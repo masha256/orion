@@ -349,6 +349,8 @@ Triggers, with per-asset thresholds in YAML: open anomaly, a driver deviating fr
 
 **Who evaluates triggers.** Orion does, not the user. After each ingest and engine re-run, the scheduled job evaluates the trigger conditions and, when one fires, launches a `triage` run with the trigger as context. Automatic evaluation is delivered in sub-project 4; until then the user checks `orion data anomalies` and launches triage manually.
 
+**One process.** CLI commands are thin wrappers over library functions. The scheduled entry point (`orion tick`, sub-project 4) runs ingest, engine, trigger evaluation, and any triggered agent run as in-process function calls in sequence. It never spawns a second `orion` process. A failed agent run is caught and rolled back, and the data-only signal for that tick is still emitted. A per-asset run lock (a SQLite row) prevents overlapping runs; a run that finds the lock held exits cleanly with a `run_in_progress` outcome.
+
 **Manual triage.** The user can launch a triage run at any time for events Orion's data cannot see (an announcement, a funding round, an outage): `orion agent run <asset> --type triage --note "<text or url>"`. The note is a lead for the agent to verify through research, not a fact. It cannot itself be cited as evidence for an assumption change.
 
 Cadence follows how often fundamental information arrives. Assets with daily on-chain revenue tighten thresholds; the calendar stays the same.
