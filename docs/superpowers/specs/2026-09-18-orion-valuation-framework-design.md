@@ -347,6 +347,10 @@ Web content fetched during research is untrusted data. It can yield provisional 
 
 Triggers, with per-asset thresholds in YAML: open anomaly, a driver deviating from its assumption-implied path by more than a threshold (default 25 percent), a staleness breach on a critical metric, a new provisional observation, and a dated event on the asset calendar (for VVV, the 2026-10-01 emission cut).
 
+**Who evaluates triggers.** Orion does, not the user. After each ingest and engine re-run, the scheduled job evaluates the trigger conditions and, when one fires, launches a `triage` run with the trigger as context. Automatic evaluation is delivered in sub-project 4; until then the user checks `orion data anomalies` and launches triage manually.
+
+**Manual triage.** The user can launch a triage run at any time for events Orion's data cannot see (an announcement, a funding round, an outage): `orion agent run <asset> --type triage --note "<text or url>"`. The note is a lead for the agent to verify through research, not a fact. It cannot itself be cited as evidence for an assumption change.
+
 Cadence follows how often fundamental information arrives. Assets with daily on-chain revenue tighten thresholds; the calendar stays the same.
 
 ## 9. Signal schema v1
@@ -402,7 +406,7 @@ orion model    run <asset> | whatif <asset> --set key=value
                | assumptions show|set|history <asset>
                | proposals list|approve|reject
                | replay <run_id>
-orion agent    run <asset> --type weekly|triage|deep | runs list|show
+orion agent    run <asset> --type weekly|triage|deep [--note <text>] | runs list|show
 orion signal   latest <asset> | history <asset> | emit <asset> [--out file]
 ```
 
