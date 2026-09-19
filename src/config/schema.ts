@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { STD_METRICS } from '../types.js';
+import { CrossCheckSchema, IngestSchema, SourceSchema, sourceIssues } from './sources.js';
 
 const MetricDefSchema = z.strictObject({
   type: z.enum(['level', 'flow', 'schedule', 'event']),
@@ -10,6 +11,9 @@ const MetricDefSchema = z.strictObject({
   tolerance_pct: z.number().nonnegative().default(1),
   allow_provisional: z.boolean().default(false),
   critical: z.boolean().default(false),
+  /** Primary source. A metric without one stays manual. Optional with no default, so existing config hashes do not move. */
+  source: SourceSchema.optional(),
+  cross_checks: z.array(CrossCheckSchema).optional(),
 });
 
 const HolderFlowSchema = z.strictObject({
@@ -42,6 +46,7 @@ export const AssetConfigSchema = z
     supply_basis: z.enum(['effective_total', 'circulating']).default('effective_total'),
     contracts: z.record(z.string(), z.string()).default({}),
     external_ids: z.record(z.string(), z.string()).default({}),
+    ingest: IngestSchema.optional(),
     metrics: z.record(z.string(), MetricDefSchema),
     holder_flows: z.array(HolderFlowSchema).min(1),
     modules: z.array(ModuleInstanceSchema).min(1),
@@ -111,6 +116,12 @@ export const AssetConfigSchema = z
         issue(`total_return_variants: "${v.id}" must reference a level metric`);
       }
     }
+
+    for (const message of sourceIssues(a, required)) issue(message);
+    const move = a.review_triggers.revenue_stale_move_pct;
+    if (move !== undefined && !(typeof move === 'number' && Number.isFinite(move) && move > 0)) {
+      issue('review_triggers: revenue_stale_move_pct must be a positive number');
+    }
   });
 
 export type AssetConfig = z.infer<typeof AssetConfigSchema>;
@@ -121,3 +132,9 @@ export type FlowKind = HolderFlowDef['kind'];
 export type CaptureRule = HolderFlowDef['capture_rule'];
 export type RecipientBase = HolderFlowDef['recipient_base'];
 export type ModuleKind = ModuleInstanceDef['kind'];
+
+/** Percent move in usage_index since the revenue disclosure that raises the stale-revenue alert. Default 30. */
+export function revenueStaleMovePct(asset: AssetConfig): number {
+  const v = asset.review_triggers.revenue_stale_move_pct;
+  return typeof v === 'number' ? v : 30;
+}
