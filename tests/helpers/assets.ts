@@ -1,5 +1,6 @@
 import { parseAssetYaml } from '../../src/config/load.js';
 import type { AssetConfig } from '../../src/config/schema.js';
+import type { AssumptionValues } from '../../src/types.js';
 
 export const MINI_ASSET_YAML = `
 id: mini
@@ -29,4 +30,19 @@ assumptions:
 
 export function miniAsset(): AssetConfig {
   return parseAssetYaml(MINI_ASSET_YAML).config;
+}
+
+/** Flat world: no growth, capture stays at 10 percent, 10 percent discount rate. Same in every scenario. */
+export function miniAssumptions(over: Partial<Record<string, number>> = {}): AssumptionValues {
+  const one = {
+    rev_growth_y1: 0,
+    growth_fade_years: 1,
+    terminal_growth: 0,
+    'capture_rate_terminal.fees': 0.1,
+    'capture_ramp_years.fees': 0,
+    discount_rate_base: 0.1,
+    staked_ratio_horizon: 0.5,
+    ...over,
+  } as Record<string, number>;
+  return { bear: { ...one }, base: { ...one }, bull: { ...one } };
 }
