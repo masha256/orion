@@ -11,6 +11,8 @@ export interface SupplyArgs {
   assumptions: ScenarioAssumptions;
   horizonYears: number;
   targetPrice: number;
+  /** Forecast on this basis instead of the asset's own. Used for figures defined on effective supply. */
+  basis?: AssetConfig['supply_basis'];
 }
 
 export function yearsBetween(asOf: string, iso: string): number {
@@ -30,7 +32,7 @@ export function emissionsBetween(steps: ScheduleStep[], asOf: string, t0: number
 
 export function forecastSupply(args: SupplyArgs): number {
   const { asset, drivers, assumptions, horizonYears: H, targetPrice } = args;
-  const circulating = asset.supply_basis === 'circulating';
+  const circulating = (args.basis ?? asset.supply_basis) === 'circulating';
   const spot = drivers.price.value;
 
   let supply: number;

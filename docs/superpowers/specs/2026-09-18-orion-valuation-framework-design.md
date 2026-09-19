@@ -183,7 +183,10 @@ expected_target  = sum(probability_s * target_s)
 dispersion       = (max estimate - min estimate) / sum(weight_i * estimate_i), per scenario
 upside_pct       = expected_target / spot - 1
 staked_total_return_pct = (expected_target / spot) * (1 + y)^(H in years) - 1
-    where y = gross emissions per year * staker_emission_share / (staked_ratio_horizon * S(H))
+    where y = gross emissions per year * staker_emission_share / (staked_ratio_horizon * E(H))
+    E(H) = EFFECTIVE supply at H (effective supply now + emissions over [0,H] - tokens burned),
+           because staked_ratio is a share of effective supply (3.1). On the effective_total
+           basis E(H) is just S(H); on the circulating basis it is not.
 ```
 
 Asset-specific return variants (for VVV, DIEM-locked stake at 80 percent of normal yield) are emitted under `extras`.

@@ -88,7 +88,13 @@ function solveScenario(
   while (iterations < MAX_ITERATIONS && !converged) {
     iterations++;
     supply = forecastSupply({ asset, drivers, assumptions: a, horizonYears: H, targetPrice: target });
-    stakingYield = (avgEmission * drivers.stakerEmissionShare.value) / (stakedRatio * supply);
+    // staked_ratio_horizon is a share of EFFECTIVE supply, so the yield denominator uses the
+    // effective-basis forecast. On the effective_total basis the two are the same number.
+    const effectiveSupply =
+      asset.supply_basis === 'circulating'
+        ? forecastSupply({ asset, drivers, assumptions: a, horizonYears: H, targetPrice: target, basis: 'effective_total' })
+        : supply;
+    stakingYield = (avgEmission * drivers.stakerEmissionShare.value) / (stakedRatio * effectiveSupply);
     modules = {};
     let next = 0;
     for (const { def, impl } of instances) {

@@ -5,7 +5,7 @@ import { runEngine } from '../../src/engine/run.js';
 import { ENGINE_VERSION } from '../../src/engine/version.js';
 import { canonicalJson } from '../../src/util/canonical.js';
 import { MINI_ASSET_YAML, miniAsset, miniAssumptions } from '../helpers/assets.js';
-import { AS_OF, miniObservations, type MiniOverrides } from '../helpers/obs.js';
+import { AS_OF, miniObservations, obs, type MiniOverrides } from '../helpers/obs.js';
 
 function run(obsOver: MiniOverrides = {}, assumeOver: Partial<Record<string, number>> = {}, asset = miniAsset()) {
   const drivers = computeDrivers(asset, miniObservations(obsOver), AS_OF).drivers!;
@@ -75,6 +75,26 @@ describe('runEngine', () => {
     const hi = run({}, { 'multiple.fm': 2, regime_multiplier: 2 }, asset).horizons['12m'];
     expect(hi.modules.fm.value).toBeCloseTo(40, 6);
     expect(hi.modules.hc.breakdown.aggregate_pv_usd).toBeCloseTo(lo.modules.hc.breakdown.aggregate_pv_usd as number, 6);
+  });
+
+  it('measures staking yield against effective supply on a circulating-basis asset', () => {
+    const asset = miniAsset();
+    asset.supply_basis = 'circulating';
+    asset.metrics.circulating_supply = { ...asset.metrics.effective_supply };
+    const list = [...miniObservations({ emission: 10 }), obs('circulating_supply', 40, '2026-06-29')];
+    const drivers = computeDrivers(asset, list, AS_OF).drivers!;
+    const s = runEngine({ asset, drivers, assumptions: miniAssumptions() }).horizons['12m'].scenarios.base;
+    // circulating at H = 40 + 10 emitted = 50; effective at H = 100 + 10 = 110 (a fee_share flow
+    // burns nothing). staked_ratio_horizon is a share of EFFECTIVE supply, so
+    // y = 10 emitted * share 1 / (0.5 * 110), not / (0.5 * 50).
+    expect(s.supplyAtHorizon).toBeCloseTo(50, 9);
+    expect(s.stakingYield).toBeCloseTo(10 / (0.5 * 110), 9);
+  });
+
+  it('leaves the staking yield of an effective_total asset alone', () => {
+    const s = run({ emission: 10 }).horizons['12m'].scenarios.base;
+    expect(s.supplyAtHorizon).toBeCloseTo(110, 9);
+    expect(s.stakingYield).toBeCloseTo(10 / (0.5 * 110), 9);
   });
 
   it('emits total-return variants in extras', () => {
