@@ -3,7 +3,7 @@ import type { AssetConfig } from '../config/schema.js';
 import { listOpenAnomalies } from '../db/anomalies.js';
 import { getAssumptionSetById, getLatestAssumptionSet } from '../db/assumptions.js';
 import type { Db } from '../db/connection.js';
-import { getObservationsByIds, listActiveObservations, type Observation } from '../db/observations.js';
+import { getObservationsByIds } from '../db/observations.js';
 import {
   createSnapshot, getConfigVersion, getLatestSignal, getSnapshot, getValuationRun, insertSignal, insertValuationRun,
   saveConfigVersion, updateRunStatus,
@@ -18,18 +18,7 @@ import { buildSignal } from '../signals/build.js';
 import type { Signal } from '../signals/schema.js';
 import { OrionError, SCENARIOS, STD_METRICS, type AssumptionValues, type Scenario } from '../types.js';
 import { canonicalJson } from '../util/canonical.js';
-
-function eligibleObservations(db: Db, asset: AssetConfig): Observation[] {
-  const active = listActiveObservations(db, asset.id).filter((o) => {
-    const def = asset.metrics[o.metricKey];
-    return def !== undefined && (o.status === 'confirmed' || def.allow_provisional);
-  });
-  // A confirmed and a provisional row can both be active at one key. Confirmed data wins, which
-  // also keeps flows from counting the same period twice.
-  const key = (o: Observation) => `${o.metricKey}@${o.observedAt}`;
-  const confirmedKeys = new Set(active.filter((o) => o.status === 'confirmed').map(key));
-  return active.filter((o) => o.status !== 'provisional' || !confirmedKeys.has(key(o)));
-}
+import { eligibleObservations } from './eligibility.js';
 
 function tryEngine(asset: AssetConfig, drivers: Drivers, values: AssumptionValues): { output: EngineOutput } | { error: string } {
   try {
@@ -50,7 +39,7 @@ export function runValuation(db: Db, loaded: LoadedAsset, now: Date): { runId: n
 
   return db.transaction(() => {
     saveConfigVersion(db, hash, asset.id, asset, asOf);
-    const observations = eligibleObservations(db, asset);
+    const observations = eligibleObservations(db, asset, asOf);
     const snapshotId = createSnapshot(db, asset.id, asOf, observations.map((o) => o.id), asOf);
     const report = computeDrivers(asset, observations, asOf, requiredExtraMetrics(asset));
     const set = getLatestAssumptionSet(db, asset.id);
@@ -134,7 +123,7 @@ export function whatIf(
 ): { blocked: string[] } | { output: EngineOutput } {
   const asset = loaded.config;
   const asOf = now.toISOString();
-  const report = computeDrivers(asset, eligibleObservations(db, asset), asOf, requiredExtraMetrics(asset));
+  const report = computeDrivers(asset, eligibleObservations(db, asset, asOf), asOf, requiredExtraMetrics(asset));
   const set = getLatestAssumptionSet(db, asset.id);
   const blocked = [
     ...validateAssetModules(asset).map((e) => `invalid_config:${e}`),

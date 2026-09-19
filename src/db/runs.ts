@@ -75,7 +75,8 @@ export function insertSignal(db: Db, runId: number, signal: Signal): void {
 }
 
 export function listSignals(db: Db, assetId: string, limit: number): Signal[] {
-  const rows = db.prepare('SELECT payload_json FROM signals WHERE asset_id = ? ORDER BY id DESC LIMIT ?').all(assetId, limit) as {
+  // Newest by generated_at (stored in emitted_at), then by id: a backfilled --as-of run never becomes "latest".
+  const rows = db.prepare('SELECT payload_json FROM signals WHERE asset_id = ? ORDER BY emitted_at DESC, id DESC LIMIT ?').all(assetId, limit) as {
     payload_json: string;
   }[];
   return rows.map((r) => JSON.parse(r.payload_json) as Signal);
