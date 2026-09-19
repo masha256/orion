@@ -1,0 +1,69 @@
+id: vvv
+symbol: VVV
+name: Venice Token
+chain: base
+supply_basis: effective_total
+
+contracts:
+  token: "0xacfE6019Ed1A7Dc6f7B508C02d1b04ec88cC21bf"
+  staking: "0x321b7ff75154472B18EDb199033fF4D116F340Ff"
+  diem: "0xF4d97F2da56e8c3098f3a8D538DB630A2606a024"
+  burn_sink: "0x0000000000000000000000000000000000000000"
+  treasury: "0x2D8CB8DC596daD0e1E34E2042E7ae6Df93B11524"
+
+external_ids:
+  coingecko: venice-token
+  coingecko_diem: diem
+  defillama: venice
+
+# All fetchers are "manual" in sub-project 1. Sub-project 2 points them at base-rpc, venice-api, coingecko, defillama.
+metrics:
+  price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }
+  revenue_run_rate_usd: { type: level, unit: usd, cadence: event, staleness_days: 60, critical: true, allow_provisional: true }
+  effective_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
+  circulating_supply: { type: level, unit: tokens, staleness_days: 14 }
+  staked_supply: { type: level, unit: tokens, staleness_days: 7 }
+  locked_supply: { type: level, unit: tokens, staleness_days: 14 }
+  staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }
+  emission_rate_annual: { type: schedule, unit: tokens_per_year, cadence: event, staleness_days: 45, critical: true }
+  flow_usd.burn: { type: flow, unit: usd, cadence: monthly, staleness_days: 45, critical: true }
+  diem_supply: { type: level, unit: diem, staleness_days: 14 }
+  diem_target_supply: { type: level, unit: diem, staleness_days: 45 }
+  diem_price_usd: { type: level, unit: usd, staleness_days: 7 }
+  diem_locked_yield_share: { type: level, unit: ratio, cadence: event, staleness_days: 90 }
+
+holder_flows:
+  - { id: burn, kind: burn, capture_rule: discretionary, recipient_base: all, metric: flow_usd.burn, window_days: 90 }
+
+modules:
+  - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.4 }
+  - { id: fm_revenue, type: forward_multiple, kind: estimate, weight: 0.3, params: { basis: revenue, market_convention: true } }
+  - { id: fm_holder_flow, type: forward_multiple, kind: estimate, weight: 0.3, params: { basis: holder_flow } }
+  - { id: diem, type: utility_claim, kind: component, params: { diem_value_basis: market } }
+
+scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }
+
+total_return_variants:
+  - { id: diem_locked_staked_total_return_pct, yield_multiplier_metric: diem_locked_yield_share }
+
+assumptions:
+  rev_growth_y1: { min: -0.5, max: 4.0 }
+  growth_fade_years: { min: 1, max: 8 }
+  terminal_growth: { min: 0, max: 0.05 }
+  capture_rate_terminal.burn: { min: 0, max: 0.5 }
+  capture_ramp_years.burn: { min: 0, max: 8 }
+  discount_rate_base: { min: 0.08, max: 0.30 }
+  discount_premium_discretionary: { min: 0, max: 0.15 }
+  multiple.fm_revenue: { min: 1, max: 50 }
+  multiple.fm_holder_flow: { min: 5, max: 150 }
+  regime_multiplier: { min: 0.3, max: 2.5 }
+  staked_ratio_horizon: { min: 0.1, max: 0.9 }
+  diem_target_supply_growth: { min: 0, max: 1 }
+  diem_discount_rate: { min: 0.05, max: 0.5 }
+
+review_triggers:
+  driver_deviation_pct: 25
+  calendar:
+    - { date: "2026-10-01", note: "Announced emission cut to 2.0M VVV per year" }
+
+peer_set: []

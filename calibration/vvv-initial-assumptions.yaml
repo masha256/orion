@@ -1,0 +1,40 @@
+# DRAFT starting point. Every value here is the user's to change at the calibration checkpoint.
+all:
+  capture_ramp_years.burn: 3
+  staked_ratio_horizon: 0.42
+bear:
+  rev_growth_y1: 0.10
+  growth_fade_years: 4
+  terminal_growth: 0.02
+  capture_rate_terminal.burn: 0.05
+  discount_rate_base: 0.20
+  discount_premium_discretionary: 0.08
+  multiple.fm_revenue: 6
+  multiple.fm_holder_flow: 15
+  regime_multiplier: 0.6
+  diem_target_supply_growth: 0.0
+  diem_discount_rate: 0.25
+base:
+  rev_growth_y1: 0.80
+  growth_fade_years: 4
+  terminal_growth: 0.03
+  capture_rate_terminal.burn: 0.10
+  discount_rate_base: 0.15
+  discount_premium_discretionary: 0.06
+  multiple.fm_revenue: 15
+  multiple.fm_holder_flow: 30
+  regime_multiplier: 1.0
+  diem_target_supply_growth: 0.10
+  diem_discount_rate: 0.20
+bull:
+  rev_growth_y1: 2.00
+  growth_fade_years: 5
+  terminal_growth: 0.04
+  capture_rate_terminal.burn: 0.20
+  discount_rate_base: 0.12
+  discount_premium_discretionary: 0.04
+  multiple.fm_revenue: 25
+  multiple.fm_holder_flow: 50
+  regime_multiplier: 1.4
+  diem_target_supply_growth: 0.25
+  diem_discount_rate: 0.15
