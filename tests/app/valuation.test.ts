@@ -111,6 +111,38 @@ describe('runValuation', () => {
   });
 });
 
+describe('runValuation config validation', () => {
+  const blockedFor = (yaml: string, over: Partial<Record<string, number>> = {}) => {
+    seedObservations();
+    seedAssumptions(over);
+    return runValuation(db, parseAssetYaml(yaml), NOW).signal;
+  };
+
+  it('blocks when a module is configured with a kind its type does not allow', () => {
+    const yaml = MINI_ASSET_YAML
+      .replace('  - { id: hc, type: holder_cashflow, kind: estimate, weight: 1 }',
+        '  - { id: hc, type: holder_cashflow, kind: component }\n  - { id: fm, type: forward_multiple, kind: estimate, weight: 1, params: { basis: revenue } }')
+      .replace('assumptions:', 'assumptions:\n  multiple.fm: { min: 0, max: 100 }\n  regime_multiplier: { min: 0.1, max: 3 }');
+    const signal = blockedFor(yaml, { 'multiple.fm': 2, regime_multiplier: 1 });
+    expect(signal.status).toBe('blocked');
+    expect(signal.status_reasons).toContain('invalid_config:modules.hc: type holder_cashflow cannot be a component');
+  });
+
+  it('blocks when a required assumption key has no bounds', () => {
+    const yaml = MINI_ASSET_YAML.replace('  discount_rate_base: { min: 0.05, max: 0.5 }\n', '');
+    const signal = blockedFor(yaml);
+    expect(signal.status).toBe('blocked');
+    expect(signal.status_reasons).toContain('invalid_config:assumptions: required key "discount_rate_base" has no bounds');
+  });
+
+  it('blocks on an unknown module type instead of throwing out of the run', () => {
+    const yaml = MINI_ASSET_YAML.replace('type: holder_cashflow', 'type: nope');
+    const signal = blockedFor(yaml);
+    expect(signal.status).toBe('blocked');
+    expect(signal.status_reasons).toContain('invalid_config:modules.hc: unknown module type "nope"');
+  });
+});
+
 describe('whatIf', () => {
   it('applies overrides without persisting anything', () => {
     seedObservations();

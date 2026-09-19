@@ -10,7 +10,7 @@ import {
 import { computeDrivers, type Drivers } from '../drivers/compute.js';
 import { latestLevel } from '../drivers/select.js';
 import { EngineError } from '../engine/errors.js';
-import { requiredExtraMetrics, validateAssumptions } from '../engine/requirements.js';
+import { requiredExtraMetrics, validateAssetModules, validateAssumptions } from '../engine/requirements.js';
 import { runEngine, type EngineOutput } from '../engine/run.js';
 import { ENGINE_VERSION } from '../engine/version.js';
 import { buildSignal } from '../signals/build.js';
@@ -50,6 +50,7 @@ export function runValuation(db: Db, loaded: LoadedAsset, now: Date): { runId: n
     const set = getLatestAssumptionSet(db, asset.id);
 
     const reasons: string[] = [
+      ...validateAssetModules(asset).map((e) => `invalid_config:${e}`),
       ...report.missing.map((m) => `missing_metric:${m}`),
       ...report.overlappingFlowMetrics.map((m) => `overlapping_flow_periods:${m}`),
     ];
@@ -128,11 +129,12 @@ export function whatIf(
   const report = computeDrivers(asset, eligibleObservations(db, asset), asOf, requiredExtraMetrics(asset));
   const set = getLatestAssumptionSet(db, asset.id);
   const blocked = [
+    ...validateAssetModules(asset).map((e) => `invalid_config:${e}`),
     ...report.missing.map((m) => `missing_metric:${m}`),
     ...report.overlappingFlowMetrics.map((m) => `overlapping_flow_periods:${m}`),
   ];
   if (!set) blocked.push('no_assumption_set');
-  if (!set || !report.drivers) return { blocked };
+  if (blocked.length > 0 || !set || !report.drivers) return { blocked };
 
   const values: AssumptionValues = { bear: { ...set.values.bear }, base: { ...set.values.base }, bull: { ...set.values.bull } };
   for (const o of overrides) {
