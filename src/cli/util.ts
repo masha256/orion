@@ -1,16 +1,37 @@
 import { join } from 'node:path';
 import { openDb, type Db } from '../db/connection.js';
+import { realFetchDeps } from '../ingest/deps.js';
+import type { FetchDeps, FetchResult } from '../ingest/run.js';
 import type { Signal } from '../signals/schema.js';
 import { OrionError } from '../types.js';
+import { loadEnv } from './env.js';
 
 export interface CliContext {
   home: string;
   stdout: (line: string) => void;
   now: () => Date;
+  /** Transports and environment for fetching. Tests inject fakes; by default the real ones are built. */
+  ingestDeps?: () => FetchDeps;
+  /** Progress lines. Never stdout, which may be carrying JSON. */
+  stderr?: (line: string) => void;
+  setExitCode?: (code: number) => void;
 }
 
 export function dbPath(ctx: CliContext): string {
   return join(ctx.home, 'orion.db');
+}
+
+export function ingestDepsFor(ctx: CliContext): FetchDeps {
+  return ctx.ingestDeps ? ctx.ingestDeps() : realFetchDeps(loadEnv(ctx.home, process.env), ctx.now);
+}
+
+export async function withDbAsync<T>(ctx: CliContext, fn: (db: Db) => Promise<T>): Promise<T> {
+  const db = openDb(dbPath(ctx));
+  try {
+    return await fn(db);
+  } finally {
+    db.close();
+  }
 }
 
 export function withDb<T>(ctx: CliContext, fn: (db: Db) => T): T {
@@ -60,6 +81,36 @@ export function signalSummary(s: Signal): string[] {
   if (s.change.prev_signal_id) {
     const delta = s.change.target_delta_pct === null ? 'n/a' : `${s.change.target_delta_pct.toFixed(1)}%`;
     lines.push(`change: ${s.change.cause}, 12m target ${delta} vs ${s.change.prev_signal_id}${s.change.rationale ? ` (${s.change.rationale})` : ''}`);
+  }
+  return lines;
+}
+
+const trim = (n: number): string => String(Number(n.toPrecision(10)));
+
+export function fetchSummary(r: FetchResult): string[] {
+  const lines = [`${r.assetId.toUpperCase()} fetch ${r.outcome}${r.dryRun ? ' (dry run: nothing was written)' : ''}`];
+  for (const s of r.sources) {
+    const status = s.status === 'failed' ? 'FAILED' : s.status;
+    const wrote = s.metricsWritten.length > 0 ? `${r.dryRun ? 'would write' : 'wrote'} ${s.metricsWritten.join(', ')}` : '';
+    lines.push(`  ${status.padEnd(8)} ${s.sourceId}  ${wrote}`.trimEnd());
+    if (s.error) lines.push(`    error: ${s.error}`);
+    for (const c of s.crossChecks) {
+      const where = c.label === 'level' ? '' : ` ${c.label}`;
+      lines.push(
+        `    check ${c.metricKey}${where} vs ${c.sourceId}: ${trim(c.primary)} vs ${trim(c.check)} (${c.diffPct.toFixed(2)}% ${c.ok ? 'within' : 'OUTSIDE'} ${c.tolerancePct}%)`,
+      );
+    }
+    for (const c of s.conflicts) {
+      lines.push(
+        `    conflict #${c.observationId} ${c.metricKey} ${c.source} ${c.observedAt}${c.periodDays ? ` (${c.periodDays}d)` : ''} ${c.adoptable ? 'adoptable' : 'NOT adoptable'}`,
+      );
+    }
+    if (s.retiredObservationIds.length > 0) lines.push(`    rejected manual rows: ${s.retiredObservationIds.map((id) => `#${id}`).join(', ')}`);
+    for (const t of s.unlistedTransfers) lines.push(`    unlisted sender ${t.from}: ${trim(t.tokens)} tokens on ${t.day} (tx ${t.txHash})`);
+    for (const note of s.notes) lines.push(`    note: ${note}`);
+  }
+  for (const a of r.anomalies) {
+    lines.push(`  anomaly ${a.id === null ? '(not recorded)' : `#${a.id}`} ${a.kind}${a.metricKey ? ` on ${a.metricKey}` : ''} (${a.severity})`);
   }
   return lines;
 }

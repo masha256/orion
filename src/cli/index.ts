@@ -6,6 +6,10 @@ const program = buildProgram({
   home: process.env.ORION_HOME ?? process.cwd(),
   stdout: (line) => console.log(line),
   now: () => new Date(),
+  stderr: (line) => console.error(line),
+  setExitCode: (code) => {
+    process.exitCode = code;
+  },
 });
 
 program.parseAsync(process.argv).catch((err: unknown) => {
