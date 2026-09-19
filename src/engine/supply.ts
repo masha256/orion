@@ -67,3 +67,53 @@ export function forecastSupply(args: SupplyArgs): number {
   if (!(supply > 0)) throw new EngineError('forecast supply is not positive');
   return supply;
 }
+
+export interface PostHorizonSupply {
+  /** S(H + tau): supply tau years after the horizon. Yearly steps, linear in between. */
+  supplyAt(tau: number): number;
+  /** E: the last known emission schedule step in tokens per year, held flat after the horizon. */
+  terminalEmission: number;
+}
+
+/**
+ * Supply path after the horizon: S(n+1) = S(n) + E, plus scheduled unlocks that fall in that year on
+ * the circulating basis. Burns are deliberately absent: holder_cashflow already values burn dollars
+ * as holder cash flow, and shrinking supply by the same burns would count them twice.
+ * Pure: the yearly steps are a deterministic function of the arguments.
+ */
+export function postHorizonSupply(args: {
+  asset: AssetConfig;
+  drivers: Drivers;
+  horizonYears: number;
+  supplyAtHorizon: number;
+  basis?: AssetConfig['supply_basis'];
+}): PostHorizonSupply {
+  const { asset, drivers, horizonYears: H, supplyAtHorizon } = args;
+  const circulating = (args.basis ?? asset.supply_basis) === 'circulating';
+  const terminalEmission = drivers.emissionSchedule.at(-1)?.value ?? 0;
+
+  const yearly = [supplyAtHorizon];
+  const extendTo = (n: number) => {
+    while (yearly.length <= n) {
+      const year = yearly.length - 1; // this step covers (H + year, H + year + 1]
+      let next = yearly[year] + terminalEmission;
+      if (circulating) {
+        for (const u of drivers.scheduledUnlocks) {
+          const t = yearsBetween(drivers.asOf, u.at) - H;
+          if (t > year && t <= year + 1) next += u.tokens;
+        }
+      }
+      yearly.push(next);
+    }
+  };
+
+  return {
+    terminalEmission,
+    supplyAt(tau: number): number {
+      if (tau <= 0) return supplyAtHorizon;
+      const n = Math.floor(tau);
+      extendTo(n + 1);
+      return yearly[n] + (yearly[n + 1] - yearly[n]) * (tau - n);
+    },
+  };
+}

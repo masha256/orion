@@ -95,21 +95,22 @@ describe('VVV end to end on the frozen golden config, seed data, and draft assum
   it('produces the expected 12 month valuation', () => {
     expect(output.converged).toBe(true);
     expect(output.spot).toBe(27.46);
-    expect(h12.expectedTarget).toBeCloseTo(34.43742233806968, 6);
-    expect(h12.modules.hc.value).toBeCloseTo(17.093183770490626, 6);
-    expect(h12.modules.fm_revenue.value).toBeCloseTo(73.2339498272557, 6);
-    expect(h12.modules.fm_holder_flow.value).toBeCloseTo(18.10575418426764, 6);
-    expect(h12.modules.diem.value).toBeCloseTo(0.19823762641642734, 6);
-    expect(h12.scenarios.base.supplyAtHorizon).toBeCloseTo(82482168.27988559, 2);
+    expect(h12.expectedTarget).toBeCloseTo(33.09189067465379, 6);
+    expect(h12.modules.hc.value).toBeCloseTo(13.680588298103167, 6); // 17.0932 under engine 1.1.0, before post-horizon dilution
+    expect(h12.modules.fm_revenue.value).toBeCloseTo(73.24089032332991, 6);
+    expect(h12.modules.fm_holder_flow.value).toBeCloseTo(18.10761428046546, 6);
+    expect(h12.modules.diem.value).toBeCloseTo(0.215103974273912, 6);
+    expect(h12.scenarios.base.supplyAtHorizon).toBeCloseTo(82479613.28300588, 2);
+    expect(h12.modules.hc.breakdown.net_dilution_terminal).toBeCloseTo(2000000 / 92479613.28300588, 9);
   });
 
   it('produces the expected 6 month valuation', () => {
-    expect(h6.expectedTarget).toBeCloseTo(24.881156582397576, 6);
-    expect(h6.modules.hc.value).toBeCloseTo(16.21213497987913, 6);
-    expect(h6.modules.fm_revenue.value).toBeCloseTo(49.77223505431847, 6);
-    expect(h6.modules.fm_holder_flow.value).toBeCloseTo(10.604722452813144, 6);
-    expect(h6.modules.diem.value).toBeCloseTo(0.2832153383064402, 6);
-    expect(h6.scenarios.base.supplyAtHorizon).toBeCloseTo(81776568.7907713, 2);
+    expect(h6.expectedTarget).toBeCloseTo(23.54875825524369, 6);
+    expect(h6.modules.hc.value).toBeCloseTo(12.840285411368317, 6);
+    expect(h6.modules.fm_revenue.value).toBeCloseTo(49.7747476937811, 6);
+    expect(h6.modules.fm_holder_flow.value).toBeCloseTo(10.605299526641362, 6);
+    expect(h6.modules.diem.value).toBeCloseTo(0.29862992456962256, 6);
+    expect(h6.scenarios.base.supplyAtHorizon).toBeCloseTo(81775278.851763, 2);
   });
 
   it('carries the utility_claim component alongside the estimates and keeps it out of dispersion', () => {
@@ -131,6 +132,6 @@ describe('VVV end to end on the frozen golden config, seed data, and draft assum
     const hash = createHash('sha256').update(canonicalJson(output)).digest('hex');
     // Changing this hash means engine or driver math changed: bump ENGINE_VERSION in
     // src/engine/version.ts, then update the hash.
-    expect(hash).toBe('ef7604ad419e5db2f96f64762f061bd9e3ca1ca18d602fbf3ee5a8be6ef54860');
+    expect(hash).toBe('6b3f9fa36241c2071c0108d5b5d0b2cf5dba2d0ccd574c65f53da9e3c519311a');
   });
 });

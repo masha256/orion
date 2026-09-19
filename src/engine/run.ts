@@ -7,7 +7,7 @@ import { EngineError } from './errors.js';
 import { getModule } from './modules/registry.js';
 import type { ModuleResult, ValuationModule } from './modules/types.js';
 import { need } from './paths.js';
-import { emissionsBetween, forecastSupply } from './supply.js';
+import { emissionsBetween, forecastSupply, postHorizonSupply } from './supply.js';
 import { ENGINE_VERSION } from './version.js';
 
 const MAX_ITERATIONS = 20;
@@ -95,6 +95,7 @@ function solveScenario(
         ? forecastSupply({ asset, drivers, assumptions: a, horizonYears: H, targetPrice: target, basis: 'effective_total' })
         : supply;
     stakingYield = (avgEmission * drivers.stakerEmissionShare.value) / (stakedRatio * effectiveSupply);
+    const post = postHorizonSupply({ asset, drivers, horizonYears: H, supplyAtHorizon: supply });
     modules = {};
     let next = 0;
     for (const { def, impl } of instances) {
@@ -107,6 +108,8 @@ function solveScenario(
         supplyAtHorizon: supply,
         priceAtHorizon: target,
         stakingYieldAtHorizon: stakingYield,
+        supplyAfterHorizon: post.supplyAt,
+        terminalEmissionRate: post.terminalEmission,
       });
       if (!Number.isFinite(result.valuePerToken)) throw new EngineError(`module ${def.id} returned a non-finite value`);
       modules[def.id] = result;

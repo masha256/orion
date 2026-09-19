@@ -12,6 +12,9 @@ function run(obsOver: MiniOverrides = {}, assumeOver: Partial<Record<string, num
   return runEngine({ asset, drivers, assumptions: miniAssumptions(assumeOver) });
 }
 
+/** Mini asset with emission 10: per-token holder_cashflow value, derived by hand in tests/engine/dilution.test.ts. */
+const DILUTED_MINI = 5.253731257665621;
+
 describe('runEngine', () => {
   it('values the flat mini asset at its perpetuity value in every scenario', () => {
     const out = run();
@@ -32,10 +35,13 @@ describe('runEngine', () => {
 
   it('lowers the per-token target when emissions rise', () => {
     const diluted = run({ emission: 10 }).horizons['12m'];
-    expect(diluted.expectedTarget).toBeCloseTo(1000 / 110, 6);
+    // Supply is 110 at the horizon and keeps growing by 10 per year, so the target is below the
+    // 1.1.0 figure of 1000 / 110. Hand derivation: tests/engine/dilution.test.ts.
+    expect(diluted.expectedTarget).toBeCloseTo(DILUTED_MINI, 6);
+    expect(diluted.expectedTarget).toBeLessThan(1000 / 110);
     // staker APR = 10 / (0.5 * 110); total return = (target/spot) * (1 + y) - 1
     const y = 10 / (0.5 * 110);
-    expect(diluted.stakedTotalReturnPct).toBeCloseTo(((1000 / 110 / 10) * (1 + y) - 1) * 100, 6);
+    expect(diluted.stakedTotalReturnPct).toBeCloseTo(((DILUTED_MINI / 10) * (1 + y) - 1) * 100, 6);
   });
 
   it('raises the target when growth rises', () => {
@@ -107,6 +113,6 @@ describe('runEngine', () => {
     const drivers = computeDrivers(asset, list, AS_OF).drivers!;
     const h = runEngine({ asset, drivers, assumptions: miniAssumptions() }).horizons['12m'];
     const y = (10 / (0.5 * 110)) * 0.8;
-    expect(h.extras.locked_total_return_pct).toBeCloseTo(((1000 / 110 / 10) * (1 + y) - 1) * 100, 6);
+    expect(h.extras.locked_total_return_pct).toBeCloseTo(((DILUTED_MINI / 10) * (1 + y) - 1) * 100, 6);
   });
 });

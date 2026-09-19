@@ -19,6 +19,7 @@ function ctx(assumptions: Record<string, number>, params: Record<string, unknown
     instanceId: 'diem', params, drivers,
     assumptions: { ...miniAssumptions().base, ...assumptions },
     horizonYears: 1, supplyAtHorizon: 1000, priceAtHorizon: 5, stakingYieldAtHorizon: 0.1,
+    supplyAfterHorizon: () => 1000, terminalEmissionRate: 0,
   };
 }
 

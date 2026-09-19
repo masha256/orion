@@ -16,6 +16,10 @@ export interface ModuleContext {
   supplyAtHorizon: number;
   priceAtHorizon: number;
   stakingYieldAtHorizon: number;
+  /** S(H + tau): forecast supply tau years after the horizon. Computed by the engine; pure. */
+  supplyAfterHorizon(tau: number): number;
+  /** E: the last known emission schedule step in tokens per year, held flat after the horizon. */
+  terminalEmissionRate: number;
 }
 
 export interface ModuleResult {

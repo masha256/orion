@@ -60,8 +60,13 @@ describe('AERO fixture', () => {
     const heavy = run(200);
     const none = run(0);
     expect(heavy.expectedTarget).toBeLessThan(none.expectedTarget);
-    // flat fees of 1000: hc = 1000/0.2 = 5000, fm = 1000*5 = 5000, both over supply 1200
-    expect(heavy.expectedTarget).toBeCloseTo(5000 / 1200, 6);
+    // fm = 1000 * 5 / 1200. hc no longer equals it: supply runs 1200, 1400, ... 2200 after the horizon,
+    // so delta = 200/2200 and g_pt = -1/12, and twenty percent inflation costs hc about 40 percent.
+    expect(heavy.modules.fm_flow.value).toBeCloseTo(5000 / 1200, 9);
+    expect(heavy.modules.hc.value).toBeCloseTo(2.508729350189619, 9);
+    expect(heavy.modules.hc.breakdown.supply_path).toEqual([1200, 1400, 1600, 1800, 2000, 2200]);
+    expect(heavy.expectedTarget).toBeCloseTo(0.6 * 2.508729350189619 + 0.4 * (5000 / 1200), 9);
+    expect(none.modules.hc.value).toBeCloseTo(5, 9); // no emissions: the 1.1.0 value, 1000 / 0.2 / 1000
     expect(heavy.stakedTotalReturnPct).toBeGreaterThan(heavy.upsidePct);
   });
 });

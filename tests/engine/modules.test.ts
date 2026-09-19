@@ -16,6 +16,8 @@ function ctx(over: Partial<ModuleContext> = {}): ModuleContext {
     supplyAtHorizon: 100,
     priceAtHorizon: 10,
     stakingYieldAtHorizon: 0,
+    supplyAfterHorizon: () => 100,
+    terminalEmissionRate: 0,
     ...over,
   };
 }
