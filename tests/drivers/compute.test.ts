@@ -52,6 +52,16 @@ describe('computeDrivers', () => {
     expect(r.drivers!.fdv.provenance).toBe('onchain');
   });
 
+  it('uses the oldest input observedAt for the derived holder-flow driver, not the newest', () => {
+    const list = miniObservations().filter((o) => o.metricKey !== 'flow_usd.fees');
+    list.push(obs('flow_usd.fees', 10, '2026-05-01', { periodDays: 30 }));
+    list.push(obs('flow_usd.fees', 10, '2026-05-31', { periodDays: 30 }));
+    list.push(obs('flow_usd.fees', 10, '2026-06-30', { periodDays: 30 }));
+    const r = computeDrivers(miniAsset(), list, AS_OF);
+    expect(r.staleMetrics).not.toContain('flow_usd.fees');
+    expect(r.drivers!.holderFlows[0].annualizedUsd.observedAt).toBe('2026-05-01T00:00:00.000Z');
+  });
+
   it('puts non-standard level metrics in extra', () => {
     const yaml = MINI_ASSET_YAML.replace('holder_flows:', '  widget_count: { type: level, unit: count, staleness_days: 30 }\nholder_flows:');
     const asset = parseAssetYaml(yaml).config;

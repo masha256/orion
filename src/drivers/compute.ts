@@ -145,6 +145,7 @@ export function computeDrivers(
     const newest = past.map((o) => o.observedAt).sort().at(-1)!;
     const { annualized, used } = trailingFlowAnnualized(past, asOf, f.window_days);
     const basis = used.length > 0 ? used : past;
+    const oldest = basis.map((o) => o.observedAt).sort()[0];
     note(f.metric, basis, newest);
     flows.push({
       def: f,
@@ -152,7 +153,7 @@ export function computeDrivers(
         value: annualized,
         provenance: worstProvenance(basis.map(obsProvenance)),
         derived: true,
-        observedAt: newest,
+        observedAt: oldest,
       },
     });
   }
