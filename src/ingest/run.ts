@@ -9,7 +9,12 @@ import { OrionError } from '../types.js';
 import { getAdapter } from './adapters/registry.js';
 import { listActiveObservations } from '../db/observations.js';
 import { MS_PER_DAY } from '../types.js';
+import { revenueStaleMovePct } from '../config/schema.js';
+import { latestLevel } from '../drivers/select.js';
+import { STD_METRICS } from '../types.js';
+import { checkRevenueStale, type IndexPoint } from './alerts.js';
 import { compareLevel, compareMonthly } from './crosscheck.js';
+import { burnMomentum } from './derived.js';
 import { scanFlowGroup } from './flow.js';
 import { buildPlan, hasSources, type FlowGroup, type SourceBatch } from './plan.js';
 import { monthOf, utcDay } from './time.js';
@@ -301,7 +306,54 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     }
   }
 
-  // [Task 16 inserts the derived metrics and the stale-revenue alert here]
+  // 6. Derived metrics, from stored observations plus this run's days (so a dry run sees them too).
+  const derivedIndex: IndexPoint[] = [];
+  for (const r of plan.derived) {
+    if (r.source.type !== 'derived') continue;
+    const outcome = outcomeOf(sourceId(r.source));
+    const flowMetric = r.source.params.metric;
+    const windowDays = r.source.params.days ?? 30;
+    if (typeof flowMetric !== 'string' || asset.metrics[flowMetric]?.type !== 'flow') {
+      throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: burn_momentum needs "metric" to name a flow metric`);
+    }
+    if (typeof windowDays !== 'number' || !Number.isInteger(windowDays) || windowDays < 1) {
+      throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: burn_momentum "days" must be a positive integer`);
+    }
+    const days = storedDailyFlow(db, asset.id, flowMetric);
+    for (const p of scannedDaily.get(flowMetric) ?? []) days.set(p.day, p.value);
+    const have = new Set(listActiveObservations(db, asset.id, r.metricKey).map((o) => o.observedAt));
+    let wrote = 0;
+    for (const point of burnMomentum(days, windowDays)) {
+      const observedAt = new Date(new Date(`${point.day}T00:00:00.000Z`).getTime() + MS_PER_DAY).toISOString(); // the day's period end
+      if (have.has(observedAt)) continue;
+      const observationId = dryRun
+        ? null
+        : insertObservation(db, {
+            assetId: asset.id, metricKey: r.metricKey, observedAt, value: point.value, source: 'onchain',
+            sourceDetail: `derived burn_momentum(${flowMetric}, ${windowDays}d)`, fetchedAt: startedAt,
+          }).id;
+      written.push({ metricKey: r.metricKey, value: point.value, observedAt, periodDays: null, source: 'onchain', observationId });
+      if (r.metricKey === STD_METRICS.usageIndex) derivedIndex.push({ observedAt, value: point.value });
+      wrote++;
+    }
+    if (wrote > 0) outcome.metricsWritten.push(r.metricKey);
+    else outcome.notes.push(`${r.metricKey}: no new day with ${windowDays} complete days behind it`);
+  }
+
+  // 7. The stale-revenue alert: advisory, and only for assets that define a usage index.
+  const revenueDef = asset.metrics[STD_METRICS.revenue];
+  if (asset.metrics[STD_METRICS.usageIndex] !== undefined && revenueDef !== undefined) {
+    const usable = listActiveObservations(db, asset.id, STD_METRICS.revenue).filter((o) => o.status === 'confirmed' || revenueDef.allow_provisional);
+    const revenue = latestLevel(usable, startedAt);
+    if (revenue) {
+      const stored = listActiveObservations(db, asset.id, STD_METRICS.usageIndex).map((o) => ({ observedAt: o.observedAt, value: o.value }));
+      const index = dryRun ? [...stored, ...derivedIndex] : stored; // a real run has already stored them
+      const finding = checkRevenueStale(revenue.observedAt, index, revenueStaleMovePct(asset));
+      if (finding) {
+        raise({ kind: 'revenue_disclosure_stale', metricKey: STD_METRICS.revenue, dedupeKey: revenue.observedAt, severity: 'advisory', detail: finding.detail });
+      }
+    }
+  }
 
   // Failure streaks: this run plus the two previous attempts of the same source.
   for (const outcome of outcomes.values()) {

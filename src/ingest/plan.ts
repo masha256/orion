@@ -3,6 +3,7 @@ import { isChainSource } from '../config/sources.js';
 import { OrionError } from '../types.js';
 import { sha256 } from '../util/canonical.js';
 import { getAdapter } from './adapters/registry.js';
+import { DERIVED_NAMES } from './derived.js';
 import { sourceId } from './sourceId.js';
 import { contractResolver, type SourceRequest } from './types.js';
 
@@ -71,6 +72,7 @@ export function buildPlan(asset: AssetConfig, opts: { metrics?: string[] } = {})
     if (!s || (wanted && !wanted.has(metricKey))) continue;
 
     if (s.type === 'derived') {
+      if (!DERIVED_NAMES.includes(s.name)) throw new OrionError('unknown_derived', `metrics.${metricKey}: unknown derived source "${s.name}"`);
       derived.push({ metricKey, role: 'primary', source: s, tolerancePct: def.tolerance_pct });
     } else if (s.type === 'transfer_flow') {
       needsRpc = true;
