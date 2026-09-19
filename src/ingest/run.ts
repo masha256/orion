@@ -7,8 +7,13 @@ import { emptySourceOutcome, insertFetchRun, recentSourceStatuses, type FetchOut
 import { insertObservation } from '../db/observations.js';
 import { OrionError } from '../types.js';
 import { getAdapter } from './adapters/registry.js';
-import { compareLevel } from './crosscheck.js';
-import { buildPlan, hasSources, type SourceBatch } from './plan.js';
+import { listActiveObservations } from '../db/observations.js';
+import { MS_PER_DAY } from '../types.js';
+import { compareLevel, compareMonthly } from './crosscheck.js';
+import { scanFlowGroup } from './flow.js';
+import { buildPlan, hasSources, type FlowGroup, type SourceBatch } from './plan.js';
+import { monthOf, utcDay } from './time.js';
+import type { DailyPoint } from './types.js';
 import { sourceId } from './sourceId.js';
 import { getSourceHandler } from './sources/registry.js';
 import { withRunCache, type HttpTransport } from './transport/http.js';
@@ -67,6 +72,21 @@ const message = (err: unknown): string => (err instanceof Error ? err.message : 
 function markFailed(outcome: SourceOutcome, text: string): void {
   outcome.status = 'failed';
   outcome.error = outcome.error === null ? text : `${outcome.error}; ${text}`;
+}
+
+/** An unlisted sender degrades the group's critical metrics; with none critical, its first metric. */
+function unlistedAnomalyMetrics(loaded: LoadedAsset, group: FlowGroup): string[] {
+  const critical = group.members.map((m) => m.metricKey).filter((k) => loaded.config.metrics[k].critical);
+  return critical.length > 0 ? critical : [group.members[0].metricKey];
+}
+
+/** The metric's stored daily on-chain rows, keyed by the UTC day each one covers. */
+function storedDailyFlow(db: Db, assetId: string, metricKey: string): Map<string, number> {
+  const days = new Map<string, number>();
+  for (const o of listActiveObservations(db, assetId, metricKey)) {
+    if (o.source === 'onchain' && o.periodDays === 1) days.set(utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY), o.value);
+  }
+  return days;
 }
 
 function readsChain(batch: SourceBatch): boolean {
@@ -208,7 +228,78 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     }
   }
 
-  // [Task 13 inserts the transfer scans and the monthly cross-checks here]
+  // 4. Transfer scans: one per flow group, at the same latest block as the level reads.
+  const scannedDaily = new Map<string, DailyPoint[]>();
+  for (const group of plan.flowGroups) {
+    if (rpc === null || block === null) {
+      markFailed(outcomeOf(group.sourceId), chainError ?? 'no RPC connection');
+      continue;
+    }
+    const scan = await scanFlowGroup({
+      db, asset, group, rpc, latest: block, http: ctx.http, env: deps.env, sleep: deps.sleep, now,
+      backfillDays: opts.backfillDays ?? asset.ingest!.backfill_days, rescan: opts.backfillDays !== undefined,
+      adopt: opts.adopt ?? false, dryRun, onProgress: opts.onProgress,
+    });
+    outcomes.set(group.sourceId, scan.outcome);
+    written.push(...scan.written);
+    for (const [metricKey, points] of scan.daily) scannedDaily.set(metricKey, points);
+
+    const bySender = new Map<string, typeof scan.unlisted>();
+    for (const t of scan.unlisted) bySender.set(t.from, [...(bySender.get(t.from) ?? []), t]);
+    for (const [sender, transfers] of bySender) {
+      const first = transfers[0];
+      const last = transfers[transfers.length - 1];
+      for (const metricKey of unlistedAnomalyMetrics(loaded, group)) {
+        raise({
+          kind: 'unlisted_sender', metricKey, dedupeKey: sender, severity: 'degrading',
+          detail: {
+            sender, transfers: transfers.length, tokens: transfers.reduce((s, t) => s + t.tokens, 0),
+            first: { tx: first.txHash, day: first.day }, last: { tx: last.txHash, day: last.day }, scan: group.sourceId,
+          },
+        });
+      }
+    }
+  }
+
+  // 5. Monthly cross-checks of flow metrics: stored daily rows, with this run's days laid over them.
+  const currentMonth = monthOf(utcDay(now.getTime()));
+  for (const batch of plan.batches) {
+    for (const r of batch.requests) {
+      const def = asset.metrics[r.metricKey];
+      if (r.role !== 'cross_check' || def.type !== 'flow') continue;
+      const outcome = outcomeOf(batch.sourceId);
+      const result = readings.get(r)!;
+      if (!result.ok) {
+        markFailed(outcome, `${r.metricKey}: ${result.error}`);
+        continue;
+      }
+      if (result.value.kind === 'level') {
+        markFailed(outcome, `${r.metricKey}: expected a daily or monthly series, got a level`);
+        continue;
+      }
+      const days = storedDailyFlow(db, asset.id, r.metricKey);
+      for (const p of scannedDaily.get(r.metricKey) ?? []) days.set(p.day, p.value);
+      const primary = [...days.entries()].map(([day, value]) => ({ day, value }));
+      const months = compareMonthly(primary, result.value, r.tolerancePct, currentMonth);
+      if (months.length === 0) outcome.notes.push(`${r.metricKey}: no calendar month is fully covered by both series yet`);
+      for (const m of months) {
+        outcome.crossChecks.push({
+          metricKey: r.metricKey, sourceId: batch.sourceId, label: m.month, primary: m.primary, check: m.check, diffPct: m.diffPct,
+          tolerancePct: r.tolerancePct, ok: m.ok,
+        });
+      }
+      const bad = months.filter((m) => !m.ok);
+      if (bad.length > 0) {
+        raise({
+          kind: 'cross_check_mismatch', metricKey: r.metricKey, dedupeKey: batch.sourceId, severity: def.critical ? 'degrading' : 'advisory',
+          detail: {
+            months: bad.map((m) => ({ month: m.month, primary: m.primary, check: m.check, diff_pct: m.diffPct })),
+            tolerance_pct: r.tolerancePct, primary_source: sourceId(def.source!), check_source: batch.sourceId,
+          },
+        });
+      }
+    }
+  }
 
   // [Task 16 inserts the derived metrics and the stale-revenue alert here]
 
