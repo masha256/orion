@@ -8,3 +8,5 @@ Real responses saved by the sub-project 2 research pass (see `docs/superpowers/s
 - `getlogs_sample25.json`: VVV `Transfer` logs to the zero address, first 25 of a larger pull.
 - `receipt.json`, `safe_info.json`, `router_info.json`: the 2026-09-08 discretionary burn and the two burn paths.
 - `merged_analysis.json`: the research pass's own per-sender and per-month totals (on-chain versus Venice). Useful for validating a backfill.
+- `cg_markets.json`: CoinGecko `/coins/markets?vs_currency=usd&ids=venice-token,diem`, untrimmed (captured during planning).
+- `chain_reads.json`: live contract reads made during planning that settled the spec's unverified ABI units.

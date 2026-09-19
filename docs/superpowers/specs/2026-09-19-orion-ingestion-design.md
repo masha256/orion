@@ -1,7 +1,7 @@
 # Orion Sub-project 2: Ingestion, Anomalies, and the Dilution Fix
 
 Date: 2026-09-19
-Status: Draft for review
+Status: Approved by the user on 2026-09-19 (section 8 amended the same day during planning)
 Parent: `docs/superpowers/specs/2026-09-18-orion-valuation-framework-design.md` (the umbrella spec; binding where this document is silent)
 Builds on: sub-project 1 (core and engine), merged to `main` at `12ef356`, engine version 1.1.0
 
@@ -29,7 +29,7 @@ Out of scope (later sub-projects): the AI agent, personas, proposals, triggers, 
 | Burn flow source | On-chain transfers to the burn sink from allowlisted senders only. Any other sender is recorded, excluded from the flow, and raises a degrading anomaly. |
 | Where asset knowledge lives | A small vocabulary of declarative source types in the asset YAML, plus named code adapters as the escape hatch. |
 | Revenue proxy | A revenue level cannot be estimated honestly from burns. Instead: a momentum index (`usage_index`) and an advisory `revenue_disclosure_stale` anomaly. |
-| Post-horizon dilution | Per-year supply path. `holder_cashflow` discounts per-token flows. No new assumption. |
+| Post-horizon dilution | Per-year supply path from emissions and unlocks. `holder_cashflow` discounts per-token flows. No new assumption. Burns are not counted again as shrinkage (amended in planning, section 8). |
 | Cross-check values | Never stored as observations. Kept in the fetch log; become an anomaly only when out of tolerance. |
 | Backfill depth | 90 days, matching the flow window and CoinGecko's hourly price depth. |
 
@@ -49,7 +49,7 @@ From a research pass on 2026-09-19 that tested each item directly. Re-verify any
 - DefiLlama `summary/fees/venice?dataType=dailyHoldersRevenue`: daily `[unixTs, usd]` pairs in `totalDataChart`, no key, within about 1 percent of Venice's monthly USD for completed months.
 - Venice's undocumented API (`https://outerface.venice.ai/api/app/vvv/`) answers plain requests. Field names: `vvv_stats` {`price`, `marketCap`, `circulatingSupplyCryptoBaseUnit`, `totalSupplyCryptoBaseUnit`, `totalStakedCryptoBaseUnit`, `totalLockedCryptoBaseUnit`}; `vvv_staking_yield` {`stakingAprRatio`, `totalEmissionsCryptoBaseUnit`, `stakerDistributionCryptoBaseUnit`}; `vvv_burn_history.burnHistory[]` {`yearMonth`, `burnedCryptoBaseUnit`, `burnedFiatUsd`}; `diem_stats` {`totalSupplyCryptoBaseUnit`, `targetSupplyCryptoBaseUnit`, `mintRateDiemPerStakedVvv`}. `CryptoBaseUnit` values are 18-decimal integers. Venice's `totalSupply` field equals `totalSupply() - balanceOf(0x0)`, the same definition as Orion's `effective_supply`.
 - DIEM supply is about 37,760 tokens (18 decimals) at about 1,950 USD. (A research note that called this price implausible misread base units as whole tokens.)
-- (unverified) The integer units of `veniceEmissionsPercentage()` and `veniceEmissionsPercentageWhenLocked()` (percent, or basis points), and the scale of the `diemSupply(i)` / `diemMintRates(i)` tables. The plan reads these live before the adapters are written.
+- (verified 2026-09-19 during planning, block 51530033) `veniceEmissionsPercentage()` = `0` and `veniceEmissionsPercentageWhenLocked()` = `200000000000000000`: fractions scaled by 1e18, so 20 percent. `diemSupply(i)` = `500 * (i + 1)` DIEM and `diemMintRates(i)` = VVV per DIEM, both 18-decimal, for `i` in 0..255 (index 256 reverts). Bucket 79 is 40,000 DIEM at 665.0150, so the on-chain target supply is 40,000. The public RPC throttles bursts of separate `eth_call`s; one multicall of all 512 table reads succeeds. `eth_getLogs` returns `blockTimestamp` on every log. Venice endpoints are `.../vvv/vvv_stats`, `vvv_staking_yield`, `vvv_burn_history`, `diem_stats`. Captures: `tests/fixtures/ingest/research-2026-09-19/chain_reads.json` and `cg_markets.json`.
 
 ## 3. Components
 
@@ -189,28 +189,24 @@ Open anomalies are read at run time and are not part of the snapshot. Replay rep
 
 ```
 supply path after the horizon, yearly steps from S(H):
-  y_b   = sum of burn-kind flows at H (annualized USD) / (priceAtHorizon * S(H))     burn yield, held constant
-          (on the circulating basis, buy_and_hold flows count too)
   E     = last known emission schedule step, held flat
-  S(n+1) = S(n) * (1 - y_b) + E [+ scheduled unlocks falling in that year, circulating basis only]
+  S(n+1) = S(n) + E [+ scheduled unlocks falling in that year, circulating basis only]
   S(H + tau) for fractional tau: linear interpolation between yearly steps
 
 per flow k, discount rate r_k, N explicit years:
   f_k(t)   = F_k(H + t - 0.5) / S(H + t - 0.5)
-  delta    = E / S(H + N) - y_b                                   terminal net dilution (may be negative)
-  g_pt     = (1 + g) / (1 + delta) - 1                            terminal per-token growth
+  delta    = E / S(H + N)                                         terminal dilution (never negative)
+  g_pt     = (1 + g) / (1 + delta) - 1                            terminal per-token growth (never above g)
   value_k  = sum_{t=1..N} f_k(t) / (1 + r_k)^t  +  [ f_k(N) * (1 + g_pt) / (r_k - g_pt) ] / (1 + r_k)^N
 value = sum over k
 ```
 
+- **Burns do not shrink the post-horizon supply path.** (Amended 2026-09-19 during planning, approved by the user.) The first draft subtracted a burn yield `y_b` each year. A prototype showed that this double counts: `holder_cashflow` already values burn dollars as holder cash flow, so also shrinking supply by the same burns counts them twice. On a burn-funded asset the engine solves to a price where `y_b` equals the discount rate, which makes `g_pt >= r` and raises `EngineError` (the HYPE fixture and the pure-burn engine test both blocked). Burns before the horizon still reduce `S(H)`, as in 1.1.0.
 - `r_k <= g_pt` raises `EngineError`; the signal is `blocked` with `engine_error:`.
-- `1 + delta <= 0` or `y_b >= 1` raises `EngineError`.
-- When `priceAtHorizon` is not positive (a fixed-point iterate clamped at zero), `y_b` is 0 for that iteration.
-- The constant burn yield is the one simplification: past the horizon, price is assumed to move with holder flows.
 - `forward_multiple` and `utility_claim` are unchanged.
 - The supply path is computed by the engine and passed to modules as `ctx.supplyAfterHorizon(tau)`, a pure function. `run.ts` builds it from the same `forecastSupply` inputs.
-- Breakdown gains `burn_yield_at_horizon`, `net_dilution_terminal`, `per_token_growth_terminal`, and `supply_path` (yearly values).
-- With zero emissions and no burn-kind flows the result equals the 1.1.0 value exactly.
+- Breakdown gains `net_dilution_terminal`, `per_token_growth_terminal`, `supply_path` (yearly values), and per-flow `explicit_pv_per_token` and `terminal_pv_per_token`. The existing `*_usd` figures become the per-token values times `S(H)`.
+- With zero emissions (and, on the circulating basis, no unlocks after the horizon) the result equals the 1.1.0 value to floating-point precision.
 - `ENGINE_VERSION` becomes `1.2.0`. The golden hash is updated. Stored 1.1.0 runs correctly refuse replay.
 
 ## 9. Command surface and configuration
@@ -269,7 +265,7 @@ No network in CI. Transports are injected; fixtures are the real response shapes
 - Anomalies: dedupe and `occurrences`, lifecycle, recurrence after resolve, severity to grade and status, `data_quality.anomalies` in the signal.
 - `burn_momentum` and `revenue_disclosure_stale`, including the no-index-near-t0 case.
 - Snapshot narrowing: the narrowed snapshot yields identical engine output to the full set on the same data; replay identical; a long-past overlap no longer blocks.
-- Dilution: zero-emission non-burn case equals the 1.1.0 value; a constant-emission case against a hand-derived closed form; a net-deflation case with `g_pt > g`; `r <= g_pt` blocks; AERO fixture direction and magnitude; golden hash updated once.
+- Dilution: zero-emission case equals the 1.1.0 value; a constant-emission case against a hand-derived closed form; burn flows leave the post-horizon path unchanged; `r <= g_pt` blocks; AERO fixture direction and magnitude; golden hash updated once.
 - `update` exit codes.
 - Live verification steps in the plan (not in CI): read the unverified ABI units from the chain before writing the adapters; a `--dry-run` fetch against the real endpoints.
 

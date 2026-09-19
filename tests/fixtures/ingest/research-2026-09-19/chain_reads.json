@@ -1,0 +1,42 @@
+{
+  "note": "Live reads from https://mainnet.base.org on 2026-09-19 during sub-project 2 planning. Raw integer results as decimal strings.",
+  "block": { "number": "51530033", "timestamp_of_block_51530023": "1789849393" },
+  "token": {
+    "address": "0xacfE6019Ed1A7Dc6f7B508C02d1b04ec88cC21bf",
+    "totalSupply": "114886562770481399543309743",
+    "decimals": "18",
+    "balanceOf_zero_address": "33877292523889967424801955"
+  },
+  "staking": {
+    "address": "0x321b7ff75154472B18EDb199033fF4D116F340Ff",
+    "totalSupply": "33941208987993140790795723",
+    "decimals": "18",
+    "totalLockedStakedVVV": "8954489934888212779041642",
+    "emissionRatePerSecond": "79274479959411466",
+    "veniceEmissionsPercentage": "0",
+    "veniceEmissionsPercentageWhenLocked": "200000000000000000"
+  },
+  "diem": {
+    "address": "0xF4d97F2da56e8c3098f3a8D538DB630A2606a024",
+    "totalSupply": "37713657734473535977725",
+    "decimals": "18"
+  },
+  "diem_tables": {
+    "entries": 256,
+    "index_256": "reverts",
+    "formula": "diemSupply(i) = 500 * (i + 1) DIEM; diemMintRates(i) = 90 * e^(2 * (diemSupply(i) / 40000)^3) VVV per DIEM; both 18-decimal",
+    "samples": {
+      "0": { "diemSupply": "500000000000000000000", "diemMintRates": "90000351563186634752" },
+      "1": { "diemSupply": "1000000000000000000000", "diemMintRates": "90002812543945768960" },
+      "78": { "diemSupply_tokens": 39500, "diemMintRates_tokens": 617.5396420419053 },
+      "79": { "diemSupply_tokens": 40000, "diemMintRates_tokens": 665.0150489037585 },
+      "80": { "diemSupply_tokens": 40500, "diemMintRates_tokens": 717.4843076907099 },
+      "255": { "diemSupply_tokens": 128000, "diemMintRates_tokens": 2.6071479398659465e+30 }
+    }
+  },
+  "getLogs": {
+    "blockTimestamp_present_on_logs": true,
+    "range_of_2001_blocks_inclusive": "accepted",
+    "sample": { "blockNumber": "51528139", "blockTimestamp": "1789845625", "logIndex": 71, "from": "0x01784ef301D79e4B2DF3a21ad9a536d4cF09A5Ce", "value": "74918015946808576" }
+  }
+}
