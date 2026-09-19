@@ -10,8 +10,12 @@ const byTimeThenId = (a: Observation, b: Observation): number =>
 
 /**
  * Narrows eligible observations to what drivers can use at `asOf`, so a snapshot stays small under
- * daily fetching. Engine output must not change: everything dropped here is something computeDrivers
- * would ignore anyway. Pure.
+ * daily fetching. Engine output must not change: among the metrics the asset DECLARES, everything
+ * dropped here is something computeDrivers would ignore anyway. Observations of a metric the asset
+ * does not declare are dropped too. That is the eligibility rule itself, unchanged since
+ * sub-project 1 (eligibleObservations has always excluded them before computeDrivers runs), not an
+ * optimization: computeDrivers would read scheduled_unlock_tokens without checking the declaration,
+ * so never hand it rows that skipped this filter. Pure.
  */
 export function narrowToUsable(asset: AssetConfig, observations: Observation[], asOf: string): Observation[] {
   const byMetric = new Map<string, Observation[]>();
