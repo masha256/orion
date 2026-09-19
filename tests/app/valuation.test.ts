@@ -111,6 +111,36 @@ describe('runValuation', () => {
   });
 });
 
+describe('runValuation with a confirmed and a provisional row at the same timestamp', () => {
+  const ALLOWING = MINI_ASSET_YAML.replace(
+    'revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 60, critical: true }',
+    'revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 60, critical: true, allow_provisional: true }',
+  );
+
+  beforeEach(() => {
+    seedObservations(['revenue_run_rate_usd']);
+    seedAssumptions();
+    insertObservation(db, { assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-28', value: 2000, source: 'onchain', fetchedAt: AS_OF });
+    insertObservation(db, {
+      assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-28', value: 5000, source: 'manual',
+      status: 'provisional', citationUrl: 'https://example.com', fetchedAt: AS_OF,
+    });
+  });
+
+  it('uses the confirmed value and does not report the metric provisional', () => {
+    const signal = runValuation(db, parseAssetYaml(ALLOWING), NOW).signal;
+    expect(signal.status).toBe('ok');
+    expect(signal.horizons!['12m'].expected_target).toBeCloseTo(20, 6); // 2000, not the provisional 5000
+    expect(signal.data_quality.provisional_metrics).toEqual([]);
+  });
+
+  it('is not blocked when the metric does not allow provisional data', () => {
+    const signal = runValuation(db, loaded, NOW).signal;
+    expect(signal.status).toBe('ok');
+    expect(signal.horizons!['12m'].expected_target).toBeCloseTo(20, 6);
+  });
+});
+
 describe('runValuation config validation', () => {
   const blockedFor = (yaml: string, over: Partial<Record<string, number>> = {}) => {
     seedObservations();

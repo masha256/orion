@@ -19,10 +19,15 @@ import { OrionError, SCENARIOS, STD_METRICS, type AssumptionValues, type Scenari
 import { canonicalJson } from '../util/canonical.js';
 
 function eligibleObservations(db: Db, asset: AssetConfig): Observation[] {
-  return listActiveObservations(db, asset.id).filter((o) => {
+  const active = listActiveObservations(db, asset.id).filter((o) => {
     const def = asset.metrics[o.metricKey];
     return def !== undefined && (o.status === 'confirmed' || def.allow_provisional);
   });
+  // A confirmed and a provisional row can both be active at one key. Confirmed data wins, which
+  // also keeps flows from counting the same period twice.
+  const key = (o: Observation) => `${o.metricKey}@${o.observedAt}`;
+  const confirmedKeys = new Set(active.filter((o) => o.status === 'confirmed').map(key));
+  return active.filter((o) => o.status !== 'provisional' || !confirmedKeys.has(key(o)));
 }
 
 function tryEngine(asset: AssetConfig, drivers: Drivers, values: AssumptionValues): { output: EngineOutput } | { error: string } {

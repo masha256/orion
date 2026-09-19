@@ -59,6 +59,24 @@ describe('observations', () => {
     expect(getObservationsByIds(db, [p.id])[0].status).toBe('rejected');
   });
 
+  it('a provisional insert supersedes only provisional rows, never a confirmed one', () => {
+    const confirmed = insertObservation(db, { ...base, observedAt: '2026-06-30', value: 10 });
+    const first = insertObservation(db, {
+      ...base, observedAt: '2026-06-30', value: 11, status: 'provisional', citationUrl: 'https://example.com/a',
+    });
+    expect(listActiveObservations(db, 'mini').map((o) => o.id)).toEqual([confirmed.id, first.id]);
+
+    const second = insertObservation(db, {
+      ...base, observedAt: '2026-06-30', value: 12, status: 'provisional', citationUrl: 'https://example.com/b',
+    });
+    expect(getObservationsByIds(db, [first.id])[0].supersededBy).toBe(second.id);
+    expect(listActiveObservations(db, 'mini').map((o) => o.id)).toEqual([confirmed.id, second.id]);
+
+    // confirming still retires the provisional row, and the earlier confirmed row with it
+    const c = confirmObservation(db, second.id, '2026-07-01T00:00:00Z');
+    expect(listActiveObservations(db, 'mini').map((o) => o.id)).toEqual([c.id]);
+  });
+
   it('refuses to confirm a row that is not an active provisional row', () => {
     const o = insertObservation(db, { ...base, observedAt: '2026-06-30', value: 10 });
     expect(() => confirmObservation(db, o.id, '2026-07-01T00:00:00Z')).toThrow(/provisional/);

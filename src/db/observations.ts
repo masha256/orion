@@ -101,8 +101,11 @@ export function insertObservation(db: Db, input: NewObservation): Observation {
   const fetchedAt = toIso(input.fetchedAt);
 
   const id = db.transaction(() => {
+    // A confirmed row supersedes every active prior at this key; a provisional row supersedes only
+    // other provisional rows, so provisional data can never knock out confirmed data.
+    const onlyProvisional = status === 'provisional' ? " AND status = 'provisional'" : '';
     const prior = db
-      .prepare(`SELECT id FROM observations WHERE asset_id = ? AND metric_key = ? AND observed_at = ? AND ${ACTIVE}`)
+      .prepare(`SELECT id FROM observations WHERE asset_id = ? AND metric_key = ? AND observed_at = ? AND ${ACTIVE}${onlyProvisional}`)
       .all(input.assetId, input.metricKey, observedAt) as { id: number }[];
     const info = db
       .prepare(
