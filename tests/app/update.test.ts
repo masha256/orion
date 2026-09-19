@@ -21,9 +21,25 @@ describe('updateAsset', () => {
     expect(fetch.outcome).toBe('ok');
     expect(signal.status).toBe('ok');
     expect(signal.provenance.run_id).toBe(runId);
+    // The spot price is an API level, stamped with the fetch's own start time (NOW).
     expect(signal.spot).toEqual({ price: 10, ts: NOW.toISOString() });
-    expect(signal.generated_at).toBe(NOW.toISOString());
+    // The valuation runs after the fetch, at deps.now() (NOW + 5s in the harness): never at NOW itself,
+    // which could already be older than a chain read the fetch just wrote (item 2 of the fix brief).
+    expect(signal.generated_at).toBe(h.deps.now().toISOString());
     expect(signal.data_quality.grade).toBe('B'); // two manual metrics remain
+  });
+
+  it('values at a time no earlier than the newest thing the fetch just wrote, even when the chain head runs ahead of deps.now()', async () => {
+    // The chain head sits a minute ahead of NOW while deps.now() is only 5s ahead: the naive fix of
+    // "value at deps.now()" would still be too early. asOf must be the later of the two.
+    const h = harness({ rpcNow: new Date(NOW.getTime() + 60_000) });
+    seedManual(h);
+    const { fetch, signal } = await updateAsset(h.db, h.loaded, NOW, h.deps);
+    expect(fetch.outcome).toBe('ok');
+    expect(signal.status).toBe('ok'); // not blocked: effective_supply etc. from this run's (future) block are usable
+    const blockObservedAt = fetch.written.find((w) => w.metricKey === 'effective_supply')!.observedAt;
+    expect(Date.parse(blockObservedAt)).toBeGreaterThan(h.deps.now().getTime());
+    expect(Date.parse(signal.generated_at)).toBeGreaterThanOrEqual(Date.parse(blockObservedAt));
   });
 
   it('still runs the valuation when a source failed, on the last good observation', async () => {

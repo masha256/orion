@@ -63,13 +63,16 @@ export function harness(
     logs?: Omit<TransferLog, 'timestamp'>[];
     env?: Record<string, string | undefined>;
     now?: Date;
+    /** Compute the RPC's latest block from this time instead of `now`, so a test can put the chain head ahead of (or behind) the fetch's `now` independently of `deps.now()`. */
+    rpcNow?: Date;
   } = {},
 ): Harness {
   const now = over.now ?? NOW;
+  const rpcNow = over.rpcNow ?? now;
   const http = fakeHttp({ ...defaultRoutes(), ...over.routes });
   const rpc = fakeRpc({
     genesisTs: GENESIS_TS,
-    latest: BigInt(Math.floor((now.getTime() / 1000 - GENESIS_TS) / 2)),
+    latest: BigInt(Math.floor((rpcNow.getTime() / 1000 - GENESIS_TS) / 2)),
     calls: { ...defaultCalls(), ...over.calls },
     logs: over.logs ?? [],
   });
