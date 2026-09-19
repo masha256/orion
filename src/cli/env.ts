@@ -1,7 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** KEY=value lines; optional "export "; optional single or double quotes; # comments. Anything else is ignored. */
+/**
+ * KEY=value lines; optional "export "; optional single or double quotes; # comments. Anything else is
+ * ignored. An unquoted value keeps a bare `#` (no preceding whitespace) but drops a trailing
+ * ` #...` comment; a quoted value keeps everything between the quotes, `#` included.
+ */
 export function parseEnvFile(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const raw of text.split(/\r?\n/)) {
@@ -12,6 +16,8 @@ export function parseEnvFile(text: string): Record<string, string> {
     let value = match[2].trim();
     if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
       value = value.slice(1, -1);
+    } else {
+      value = value.replace(/\s+#.*$/, '');
     }
     out[match[1]] = value;
   }

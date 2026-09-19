@@ -1,5 +1,6 @@
 import type { AssetConfig } from '../config/schema.js';
 import type { SourceConfig, SourceOf } from '../config/sources.js';
+import type { AnomalyKind, AnomalySeverity } from '../db/anomalies.js';
 import { OrionError } from '../types.js';
 import type { HttpTransport } from './transport/http.js';
 import type { BlockRef, RpcTransport } from './transport/rpc.js';
@@ -88,9 +89,9 @@ export interface WrittenObservation {
 /** An anomaly a fetch raised, or (on a dry run, id null) would have raised. */
 export interface RaisedAnomaly {
   id: number | null;
-  kind: import('../db/anomalies.js').AnomalyKind;
+  kind: AnomalyKind;
   metricKey: string;
   dedupeKey: string;
-  severity: import('../db/anomalies.js').AnomalySeverity;
+  severity: AnomalySeverity;
   detail: Record<string, unknown>;
 }

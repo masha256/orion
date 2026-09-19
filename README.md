@@ -58,6 +58,9 @@ One cron line gives a daily signal:
 - A backfill is resumable: each completed UTC day commits on its own, and the next run carries on after the last one. `--backfill-days <n>` re-scans the last `n` days; re-scanned days supersede the old rows.
 - Fetched flow rows never silently overwrite hand-entered ones. Without `--adopt`, a fetch that would overlap them writes nothing for that scan and lists the conflicting rows. `--adopt` rejects only rows whose source is `manual`.
 - Several metrics can share one burn-flow scan (same token, sink, and allowlist) and so share its cursor: `--metric` on any one of them fetches every metric that shares its scan, at no extra cost.
+- A metric added later to an existing scan group gets no history by itself (the cursor is already past those days): re-run with `--backfill-days <n>`.
+- The cron line above runs in the machine's local time; the code itself works in UTC either way, and any time after 00:05 UTC picks up the previous UTC day.
+- A plain `--dry-run` on a database that still has hand-entered burn rows reports the burn scan as `skipped` and lists the conflicts; add `--adopt` to the dry run to see what would be written without writing it.
 - Cross-check readings are never stored. A reading outside its tolerance opens an anomaly:
 
 ```bash
