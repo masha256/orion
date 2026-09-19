@@ -73,4 +73,45 @@ CREATE TABLE signals (
 );
 `,
   },
+  {
+    id: 2,
+    sql: `
+CREATE TABLE fetch_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_id TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ok','partial','failed')),
+  detail_json TEXT NOT NULL
+);
+CREATE INDEX idx_fetch_runs_asset ON fetch_runs (asset_id, id);
+
+CREATE TABLE fetch_cursors (
+  asset_id TEXT NOT NULL,
+  scan_key TEXT NOT NULL,
+  last_block INTEGER NOT NULL,
+  last_day TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (asset_id, scan_key)
+);
+
+CREATE TABLE anomalies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('cross_check_mismatch','unlisted_sender','source_failure_streak','revenue_disclosure_stale')),
+  metric_key TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK (severity IN ('degrading','advisory')),
+  status TEXT NOT NULL CHECK (status IN ('open','resolved','acknowledged')),
+  detail_json TEXT NOT NULL,
+  occurrences INTEGER NOT NULL DEFAULT 1,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  note TEXT,
+  decided_at TEXT
+);
+CREATE INDEX idx_anomalies_asset ON anomalies (asset_id, status);
+CREATE UNIQUE INDEX idx_anomalies_one_open ON anomalies (asset_id, kind, metric_key, dedupe_key) WHERE status = 'open';
+`,
+  },
 ];
