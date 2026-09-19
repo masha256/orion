@@ -9,28 +9,164 @@ contracts:
   staking: "0x321b7ff75154472B18EDb199033fF4D116F340Ff"
   diem: "0xF4d97F2da56e8c3098f3a8D538DB630A2606a024"
   burn_sink: "0x0000000000000000000000000000000000000000"
+  # An emissions recipient, not a burner (the 2026-09-19 research pass corrected the earlier "treasury Safe" label).
   treasury: "0x2D8CB8DC596daD0e1E34E2042E7ae6Df93B11524"
+  # The only two addresses that sent VVV to the zero address over 120 days. Any other sender raises a degrading anomaly.
+  aerodrome_pool: "0x01784ef301D79e4B2DF3a21ad9a536d4cF09A5Ce" # programmatic: per-subscription and credit-purchase burns, each under 1 VVV
+  buyback_safe: "0x35FB3b67C57849bF57eB24B061EeF0b5e560DC57" # discretionary: roughly monthly buybacks of 9k to 27k VVV
+
+# ORION_BASE_RPC_URL is optional: https://mainnet.base.org is the default for Base.
+ingest: { chain_id: 8453, rpc_url_env: ORION_BASE_RPC_URL, backfill_days: 90 }
 
 external_ids:
   coingecko: venice-token
   coingecko_diem: diem
   defillama: venice
 
-# All fetchers are "manual" in sub-project 1. Sub-project 2 points them at base-rpc, venice-api, coingecko, defillama.
+# Sources (ingestion spec 4.3). A metric without a `source` is entered by hand. Venice's own API
+# (outerface.venice.ai) is undocumented, so it only ever appears as a cross-check: a cross-check
+# reading is never stored, it can only raise an anomaly.
 metrics:
-  price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }
+  price_usd:
+    type: level
+    unit: usd
+    staleness_days: 3
+    critical: true
+    source: { type: coingecko, id: venice-token, field: price }
+    cross_checks:
+      - { tolerance_pct: 2, source: { type: http_json, url: "https://outerface.venice.ai/api/app/vvv/vvv_stats", path: price } }
+
+  # Manual, or agent-researched and provisional: revenue settles off-chain and has no API. The
+  # advisory revenue_disclosure_stale anomaly says when usage has moved since the figure was disclosed.
   revenue_run_rate_usd: { type: level, unit: usd, cadence: event, staleness_days: 60, critical: true, allow_provisional: true }
-  effective_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
-  circulating_supply: { type: level, unit: tokens, staleness_days: 14 }
-  staked_supply: { type: level, unit: tokens, staleness_days: 7 }
-  locked_supply: { type: level, unit: tokens, staleness_days: 14 }
-  staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }
-  emission_rate_annual: { type: schedule, unit: tokens_per_year, cadence: event, staleness_days: 45, critical: true }
-  flow_usd.burn: { type: flow, unit: usd, cadence: monthly, staleness_days: 45, critical: true }
-  diem_supply: { type: level, unit: diem, staleness_days: 14 }
-  diem_target_supply: { type: level, unit: diem, staleness_days: 45 }
-  diem_price_usd: { type: level, unit: usd, staleness_days: 7 }
-  diem_locked_yield_share: { type: level, unit: ratio, cadence: event, staleness_days: 90 }
+
+  effective_supply:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    critical: true
+    source: { type: erc20_supply, token: token, subtract_balances: [burn_sink] }
+    cross_checks:
+      - { tolerance_pct: 0.1, source: { type: http_json, url: "https://outerface.venice.ai/api/app/vvv/vvv_stats", path: totalSupplyCryptoBaseUnit, decimals: 18 } }
+
+  circulating_supply:
+    type: level
+    unit: tokens
+    staleness_days: 14
+    source: { type: coingecko, id: venice-token, field: circulating_supply }
+    cross_checks:
+      - { tolerance_pct: 2, source: { type: http_json, url: "https://outerface.venice.ai/api/app/vvv/vvv_stats", path: circulatingSupplyCryptoBaseUnit, decimals: 18 } }
+
+  staked_supply:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    source: { type: contract_read, contract: staking, function: totalSupply, decimals: 18 }
+    cross_checks:
+      - { tolerance_pct: 0.1, source: { type: http_json, url: "https://outerface.venice.ai/api/app/vvv/vvv_stats", path: totalStakedCryptoBaseUnit, decimals: 18 } }
+
+  locked_supply:
+    type: level
+    unit: tokens
+    staleness_days: 14
+    source: { type: contract_read, contract: staking, function: totalLockedStakedVVV, decimals: 18 }
+    cross_checks:
+      - { tolerance_pct: 0.1, source: { type: http_json, url: "https://outerface.venice.ai/api/app/vvv/vvv_stats", path: totalLockedCryptoBaseUnit, decimals: 18 } }
+
+  staker_emission_share:
+    type: level
+    unit: ratio
+    staleness_days: 30
+    source: { type: adapter, name: vvv.staker_emission_share }
+    cross_checks:
+      - { tolerance_pct: 1, source: { type: adapter, name: vvv.staker_share_from_api, params: { url: "https://outerface.venice.ai/api/app/vvv/vvv_staking_yield" } } }
+
+  # The chain gives the rate in force. An ANNOUNCED future cut exists only on Venice's blog: enter it by
+  # hand with its effective date (orion data set vvv emission_rate_annual <n> --at <date>). Once that
+  # date passes, the daily on-chain read is the newest schedule row and governs; if the cut is delayed,
+  # the signal follows the chain.
+  emission_rate_annual:
+    type: schedule
+    unit: tokens_per_year
+    cadence: event
+    staleness_days: 45
+    critical: true
+    source: { type: contract_read, contract: staking, function: emissionRatePerSecond, decimals: 18, scale: 31536000 }
+    cross_checks:
+      # Venice reports emissions per day.
+      - { tolerance_pct: 1, source: { type: http_json, url: "https://outerface.venice.ai/api/app/vvv/vvv_staking_yield", path: totalEmissionsCryptoBaseUnit, decimals: 18, scale: 365 } }
+
+  # On-chain transfers to the zero address from the allowlisted senders, one row per completed UTC
+  # day, each transfer valued at the CoinGecko hourly price at its own block time.
+  flow_usd.burn:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 4
+    critical: true
+    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [aerodrome_pool, buyback_safe], unit: usd, price_coingecko_id: venice-token }
+    cross_checks:
+      - { tolerance_pct: 5, source: { type: defillama, slug: venice, data_type: dailyHoldersRevenue, compare: monthly_sum } }
+
+  # Informational: same scan, in tokens. Matches Venice's burn history to four decimals per completed month.
+  flow_tokens.burn:
+    type: flow
+    unit: tokens
+    cadence: daily
+    staleness_days: 4
+    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [aerodrome_pool, buyback_safe], unit: tokens }
+    cross_checks:
+      - { tolerance_pct: 0.1, source: { type: adapter, name: vvv.burn_history_tokens, params: { url: "https://outerface.venice.ai/api/app/vvv/vvv_burn_history" } } }
+
+  # Informational: same scan, pool burns only (new paid subscriptions and credit purchases). Feeds usage_index.
+  flow_usd.burn_programmatic:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 4
+    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [aerodrome_pool, buyback_safe], count_from: [aerodrome_pool], unit: usd, price_coingecko_id: venice-token }
+
+  # Momentum, not a revenue estimate: mean programmatic burn USD per day over 30 completed days.
+  # It never feeds a valuation module. Known limits: the 5 USD band mixes Pro+ sign-ups and credit
+  # purchases, and a change of burn policy (credit burns began 2026-07-17) moves it without any
+  # change in the business.
+  usage_index:
+    type: level
+    unit: usd_per_day
+    staleness_days: 7
+    source: { type: derived, name: burn_momentum, params: { metric: flow_usd.burn_programmatic, days: 30 } }
+
+  diem_supply:
+    type: level
+    unit: diem
+    staleness_days: 14
+    source: { type: contract_read, contract: diem, function: totalSupply, decimals: 18 }
+    cross_checks:
+      - { tolerance_pct: 0.1, source: { type: http_json, url: "https://outerface.venice.ai/api/app/vvv/diem_stats", path: totalSupplyCryptoBaseUnit, decimals: 18 } }
+
+  diem_target_supply:
+    type: level
+    unit: diem
+    staleness_days: 45
+    source: { type: adapter, name: vvv.diem_target_supply }
+    cross_checks:
+      # Venice's field is known to lag the on-chain table (39,500 against 40,000 on 2026-09-19).
+      - { tolerance_pct: 5, source: { type: http_json, url: "https://outerface.venice.ai/api/app/vvv/diem_stats", path: targetSupplyCryptoBaseUnit, decimals: 18 } }
+
+  # No second source exists for the DIEM price.
+  diem_price_usd:
+    type: level
+    unit: usd
+    staleness_days: 7
+    source: { type: coingecko, id: diem, field: price }
+
+  # 1 minus Venice's take on DIEM-locked stake. The contract returns a fraction scaled by 1e18 (verified 2026-09-19).
+  diem_locked_yield_share:
+    type: level
+    unit: ratio
+    cadence: event
+    staleness_days: 90
+    source: { type: contract_read, contract: staking, function: veniceEmissionsPercentageWhenLocked, decimals: 18, scale: -1, offset: 1 }
 
 holder_flows:
   - { id: burn, kind: burn, capture_rule: discretionary, recipient_base: all, metric: flow_usd.burn, window_days: 90 }
@@ -69,6 +205,7 @@ assumptions:
 
 review_triggers:
   driver_deviation_pct: 25
+  revenue_stale_move_pct: 30 # usage_index move since the revenue disclosure that raises the advisory stale-revenue anomaly
   calendar:
     - { date: "2026-10-01", note: "Announced emission cut to 2.0M VVV per year" }
 
