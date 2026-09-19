@@ -108,6 +108,15 @@ describe('orion cli', () => {
     await expect(orion('data', 'set', 'mini', 'price_usd', '1', '--provisional')).rejects.toThrow(/citation/);
   });
 
+  it('accepts --json on signal emit, same as every other command', async () => {
+    await seedData();
+    await orion('model', 'assumptions', 'import', 'mini', join(home, 'assumptions.yaml'), '--rationale', 'initial');
+    const signal = JSON.parse(await orion('model', 'run', 'mini', '--json'));
+
+    const emitted = JSON.parse(await orion('signal', 'emit', 'mini', '--json'));
+    expect(emitted.signal_id).toBe(signal.signal_id);
+  });
+
   it('prints a readable summary without --json', async () => {
     await seedData();
     await orion('model', 'assumptions', 'import', 'mini', join(home, 'assumptions.yaml'), '--rationale', 'initial');

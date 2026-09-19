@@ -38,6 +38,7 @@ export function registerSignal(program: Command, ctx: CliContext): void {
     .command('emit <asset>')
     .description('write the latest signal as one JSON line to stdout, and append it to --out when given')
     .option('--out <file>', 'JSONL file to append to')
+    .option('--json', 'accepted for consistency; emit always writes JSON')
     .action((assetId: string, opts: { out?: string }) => {
       emitSignal(latest(assetId), { write: ctx.stdout, outFile: opts.out });
     });
