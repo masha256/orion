@@ -1,5 +1,5 @@
 import type { AssetConfig } from '../config/schema.js';
-import { isChainSource } from '../config/sources.js';
+import { isChainSource, type SourceOf } from '../config/sources.js';
 import { OrionError } from '../types.js';
 import { sha256 } from '../util/canonical.js';
 import { getAdapter } from './adapters/registry.js';
@@ -43,6 +43,14 @@ export function hasSources(asset: AssetConfig): boolean {
   return Object.values(asset.metrics).some((def) => def.source !== undefined);
 }
 
+/** Identifies the scan (and its shared fetch_cursors row) that a transfer_flow source belongs to. */
+function flowScanKey(s: SourceOf<'transfer_flow'>, address: (name: string) => string): string {
+  const token = address(s.token);
+  const sink = address(s.to);
+  const allowlist = [...s.from_allowlist].map(address).sort();
+  return sha256(`${token}|${sink}|${allowlist.join(',')}`).slice(0, 16);
+}
+
 export function buildPlan(asset: AssetConfig, opts: { metrics?: string[] } = {}): FetchPlan {
   const wanted = opts.metrics && opts.metrics.length > 0 ? new Set(opts.metrics) : null;
   for (const key of wanted ?? []) {
@@ -53,6 +61,26 @@ export function buildPlan(asset: AssetConfig, opts: { metrics?: string[] } = {})
 
   const contract = contractResolver(asset);
   const address = (name: string) => contract(name).toLowerCase();
+
+  if (wanted) {
+    // A transfer_flow metric shares its scan cursor (fetch_cursors, keyed by scanKey) with every other
+    // metric fed by the same token/sink/allowlist scan: the scan reads the same days for all of them at
+    // the same cost. Narrowing to just one member would advance the shared cursor past days the other
+    // members never got, leaving permanent gaps in them. So requesting one member pulls in the rest.
+    const membersByScanKey = new Map<string, string[]>();
+    for (const [metricKey, def] of Object.entries(asset.metrics)) {
+      const s = def.source;
+      if (!s || s.type !== 'transfer_flow') continue;
+      const scanKey = flowScanKey(s, address);
+      membersByScanKey.set(scanKey, [...(membersByScanKey.get(scanKey) ?? []), metricKey]);
+    }
+    for (const key of [...wanted]) {
+      const def = asset.metrics[key];
+      if (!def?.source || def.source.type !== 'transfer_flow') continue;
+      const scanKey = flowScanKey(def.source, address);
+      for (const member of membersByScanKey.get(scanKey) ?? []) wanted.add(member);
+    }
+  }
   const batches = new Map<string, SourceBatch>();
   const groups = new Map<string, FlowGroup>();
   const derived: SourceRequest[] = [];
@@ -79,7 +107,7 @@ export function buildPlan(asset: AssetConfig, opts: { metrics?: string[] } = {})
       const allowlist = [...s.from_allowlist].sort().map((name) => ({ name, address: address(name) }));
       const token = address(s.token);
       const sink = address(s.to);
-      const scanKey = sha256(`${token}|${sink}|${allowlist.map((a) => a.address).sort().join(',')}`).slice(0, 16);
+      const scanKey = flowScanKey(s, address);
       const group = groups.get(scanKey) ?? { scanKey, sourceId: sourceId(s), token, sink, allowlist, members: [] };
       group.members.push({
         metricKey,

@@ -63,7 +63,11 @@ describe('buildPlan', () => {
     expect(p.batches.flatMap((b) => b.requests).every((r) => r.metricKey === 'price_usd')).toBe(true);
     expect(p.flowGroups).toEqual([]);
     expect(p.needsRpc).toBe(false);
-    expect(buildPlan(ingestAsset().config, { metrics: ['flow_tokens.fees'] }).flowGroups[0].members.map((m) => m.metricKey)).toEqual(['flow_tokens.fees']);
+    // A metric fed by a transfer_flow shares its scan cursor with the group: narrowing to one member
+    // must not starve the others of the days this run scans, so every member comes along.
+    const flowPlan = buildPlan(ingestAsset().config, { metrics: ['flow_tokens.fees'] });
+    expect(flowPlan.flowGroups[0].members.map((m) => m.metricKey)).toEqual(['flow_usd.fees', 'flow_tokens.fees', 'flow_usd.fees_programmatic']);
+    expect(flowPlan.batches.flatMap((b) => b.requests)).toContainEqual(expect.objectContaining({ metricKey: 'flow_usd.fees', role: 'cross_check' }));
   });
 
   it('lists derived metrics apart and flags adapters that need the chain', () => {

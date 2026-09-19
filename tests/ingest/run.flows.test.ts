@@ -65,6 +65,17 @@ describe('fetchAsset: flows', () => {
     expect(listActiveObservations(h.db, 'mini', 'flow_usd.fees')).toHaveLength(3);
   });
 
+  it('a --metric narrowed to one member of a shared scan still advances the cursor for the whole group', async () => {
+    const h = harness({ logs: [log('2026-09-17T12:00:00Z', POOL, 4n, 0)] });
+    const narrowed = ['flow_usd.fees', 'flow_tokens.fees', 'flow_usd.fees_programmatic'];
+    const first = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps, { metrics: ['flow_tokens.fees'] });
+    expect(new Set(first.written.filter((w) => w.periodDays === 1).map((w) => w.metricKey))).toEqual(new Set(narrowed));
+    await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps); // a normal fetch afterwards must find nothing left for any member to catch up on
+    for (const metricKey of narrowed) {
+      expect(listActiveObservations(h.db, 'mini', metricKey)).toHaveLength(3);
+    }
+  });
+
   it('fails the flow group when the latest block cannot be read', async () => {
     const h = harness();
     h.rpc.latestBlock = async () => {
