@@ -66,6 +66,27 @@ describe('http transport', () => {
     expect(h.calls).toHaveLength(1);
   });
 
+  it('retries a failed body read like a rejected fetch, with the URL in the message', async () => {
+    let t = 1_000_000;
+    let call = 0;
+    const sleeps: number[] = [];
+    const deps: HttpDeps = {
+      now: () => t,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        t += ms;
+      },
+      fetch: async () => {
+        call++;
+        if (call === 1) return { status: 200, headers: { get: () => null }, text: async () => Promise.reject(new Error('stream reset')) };
+        return { status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ ok: true }) };
+      },
+    };
+    const http = createHttpTransport(deps);
+    expect(await http.getJson('https://x.test/a')).toEqual({ ok: true });
+    expect(sleeps).toEqual([1000]);
+  });
+
   it('does not retry a 2xx body that is not JSON', async () => {
     const h = harness([{ status: 200, body: '<html>' }, ok(1)]);
     await expect(h.http.getJson('https://x.test/a')).rejects.toThrow(/not JSON/);

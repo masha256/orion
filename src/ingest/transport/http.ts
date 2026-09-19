@@ -74,17 +74,20 @@ export function createHttpTransport(deps: HttpDeps, options: Partial<HttpOptions
         await waitForSlot(host);
         let delay = o.backoffMs * 2 ** (attempt - 1);
         let res: HttpResponseLike;
+        let body: string | undefined;
         try {
           res = await deps.fetch(url, { headers: { accept: 'application/json', ...headers }, signal: AbortSignal.timeout(o.timeoutMs) });
+          // Reading the body can fail the same way the request itself can (a timeout or reset mid-read);
+          // it belongs inside the same retry path, not after it.
+          if (res.status >= 200 && res.status < 300) body = await res.text();
         } catch (err) {
           failure = new HttpError(`${url}: ${err instanceof Error ? err.message : String(err)}`, null);
           if (attempt < o.attempts) await deps.sleep(delay);
           continue;
         }
         if (res.status >= 200 && res.status < 300) {
-          const text = await res.text();
           try {
-            return JSON.parse(text) as unknown;
+            return JSON.parse(body!) as unknown;
           } catch {
             throw new HttpError(`${url}: the response is not JSON`, res.status);
           }
