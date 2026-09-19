@@ -2,6 +2,7 @@ import type { SourceConfig } from '../../config/sources.js';
 import { OrionError } from '../../types.js';
 import type { SourceHandler } from '../types.js';
 import { adapterSource } from './adapter.js';
+import { chainLevelsSource } from './chainLevels.js';
 import { coingeckoSource } from './coingecko.js';
 import { defillamaSource } from './defillama.js';
 import { httpJsonSource } from './httpJson.js';
@@ -11,6 +12,8 @@ const HANDLERS: Partial<Record<SourceConfig['type'], SourceHandler>> = {
   coingecko: coingeckoSource,
   http_json: httpJsonSource,
   defillama: defillamaSource,
+  erc20_supply: chainLevelsSource,
+  contract_read: chainLevelsSource,
   adapter: adapterSource,
 };
 
