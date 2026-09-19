@@ -4,6 +4,7 @@ import { registerData } from './commands/data.js';
 import { registerInit } from './commands/init.js';
 import { registerModel } from './commands/model.js';
 import { registerSignal } from './commands/signal.js';
+import { registerUpdate } from './commands/update.js';
 import type { CliContext } from './util.js';
 
 export type { CliContext } from './util.js';
@@ -21,5 +22,6 @@ export function buildProgram(ctx: CliContext): Command {
   registerData(program, ctx);
   registerModel(program, ctx);
   registerSignal(program, ctx);
+  registerUpdate(program, ctx);
   return program;
 }

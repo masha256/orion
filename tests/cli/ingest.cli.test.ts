@@ -117,3 +117,52 @@ describe('orion data anomalies, resolve, ack', () => {
     await expect(orion('data', 'resolve', '99', '--note', 'x')).rejects.toThrow(/no anomaly with id 99/);
   });
 });
+
+describe('orion update', () => {
+  let exitCodes: number[];
+
+  async function update(...args: string[]): Promise<string> {
+    const lines: string[] = [];
+    const h = harness({ routes });
+    const program = buildProgram({
+      home, stdout: (l) => lines.push(l), now: () => NOW, ingestDeps: () => h.deps, stderr: (l) => stderr.push(l), setExitCode: (c) => exitCodes.push(c),
+    });
+    await program.parseAsync(['update', ...args], { from: 'user' });
+    return lines.join('\n');
+  }
+
+  beforeEach(() => {
+    exitCodes = [];
+  });
+
+  const ASSUMPTIONS = 'all:\n  rev_growth_y1: 0\n  growth_fade_years: 1\n  terminal_growth: 0\n  capture_rate_terminal.fees: 0.1\n  capture_ramp_years.fees: 0\n  discount_rate_base: 0.1\n  staked_ratio_horizon: 0.5\n';
+
+  it('emits one JSON signal line on stdout, the fetch summary on stderr, and exits 0 when ok', async () => {
+    await orion('data', 'set', 'mini', 'revenue_run_rate_usd', '1000', '--at', '2026-09-18');
+    await orion('data', 'set', 'mini', 'staker_emission_share', '1', '--at', '2026-09-18');
+    writeFileSync(join(home, 'a.yaml'), ASSUMPTIONS);
+    await orion('model', 'assumptions', 'import', 'mini', join(home, 'a.yaml'), '--rationale', 'initial');
+
+    const out = join(home, 'signals.jsonl');
+    const text = await update('mini', '--out', out);
+    expect(text.split('\n')).toHaveLength(1);
+    const signal = JSON.parse(text);
+    expect(signal.status).toBe('ok');
+    expect(JSON.parse((await import('node:fs')).readFileSync(out, 'utf8').trim()).signal_id).toBe(signal.signal_id);
+    expect(stderr.some((l) => l === 'MINI fetch ok')).toBe(true);
+    expect(exitCodes).toEqual([]);
+    expect(JSON.parse(await orion('signal', 'latest', 'mini', '--json')).signal_id).toBe(signal.signal_id);
+    expect(JSON.parse(await update('mini', '--json')).status).toBe('ok'); // --json is accepted; the output is JSON either way
+  });
+
+  it('exits 2 for a blocked signal, and still emits it', async () => {
+    const signal = JSON.parse(await update('mini'));
+    expect(signal.status).toBe('blocked');
+    expect(exitCodes).toEqual([2]);
+  });
+
+  it('throws for a configuration error, which the entry point turns into exit 1', async () => {
+    writeFileSync(join(home, 'assets', 'manual.yaml'), (await import('../helpers/assets.js')).MINI_ASSET_YAML.replace('id: mini', 'id: manual'));
+    await expect(update('manual')).rejects.toThrow(/nothing to fetch/);
+  });
+});
