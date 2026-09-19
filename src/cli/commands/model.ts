@@ -4,20 +4,13 @@ import { parse as parseYaml } from 'yaml';
 import { replayRun, runValuation, whatIf } from '../../app/valuation.js';
 import { loadAsset } from '../../config/load.js';
 import type { AssetConfig } from '../../config/schema.js';
-import { createAssumptionSet, getLatestAssumptionSet, listAssumptionSets } from '../../db/assumptions.js';
-import type { Db } from '../../db/connection.js';
-import { validateAssumptions } from '../../engine/requirements.js';
+import { saveAssumptions } from '../../app/assumptions.js';
+import { getLatestAssumptionSet, listAssumptionSets } from '../../db/assumptions.js';
 import { OrionError, SCENARIOS, type AssumptionValues, type Scenario } from '../../types.js';
 import { fmt, output, parseNumber, signalSummary, withDb, type CliContext } from '../util.js';
 
 const isScenario = (x: string): x is Scenario => (SCENARIOS as readonly string[]).includes(x);
 const collect = (value: string, previous: string[]): string[] => [...previous, value];
-
-function saveValidated(db: Db, asset: AssetConfig, values: AssumptionValues, rationale: string, nowIso: string) {
-  const errors = validateAssumptions(asset, values);
-  if (errors.length > 0) throw new OrionError('invalid_assumptions', errors.join('\n'));
-  return createAssumptionSet(db, { assetId: asset.id, author: 'user', rationale, values, createdAt: nowIso });
-}
 
 function readImportFile(path: string): AssumptionValues {
   const raw = parseYaml(readFileSync(path, 'utf8')) as Record<string, unknown> | null;
@@ -115,7 +108,7 @@ export function registerModel(program: Command, ctx: CliContext): void {
         if (!latest) throw new OrionError('no_assumption_set', `no assumption set for ${assetId}; import one first`);
         const values: AssumptionValues = { bear: { ...latest.values.bear }, base: { ...latest.values.base }, bull: { ...latest.values.bull } };
         for (const s of opts.scenario === 'all' ? SCENARIOS : [opts.scenario as Scenario]) values[s][key] = v;
-        return saveValidated(db, config, values, opts.rationale, ctx.now().toISOString());
+        return saveAssumptions(db, config, values, { author: 'user', rationale: opts.rationale, now: ctx.now() });
       });
       output(ctx, opts.json, set, () => [`${assetId} assumptions v${set.version}: ${key} = ${v} (${opts.scenario})`]);
     });
@@ -128,7 +121,7 @@ export function registerModel(program: Command, ctx: CliContext): void {
     .action((assetId: string, file: string, opts: { rationale: string; json?: boolean }) => {
       const { config } = loadAsset(ctx.home, assetId);
       const values = readImportFile(file);
-      const set = withDb(ctx, (db) => saveValidated(db, config, values, opts.rationale, ctx.now().toISOString()));
+      const set = withDb(ctx, (db) => saveAssumptions(db, config, values, { author: 'user', rationale: opts.rationale, now: ctx.now() }));
       output(ctx, opts.json, set, () => [`${assetId} assumptions v${set.version} imported from ${file}`]);
     });
 
