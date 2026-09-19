@@ -1,2 +1,10 @@
 .superpowers/
 .idea/
+
+node_modules/
+dist/
+*.db
+*.db-wal
+*.db-shm
+.env
+signals.jsonl
