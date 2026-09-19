@@ -1,30 +1,25 @@
 import type { LoadedAsset } from '../config/load.js';
-import type { MetricDef } from '../config/schema.js';
+import { revenueStaleMovePct, type MetricDef } from '../config/schema.js';
 import { isChainSource } from '../config/sources.js';
 import { raiseAnomaly } from '../db/anomalies.js';
 import type { Db } from '../db/connection.js';
 import { emptySourceOutcome, insertFetchRun, recentSourceStatuses, type FetchOutcome, type SourceOutcome } from '../db/fetchRuns.js';
-import { insertObservation } from '../db/observations.js';
-import { OrionError } from '../types.js';
-import { getAdapter } from './adapters/registry.js';
-import { listActiveObservations } from '../db/observations.js';
-import { MS_PER_DAY } from '../types.js';
-import { revenueStaleMovePct } from '../config/schema.js';
+import { insertObservation, listActiveObservations } from '../db/observations.js';
 import { latestLevel } from '../drivers/select.js';
-import { STD_METRICS } from '../types.js';
+import { MS_PER_DAY, OrionError, STD_METRICS } from '../types.js';
+import { getAdapter } from './adapters/registry.js';
 import { checkRevenueStale, type IndexPoint } from './alerts.js';
 import { compareLevel, compareMonthly } from './crosscheck.js';
 import { burnMomentum } from './derived.js';
 import { scanFlowGroup } from './flow.js';
 import { buildPlan, hasSources, type FlowGroup, type SourceBatch } from './plan.js';
-import { monthOf, utcDay } from './time.js';
-import type { DailyPoint } from './types.js';
 import { sourceId } from './sourceId.js';
 import { getSourceHandler } from './sources/registry.js';
+import { monthOf, utcDay } from './time.js';
 import { withRunCache, type HttpTransport } from './transport/http.js';
 import type { BlockRef, RpcFactory, RpcTransport } from './transport/rpc.js';
 import {
-  contractResolver, failed, type RaisedAnomaly, type ReadingResult, type SourceContext, type SourceRequest, type WrittenObservation,
+  contractResolver, failed, type DailyPoint, type RaisedAnomaly, type ReadingResult, type SourceContext, type SourceRequest, type WrittenObservation,
 } from './types.js';
 
 /** Used when the asset's rpc_url_env variable is not set. */
@@ -321,11 +316,14 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     }
     const days = storedDailyFlow(db, asset.id, flowMetric);
     for (const p of scannedDaily.get(flowMetric) ?? []) days.set(p.day, p.value);
-    const have = new Set(listActiveObservations(db, asset.id, r.metricKey).map((o) => o.observedAt));
+    // Keyed by observedAt: a re-scan (--backfill-days) can change a stored day's value, which changes
+    // every index window that covers it. Skip only when the existing row already has this value; a
+    // changed value must be rewritten (insertObservation supersedes the row at the same observedAt).
+    const have = new Map(listActiveObservations(db, asset.id, r.metricKey).map((o) => [o.observedAt, o.value]));
     let wrote = 0;
     for (const point of burnMomentum(days, windowDays)) {
       const observedAt = new Date(new Date(`${point.day}T00:00:00.000Z`).getTime() + MS_PER_DAY).toISOString(); // the day's period end
-      if (have.has(observedAt)) continue;
+      if (have.get(observedAt) === point.value) continue;
       const observationId = dryRun
         ? null
         : insertObservation(db, {

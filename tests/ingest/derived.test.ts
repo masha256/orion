@@ -102,6 +102,37 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
     expect(listActiveObservations(h.db, 'mini', 'usage_index')).toHaveLength(7);
   });
 
+  it('rewrites an index day whose window changed after a rescan, leaving days it does not cover untouched', async () => {
+    const h = harness({ loaded: parseAssetYaml(WITH_INDEX) });
+    seedDaily(h.db, '2026-09-10', [30, 60, 90, 120, 150, 180]); // days 10..15; the scan then adds zeros for 16, 17, 18
+    await fetchAsset(h.db, h.loaded, NOW, h.deps);
+    const before = listActiveObservations(h.db, 'mini', 'usage_index');
+    expect(before.map((o) => o.value)).toEqual([60, 90, 120, 150, 110, 60, 0]);
+    const idBefore = new Map(before.map((o) => [o.observedAt, o.id]));
+
+    // A --backfill-days rescan supersedes the stored row covering 2026-09-12 (period end 2026-09-13) with a different value.
+    insertObservation(h.db, {
+      assetId: 'mini', metricKey: 'flow_usd.fees_programmatic', observedAt: '2026-09-13', periodDays: 1, value: 999, source: 'onchain', fetchedAt: NOW.toISOString(),
+    });
+
+    const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
+    const after = listActiveObservations(h.db, 'mini', 'usage_index');
+    const idAfter = new Map(after.map((o) => [o.observedAt, o.id]));
+
+    // The three-day trailing windows ending 2026-09-12/13/14 (index days 2026-09-13/14/15) include the
+    // changed day and are rewritten; the windows ending 15/16/17/18 do not include it and stay put.
+    expect(after.map((o) => [o.observedAt.slice(0, 10), o.value])).toEqual([
+      ['2026-09-13', 363], ['2026-09-14', 393], ['2026-09-15', 423], ['2026-09-16', 150], ['2026-09-17', 110], ['2026-09-18', 60], ['2026-09-19', 0],
+    ]);
+    for (const day of ['2026-09-13', '2026-09-14', '2026-09-15']) {
+      expect(idAfter.get(`${day}T00:00:00.000Z`)).not.toBe(idBefore.get(`${day}T00:00:00.000Z`));
+    }
+    for (const day of ['2026-09-16', '2026-09-17', '2026-09-18', '2026-09-19']) {
+      expect(idAfter.get(`${day}T00:00:00.000Z`)).toBe(idBefore.get(`${day}T00:00:00.000Z`));
+    }
+    expect(r.sources.find((s) => s.sourceId === 'derived:burn_momentum')).toMatchObject({ status: 'ok', metricsWritten: ['usage_index'] });
+  });
+
   it('raises the advisory alert when usage has moved since the revenue disclosure, once per disclosure', async () => {
     const h = harness({ loaded: parseAssetYaml(WITH_INDEX) });
     seedDaily(h.db, '2026-09-10', [100, 100, 100, 100, 100, 100]);
