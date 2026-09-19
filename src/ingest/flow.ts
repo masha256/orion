@@ -73,14 +73,19 @@ async function loadPrices(http: HttpTransport, env: Record<string, string | unde
   return { hourly, daily };
 }
 
+/** Milliseconds for which an observation's period [observedAt - periodDays, observedAt] overlaps [startMs, endMs). Periods that only touch overlap by 0. */
+function overlapMs(o: { observedAt: string; periodDays: number | null }, startMs: number, endMs: number): number {
+  const end = new Date(o.observedAt).getTime();
+  const start = end - (o.periodDays ?? 1) * MS_PER_DAY;
+  return Math.min(end, endMs) - Math.max(start, startMs);
+}
+
 /** Active rows from another source whose period overlaps (startMs, endMs). Periods that only touch do not overlap. */
 export function findFlowConflicts(db: Db, assetId: string, metricKey: string, startMs: number, endMs: number): FlowConflict[] {
   return listActiveObservations(db, assetId, metricKey)
     .filter((o) => {
       if (o.source === 'onchain') return false;
-      const end = new Date(o.observedAt).getTime();
-      const start = end - (o.periodDays ?? 1) * MS_PER_DAY;
-      return Math.min(end, endMs) - Math.max(start, startMs) > 0;
+      return overlapMs(o, startMs, endMs) > 0;
     })
     .map((o) => ({
       metricKey, observationId: o.id, source: o.source, observedAt: o.observedAt, periodDays: o.periodDays, adoptable: o.source === 'manual',
@@ -226,9 +231,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
           for (const m of group.members) {
             for (const c of conflicts) {
               if (c.metricKey !== m.metricKey || retired.has(c.observationId)) continue;
-              const end = new Date(c.observedAt).getTime();
-              const start = end - (c.periodDays ?? 1) * MS_PER_DAY;
-              if (Math.min(end, dayEndMs) - Math.max(start, dayEndMs - MS_PER_DAY) <= 0) continue;
+              if (overlapMs(c, dayEndMs - MS_PER_DAY, dayEndMs) <= 0) continue;
               rejectObservation(db, c.observationId);
               retired.add(c.observationId);
               outcome.retiredObservationIds.push(c.observationId);
