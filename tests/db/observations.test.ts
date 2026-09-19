@@ -33,6 +33,13 @@ describe('observations', () => {
     expect(getObservationsByIds(db, [first.id])[0].supersededBy).toBe(second.id);
   });
 
+  it('refuses a period length that is not a positive finite number', () => {
+    for (const periodDays of [0, -30, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => insertObservation(db, { ...base, observedAt: '2026-06-30', value: 1, periodDays })).toThrow(/period/);
+    }
+    expect(insertObservation(db, { ...base, observedAt: '2026-06-30', value: 1, periodDays: null }).periodDays).toBeNull();
+  });
+
   it('requires a citation for provisional rows', () => {
     expect(() =>
       insertObservation(db, { ...base, observedAt: '2026-06-30', value: 1, status: 'provisional' }),

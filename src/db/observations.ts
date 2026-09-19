@@ -93,6 +93,9 @@ export function listActiveObservations(db: Db, assetId: string, metricKey?: stri
 
 export function insertObservation(db: Db, input: NewObservation): Observation {
   if (!Number.isFinite(input.value)) throw new OrionError('invalid_value', 'observation value must be a finite number');
+  if (input.periodDays !== undefined && input.periodDays !== null && !(Number.isFinite(input.periodDays) && input.periodDays > 0)) {
+    throw new OrionError('invalid_period', `period days must be a finite number greater than 0, got ${input.periodDays}`);
+  }
   const status = input.status ?? 'confirmed';
   if (status === 'provisional' && !input.citationUrl) {
     throw new OrionError('citation_required', 'a provisional observation requires a citation url');

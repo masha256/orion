@@ -4,6 +4,7 @@ import { parseAssetYaml, type LoadedAsset } from '../../src/config/load.js';
 import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb, type Db } from '../../src/db/connection.js';
 import { insertObservation, rejectObservation } from '../../src/db/observations.js';
+import type { OrionError } from '../../src/types.js';
 import { MINI_ASSET_YAML, miniAssumptions } from '../helpers/assets.js';
 import { AS_OF, miniObservations } from '../helpers/obs.js';
 
@@ -209,6 +210,20 @@ describe('replayRun', () => {
     const r = replayRun(db, runId);
     expect(r.identical).toBe(true);
     expect(r.replayed).toBe(r.stored);
+  });
+
+  it('refuses to replay a run recorded by a different engine version', () => {
+    seedObservations();
+    seedAssumptions();
+    const { runId } = runValuation(db, loaded, NOW);
+    db.prepare('UPDATE valuation_runs SET engine_version = ? WHERE id = ?').run('0.0.1-other', runId);
+    let code: string | undefined;
+    try {
+      replayRun(db, runId);
+    } catch (err) {
+      code = (err as OrionError).code;
+    }
+    expect(code).toBe('engine_version_mismatch');
   });
 
   it('refuses to replay a blocked run', () => {

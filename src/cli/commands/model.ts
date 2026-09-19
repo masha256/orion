@@ -64,6 +64,7 @@ export function registerModel(program: Command, ctx: CliContext): void {
       });
       const loaded = loadAsset(ctx.home, assetId);
       const now = opts.asOf ? new Date(opts.asOf) : ctx.now();
+      if (Number.isNaN(now.getTime())) throw new OrionError('invalid_timestamp', `invalid --as-of: ${opts.asOf}`);
       const result = withDb(ctx, (db) => whatIf(db, loaded, now, overrides));
       output(ctx, opts.json, result, () => {
         if ('blocked' in result) return ['cannot run:', ...result.blocked.map((b) => `  ${b}`)];

@@ -55,6 +55,7 @@ describe('buildSignal', () => {
     expect(s.horizons!['12m'].expected_target).toBeCloseTo(10, 6);
     expect(s.horizons!['12m'].scenarios.base.probability).toBe(0.5);
     expect(s.horizons!['12m'].modules.hc.breakdown.by_scenario).toEqual({ bear: expect.any(Number), base: expect.any(Number), bull: expect.any(Number) });
+    expect(s.horizons!['12m'].modules.hc.breakdown.breakdown_scenario).toBe('base');
     expect(s.data_quality.grade).toBe('A');
     expect(s.spot).toEqual({ price: 10, ts: '2026-06-29T00:00:00.000Z' });
   });

@@ -33,8 +33,18 @@ export function registerData(program: Command, ctx: CliContext): void {
     .option('--json', 'JSON output')
     .action((assetId: string, metric: string, value: string, opts: SetOpts) => {
       const { config } = loadAsset(ctx.home, assetId);
-      if (!config.metrics[metric]) throw new OrionError('unknown_metric', `metric "${metric}" is not defined in assets/${assetId}.yaml`);
+      const def = config.metrics[metric];
+      if (!def) throw new OrionError('unknown_metric', `metric "${metric}" is not defined in assets/${assetId}.yaml`);
       if (!SOURCES.includes(opts.source as ObservationSource)) throw new OrionError('invalid_source', `source must be one of ${SOURCES.join(', ')}`);
+      if (def.type === 'flow' && opts.periodDays === undefined) {
+        throw new OrionError(
+          'missing_period_days',
+          `metric "${metric}" is a flow: pass --period-days <n>, the number of days the value covers, ending at --at`,
+        );
+      }
+      if (def.type !== 'flow' && opts.periodDays !== undefined) {
+        throw new OrionError('unexpected_period_days', `metric "${metric}" is a ${def.type} metric: --period-days applies only to flow metrics`);
+      }
       const nowIso = ctx.now().toISOString();
       const o = withDb(ctx, (db) =>
         insertObservation(db, {

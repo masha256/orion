@@ -27,7 +27,8 @@ function toHorizon(h: HorizonOutput): SignalHorizon {
       kind: m.kind,
       weight: m.weight,
       value: m.value,
-      breakdown: { ...m.breakdown, by_scenario: m.byScenario },
+      // `value` is probability weighted across scenarios; the breakdown itself is the base scenario's.
+      breakdown: { ...m.breakdown, by_scenario: m.byScenario, breakdown_scenario: 'base' },
     };
   }
   const scenario = (s: 'bear' | 'base' | 'bull') => ({ target: h.scenarios[s].target, probability: h.scenarios[s].probability });

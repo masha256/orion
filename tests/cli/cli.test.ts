@@ -64,6 +64,17 @@ describe('orion cli', () => {
     await expect(orion('data', 'set', 'mini', 'nonsense', '1')).rejects.toThrow(/not defined/);
   });
 
+  it('requires --period-days for a flow metric and refuses it for any other type', async () => {
+    await expect(orion('data', 'set', 'mini', 'flow_usd.fees', '100', '--at', AS_OF)).rejects.toThrow(/--period-days/);
+    await expect(
+      orion('data', 'set', 'mini', 'price_usd', '10', '--at', AS_OF, '--period-days', '30'),
+    ).rejects.toThrow(/--period-days/);
+  });
+
+  it('refuses an invalid --as-of on whatif, the same as on run', async () => {
+    await expect(orion('model', 'whatif', 'mini', '--as-of', 'not-a-date')).rejects.toThrow(/invalid --as-of/);
+  });
+
   it('runs the full flow: data, assumptions, run, replay, what-if, emit', async () => {
     await seedData();
     await orion('model', 'assumptions', 'import', 'mini', join(home, 'assumptions.yaml'), '--rationale', 'initial');
