@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseAssetYaml } from '../../src/config/load.js';
 import { computeDrivers } from '../../src/drivers/compute.js';
+import { canonicalJson } from '../../src/util/canonical.js';
 import { MINI_ASSET_YAML, miniAsset } from '../helpers/assets.js';
 import { AS_OF, miniObservations, obs } from '../helpers/obs.js';
 
@@ -60,6 +61,18 @@ describe('computeDrivers', () => {
     const r = computeDrivers(miniAsset(), list, AS_OF);
     expect(r.staleMetrics).not.toContain('flow_usd.fees');
     expect(r.drivers!.holderFlows[0].annualizedUsd.observedAt).toBe('2026-05-01T00:00:00.000Z');
+  });
+
+  it('produces identical output regardless of the order observations are passed in (floating-point-order-sensitive flow sum)', () => {
+    // (0.1 + 0.2) + 0.3 !== (0.3 + 0.2) + 0.1 in IEEE 754 double arithmetic: this triple provably
+    // exposes summation-order sensitivity, so it fails if driver output depends on input order.
+    const base = miniObservations().filter((o) => o.metricKey !== 'flow_usd.fees');
+    const flowOld = obs('flow_usd.fees', 0.1, '2026-06-27', { periodDays: 1 });
+    const flowMid = obs('flow_usd.fees', 0.2, '2026-06-28', { periodDays: 1 });
+    const flowNew = obs('flow_usd.fees', 0.3, '2026-06-29', { periodDays: 1 });
+    const chronological = computeDrivers(miniAsset(), [...base, flowOld, flowMid, flowNew], AS_OF);
+    const reversed = computeDrivers(miniAsset(), [...base, flowNew, flowMid, flowOld], AS_OF);
+    expect(canonicalJson(reversed.drivers)).toBe(canonicalJson(chronological.drivers));
   });
 
   it('puts non-standard level metrics in extra', () => {

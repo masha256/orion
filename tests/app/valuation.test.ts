@@ -137,4 +137,28 @@ describe('replayRun', () => {
     const { runId } = runValuation(db, loaded, NOW);
     expect(() => replayRun(db, runId)).toThrow(/blocked/);
   });
+
+  it('reproduces a run whose flow metric was backfilled out of chronological order', () => {
+    seedObservations(['flow_usd.fees']);
+    // A non-zero capture ramp makes the module's cashflow path depend on the *current* capture
+    // rate (derived from the driver's annualized flow), not just the terminal assumption, so an
+    // order-sensitive driver difference actually reaches the engine output instead of being
+    // masked by capture_ramp_years.fees: 0 (mini's usual flat-world default).
+    seedAssumptions({ 'capture_ramp_years.fees': 5 });
+    // Insert newest-first, then backfill older observations later: ids end up in the REVERSE of
+    // observedAt order. getObservationsByIds (ORDER BY id) and listActiveObservations
+    // (ORDER BY observed_at, id) would then disagree on order if driver output depended on it.
+    // Large, order-sensitive values under IEEE 754 summation: (a+b)+c !== (c+b)+a for these three.
+    insertObservation(db, {
+      assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-06-29', periodDays: 1, value: 300000.3, source: 'onchain', fetchedAt: AS_OF,
+    });
+    insertObservation(db, {
+      assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-06-28', periodDays: 1, value: 200000.2, source: 'onchain', fetchedAt: AS_OF,
+    });
+    insertObservation(db, {
+      assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-06-27', periodDays: 1, value: 100000.1, source: 'onchain', fetchedAt: AS_OF,
+    });
+    const { runId } = runValuation(db, loaded, NOW);
+    expect(replayRun(db, runId).identical).toBe(true);
+  });
 });

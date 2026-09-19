@@ -79,6 +79,10 @@ export function computeDrivers(
     list.push(o);
     byMetric.set(o.metricKey, list);
   }
+  // Contract: driver output must not depend on the order observations are passed in.
+  for (const list of byMetric.values()) {
+    list.sort((a, b) => (a.observedAt === b.observedAt ? a.id - b.id : a.observedAt < b.observedAt ? -1 : 1));
+  }
   const of = (key: string) => byMetric.get(key) ?? [];
 
   const missing = new Set<string>();
