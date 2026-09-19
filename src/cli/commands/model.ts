@@ -1,10 +1,9 @@
 import type { Command } from 'commander';
 import { readFileSync } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
+import { saveAssumptions } from '../../app/assumptions.js';
 import { replayRun, runValuation, whatIf } from '../../app/valuation.js';
 import { loadAsset } from '../../config/load.js';
-import type { AssetConfig } from '../../config/schema.js';
-import { saveAssumptions } from '../../app/assumptions.js';
 import { getLatestAssumptionSet, listAssumptionSets } from '../../db/assumptions.js';
 import { OrionError, SCENARIOS, type AssumptionValues, type Scenario } from '../../types.js';
 import { fmt, output, parseNumber, signalSummary, withDb, type CliContext } from '../util.js';
