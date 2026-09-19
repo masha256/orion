@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
-import { loadAsset } from '../../src/config/load.js';
+import { parseAssetYaml } from '../../src/config/load.js';
 import type { Observation } from '../../src/db/observations.js';
 import { computeDrivers } from '../../src/drivers/compute.js';
 import { requiredExtraMetrics } from '../../src/engine/requirements.js';
@@ -64,7 +64,7 @@ function seedObservations(): Observation[] {
 }
 
 function draftAssumptions(): AssumptionValues {
-  const raw = parseYaml(readFileSync(`${ROOT}/calibration/vvv-initial-assumptions.yaml`, 'utf8')) as Record<string, Record<string, number>>;
+  const raw = parseYaml(readFileSync(`${ROOT}/tests/fixtures/vvv-golden-assumptions.yaml`, 'utf8')) as Record<string, Record<string, number>>;
   return {
     bear: { ...raw.all, ...raw.bear },
     base: { ...raw.all, ...raw.base },
@@ -72,8 +72,10 @@ function draftAssumptions(): AssumptionValues {
   };
 }
 
-describe('VVV end to end on the real config, seed data, and draft assumptions', () => {
-  const { config } = loadAsset(ROOT, 'vvv');
+// Reads frozen fixture copies, not assets/vvv.yaml or calibration/: recalibrating VVV must not
+// move this hash. Only engine or driver math may.
+describe('VVV end to end on the frozen golden config, seed data, and draft assumptions', () => {
+  const { config } = parseAssetYaml(readFileSync(`${ROOT}/tests/fixtures/vvv-golden.yaml`, 'utf8'));
   const report = computeDrivers(config, seedObservations(), AS_OF, requiredExtraMetrics(config));
   const drivers = report.drivers!;
   const output = runEngine({ asset: config, drivers, assumptions: draftAssumptions() });

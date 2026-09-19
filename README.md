@@ -12,7 +12,7 @@ export ORION_HOME="$PWD"
 orion init
 orion asset validate
 ./calibration/vvv-seed-2026-09-18.sh
-orion model assumptions import vvv calibration/vvv-initial-assumptions.yaml --rationale "first calibration"
+orion model assumptions import vvv calibration/vvv-assumptions.yaml --rationale "first calibration"
 orion model run vvv
 orion signal emit vvv --out signals.jsonl
 ```

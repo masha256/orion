@@ -15,9 +15,9 @@ describe('assets/vvv.yaml', () => {
     expect(requiredExtraMetrics(config)).toEqual(['diem_locked_yield_share', 'diem_price_usd', 'diem_supply', 'diem_target_supply']);
   });
 
-  it('ships a draft assumption file that passes validation', () => {
+  it('ships a calibrated assumption file that passes validation against the live bounds', () => {
     const { config } = loadAsset(ROOT, 'vvv');
-    const raw = parseYaml(readFileSync(`${ROOT}/calibration/vvv-initial-assumptions.yaml`, 'utf8')) as Record<string, Record<string, number>>;
+    const raw = parseYaml(readFileSync(`${ROOT}/calibration/vvv-assumptions.yaml`, 'utf8')) as Record<string, Record<string, number>>;
     const values: AssumptionValues = {
       bear: { ...raw.all, ...raw.bear },
       base: { ...raw.all, ...raw.base },

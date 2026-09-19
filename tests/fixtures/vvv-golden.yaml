@@ -35,12 +35,9 @@ metrics:
 holder_flows:
   - { id: burn, kind: burn, capture_rule: discretionary, recipient_base: all, metric: flow_usd.burn, window_days: 90 }
 
-# Weights calibrated by the user on 2026-09-19 ("balanced"): the market prices VVV mostly on company
-# revenue today, so the revenue multiple gets the largest single weight, but 60% still rests on cash
-# flows that actually reach holders. Structural: the agent may only propose changes here.
 modules:
-  - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.3 }
-  - { id: fm_revenue, type: forward_multiple, kind: estimate, weight: 0.4, params: { basis: revenue, market_convention: true } }
+  - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.4 }
+  - { id: fm_revenue, type: forward_multiple, kind: estimate, weight: 0.3, params: { basis: revenue, market_convention: true } }
   - { id: fm_holder_flow, type: forward_multiple, kind: estimate, weight: 0.3, params: { basis: holder_flow } }
   - { id: diem, type: utility_claim, kind: component, params: { diem_value_basis: market } }
 
@@ -49,20 +46,17 @@ scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }
 total_return_variants:
   - { id: diem_locked_staked_total_return_pct, yield_multiplier_metric: diem_locked_yield_share }
 
-# Bounds are the agent's sandbox (per assumption, across all three scenarios). Calibrated by the user
-# on 2026-09-19 to "medium": about one scenario's worth of room beyond the bear and bull values in
-# calibration/vvv-assumptions.yaml. Outside these, the agent must file a proposal.
 assumptions:
-  rev_growth_y1: { min: -0.3, max: 2.5 }
+  rev_growth_y1: { min: -0.5, max: 4.0 }
   growth_fade_years: { min: 1, max: 8 }
   terminal_growth: { min: 0, max: 0.05 }
-  capture_rate_terminal.burn: { min: 0.02, max: 0.40 }
+  capture_rate_terminal.burn: { min: 0, max: 0.5 }
   capture_ramp_years.burn: { min: 0, max: 8 }
   discount_rate_base: { min: 0.08, max: 0.30 }
   discount_premium_discretionary: { min: 0, max: 0.15 }
-  multiple.fm_revenue: { min: 3, max: 20 }
-  multiple.fm_holder_flow: { min: 8, max: 60 }
-  regime_multiplier: { min: 0.4, max: 1.6 }
+  multiple.fm_revenue: { min: 1, max: 50 }
+  multiple.fm_holder_flow: { min: 5, max: 150 }
+  regime_multiplier: { min: 0.3, max: 2.5 }
   staked_ratio_horizon: { min: 0.1, max: 0.9 }
   diem_target_supply_growth: { min: 0, max: 1 }
   diem_discount_rate: { min: 0.05, max: 0.5 }
