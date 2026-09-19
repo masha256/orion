@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { firstBlockAtOrAfter, getLogsChunked, type TransferLog } from '../../src/ingest/transport/rpc.js';
-import { createViemRpc } from '../../src/ingest/transport/viemRpc.js';
+import { cleanRpcErrorMessage, createViemRpc } from '../../src/ingest/transport/viemRpc.js';
 import type { OrionError } from '../../src/types.js';
 import { fakeRpc } from '../helpers/fakeRpc.js';
 
@@ -89,5 +89,22 @@ describe('createViemRpc', () => {
       code = (err as OrionError).code;
     }
     expect(code).toBe('unsupported_chain');
+  });
+});
+
+describe('cleanRpcErrorMessage', () => {
+  it('prefers a viem-style shortMessage over the full message', () => {
+    const err = { shortMessage: 'The contract function reverted.', message: 'The contract function "totalSupply" reverted.\n\nURL: https://mainnet.base.org/?key=SECRET\n...' };
+    expect(cleanRpcErrorMessage(err)).toBe('The contract function reverted.');
+  });
+
+  it('falls back to the full message with any URL trimmed down to its origin', () => {
+    const err = new Error('HTTP request failed. URL: https://mainnet.base.org/rpc?key=SECRET Status: 503');
+    expect(cleanRpcErrorMessage(err)).toBe('HTTP request failed. URL: https://mainnet.base.org Status: 503');
+  });
+
+  it('handles a non-Error value and a message with no URL', () => {
+    expect(cleanRpcErrorMessage('boom')).toBe('boom');
+    expect(cleanRpcErrorMessage(new Error('connection refused'))).toBe('connection refused');
   });
 });
