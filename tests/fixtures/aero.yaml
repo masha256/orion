@@ -1,0 +1,27 @@
+id: aero
+symbol: AERO
+name: Aerodrome (synthetic fixture)
+metrics:
+  price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }
+  revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 7, critical: true }
+  effective_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
+  staked_supply: { type: level, unit: tokens, staleness_days: 7 }
+  locked_supply: { type: level, unit: tokens, staleness_days: 7 }
+  staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }
+  emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400 }
+  flow_usd.fees: { type: flow, unit: usd, staleness_days: 7, critical: true }
+holder_flows:
+  - { id: fees, kind: fee_share, capture_rule: contractual, recipient_base: locked, metric: flow_usd.fees }
+modules:
+  - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.6 }
+  - { id: fm_flow, type: forward_multiple, kind: estimate, weight: 0.4, params: { basis: holder_flow } }
+assumptions:
+  rev_growth_y1: { min: -0.5, max: 3 }
+  growth_fade_years: { min: 0, max: 10 }
+  terminal_growth: { min: 0, max: 0.05 }
+  capture_rate_terminal.fees: { min: 0, max: 1 }
+  capture_ramp_years.fees: { min: 0, max: 10 }
+  discount_rate_base: { min: 0.05, max: 0.5 }
+  multiple.fm_flow: { min: 1, max: 100 }
+  regime_multiplier: { min: 0.2, max: 3 }
+  staked_ratio_horizon: { min: 0.05, max: 0.95 }
