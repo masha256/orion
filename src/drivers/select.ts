@@ -33,17 +33,23 @@ export function latestLevel(obs: Observation[], asOf: string): Observation | und
   return best;
 }
 
+/**
+ * Annualizes the trailing `windowDays` of REPORTED data. The window ends at the newest reported
+ * period end at or before `asOf`, not at `asOf` itself: anchoring it at `asOf` would divide by days
+ * for which nothing was reported, inventing zeros. Staleness handles data that is simply too old.
+ */
 export function trailingFlowAnnualized(
   obs: Observation[],
   asOf: string,
   windowDays: number,
 ): { annualized: number; used: Observation[] } {
-  const windowEnd = ms(asOf);
+  const past = obs.filter((o) => o.observedAt <= asOf);
+  if (past.length === 0) return { annualized: 0, used: [] };
+  const windowEnd = Math.max(...past.map((o) => ms(o.observedAt)));
   const windowStart = windowEnd - windowDays * MS_PER_DAY;
   let sum = 0;
   const used: Observation[] = [];
-  for (const o of obs) {
-    if (o.observedAt > asOf) continue;
+  for (const o of past) {
     const period = (o.periodDays ?? 1) * MS_PER_DAY;
     const end = ms(o.observedAt);
     const start = end - period;

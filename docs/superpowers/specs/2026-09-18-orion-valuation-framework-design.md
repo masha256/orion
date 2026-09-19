@@ -70,7 +70,7 @@ Every driver value carries provenance: `onchain`, `api`, `manual`, `provisional`
 |---|---|---|
 | Business | `revenue_run_rate` | Annualized USD revenue of the project |
 | Business | `usage_index` | Asset-defined usage measure, informational in v1 |
-| Capture | `holder_flows[]` | List of revenue-funded value flows reaching token holders. Each has `id`, `kind` (`burn`, `buy_and_hold`, `fee_share`), trailing annualized USD (trailing 90 days by default, window configurable per flow), `capture_rule`, and `recipient_base` |
+| Capture | `holder_flows[]` | List of revenue-funded value flows reaching token holders. Each has `id`, `kind` (`burn`, `buy_and_hold`, `fee_share`), trailing annualized USD (trailing 90 days of reported data, ending at the newest reported period, by default, window configurable per flow), `capture_rule`, and `recipient_base` |
 | Capture | `capture_rate` | Sum of holder flows divided by `revenue_run_rate` |
 | Capture | `capture_rule` | `contractual`, `programmatic`, or `discretionary`, per flow |
 | Supply | `effective_supply` | Total supply net of burned tokens |
