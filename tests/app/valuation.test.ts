@@ -77,6 +77,22 @@ describe('runValuation', () => {
     expect(runValuation(db, loaded, NOW).signal.change.cause).toBe('data');
   });
 
+  it('blocks on overlapping flow periods and runs again once the partial row is rejected', () => {
+    seedObservations();
+    seedAssumptions();
+    // The seeded flow row covers the 90 days ending at AS_OF; this one lands inside it.
+    const partial = insertObservation(db, {
+      assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-06-15', periodDays: 15,
+      value: 5, source: 'onchain', fetchedAt: AS_OF,
+    });
+    const blocked = runValuation(db, loaded, NOW).signal;
+    expect(blocked.status).toBe('blocked');
+    expect(blocked.status_reasons).toContain('overlapping_flow_periods:flow_usd.fees');
+
+    rejectObservation(db, partial.id);
+    expect(runValuation(db, loaded, NOW).signal.status).toBe('ok');
+  });
+
   it('excludes provisional observations unless the metric allows them', () => {
     seedObservations();
     seedAssumptions();

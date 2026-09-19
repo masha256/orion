@@ -75,6 +75,27 @@ describe('computeDrivers', () => {
     expect(canonicalJson(reversed.drivers)).toBe(canonicalJson(chronological.drivers));
   });
 
+  it('refuses to compute when two flow periods for the same metric overlap', () => {
+    const list = miniObservations().filter((o) => o.metricKey !== 'flow_usd.fees');
+    // month to date: covers [2026-06-01, 2026-06-15]
+    list.push(obs('flow_usd.fees', 50, '2026-06-15', { periodDays: 15 }));
+    // the full month arrives later under its own observed_at, so nothing is superseded:
+    // covers [2026-05-31, 2026-06-30], which double counts the first half of June.
+    list.push(obs('flow_usd.fees', 100, '2026-06-30', { periodDays: 30 }));
+    const r = computeDrivers(miniAsset(), list, AS_OF);
+    expect(r.overlappingFlowMetrics).toEqual(['flow_usd.fees']);
+    expect(r.drivers).toBeNull();
+  });
+
+  it('does not treat adjacent periods that touch at an endpoint as an overlap', () => {
+    const list = miniObservations().filter((o) => o.metricKey !== 'flow_usd.fees');
+    list.push(obs('flow_usd.fees', 50, '2026-05-31', { periodDays: 30 })); // [2026-05-01, 2026-05-31]
+    list.push(obs('flow_usd.fees', 50, '2026-06-30', { periodDays: 30 })); // [2026-05-31, 2026-06-30]
+    const r = computeDrivers(miniAsset(), list, AS_OF);
+    expect(r.overlappingFlowMetrics).toEqual([]);
+    expect(r.drivers).not.toBeNull();
+  });
+
   it('puts non-standard level metrics in extra', () => {
     const yaml = MINI_ASSET_YAML.replace('holder_flows:', '  widget_count: { type: level, unit: count, staleness_days: 30 }\nholder_flows:');
     const asset = parseAssetYaml(yaml).config;

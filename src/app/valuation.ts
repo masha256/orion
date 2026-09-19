@@ -49,7 +49,10 @@ export function runValuation(db: Db, loaded: LoadedAsset, now: Date): { runId: n
     const report = computeDrivers(asset, observations, asOf, requiredExtraMetrics(asset));
     const set = getLatestAssumptionSet(db, asset.id);
 
-    const reasons: string[] = report.missing.map((m) => `missing_metric:${m}`);
+    const reasons: string[] = [
+      ...report.missing.map((m) => `missing_metric:${m}`),
+      ...report.overlappingFlowMetrics.map((m) => `overlapping_flow_periods:${m}`),
+    ];
     if (!set) reasons.push('no_assumption_set');
     else reasons.push(...validateAssumptions(asset, set.values).map((e) => `invalid_assumptions:${e}`));
 
@@ -124,7 +127,10 @@ export function whatIf(
   const asOf = now.toISOString();
   const report = computeDrivers(asset, eligibleObservations(db, asset), asOf, requiredExtraMetrics(asset));
   const set = getLatestAssumptionSet(db, asset.id);
-  const blocked = report.missing.map((m) => `missing_metric:${m}`);
+  const blocked = [
+    ...report.missing.map((m) => `missing_metric:${m}`),
+    ...report.overlappingFlowMetrics.map((m) => `overlapping_flow_periods:${m}`),
+  ];
   if (!set) blocked.push('no_assumption_set');
   if (!set || !report.drivers) return { blocked };
 

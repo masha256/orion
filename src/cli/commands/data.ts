@@ -64,6 +64,7 @@ export function registerData(program: Command, ctx: CliContext): void {
 
   data
     .command('reject <obs_id>')
+    .description('retire an active observation, confirmed or provisional; the row is kept, never deleted')
     .option('--json', 'JSON output')
     .action((id: string, opts: { json?: boolean }) => {
       const n = parseNumber(id, 'obs_id');

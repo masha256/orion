@@ -35,4 +35,6 @@ orion model run vvv                                      # new signal
 orion model replay 12                                    # prove run 12 reproduces
 ```
 
+Flow rows must not overlap each other: each one covers `[--at minus --period-days, --at]`, and a run is blocked when two periods for the same metric cover any of the same time. So when the full-period figure arrives, `orion data reject <id>` the partial-period (month-to-date) row first, then enter the full one.
+
 Every command accepts `--json`. Signals follow schema v1 (spec section 9). Orion emits signals only. It is not investment advice.

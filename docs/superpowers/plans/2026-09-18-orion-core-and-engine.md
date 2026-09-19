@@ -15,7 +15,7 @@
 - Node `>=22`. ESM only (`"type": "module"`). Relative imports end in `.js`.
 - The engine (`src/engine/**`) and drivers (`src/drivers/**`) are pure: no `Date.now()`, no `new Date()` without an argument, no file or DB access, no randomness. Time enters as an `asOf` ISO string.
 - Modules read `Drivers` and assumptions only. Shared modules never read `drivers.extra`. Only custom modules may.
-- Observations are append-only. The only in-place mutations allowed are `superseded_by` and `status -> 'rejected'` on a provisional row.
+- Observations are append-only. The only in-place mutations allowed are `superseded_by` and `status -> 'rejected'` on an active row.
 - Emissions yield is never a holder flow. Only revenue-funded flows count.
 - A signal is always emitted, including `blocked`. Never interpolate or invent data.
 - Percent fields (`*_pct`) are in percent units: `25` means +25 percent.

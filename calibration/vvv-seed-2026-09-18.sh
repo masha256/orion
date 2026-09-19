@@ -20,6 +20,8 @@ $O data set vvv emission_rate_annual 2000000 --at 2026-10-01 --detail "$D: Venic
 $O data set vvv flow_usd.burn 241800 --at 2026-07-01 --period-days 30 --detail "$D: vvv_burn_history 2026-06"
 $O data set vvv flow_usd.burn 445200 --at 2026-08-01 --period-days 31 --detail "$D: vvv_burn_history 2026-07"
 $O data set vvv flow_usd.burn 702700 --at 2026-09-01 --period-days 31 --detail "$D: vvv_burn_history 2026-08"
+# Month to date. Flow periods must not overlap: when the full September figure arrives,
+# "orion data reject <id>" this partial-period row first, then enter the full month.
 $O data set vvv flow_usd.burn 676500 --at 2026-09-18 --period-days 17 --detail "$D: vvv_burn_history 2026-09 month to date"
 
 $O data set vvv diem_supply 37759.6 --at 2026-09-18 --detail "$D: DIEM totalSupply()"

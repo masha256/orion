@@ -59,9 +59,23 @@ describe('observations', () => {
     expect(getObservationsByIds(db, [p.id])[0].status).toBe('rejected');
   });
 
-  it('refuses to confirm or reject a row that is not an active provisional row', () => {
+  it('refuses to confirm a row that is not an active provisional row', () => {
     const o = insertObservation(db, { ...base, observedAt: '2026-06-30', value: 10 });
     expect(() => confirmObservation(db, o.id, '2026-07-01T00:00:00Z')).toThrow(/provisional/);
-    expect(() => rejectObservation(db, o.id)).toThrow(/provisional/);
+  });
+
+  it('reject retires an active confirmed row so a bad entry can be taken out of the window', () => {
+    const o = insertObservation(db, { ...base, observedAt: '2026-06-30', value: 10 });
+    rejectObservation(db, o.id);
+    expect(listActiveObservations(db, 'mini')).toEqual([]);
+    expect(getObservationsByIds(db, [o.id])[0].status).toBe('rejected');
+  });
+
+  it('refuses to reject a superseded or already rejected row', () => {
+    const first = insertObservation(db, { ...base, observedAt: '2026-06-30', value: 10 });
+    const second = insertObservation(db, { ...base, observedAt: '2026-06-30', value: 11 });
+    expect(() => rejectObservation(db, first.id)).toThrow(/not active/);
+    rejectObservation(db, second.id);
+    expect(() => rejectObservation(db, second.id)).toThrow(/not active/);
   });
 });

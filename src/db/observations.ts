@@ -122,10 +122,18 @@ export function insertObservation(db: Db, input: NewObservation): Observation {
   return getObservationsByIds(db, [id])[0];
 }
 
-function activeProvisional(db: Db, id: number): Observation {
+function activeObservation(db: Db, id: number): Observation {
   const o = getObservationsByIds(db, [id])[0];
   if (!o) throw new OrionError('observation_not_found', `no observation with id ${id}`);
-  if (o.status !== 'provisional' || o.supersededBy !== null) {
+  if (o.supersededBy !== null || o.status === 'rejected') {
+    throw new OrionError('not_active', `observation ${id} is not active; it was already superseded or rejected`);
+  }
+  return o;
+}
+
+function activeProvisional(db: Db, id: number): Observation {
+  const o = activeObservation(db, id);
+  if (o.status !== 'provisional') {
     throw new OrionError('not_provisional', `observation ${id} is not an active provisional observation`);
   }
   return o;
@@ -148,7 +156,8 @@ export function confirmObservation(db: Db, id: number, nowIso: string): Observat
   });
 }
 
+/** Retires any active observation, confirmed or provisional. The row itself is never deleted. */
 export function rejectObservation(db: Db, id: number): void {
-  activeProvisional(db, id);
+  activeObservation(db, id);
   db.prepare("UPDATE observations SET status = 'rejected' WHERE id = ?").run(id);
 }

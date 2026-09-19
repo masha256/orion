@@ -1,6 +1,6 @@
 import type { AssetConfig, CaptureRule, FlowKind, RecipientBase } from '../config/schema.js';
 import type { Observation } from '../db/observations.js';
-import { STD_METRICS, type Provenance } from '../types.js';
+import { MS_PER_DAY, STD_METRICS, type Provenance } from '../types.js';
 import {
   buildSchedule, isStale, latestLevel, obsProvenance, trailingFlowAnnualized, worstProvenance, type ScheduleStep,
 } from './select.js';
@@ -51,6 +51,26 @@ export interface DriverReport {
   staleCritical: string[];
   provisionalMetrics: string[];
   manualMetrics: string[];
+  /** Flow metrics whose reported periods overlap each other, which would double count the overlap. */
+  overlappingFlowMetrics: string[];
+}
+
+/**
+ * True when any two of these observations cover overlapping time.
+ * Each observation covers [observedAt - periodDays, observedAt]; periods that merely touch at an
+ * endpoint (one period ends exactly where the next begins) do not overlap.
+ */
+function hasOverlappingPeriods(list: Observation[]): boolean {
+  const spans = list.map((o) => {
+    const end = new Date(o.observedAt).getTime();
+    return { start: end - (o.periodDays ?? 1) * MS_PER_DAY, end };
+  });
+  for (let i = 0; i < spans.length; i++) {
+    for (let j = i + 1; j < spans.length; j++) {
+      if (Math.min(spans[i].end, spans[j].end) - Math.max(spans[i].start, spans[j].start) > 0) return true;
+    }
+  }
+  return false;
 }
 
 function derive(value: number, inputs: DriverValue[]): DriverValue {
@@ -86,6 +106,7 @@ export function computeDrivers(
   const of = (key: string) => byMetric.get(key) ?? [];
 
   const missing = new Set<string>();
+  const overlapping = new Set<string>();
   const stale = new Set<string>();
   const provisional = new Set<string>();
   const manual = new Set<string>();
@@ -146,6 +167,7 @@ export function computeDrivers(
       missing.add(f.metric);
       continue;
     }
+    if (hasOverlappingPeriods(past)) overlapping.add(f.metric);
     const newest = past.map((o) => o.observedAt).sort().at(-1)!;
     const { annualized, used } = trailingFlowAnnualized(past, asOf, f.window_days);
     const basis = used.length > 0 ? used : past;
@@ -179,9 +201,11 @@ export function computeDrivers(
     staleCritical: [...stale].filter((k) => asset.metrics[k]?.critical).sort(),
     provisionalMetrics: [...provisional].sort(),
     manualMetrics: [...manual].sort(),
+    overlappingFlowMetrics: [...overlapping].sort(),
   });
 
-  if (missing.size > 0 || !price || !revenue || !effective || !staked || !share || !emissionNow) return report(null);
+  if (missing.size > 0 || overlapping.size > 0) return report(null);
+  if (!price || !revenue || !effective || !staked || !share || !emissionNow) return report(null);
 
   const holderFlows: HolderFlowDriver[] = flows.map(({ def, annualized }) => ({
     id: def.id,
