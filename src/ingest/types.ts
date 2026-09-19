@@ -74,3 +74,23 @@ export function contractResolver(asset: AssetConfig): (name: string) => string {
     return address;
   };
 }
+
+/** An observation a fetch wrote, or (on a dry run, observationId null) would have written. */
+export interface WrittenObservation {
+  metricKey: string;
+  value: number;
+  observedAt: string;
+  periodDays: number | null;
+  source: 'onchain' | 'api';
+  observationId: number | null;
+}
+
+/** An anomaly a fetch raised, or (on a dry run, id null) would have raised. */
+export interface RaisedAnomaly {
+  id: number | null;
+  kind: import('../db/anomalies.js').AnomalyKind;
+  metricKey: string;
+  dedupeKey: string;
+  severity: import('../db/anomalies.js').AnomalySeverity;
+  detail: Record<string, unknown>;
+}
