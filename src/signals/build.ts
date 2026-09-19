@@ -15,6 +15,16 @@ export interface BuildSignalInput {
   provenance: Signal['provenance'];
   /** Price observation to report when drivers are null (blocked) but a price exists. */
   spotFallback?: { price: number; ts: string } | null;
+  /** Open anomalies for the asset, read at run time. They are not part of the snapshot. */
+  openAnomalies?: SignalAnomaly[];
+}
+
+export interface SignalAnomaly {
+  id: number;
+  kind: string;
+  /** '' for an anomaly that belongs to a source rather than a metric. */
+  metricKey: string;
+  severity: 'degrading' | 'advisory';
 }
 
 type SignalHorizon = NonNullable<Signal['horizons']>['6m'];
@@ -45,7 +55,10 @@ function toHorizon(h: HorizonOutput): SignalHorizon {
 
 export function buildSignal(input: BuildSignalInput): Signal {
   const { report, engine } = input;
-  const grade = gradeDataQuality(report);
+  const openAnomalies = input.openAnomalies ?? [];
+  // Only a degrading anomaly on a critical metric affects grade and status. The rest are listed.
+  const degrading = openAnomalies.filter((a) => a.severity === 'degrading' && input.asset.metrics[a.metricKey]?.critical === true);
+  const grade = gradeDataQuality(report, degrading.length > 0);
 
   let status: Signal['status'];
   let reasons: string[];
@@ -54,6 +67,7 @@ export function buildSignal(input: BuildSignalInput): Signal {
     reasons = input.blockedReasons;
   } else {
     reasons = report.staleCritical.map((m) => `stale_critical:${m}`);
+    reasons.push(...degrading.map((a) => `open_anomaly:${a.kind}:${a.metricKey}`));
     if (!engine.converged) reasons.push('supply_forecast_not_converged');
     status = reasons.length > 0 ? 'degraded' : 'ok';
   }
@@ -75,7 +89,8 @@ export function buildSignal(input: BuildSignalInput): Signal {
       grade,
       stale_metrics: report.staleMetrics,
       provisional_metrics: report.provisionalMetrics,
-      open_anomalies: 0,
+      open_anomalies: openAnomalies.length,
+      anomalies: openAnomalies.map((a) => ({ id: a.id, kind: a.kind, metric: a.metricKey, severity: a.severity })),
     },
     change: input.change,
     provenance: input.provenance,

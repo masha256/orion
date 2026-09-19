@@ -1,5 +1,6 @@
 import { parseAssetObject, type LoadedAsset } from '../config/load.js';
 import type { AssetConfig } from '../config/schema.js';
+import { listOpenAnomalies } from '../db/anomalies.js';
 import { getAssumptionSetById, getLatestAssumptionSet } from '../db/assumptions.js';
 import type { Db } from '../db/connection.js';
 import { getObservationsByIds, listActiveObservations, type Observation } from '../db/observations.js';
@@ -102,6 +103,8 @@ export function runValuation(db: Db, loaded: LoadedAsset, now: Date): { runId: n
       engine,
       blockedReasons: reasons,
       spotFallback: priceObs ? { price: priceObs.value, ts: priceObs.observedAt } : null,
+      // Read at run time and deliberately outside the snapshot: replay reproduces engine output only.
+      openAnomalies: listOpenAnomalies(db, asset.id),
       change: {
         prev_signal_id: prev?.signal_id ?? null,
         target_delta_pct: delta,

@@ -34,6 +34,10 @@ export const SignalSchema = z.strictObject({
     stale_metrics: z.array(z.string()),
     provisional_metrics: z.array(z.string()),
     open_anomalies: z.number().int().nonnegative(),
+    /** Added in sub-project 2 (additive, schema_version stays 1). Signals stored before it have no such key. */
+    anomalies: z
+      .array(z.strictObject({ id: z.number().int(), kind: z.string(), metric: z.string(), severity: z.enum(['degrading', 'advisory']) }))
+      .default([]),
   }),
   change: z.strictObject({
     prev_signal_id: z.string().nullable(),

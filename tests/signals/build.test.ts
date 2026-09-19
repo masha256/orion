@@ -89,3 +89,45 @@ describe('emitSignal', () => {
     expect(readFileSync(out, 'utf8').trim().split('\n')).toHaveLength(2);
   });
 });
+
+describe('buildSignal with open anomalies', () => {
+  const degrading = { id: 7, kind: 'cross_check_mismatch', metricKey: 'price_usd', severity: 'degrading' as const };
+
+  it('reports no anomalies by default', () => {
+    const s = buildSignal(input());
+    expect(s.data_quality.open_anomalies).toBe(0);
+    expect(s.data_quality.anomalies).toEqual([]);
+  });
+
+  it('degrades to grade D for an open degrading anomaly on a critical metric', () => {
+    const s = buildSignal({ ...input(), openAnomalies: [degrading] });
+    expect(s.status).toBe('degraded');
+    expect(s.status_reasons).toEqual(['open_anomaly:cross_check_mismatch:price_usd']);
+    expect(s.data_quality).toMatchObject({ grade: 'D', open_anomalies: 1, anomalies: [{ id: 7, kind: 'cross_check_mismatch', metric: 'price_usd', severity: 'degrading' }] });
+    expect(s.horizons).toBeDefined();
+    expect(SignalSchema.safeParse(s).success).toBe(true);
+  });
+
+  it('lists advisory anomalies, and degrading ones on non-critical metrics, without changing grade or status', () => {
+    const s = buildSignal({
+      ...input(),
+      openAnomalies: [
+        { id: 1, kind: 'revenue_disclosure_stale', metricKey: 'revenue_run_rate_usd', severity: 'advisory' },
+        { id: 2, kind: 'cross_check_mismatch', metricKey: 'staked_supply', severity: 'degrading' }, // staked_supply is not critical
+        { id: 3, kind: 'source_failure_streak', metricKey: '', severity: 'advisory' },
+      ],
+    });
+    expect(s.status).toBe('ok');
+    expect(s.data_quality.grade).toBe('A');
+    expect(s.data_quality.open_anomalies).toBe(3);
+    expect(s.data_quality.anomalies.map((a) => a.id)).toEqual([1, 2, 3]);
+  });
+
+  it('keeps a blocked signal blocked with its own reasons, and still reports the anomalies', () => {
+    const s = buildSignal({ ...input(miniObservations().filter((o) => o.metricKey !== 'effective_supply')), openAnomalies: [degrading] });
+    expect(s.status).toBe('blocked');
+    expect(s.status_reasons).toEqual(['missing_metric:effective_supply']);
+    expect(s.data_quality.grade).toBe('D');
+    expect(s.data_quality.open_anomalies).toBe(1);
+  });
+});

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { replayRun, runValuation, whatIf } from '../../src/app/valuation.js';
 import { parseAssetYaml, type LoadedAsset } from '../../src/config/load.js';
+import { decideAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
 import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb, type Db } from '../../src/db/connection.js';
 import { insertObservation, rejectObservation } from '../../src/db/observations.js';
@@ -252,6 +253,46 @@ describe('replayRun', () => {
       assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-06-27', periodDays: 1, value: 100000.1, source: 'onchain', fetchedAt: AS_OF,
     });
     const { runId } = runValuation(db, loaded, NOW);
+    expect(replayRun(db, runId).identical).toBe(true);
+  });
+});
+
+describe('runValuation and open anomalies', () => {
+  const raise = (severity: 'degrading' | 'advisory', metricKey = 'price_usd') =>
+    raiseAnomaly(db, { assetId: 'mini', kind: 'cross_check_mismatch', metricKey, dedupeKey: 'coingecko', severity, detail: {}, seenAt: AS_OF });
+
+  it('degrades while a degrading anomaly on a critical metric is open, and recovers once it is acknowledged', () => {
+    seedObservations();
+    seedAssumptions();
+    const anomaly = raise('degrading');
+    const degraded = runValuation(db, loaded, NOW).signal;
+    expect(degraded.status).toBe('degraded');
+    expect(degraded.status_reasons).toEqual(['open_anomaly:cross_check_mismatch:price_usd']);
+    expect(degraded.data_quality).toMatchObject({ grade: 'D', open_anomalies: 1 });
+    expect(degraded.data_quality.anomalies).toEqual([{ id: anomaly.id, kind: 'cross_check_mismatch', metric: 'price_usd', severity: 'degrading' }]);
+    expect(degraded.horizons!['12m'].expected_target).toBeCloseTo(10, 6); // the target itself is untouched
+
+    decideAnomaly(db, anomaly.id, 'acknowledged', 'venice api lags by an hour', AS_OF);
+    const ok = runValuation(db, loaded, NOW).signal;
+    expect(ok.status).toBe('ok');
+    expect(ok.data_quality).toMatchObject({ grade: 'A', open_anomalies: 0, anomalies: [] });
+  });
+
+  it('ignores anomalies of other assets and leaves advisory ones in the list only', () => {
+    seedObservations();
+    seedAssumptions();
+    raise('advisory');
+    raiseAnomaly(db, { assetId: 'other', kind: 'unlisted_sender', metricKey: 'price_usd', dedupeKey: '0x1', severity: 'degrading', detail: {}, seenAt: AS_OF });
+    const signal = runValuation(db, loaded, NOW).signal;
+    expect(signal.status).toBe('ok');
+    expect(signal.data_quality.open_anomalies).toBe(1);
+  });
+
+  it('keeps anomalies out of the replayed engine output', () => {
+    seedObservations();
+    seedAssumptions();
+    const { runId } = runValuation(db, loaded, NOW);
+    raise('degrading');
     expect(replayRun(db, runId).identical).toBe(true);
   });
 });

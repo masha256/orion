@@ -53,6 +53,10 @@ export function signalSummary(s: Signal): string[] {
   if (s.status_reasons.length > 0) lines.push(`reasons: ${s.status_reasons.join('; ')}`);
   if (s.data_quality.stale_metrics.length > 0) lines.push(`stale: ${s.data_quality.stale_metrics.join(', ')}`);
   if (s.data_quality.provisional_metrics.length > 0) lines.push(`provisional: ${s.data_quality.provisional_metrics.join(', ')}`);
+  const anomalies = s.data_quality.anomalies ?? []; // signals stored before sub-project 2 have no list
+  if (anomalies.length > 0) {
+    lines.push(`open anomalies: ${anomalies.map((a) => `#${a.id} ${a.kind}${a.metric ? ` on ${a.metric}` : ''} (${a.severity})`).join('; ')}`);
+  }
   if (s.change.prev_signal_id) {
     const delta = s.change.target_delta_pct === null ? 'n/a' : `${s.change.target_delta_pct.toFixed(1)}%`;
     lines.push(`change: ${s.change.cause}, 12m target ${delta} vs ${s.change.prev_signal_id}${s.change.rationale ? ` (${s.change.rationale})` : ''}`);
