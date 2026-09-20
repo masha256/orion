@@ -171,6 +171,23 @@ export function normalizeText(text: string): string {
     .trim();
 }
 
+const BLOCK_TAG =
+  /<\/?(?:address|article|aside|blockquote|br|caption|dd|details|div|dl|dt|figcaption|figure|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|summary|table|tbody|td|tfoot|th|thead|tr|ul)\b[^>]*>/gi;
+
+/**
+ * The page cut into blocks, each normalized: paragraphs, table cells, list items, headings; for plain text, runs separated
+ * by a blank line. A quote must sit inside ONE block. Flattening the whole page would let a quote be spliced from two
+ * unrelated blocks (a figure from one table row, a claim from the next) and still "occur" in the page.
+ */
+export function textBlocks(text: string): string[] {
+  return text
+    .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, '\n\n')
+    .replace(BLOCK_TAG, '\n\n')
+    .split(/\n[ \t\r]*\n/)
+    .map(normalizeText)
+    .filter((block) => block !== '');
+}
+
 /** Scheme and host lowercased, fragment dropped, one trailing slash dropped. The query string is kept: it can select the page. */
 export function normalizeUrl(url: string): string {
   try {
@@ -183,7 +200,7 @@ export function normalizeUrl(url: string): string {
   }
 }
 
-/** The citation must be a page fetched in this run, and the quote must occur in it. Catches invented citations, not misread pages. */
+/** The citation must be a page fetched in this run, and the quote must occur inside one block of it. Catches invented and spliced citations, not misread pages. */
 export function verifyCitation(pages: FetchedPage[], citationUrl: string, quotedText: string): Refusal | null {
   const quote = normalizeText(quotedText);
   if (quote.length < MIN_QUOTE_LENGTH) {
@@ -197,11 +214,15 @@ export function verifyCitation(pages: FetchedPage[], citationUrl: string, quoted
       message: `${citationUrl} was not fetched with web_fetch in this run; fetch the page you are citing, then record the observation`,
     };
   }
-  if (!fetched.some((p) => normalizeText(p.text).includes(quote))) {
+  if (fetched.some((p) => textBlocks(p.text).some((block) => block.includes(quote)))) return null;
+  if (fetched.some((p) => normalizeText(p.text).includes(quote))) {
     return {
-      refused: 'quote_not_found',
-      message: `quoted_text does not occur in the fetched text of ${citationUrl}; quote the page verbatim`,
+      refused: 'quote_spans_blocks',
+      message: `quoted_text runs across separate blocks of ${citationUrl} (paragraphs, table cells, list items); quote from within one of them`,
     };
   }
-  return null;
+  return {
+    refused: 'quote_not_found',
+    message: `quoted_text does not occur in the fetched text of ${citationUrl}; quote the page verbatim`,
+  };
 }

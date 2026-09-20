@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  allowedRange, blockingAnomalies, checkEvidence, checkStep, maxStep, normalizeText, normalizeUrl, placeValue, routeObservation,
+  allowedRange, blockingAnomalies, checkEvidence, checkStep, maxStep, normalizeText, normalizeUrl, placeValue, routeObservation, textBlocks,
   verifyCitation, type EvidenceRef,
 } from '../../src/agent/guardrails.js';
 import { parseAssetYaml } from '../../src/config/load.js';
@@ -145,6 +145,24 @@ describe('verified citations', () => {
   it('accepts a verbatim quote across inline tags and entity spacing', () => {
     expect(verifyCitation(pages, 'https://news.example.com/venice-revenue', 'annualized revenue of $100 million')).toBeNull();
     expect(verifyCitation(pages, 'https://news.example.com/venice-revenue/', 'founder wrote - "up from $70 million"')).toBeNull();
+  });
+
+  it('cuts a page into blocks at block-level tags and at blank lines; inline tags stay inside their block', () => {
+    expect(textBlocks('<h1>Title</h1><p>One <b>bold</b> line<br>next</p><ul><li>a</li><li>b</li></ul>')).toEqual(['Title', 'One bold line', 'next', 'a', 'b']);
+    expect(textBlocks('First paragraph,\nwrapped.\n\nSecond paragraph.')).toEqual(['First paragraph, wrapped.', 'Second paragraph.']);
+    expect(textBlocks('<p>kept</p><script>var hidden = 1;</script>')).toEqual(['kept']);
+  });
+
+  it('refuses a quote spliced across blocks, though every word of it is on the page', () => {
+    const table =
+      '<table><tr><td>Acme Corp</td><td>revenue fell 40 percent to $12 million</td></tr>' +
+      '<tr><td>Zenith Inc</td><td>revenue grew 15 percent to $90 million</td></tr></table>';
+    const t = [{ url: 'https://x.example.com/t', text: table }];
+    expect(verifyCitation(t, 'https://x.example.com/t', '$12 million Zenith Inc revenue grew 15 percent')?.refused).toBe('quote_spans_blocks');
+    expect(verifyCitation(t, 'https://x.example.com/t', 'revenue grew 15 percent to $90 million')).toBeNull();
+    const plain = [{ url: 'https://x.example.com/p', text: 'Acme reported revenue of $12 million.\n\nZenith reported\nrevenue of $90 million.' }];
+    expect(verifyCitation(plain, 'https://x.example.com/p', 'of $12 million. Zenith reported revenue')?.refused).toBe('quote_spans_blocks');
+    expect(verifyCitation(plain, 'https://x.example.com/p', 'Zenith reported revenue of $90 million')).toBeNull(); // one line break inside a paragraph is fine
   });
 
   it('refuses a page that was not fetched, a quote that is not there, and a quote too short to mean anything', () => {
