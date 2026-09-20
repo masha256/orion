@@ -156,8 +156,9 @@ const recordProvisionalObservation = defineTool({
   name: 'record_provisional_observation',
   description:
     'Records a value you found by research, for a manually maintained metric. citation_url must be a page you fetched with web_fetch in ' +
-    'this run, and quoted_text must be the page\'s own words (20 characters or more, verbatim) stating the figure. The row is stored as ' +
-    'provisional. On a critical metric, a large move from the value in force becomes a proposal for the user instead of going live. ' +
+    'this run, and quoted_text must be the page\'s own words (20 characters or more, verbatim, from within one paragraph, table cell, or list item) ' +
+    'stating the figure. The row is stored as ' +
+    'provisional. On a critical metric, a large move from the last confirmed value becomes a proposal for the user instead of going live. ' +
     'Future dates are for announced schedule changes and events only. You cannot write where an observation already exists at the same time; propose reject_observation for one that is wrong.',
   input: z.strictObject({
     metric: z.string(),
