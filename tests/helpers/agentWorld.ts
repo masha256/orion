@@ -1,9 +1,13 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { FetchedPage } from '../../src/agent/guardrails.js';
 import { Ledger } from '../../src/agent/ledger.js';
 import { AGENT_TOOLS, runTool, type ToolContext } from '../../src/agent/tools/index.js';
 import { budgetsFor } from '../../src/config/agentPolicy.js';
 import { parseAssetYaml, type LoadedAsset } from '../../src/config/load.js';
 import { createAssumptionSet } from '../../src/db/assumptions.js';
+import { assignPersona } from '../../src/db/coverage.js';
 import { openDb, type Db } from '../../src/db/connection.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { MINI_ASSET_YAML, miniAssumptions } from './assets.js';
@@ -59,4 +63,33 @@ export function agentWorld(yaml: string = AGENT_ASSET_YAML, assumptionsOver: Par
     return { isError: outcome.isError, result: JSON.parse(outcome.content) as Record<string, unknown> };
   };
   return { db, loaded, ledger, ctx, ids, pages, call };
+}
+
+export const PERSONA_MD = `---
+name: analyst
+temperament: skeptical
+sectors: [test-assets]
+---
+You are the analyst covering the mini test asset.
+`;
+
+const skillMd = (name: string, runTypes: string): string => `---
+name: ${name}
+description: How to do ${name}.
+run_types: [${runTypes}]
+---
+Instructions for ${name}.
+`;
+
+/** A temp ORION_HOME with one persona and three skills, and the persona assigned to the mini asset in `db`. */
+export function agentHome(db: Db): string {
+  const home = mkdtempSync(join(tmpdir(), 'orion-agent-'));
+  mkdirSync(join(home, 'personas'));
+  mkdirSync(join(home, 'skills'));
+  writeFileSync(join(home, 'personas', 'analyst.md'), PERSONA_MD);
+  writeFileSync(join(home, 'skills', 'assumption-review.md'), skillMd('assumption-review', 'weekly, deep'));
+  writeFileSync(join(home, 'skills', 'anomaly-triage.md'), skillMd('anomaly-triage', 'triage'));
+  writeFileSync(join(home, 'skills', 'disclosure-research.md'), skillMd('disclosure-research', 'weekly, triage, deep'));
+  assignPersona(db, 'mini', 'analyst', AS_OF);
+  return home;
 }
