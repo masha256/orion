@@ -66,6 +66,15 @@ describe('staging', () => {
     expect(rows[0]).toMatchObject({ id: -1, assetId: 'mini', metricKey: 'revenue_run_rate_usd', value: 1100, status: 'provisional', source: 'manual' });
   });
 
+  it('replaces an observation staged earlier at the same metric and time, keeping its temporary id', () => {
+    const first = research({ value: 1100 });
+    const second = research({ value: 1150, quotedText: 'annualized revenue of $1,150' });
+    expect(second.tempId).toBe(first.tempId);
+    expect(ledger.observations()).toHaveLength(1);
+    expect(ledger.observations()[0]).toMatchObject({ tempId: -1, value: 1150, quotedText: 'annualized revenue of $1,150' });
+    expect(research({ observedAt: '2026-09-17' }).tempId).toBe(-2);
+  });
+
   it('tracks staged resolutions', () => {
     ledger.stageResolution({ anomalyId: 4, note: 'cleared', evidence: [priceId] });
     expect([...ledger.resolvedAnomalyIds()]).toEqual([4]);
@@ -179,6 +188,19 @@ describe('the world changes mid-run', () => {
     expect(() => ledger.commit(db, asset, { agentRunId: null, now: NOW })).toThrow(/anomaly \d+ is no longer open \(acknowledged\)/);
     expect(getAnomaly(db, a.id)).toMatchObject({ status: 'acknowledged', note: 'known lag' });
     nothingWritten();
+  });
+
+  it('conflicts rather than supersede an observation that already exists at the same metric and time', () => {
+    research();
+    ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's' });
+    const users = insertObservation(db, {
+      assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-18', value: 1000, source: 'manual', status: 'provisional',
+      citationUrl: 'https://example.com/user', fetchedAt: '2026-09-19',
+    });
+    expect(() => ledger.commit(db, asset, { agentRunId: null, now: NOW })).toThrow(/already exists/);
+    const active = listActiveObservations(db, 'mini', 'revenue_run_rate_usd');
+    expect(active.map((o) => o.id)).toEqual([users.id]);
+    expect(count('journal')).toBe(0);
   });
 
   it('conflicts when the config tightened so the staged set is no longer valid, and rolls back the rows already inserted', () => {

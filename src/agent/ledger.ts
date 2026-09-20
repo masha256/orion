@@ -5,7 +5,7 @@ import { insertAssumptionChange } from '../db/assumptionChanges.js';
 import { getLatestAssumptionSet, type AssumptionSet } from '../db/assumptions.js';
 import type { Db } from '../db/connection.js';
 import { insertJournalEntry } from '../db/journal.js';
-import { insertObservation, type Observation } from '../db/observations.js';
+import { insertObservation, listActiveObservations, type Observation } from '../db/observations.js';
 import { insertProposal, type ProposalChange, type ProposalEffect } from '../db/proposals.js';
 import { OrionError, type AssumptionValues, type Scenario } from '../types.js';
 
@@ -141,8 +141,15 @@ export class Ledger {
 
   // ---- observations ----
 
+  /** A second observation at the same metric and time replaces the first staged one and keeps its temporary id, so evidence that cites it still resolves. */
   stageObservation(o: Omit<StagedObservation, 'tempId'>): StagedObservation {
-    const staged = { ...o, observedAt: new Date(o.observedAt).toISOString(), tempId: this.nextTempId-- };
+    const observedAt = new Date(o.observedAt).toISOString();
+    const existing = this.stagedObservations.find((s) => s.metricKey === o.metricKey && s.observedAt === observedAt);
+    if (existing) {
+      Object.assign(existing, o, { observedAt });
+      return existing;
+    }
+    const staged = { ...o, observedAt, tempId: this.nextTempId-- };
     this.stagedObservations.push(staged);
     this.shown.add(staged.tempId);
     return staged;
@@ -219,6 +226,13 @@ export class Ledger {
           const current = getAnomaly(db, r.anomalyId);
           // decideAnomaly would also resolve an ACKNOWLEDGED anomaly, which withdraws the user's decision. Never let that through.
           if (!current || current.status !== 'open') throw new AgentConflict(`anomaly ${r.anomalyId} is no longer open (${current?.status ?? 'missing'})`);
+        }
+
+        // The agent never supersedes an observation. insertObservation would let a provisional insert retire any active
+        // provisional row at the same metric and time, including one the user entered; rejecting a row is the user's call.
+        for (const o of this.stagedObservations) {
+          const taken = listActiveObservations(db, this.assetId, o.metricKey).find((row) => row.observedAt === o.observedAt);
+          if (taken) throw new AgentConflict(`observation #${taken.id} of ${o.metricKey} at ${o.observedAt} already exists; the agent never supersedes one`);
         }
 
         const realId = new Map<number, number>();
