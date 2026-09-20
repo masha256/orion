@@ -178,6 +178,16 @@ describe('verified citations', () => {
     expect(verifyCitation(rows, 'https://x.example.com/r', 'Zenith Inc revenue grew 15 percent to $90 million')).toBeNull();
   });
 
+  it('never lets a wrong guess about HTML merge paragraphs: a blank line is a hard break in every page', () => {
+    const generics = 'Acme Corp reported revenue of $12 million in Q1, citing List<int> throughput gains.\n\nZenith Inc reported revenue of $90 million in Q2.';
+    expect(textBlocks(generics)).toHaveLength(2);
+    const placeholder = [{ url: 'https://x.example.com/g', text: `Dear <investor>, revenue was $12 million in the first quarter.\n\nSeparately, Zenith Inc reported revenue of $90 million.` }];
+    expect(verifyCitation(placeholder, 'https://x.example.com/g', 'in the first quarter. Separately, Zenith Inc reported revenue')?.refused).toBe('quote_spans_blocks');
+    expect(verifyCitation(placeholder, 'https://x.example.com/g', 'Zenith Inc reported revenue of $90 million')).toBeNull();
+    // Real HTML with a blank line between two paragraphs' tags still gives two blocks, and one paragraph stays whole.
+    expect(textBlocks('<p>One paragraph\nwrapped in the source.</p>\n\n<p>Another.</p>')).toEqual(['One paragraph wrapped in the source.', 'Another.']);
+  });
+
   it('refuses a page that was not fetched, a quote that is not there, and a quote too short to mean anything', () => {
     expect(verifyCitation(pages, 'https://other.example.com/x', 'annualized revenue of $100 million')?.refused).toBe('citation_not_fetched');
     expect(verifyCitation(pages, 'https://news.example.com/venice-revenue', 'annualized revenue of $200 million')?.refused).toBe('quote_not_found');
