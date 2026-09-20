@@ -209,7 +209,7 @@ assumptions:
 
 review_triggers:
   driver_deviation_pct: 25
-  provisional_move_pct: 25 # a researched value on a critical metric further than this from the value in force becomes a proposal
+  provisional_move_pct: 25 # a researched value on a critical metric further than this from the last confirmed value becomes a proposal
   revenue_stale_move_pct: 30 # usage_index move since the revenue disclosure that raises the advisory stale-revenue anomaly
   calendar:
     - { date: "2026-10-01", note: "Announced emission cut to 2.0M VVV per year" }
