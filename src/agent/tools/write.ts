@@ -4,7 +4,7 @@ import { provisionalMovePct } from '../../config/agentPolicy.js';
 import { applyEditsToObject, getAtPath } from '../../config/edit.js';
 import { parseAssetObject, rawConfig } from '../../config/load.js';
 import { getAnomaly, listOpenAnomalies } from '../../db/anomalies.js';
-import { getObservationsByIds, type Observation } from '../../db/observations.js';
+import { getObservationsByIds, listActiveObservations, type Observation } from '../../db/observations.js';
 import { findPendingDuplicate, type ProposalChange, type ProposalEffect } from '../../db/proposals.js';
 import { requiredAssumptionKeys, validateAssetModules, validateAssumptions } from '../../engine/requirements.js';
 import { SCENARIOS, type Scenario } from '../../types.js';
@@ -158,7 +158,7 @@ const recordProvisionalObservation = defineTool({
     'Records a value you found by research, for a manually maintained metric. citation_url must be a page you fetched with web_fetch in ' +
     'this run, and quoted_text must be the page\'s own words (20 characters or more, verbatim) stating the figure. The row is stored as ' +
     'provisional. On a critical metric, a large move from the value in force becomes a proposal for the user instead of going live. ' +
-    'Future dates are for announced schedule changes and events only.',
+    'Future dates are for announced schedule changes and events only. You cannot write where an observation already exists at the same time; propose reject_observation for one that is wrong.',
   input: z.strictObject({
     metric: z.string(),
     value: z.number(),
@@ -182,6 +182,16 @@ const recordProvisionalObservation = defineTool({
       refuse('future_observation', `${input.metric} is a ${def.type} metric; only schedule and event metrics may be dated in the future`);
     }
     if (def.type === 'flow' && input.period_days === undefined) refuse('period_required', `${input.metric} is a flow metric; give period_days`);
+
+    // The agent never supersedes an observation: the ledger refuses it at commit too. Say so now, while it can still act.
+    const taken = listActiveObservations(ctx.db, asset.id, input.metric).find((o) => o.observedAt === observedAt);
+    if (taken) {
+      refuse(
+        'observation_exists',
+        `observation #${taken.id} of ${input.metric} at ${observedAt} already exists (${taken.status}, value ${taken.value}); you never supersede one. If it is wrong, propose reject_observation.`,
+        { observation_id: taken.id },
+      );
+    }
 
     const citation = verifyCitation(ctx.fetchedPages(), input.citation_url, input.quoted_text);
     if (citation) throw new ToolRefusal(citation);

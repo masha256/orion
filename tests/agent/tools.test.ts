@@ -210,6 +210,13 @@ describe('record_provisional_observation', () => {
     expect(w.ledger.observations()[0].live).toBe(false);
   });
 
+  it('refuses to write where an observation already exists, and names it: the agent never supersedes one', () => {
+    const r = research({ observed_at: '2026-06-15' }); // the seeded revenue observation is dated 2026-06-15
+    expect(r).toMatchObject({ isError: true, result: { refused: 'observation_exists', observation_id: w.ids.revenue_run_rate_usd } });
+    expect(w.ledger.observations()).toEqual([]);
+    expect(w.ledger.proposals()).toEqual([]);
+  });
+
   it('verifies the citation against the pages fetched in this run', () => {
     expect(research({ citation_url: 'https://elsewhere.example.com/' }).result.refused).toBe('citation_not_fetched');
     expect(research({ quoted_text: 'annualized revenue reached $9,999 in September' }).result.refused).toBe('quote_not_found');
