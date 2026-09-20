@@ -114,4 +114,92 @@ CREATE INDEX idx_anomalies_asset ON anomalies (asset_id, status);
 CREATE UNIQUE INDEX idx_anomalies_one_open ON anomalies (asset_id, kind, metric_key, dedupe_key) WHERE status = 'open';
 `,
   },
+  {
+    id: 3,
+    sql: `
+CREATE TABLE coverage (
+  asset_id TEXT PRIMARY KEY,
+  persona TEXT NOT NULL,
+  assigned_at TEXT NOT NULL
+);
+
+CREATE TABLE agent_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_id TEXT NOT NULL,
+  persona TEXT NOT NULL,
+  run_type TEXT NOT NULL CHECK (run_type IN ('weekly','triage','deep')),
+  trigger_kind TEXT NOT NULL,
+  trigger_detail_json TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('running','completed','budget_exhausted','refused','no_journal','conflict','error')),
+  dry_run INTEGER NOT NULL DEFAULT 0,
+  config_hash TEXT NOT NULL,
+  model TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  requests INTEGER NOT NULL DEFAULT 0,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  web_searches INTEGER NOT NULL DEFAULT 0,
+  web_fetches INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  summary_json TEXT
+);
+CREATE INDEX idx_agent_runs_asset ON agent_runs (asset_id, id);
+
+CREATE TABLE agent_transcripts (
+  run_id INTEGER PRIMARY KEY REFERENCES agent_runs(id),
+  messages_json TEXT NOT NULL
+);
+
+CREATE TABLE proposals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_id TEXT NOT NULL,
+  persona TEXT NOT NULL,
+  agent_run_id INTEGER REFERENCES agent_runs(id),
+  kind TEXT NOT NULL CHECK (kind IN ('assumption_value','config','acknowledge_anomaly','withdraw_acknowledgement','confirm_observation','reject_observation','observation')),
+  change_json TEXT NOT NULL,
+  filed_against_json TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  evidence_json TEXT NOT NULL,
+  effect_json TEXT,
+  status TEXT NOT NULL CHECK (status IN ('pending','approved','rejected')),
+  created_at TEXT NOT NULL,
+  decided_at TEXT,
+  decision_note TEXT
+);
+CREATE INDEX idx_proposals_asset ON proposals (asset_id, status);
+
+CREATE TABLE assumption_changes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  set_id INTEGER NOT NULL REFERENCES assumption_sets(id),
+  key TEXT NOT NULL,
+  scenario TEXT NOT NULL CHECK (scenario IN ('bear','base','bull')),
+  from_value REAL NOT NULL,
+  to_value REAL NOT NULL,
+  rationale TEXT NOT NULL
+);
+CREATE TABLE assumption_evidence (
+  change_id INTEGER NOT NULL REFERENCES assumption_changes(id),
+  observation_id INTEGER NOT NULL REFERENCES observations(id),
+  PRIMARY KEY (change_id, observation_id)
+);
+
+CREATE TABLE journal (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_id TEXT NOT NULL,
+  persona TEXT NOT NULL,
+  agent_run_id INTEGER REFERENCES agent_runs(id),
+  created_at TEXT NOT NULL,
+  thesis TEXT NOT NULL,
+  open_questions_json TEXT NOT NULL,
+  summary TEXT NOT NULL
+);
+CREATE INDEX idx_journal_asset ON journal (asset_id, id);
+
+ALTER TABLE anomalies ADD COLUMN decided_by TEXT;
+ALTER TABLE valuation_runs ADD COLUMN agent_run_id INTEGER;
+`,
+  },
 ];

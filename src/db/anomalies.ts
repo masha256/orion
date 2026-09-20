@@ -20,6 +20,8 @@ export interface Anomaly {
   lastSeenAt: string;
   note: string | null;
   decidedAt: string | null;
+  /** The persona that decided it, or null when the user did (and for every open anomaly). */
+  decidedBy: string | null;
 }
 
 export interface RaiseAnomalyInput {
@@ -46,13 +48,14 @@ interface Row {
   last_seen_at: string;
   note: string | null;
   decided_at: string | null;
+  decided_by: string | null;
 }
 
 function fromRow(r: Row): Anomaly {
   return {
     id: r.id, assetId: r.asset_id, kind: r.kind, metricKey: r.metric_key, dedupeKey: r.dedupe_key, severity: r.severity,
     status: r.status, detail: JSON.parse(r.detail_json) as Record<string, unknown>, occurrences: r.occurrences,
-    firstSeenAt: r.first_seen_at, lastSeenAt: r.last_seen_at, note: r.note, decidedAt: r.decided_at,
+    firstSeenAt: r.first_seen_at, lastSeenAt: r.last_seen_at, note: r.note, decidedAt: r.decided_at, decidedBy: r.decided_by,
   };
 }
 
@@ -123,7 +126,15 @@ export function listOpenAnomalies(db: Db, assetId: string): Anomaly[] {
   return rows.map(fromRow);
 }
 
-export function decideAnomaly(db: Db, id: number, status: 'resolved' | 'acknowledged', note: string, nowIso: string): Anomaly {
+export function decideAnomaly(
+  db: Db,
+  id: number,
+  status: 'resolved' | 'acknowledged',
+  note: string,
+  nowIso: string,
+  /** A persona name when the agent decides; omitted when the user does. */
+  decidedBy: string | null = null,
+): Anomaly {
   if (note.trim() === '') throw new OrionError('note_required', 'a note is required: say why this anomaly is resolved or acknowledged');
   const current = getAnomaly(db, id);
   if (!current) throw new OrionError('anomaly_not_found', `no anomaly with id ${id}`);
@@ -131,6 +142,8 @@ export function decideAnomaly(db: Db, id: number, status: 'resolved' | 'acknowle
   // that withdraws the standing acknowledgement, so the next occurrence opens a new anomaly.
   const allowed = current.status === 'open' || (current.status === 'acknowledged' && status === 'resolved');
   if (!allowed) throw new OrionError('anomaly_not_open', `anomaly ${id} is already ${current.status}`);
-  db.prepare('UPDATE anomalies SET status = ?, note = ?, decided_at = ? WHERE id = ?').run(status, note.trim(), new Date(nowIso).toISOString(), id);
+  db.prepare('UPDATE anomalies SET status = ?, note = ?, decided_at = ?, decided_by = ? WHERE id = ?').run(
+    status, note.trim(), new Date(nowIso).toISOString(), decidedBy, id,
+  );
   return getAnomaly(db, id)!;
 }

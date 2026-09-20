@@ -11,6 +11,9 @@ export const PROVENANCE_RANK: Record<Provenance, number> = { onchain: 0, api: 1,
 export type ObservationSource = 'onchain' | 'api' | 'manual';
 export type ObservationStatus = 'confirmed' | 'provisional' | 'rejected';
 
+export const RUN_TYPES = ['weekly', 'triage', 'deep'] as const;
+export type RunType = (typeof RUN_TYPES)[number];
+
 export const MS_PER_DAY = 86_400_000;
 export const DAYS_PER_YEAR = 365;
 
@@ -27,6 +30,14 @@ export const STD_METRICS = {
   stakerEmissionShare: 'staker_emission_share',
   scheduledUnlock: 'scheduled_unlock_tokens',
 } as const;
+
+/** Addresses a place in an asset config. A string selects a map key, or the item with that `id` in a list of items that have ids. A number selects by index. */
+export type PathSegment = string | number;
+export interface ConfigEdit {
+  path: PathSegment[];
+  /** `null` deletes the key. */
+  value: unknown;
+}
 
 export type ScenarioAssumptions = Record<string, number>;
 export type AssumptionValues = Record<Scenario, ScenarioAssumptions>;

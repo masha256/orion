@@ -24,6 +24,7 @@
     "orion": "dist/cli/index.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.127.0",
     "better-sqlite3": "^13.0.3",
     "commander": "^15.0.0",
     "viem": "^2.56.8",
