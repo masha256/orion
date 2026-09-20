@@ -113,7 +113,8 @@ export function approveProposal(db: Db, home: string, id: number, opts: { note?:
       case 'observation': {
         const { config } = loadAsset(home, p.assetId);
         const filed = (p.filedAgainst as { inForce: number | null }).inForce;
-        const inForce = valueInForce(db, config, change.metricKey, nowIso);
+        // The last CONFIRMED value: the same baseline the move guard measured from when it filed this proposal.
+        const inForce = valueInForce(db, config, change.metricKey, nowIso, { confirmedOnly: true });
         if (inForce !== filed) stale(id, `${change.metricKey} was ${filed} when it was filed and is ${inForce} now`);
         const row = insertObservation(db, {
           assetId: p.assetId, metricKey: change.metricKey, observedAt: change.observedAt, periodDays: change.periodDays, value: change.value,

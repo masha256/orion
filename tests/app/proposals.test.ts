@@ -123,6 +123,22 @@ describe('approving observation proposals', () => {
     const late = file({ ...change, value: 2100 }, { inForce: 1000 });
     expect(codeOf(() => approve(late.id))).toBe('stale_proposal'); // 2000 is in force now
   });
+
+  it('checks an observation proposal against the last CONFIRMED value, the baseline the move guard filed it against', () => {
+    // A provisional row is live in the signal (1250). The confirmed value, which the proposal was filed against, is still 1000.
+    insertObservation(w.db, {
+      assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-20', value: 1250, source: 'manual', status: 'provisional',
+      citationUrl: 'https://news.example.com/earlier', fetchedAt: AS_OF,
+    });
+    const p = file(
+      {
+        kind: 'observation', metricKey: 'revenue_run_rate_usd', value: 2000, observedAt: '2026-06-28T00:00:00.000Z', periodDays: null,
+        citationUrl: 'https://news.example.com/big', quotedText: 'reports annualized revenue of $2,000',
+      },
+      { inForce: 1000 },
+    );
+    expect(approve(p.id).result).toMatchObject({ kind: 'observation', action: 'inserted' });
+  });
 });
 
 describe('approving a config proposal', () => {
