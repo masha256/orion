@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -139,6 +139,20 @@ describe('approving observation proposals', () => {
     );
     expect(approve(p.id).result).toMatchObject({ kind: 'observation', action: 'inserted' });
   });
+
+  it('goes stale rather than supersede an observation that now exists at the same metric and time, even a confirmed one', () => {
+    const change: ProposalChange = {
+      kind: 'observation', metricKey: 'revenue_run_rate_usd', value: 2000, observedAt: '2026-06-10T00:00:00.000Z', periodDays: null,
+      citationUrl: 'https://news.example.com/big', quotedText: 'reports annualized revenue of $2,000',
+    };
+    const p = file(change, { inForce: 1000 });
+    const users = insertObservation(w.db, {
+      assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-10', value: 900, source: 'manual', fetchedAt: AS_OF,
+    });
+    expect(codeOf(() => approve(p.id))).toBe('stale_proposal');
+    expect(getObservationsByIds(w.db, [users.id])[0]).toMatchObject({ supersededBy: null, status: 'confirmed' });
+    expect(getProposal(w.db, p.id)!.status).toBe('pending');
+  });
 });
 
 describe('approving a config proposal', () => {
@@ -180,6 +194,40 @@ describe('approving a config proposal', () => {
     w.db.exec("CREATE TRIGGER fail_decide BEFORE UPDATE ON proposals BEGIN SELECT RAISE(ABORT, 'disk full'); END;");
     expect(() => approve(p.id)).toThrow(/disk full/);
     expect(readFileSync(yamlPath, 'utf8')).toBe(before);
+  });
+
+  it('never applies an edit under agent: or id, whoever wrote the proposal row: the agent cannot raise its own limits', () => {
+    const before = readFileSync(yamlPath, 'utf8');
+    const step = file({ kind: 'config', edits: [{ path: ['agent', 'max_step_fraction'], value: 1 }] }, [null]);
+    const budgets = file({ kind: 'config', edits: [{ path: ['agent'], value: { budgets: { weekly: { proposals: 9999 } } } }] }, [null]);
+    const rename = file({ kind: 'config', edits: [{ path: ['id'], value: 'other' }] }, ['mini']);
+    for (const p of [step, budgets, rename]) {
+      expect(codeOf(() => approve(p.id))).toBe('path_not_proposable');
+      expect(getProposal(w.db, p.id)!.status).toBe('pending');
+    }
+    expect(readFileSync(yamlPath, 'utf8')).toBe(before);
+  });
+
+  it('refuses a proposal whose filed-against record does not line up with its edits', () => {
+    const edit: ProposalChange = { kind: 'config', edits: [{ path: ['assumptions', 'rev_growth_y1', 'base'], value: { min: 0, max: 2 } }] };
+    expect(codeOf(() => approve(file(edit, []).id))).toBe('invalid_proposal');
+    expect(codeOf(() => approve(file(edit, { value: 0 }).id))).toBe('invalid_proposal');
+  });
+
+  it('marks a proposal approved without rewriting when the file already holds every proposed value', () => {
+    // A crash after the rename and before the status write leaves exactly this state.
+    const p = file(bandEdit, [{ min: 0, max: 1 }]);
+    writeFileSync(yamlPath, readFileSync(yamlPath, 'utf8').replace('base: { min: 0, max: 1 }', 'base: { min: 0, max: 2 }'));
+    const applied = readFileSync(yamlPath, 'utf8');
+    expect(approve(p.id).proposal.status).toBe('approved');
+    expect(readFileSync(yamlPath, 'utf8')).toBe(applied);
+  });
+
+  it('leaves no temp file behind, and reports a missing asset file as such', () => {
+    approve(file(bandEdit, [{ min: 0, max: 1 }]).id);
+    expect(existsSync(`${yamlPath}.tmp`)).toBe(false);
+    const orphan = file(bandEdit, [{ min: 0, max: 1 }], { assetId: 'ghost' });
+    expect(codeOf(() => approve(orphan.id))).toBe('asset_not_found');
   });
 });
 

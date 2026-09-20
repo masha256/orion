@@ -1,13 +1,13 @@
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { applyEditsToYaml, getAtPath } from '../config/edit.js';
+import { applyEditsToYaml, getAtPath, unproposableEdits } from '../config/edit.js';
 import { loadAsset, parseAssetYaml } from '../config/load.js';
 import { decideAnomaly, getAnomaly } from '../db/anomalies.js';
 import { insertAssumptionChange } from '../db/assumptionChanges.js';
 import { getLatestAssumptionSet } from '../db/assumptions.js';
 import type { Db } from '../db/connection.js';
-import { confirmObservation, getObservationsByIds, insertObservation, rejectObservation } from '../db/observations.js';
+import { confirmObservation, getObservationsByIds, insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
 import { decideProposal, getProposal, type Proposal } from '../db/proposals.js';
 import { validateAssetModules, validateAssumptions } from '../engine/requirements.js';
 import { OrionError, type AssumptionValues, type PathSegment } from '../types.js';
@@ -116,6 +116,10 @@ export function approveProposal(db: Db, home: string, id: number, opts: { note?:
         // The last CONFIRMED value: the same baseline the move guard measured from when it filed this proposal.
         const inForce = valueInForce(db, config, change.metricKey, nowIso, { confirmedOnly: true });
         if (inForce !== filed) stale(id, `${change.metricKey} was ${filed} when it was filed and is ${inForce} now`);
+        // Approving never supersedes silently either: a confirmed insert would retire every active row at this metric and time.
+        const at = new Date(change.observedAt).toISOString();
+        const taken = listActiveObservations(db, p.assetId, change.metricKey).find((o) => o.observedAt === at);
+        if (taken) stale(id, `observation #${taken.id} of ${change.metricKey} at ${at} now exists (${taken.status}, value ${taken.value}); reject it first if this proposal's value should replace it`);
         const row = insertObservation(db, {
           assetId: p.assetId, metricKey: change.metricKey, observedAt: change.observedAt, periodDays: change.periodDays, value: change.value,
           source: 'manual', status: 'confirmed', citationUrl: change.citationUrl, quotedText: change.quotedText, fetchedAt: nowIso,
@@ -129,19 +133,49 @@ export function approveProposal(db: Db, home: string, id: number, opts: { note?:
   })();
 }
 
+/** Writes beside the file, then renames over it: a crash never leaves half a config, and a failure never leaves the temp file. */
+function writeAtomically(file: string, text: string): void {
+  const tmp = `${file}.tmp`;
+  try {
+    writeFileSync(tmp, text);
+    renameSync(tmp, file);
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
+  }
+}
+
+const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
 function approveConfig(db: Db, home: string, p: Proposal, note: string | null, nowIso: string): { proposal: Proposal; result: ApproveResult } {
   if (p.change.kind !== 'config') throw new Error('not a config proposal');
   const edits = p.change.edits;
+
+  // The tool refuses these when a proposal is filed. Approve acts with the USER's authority on a stored row, so it checks
+  // again: a row from an older build, or one edited in the database, must never raise the agent's own limits.
+  const blocked = unproposableEdits(edits);
+  if (blocked.length > 0) {
+    throw new OrionError('path_not_proposable', `proposal ${p.id} edits ${blocked.map((e) => e.path.join(' > ')).join(', ')}; nothing under agent or id can be changed by a proposal`);
+  }
+  const filed = p.filedAgainst;
+  if (!Array.isArray(filed) || filed.length !== edits.length) {
+    throw new OrionError('invalid_proposal', `proposal ${p.id} does not record what each of its ${edits.length} edits was filed against`);
+  }
+
   const file = join(home, 'assets', `${p.assetId}.yaml`);
+  if (!existsSync(file)) throw new OrionError('asset_not_found', `no asset config at ${file}`);
   const original = readFileSync(file, 'utf8');
 
   // 1. Stale check, against the file as written: the same view the proposal was filed against.
   const raw = parseYaml(original) as unknown;
-  const filed = p.filedAgainst as unknown[];
-  const changes = edits.map((e, i) => {
-    const from = getAtPath(raw, e.path);
-    if (!same(from, filed[i])) stale(p.id, `${e.path.join(' > ')} was ${JSON.stringify(filed[i])} when it was filed and is ${JSON.stringify(from)} now`);
-    return { path: e.path, from, to: e.value };
+  const current = edits.map((e) => getAtPath(raw, e.path));
+  const changes = edits.map((e, i) => ({ path: e.path, from: current[i], to: e.value }));
+  // The file already holds every proposed value: an earlier approve renamed the file and died before recording it.
+  if (edits.every((e, i) => same(current[i], e.value))) {
+    return { proposal: decideProposal(db, p.id, 'approved', note, nowIso), result: { kind: 'config', file, changes } };
+  }
+  edits.forEach((e, i) => {
+    if (!same(current[i], filed[i])) stale(p.id, `${e.path.join(' > ')} was ${JSON.stringify(filed[i])} when it was filed and is ${JSON.stringify(current[i])} now`);
   });
 
   // 2 and 3. Edit the text, then validate it with the real loader before it touches the disk.
@@ -153,16 +187,22 @@ function approveConfig(db: Db, home: string, p: Proposal, note: string | null, n
   if (latest) errors.push(...validateAssumptions(config, latest.values));
   if (errors.length > 0) throw new OrionError('invalid_asset_config', `the edited config is not valid:\n${errors.join('\n')}`);
 
-  // 4. Write beside the file, then rename over it: a crash never leaves half a config.
-  const tmp = `${file}.tmp`;
-  writeFileSync(tmp, edited);
-  renameSync(tmp, file);
+  // 4. Write the file.
+  writeAtomically(file, edited);
 
-  // 5. Mark it approved. If that fails, put the original text back.
+  // 5. Mark it approved. If that fails, put the original text back, and never let a failed restore hide why.
   try {
     return { proposal: decideProposal(db, p.id, 'approved', note, nowIso), result: { kind: 'config', file, changes } };
   } catch (err) {
-    writeFileSync(file, original);
+    try {
+      writeAtomically(file, original);
+    } catch (restoreErr) {
+      throw new OrionError(
+        'config_restore_failed',
+        `marking proposal ${p.id} approved failed (${messageOf(err)}), and restoring ${file} failed too (${messageOf(restoreErr)}). ` +
+          'The file holds the EDITED config: check it with git diff.',
+      );
+    }
     throw err;
   }
 }

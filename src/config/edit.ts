@@ -17,6 +17,14 @@ const show = (path: PathSegment[]): string => path.map(String).join(' > ');
 /** Paths come from model output. These segments would walk into Object.prototype instead of the config. */
 const PROTOTYPE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
+/** Top-level config keys no proposal may touch: the agent's own limits, and the asset's identity. Checked when a proposal is filed AND when it is approved. */
+export const UNPROPOSABLE_ROOTS: readonly string[] = ['agent', 'id'];
+
+/** The edits that reach under an unproposable root. */
+export function unproposableEdits(edits: ConfigEdit[]): ConfigEdit[] {
+  return edits.filter((e) => UNPROPOSABLE_ROOTS.includes(String(e.path[0])));
+}
+
 /** Turns id segments into list indexes by walking the plain object. Throws `invalid_path` when a parent is missing or is not a container. */
 function concretePath(root: unknown, path: PathSegment[]): (string | number)[] {
   if (path.length === 0) throw new OrionError('invalid_path', 'a config path needs at least one segment');

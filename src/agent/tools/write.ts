@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { valueInForce } from '../../app/eligibility.js';
 import { provisionalMovePct } from '../../config/agentPolicy.js';
-import { applyEditsToObject, getAtPath } from '../../config/edit.js';
+import { applyEditsToObject, getAtPath, UNPROPOSABLE_ROOTS, unproposableEdits } from '../../config/edit.js';
 import { parseAssetObject, rawConfig } from '../../config/load.js';
 import { getAnomaly, listOpenAnomalies } from '../../db/anomalies.js';
 import { getObservationsByIds, listActiveObservations, type Observation } from '../../db/observations.js';
@@ -242,9 +242,6 @@ const recordProvisionalObservation = defineTool({
 
 const PROPOSABLE_KINDS = ['assumption_value', 'config', 'acknowledge_anomaly', 'withdraw_acknowledgement', 'confirm_observation', 'reject_observation'] as const;
 
-/** Top-level config keys no proposal may touch: the agent's own limits, and the asset's identity. */
-const UNPROPOSABLE_ROOTS = ['agent', 'id'];
-
 const proposeChange = defineTool({
   name: 'propose_change',
   description:
@@ -291,7 +288,7 @@ const proposeChange = defineTool({
       case 'config': {
         if (input.edits === undefined) refuse('invalid_input', 'config needs edits');
         const edits = (input.edits ?? []).map((e) => ({ path: e.path, value: e.value ?? null }));
-        const blocked = edits.filter((e) => UNPROPOSABLE_ROOTS.includes(String(e.path[0])));
+        const blocked = unproposableEdits(edits);
         if (blocked.length > 0) {
           refuse('path_not_proposable', `nothing under ${UNPROPOSABLE_ROOTS.join(' or ')} can be proposed`, { paths: blocked.map((e) => e.path) });
         }
