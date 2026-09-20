@@ -65,7 +65,7 @@ One cron line gives a daily signal:
 
 ```bash
 orion data anomalies vvv                       # open anomalies (--all includes decided ones)
-orion data ack 3 --note "Venice's API lags"    # understood and accepted: it stops affecting the signal
+orion data ack 3 --note "Venice's API lags"    # understood and accepted: it stops affecting the signal, and stays that way if seen again
 orion data resolve 4 --note "allowlisted the new buyback Safe"
 ```
 
@@ -91,6 +91,6 @@ With the cron line in place, the daily signal takes care of itself. What is left
 
 Exit codes of `orion update`, for whatever watches the cron job: `0` for an `ok` or `degraded` signal, `2` for `blocked`, `1` for an error. A signal is always emitted, including `blocked`.
 
-Known limitation: an anomaly never closes itself, and an acknowledgement holds only until the same condition is seen again. The daily fetch re-evaluates every cross-check, so a mismatch that persists after you `ack` it opens a new anomaly on the next run, and on a critical metric the signal is `degraded` again. For a disagreement you expect to last, widen that cross-check's `tolerance_pct` in `assets/<id>.yaml` instead. See `docs/superpowers/notes/2026-09-19-ingestion-followups.md`.
+Anomalies never close themselves, but an acknowledgement stands: when the daily fetch sees an acknowledged condition again it says "seen again, stays acknowledged", counts the repeat on the same row, and the signal is not degraded again. A `resolved` anomaly that recurs opens a new one, because resolved means the cause was fixed. To withdraw an acknowledgement, `orion data resolve <id> --note "..."` the acknowledged anomaly: the next occurrence then opens a new one. The acknowledged row always carries the latest reading, so check `orion data anomalies vvv --all` now and then: a disagreement you accepted at 3 percent is still acknowledged at 30. For a disagreement you expect to last, widening that cross-check's `tolerance_pct` in `assets/<id>.yaml` is the cleaner fix.
 
 Every command accepts `--json`. Signals follow schema v1 (spec section 9). Orion emits signals only. It is not investment advice.

@@ -110,7 +110,8 @@ export function fetchSummary(r: FetchResult): string[] {
     for (const note of s.notes) lines.push(`    note: ${note}`);
   }
   for (const a of r.anomalies) {
-    lines.push(`  anomaly ${a.id === null ? '(not recorded)' : `#${a.id}`} ${a.kind}${a.metricKey ? ` on ${a.metricKey}` : ''} (${a.severity})`);
+    const standing = a.status === 'acknowledged' ? ': seen again, stays acknowledged' : '';
+    lines.push(`  anomaly ${a.id === null ? '(not recorded)' : `#${a.id}`} ${a.kind}${a.metricKey ? ` on ${a.metricKey}` : ''} (${a.severity})${standing}`);
   }
   return lines;
 }

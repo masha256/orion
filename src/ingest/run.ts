@@ -1,7 +1,7 @@
 import type { LoadedAsset } from '../config/load.js';
 import { revenueStaleMovePct, type MetricDef } from '../config/schema.js';
 import { isChainSource } from '../config/sources.js';
-import { raiseAnomaly } from '../db/anomalies.js';
+import { findStandingAnomaly, raiseAnomaly } from '../db/anomalies.js';
 import type { Db } from '../db/connection.js';
 import { emptySourceOutcome, insertFetchRun, recentSourceStatuses, type FetchOutcome, type SourceOutcome } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations } from '../db/observations.js';
@@ -130,9 +130,15 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   };
   const written: WrittenObservation[] = [];
   const anomalies: RaisedAnomaly[] = [];
-  const raise = (a: Omit<RaisedAnomaly, 'id'>): void => {
-    const id = dryRun ? null : raiseAnomaly(db, { assetId: asset.id, ...a, seenAt: startedAt }).id;
-    anomalies.push({ id, ...a });
+  const raise = (a: Omit<RaisedAnomaly, 'id' | 'status'>): void => {
+    if (dryRun) {
+      // Nothing is written; report what a real run would do: an acknowledged condition stays acknowledged.
+      const standing = findStandingAnomaly(db, { assetId: asset.id, ...a });
+      anomalies.push({ id: null, status: standing?.status === 'acknowledged' ? 'acknowledged' : 'open', ...a });
+      return;
+    }
+    const row = raiseAnomaly(db, { assetId: asset.id, ...a, seenAt: startedAt });
+    anomalies.push({ id: row.id, status: row.status === 'acknowledged' ? 'acknowledged' : 'open', ...a });
   };
 
   // 1. Fetch phase: one batch at a time. A thrown handler fails its whole batch and nothing else.

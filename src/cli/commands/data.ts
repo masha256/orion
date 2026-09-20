@@ -160,12 +160,12 @@ export function registerData(program: Command, ctx: CliContext): void {
     });
 
   for (const [name, status, summary] of [
-    ['resolve', 'resolved', 'the cause is fixed'],
-    ['ack', 'acknowledged', 'the cause is understood and accepted; it no longer affects the signal'],
+    ['resolve', 'resolved', 'the cause is fixed; if it recurs, a new anomaly opens. Also withdraws an acknowledgement'],
+    ['ack', 'acknowledged', 'the cause is understood and accepted; it no longer affects the signal, also when seen again'],
   ] as const) {
     data
       .command(`${name} <id>`)
-      .description(`close an open anomaly: ${summary}`)
+      .description(`close an anomaly: ${summary}`)
       .requiredOption('--note <text>', 'why')
       .option('--json', 'JSON output')
       .action((id: string, opts: { note: string; json?: boolean }) => {

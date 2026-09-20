@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { updateAsset } from '../../src/app/update.js';
+import { decideAnomaly } from '../../src/db/anomalies.js';
 import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { miniAssumptions } from '../helpers/assets.js';
-import { CG_MARKETS, harness, NOW } from '../helpers/fetchHarness.js';
+import { CG_MARKETS, harness, NOW, STATS } from '../helpers/fetchHarness.js';
 
 /** The two metrics the ingest asset leaves manual, and an assumption set. */
 function seedManual(h: ReturnType<typeof harness>) {
@@ -58,5 +59,25 @@ describe('updateAsset', () => {
     const { signal } = await updateAsset(h.db, h.loaded, NOW, h.deps);
     expect(signal.status).toBe('blocked');
     expect(signal.status_reasons).toEqual(expect.arrayContaining(['missing_metric:revenue_run_rate_usd', 'no_assumption_set']));
+  });
+});
+
+describe('updateAsset and a standing acknowledgement', () => {
+  it('stays ok on later days once a persistent mismatch on a critical metric is acknowledged', async () => {
+    const mismatching = { [STATS]: { price: 11, supply: { totalBaseUnit: (100n * 10n ** 18n).toString() } } };
+    const day1 = harness({ routes: mismatching });
+    seedManual(day1);
+    const first = await updateAsset(day1.db, day1.loaded, NOW, day1.deps);
+    expect(first.signal.status).toBe('degraded');
+    expect(first.signal.status_reasons).toEqual(['open_anomaly:cross_check_mismatch:price_usd']);
+
+    decideAnomaly(day1.db, first.fetch.anomalies[0].id!, 'acknowledged', 'the second source lags', NOW.toISOString());
+
+    const tomorrow = new Date(NOW.getTime() + 86_400_000);
+    const day2 = harness({ db: day1.db, routes: mismatching, now: tomorrow });
+    const second = await updateAsset(day2.db, day2.loaded, tomorrow, day2.deps);
+    expect(second.signal.status).toBe('ok'); // the same mismatch was seen again; the acknowledgement stands
+    expect(second.signal.data_quality).toMatchObject({ open_anomalies: 0, anomalies: [] });
+    expect(second.fetch.anomalies[0]).toMatchObject({ status: 'acknowledged' });
   });
 });

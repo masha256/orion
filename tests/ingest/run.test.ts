@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseAssetYaml } from '../../src/config/load.js';
-import { listAnomalies } from '../../src/db/anomalies.js';
+import { decideAnomaly, listAnomalies } from '../../src/db/anomalies.js';
 import type { Db } from '../../src/db/connection.js';
 import { listFetchRuns } from '../../src/db/fetchRuns.js';
 import { listActiveObservations } from '../../src/db/observations.js';
@@ -80,6 +80,19 @@ describe('fetchAsset: levels', () => {
     const [open] = listAnomalies(h.db, { assetId: 'mini' });
     expect(open.occurrences).toBe(2);
     expect(open.id).toBe(r.anomalies[0].id);
+  });
+
+  it('reports an acknowledged condition as still acknowledged, on a real run and on a dry run', async () => {
+    const h = harness({ routes: { [STATS]: { price: 11, supply: { totalBaseUnit: (100n * 10n ** 18n).toString() } } } });
+    const first = await fetchAsset(h.db, h.loaded, NOW, h.deps);
+    expect(first.anomalies[0]).toMatchObject({ status: 'open' });
+    decideAnomaly(h.db, first.anomalies[0].id!, 'acknowledged', 'venice lags', NOW.toISOString());
+
+    const dry = await fetchAsset(h.db, h.loaded, new Date(NOW.getTime() + 86_400_000), h.deps, { dryRun: true });
+    expect(dry.anomalies[0]).toMatchObject({ id: null, kind: 'cross_check_mismatch', status: 'acknowledged' });
+    const real = await fetchAsset(h.db, h.loaded, new Date(NOW.getTime() + 86_400_000), h.deps);
+    expect(real.anomalies[0]).toMatchObject({ id: first.anomalies[0].id, status: 'acknowledged' });
+    expect(listAnomalies(h.db, { assetId: 'mini' })).toEqual([]); // nothing reopened
   });
 
   it('raises an advisory anomaly when the metric is not critical', async () => {

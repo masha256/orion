@@ -89,6 +89,8 @@ export interface WrittenObservation {
 /** An anomaly a fetch raised, or (on a dry run, id null) would have raised. */
 export interface RaisedAnomaly {
   id: number | null;
+  /** 'acknowledged' when the condition was seen again under a standing acknowledgement: nothing reopened. */
+  status: 'open' | 'acknowledged';
   kind: AnomalyKind;
   metricKey: string;
   dedupeKey: string;

@@ -1,7 +1,7 @@
 # Orion Sub-project 2: Ingestion, Anomalies, and the Dilution Fix
 
 Date: 2026-09-19
-Status: Approved by the user on 2026-09-19 (section 8 amended the same day during planning)
+Status: Approved by the user on 2026-09-19 (section 8 amended the same day during planning; section 6.3 amended on 2026-09-20 after the final review)
 Parent: `docs/superpowers/specs/2026-09-18-orion-valuation-framework-design.md` (the umbrella spec; binding where this document is silent)
 Builds on: sub-project 1 (core and engine), merged to `main` at `12ef356`, engine version 1.1.0
 
@@ -165,7 +165,9 @@ For a level metric: `abs(primary - check) / abs(primary) * 100 > tolerance_pct` 
 
 ### 6.3 Lifecycle
 
-`open` to `resolved` (with a note) or `acknowledged` (with a note). An acknowledged anomaly no longer affects the signal. A repeat of an open anomaly with the same `(asset, kind, metric, dedupe_key)` increments `occurrences` and updates `last_seen_at` and `detail` rather than inserting a row. `dedupe_key` is the cross-check source id, the sender address, or the source id, by kind. A resolved or acknowledged anomaly that recurs opens a new row.
+`open` to `resolved` (with a note) or `acknowledged` (with a note); `acknowledged` to `resolved` (with a note). An acknowledged anomaly no longer affects the signal. A repeat of an open anomaly with the same `(asset, kind, metric, dedupe_key)` increments `occurrences` and updates `last_seen_at` and `detail` rather than inserting a row. `dedupe_key` is the cross-check source id, the sender address, or the source id, by kind (for `revenue_disclosure_stale`, the disclosure's `observed_at`).
+
+**An acknowledgement stands.** (Amended 2026-09-20 after the final review of the implementation, approved by the user.) A repeat is judged against the LATEST row with the same `(asset, kind, metric, dedupe_key)`. If that row is `open` or `acknowledged`, the repeat updates it (`occurrences`, `last_seen_at`, `detail`, `severity`) and its status does not change: an acknowledged condition stays acknowledged and keeps not affecting the signal. If that row is `resolved`, or there is none, a new `open` row is inserted: resolved means the cause was fixed, so a recurrence is news. The first draft reopened acknowledged anomalies too. Because the daily fetch re-evaluates every cross-check, an acknowledgement then held for exactly one fetch, and a persistent, accepted disagreement on a critical metric degraded the signal again every day. The fetch outcome reports such a repeat as "seen again, stays acknowledged", and the acknowledged row always carries the latest reading, so a disagreement that grows is visible under `orion data anomalies --all`. An acknowledged anomaly can still be `resolved` (with a note): that withdraws the acknowledgement, so the next occurrence opens a new row. No other second decision is allowed.
 
 ### 6.4 Effect on the signal
 

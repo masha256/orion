@@ -106,10 +106,26 @@ describe('orion data anomalies, resolve, ack', () => {
     expect(await orion('data', 'anomalies', 'mini')).toBe('no open anomalies');
     expect(JSON.parse(await orion('data', 'anomalies', 'mini', '--all', '--json'))).toHaveLength(1);
 
-    await orion('data', 'fetch', 'mini'); // the mismatch recurs: a new anomaly opens
+    // The mismatch is still there on the next fetch. The acknowledgement stands: nothing reopens,
+    // the fetch says so, and the acknowledged row counts the repeat.
+    const next = await orion('data', 'fetch', 'mini');
+    expect(next).toMatch(new RegExp(`anomaly #${open[0].id} cross_check_mismatch on price_usd \\(degrading\\): seen again, stays acknowledged`));
+    expect(await orion('data', 'anomalies', 'mini')).toBe('no open anomalies');
+    const all = JSON.parse(await orion('data', 'anomalies', 'mini', '--all', '--json'));
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({ id: open[0].id, status: 'acknowledged', occurrences: 2 });
+  });
+
+  it('reopens as a new anomaly when a resolved one recurs', async () => {
+    routes = { [STATS]: { price: 12, supply: { totalBaseUnit: (100n * 10n ** 18n).toString() } } };
+    await orion('data', 'fetch', 'mini');
+    const [first] = JSON.parse(await orion('data', 'anomalies', 'mini', '--json'));
+    expect(JSON.parse(await orion('data', 'resolve', String(first.id), '--note', 'fixed upstream', '--json')).status).toBe('resolved');
+    await orion('data', 'fetch', 'mini');
     const again = JSON.parse(await orion('data', 'anomalies', 'mini', '--json'));
-    expect(again[0].id).not.toBe(open[0].id);
-    expect(JSON.parse(await orion('data', 'resolve', String(again[0].id), '--note', 'fixed', '--json')).status).toBe('resolved');
+    expect(again).toHaveLength(1);
+    expect(again[0].id).not.toBe(first.id);
+    expect(again[0]).toMatchObject({ status: 'open', occurrences: 1 });
   });
 
   it('requires a note and an open anomaly', async () => {
