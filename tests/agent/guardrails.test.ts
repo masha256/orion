@@ -147,9 +147,14 @@ describe('verified citations', () => {
     expect(verifyCitation(pages, 'https://news.example.com/venice-revenue/', 'founder wrote - "up from $70 million"')).toBeNull();
   });
 
-  it('cuts a page into blocks at block-level tags and at blank lines; inline tags stay inside their block', () => {
-    expect(textBlocks('<h1>Title</h1><p>One <b>bold</b> line<br>next</p><ul><li>a</li><li>b</li></ul>')).toEqual(['Title', 'One bold line', 'next', 'a', 'b']);
+  it('cuts a page into blocks at block-level tags and blank lines; a single line break continues a block only into a lower-case line', () => {
+    expect(textBlocks('<h1>Title</h1><p>One <b>bold</b> line<br>next</p><ul><li>a</li><li>b</li></ul>')).toEqual(['Title', 'One bold line next', 'a', 'b']);
+    expect(textBlocks('<p>revenue grew 15 percent<br/>to $90 million</p>')).toEqual(['revenue grew 15 percent to $90 million']);
+    expect(textBlocks('<td>Acme Corp<BR>Zenith Inc</td>')).toEqual(['Acme Corp', 'Zenith Inc']);
+    // In HTML a source newline is only whitespace, whatever follows it.
+    expect(textBlocks('<p>revenue reached\n   $100 million</p>')).toEqual(['revenue reached $100 million']);
     expect(textBlocks('First paragraph,\nwrapped.\n\nSecond paragraph.')).toEqual(['First paragraph, wrapped.', 'Second paragraph.']);
+    expect(textBlocks('Acme Corp fell to $12 million\nZenith Inc grew to $90 million')).toEqual(['Acme Corp fell to $12 million', 'Zenith Inc grew to $90 million']);
     expect(textBlocks('<p>kept</p><script>var hidden = 1;</script>')).toEqual(['kept']);
   });
 
@@ -163,6 +168,14 @@ describe('verified citations', () => {
     const plain = [{ url: 'https://x.example.com/p', text: 'Acme reported revenue of $12 million.\n\nZenith reported\nrevenue of $90 million.' }];
     expect(verifyCitation(plain, 'https://x.example.com/p', 'of $12 million. Zenith reported revenue')?.refused).toBe('quote_spans_blocks');
     expect(verifyCitation(plain, 'https://x.example.com/p', 'Zenith reported revenue of $90 million')).toBeNull(); // one line break inside a paragraph is fine
+  });
+
+  it('accepts a sentence wrapped with a line break, and refuses a splice across single-newline rows of plain text', () => {
+    const wrapped = [{ url: 'https://x.example.com/w', text: '<p>The company said revenue grew 15 percent<br>to $90 million in the quarter.</p>' }];
+    expect(verifyCitation(wrapped, 'https://x.example.com/w', 'revenue grew 15 percent to $90 million in the quarter')).toBeNull();
+    const rows = [{ url: 'https://x.example.com/r', text: 'Acme Corp revenue fell 40 percent to $12 million\nZenith Inc revenue grew 15 percent to $90 million' }];
+    expect(verifyCitation(rows, 'https://x.example.com/r', '$12 million Zenith Inc revenue grew 15 percent')?.refused).toBe('quote_spans_blocks');
+    expect(verifyCitation(rows, 'https://x.example.com/r', 'Zenith Inc revenue grew 15 percent to $90 million')).toBeNull();
   });
 
   it('refuses a page that was not fetched, a quote that is not there, and a quote too short to mean anything', () => {

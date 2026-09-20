@@ -172,20 +172,39 @@ export function normalizeText(text: string): string {
 }
 
 const BLOCK_TAG =
-  /<\/?(?:address|article|aside|blockquote|br|caption|dd|details|div|dl|dt|figcaption|figure|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|summary|table|tbody|td|tfoot|th|thead|tr|ul)\b[^>]*>/gi;
+  /<\/?(?:address|article|aside|blockquote|caption|dd|details|div|dl|dt|figcaption|figure|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|summary|table|tbody|td|tfoot|th|thead|tr|ul)\b[^>]*>/gi;
+const LINE_BREAK_TAG = /<br\b[^>]*>/gi;
+const SCRIPT_OR_STYLE = /<(script|style)\b[\s\S]*?<\/\1\s*>/gi;
+const LOOKS_LIKE_HTML = /<\/?[a-z][^>]*>/i;
 
 /**
  * The page cut into blocks, each normalized: paragraphs, table cells, list items, headings; for plain text, runs separated
  * by a blank line. A quote must sit inside ONE block. Flattening the whole page would let a quote be spliced from two
  * unrelated blocks (a figure from one table row, a claim from the next) and still "occur" in the page.
+ *
+ * A single line break (a <br>, or one newline in plain text) is ambiguous: a wrapped sentence, or the next row of a table.
+ * A line that starts in lower case continues the sentence; anything else starts a new block. That errs toward refusing,
+ * on purpose: a refusal costs the agent one retry with a shorter quote; a wrong acceptance lets an invented claim in.
+ * In HTML, a newline in the source is only whitespace: there, tags alone break lines.
  */
 export function textBlocks(text: string): string[] {
-  return text
-    .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, '\n\n')
-    .replace(BLOCK_TAG, '\n\n')
-    .split(/\n[ \t\r]*\n/)
-    .map(normalizeText)
-    .filter((block) => block !== '');
+  const html = LOOKS_LIKE_HTML.test(text);
+  let t = (html ? text.replace(/\s+/g, ' ') : text).replace(SCRIPT_OR_STYLE, '\n\n');
+  if (html) t = t.replace(BLOCK_TAG, '\n\n').replace(LINE_BREAK_TAG, '\n');
+  const blocks: string[] = [];
+  for (const hard of t.split(/\n[ \t\r]*\n/)) {
+    let current = '';
+    for (const line of hard.split('\n').map(normalizeText).filter((l) => l !== '')) {
+      if (current !== '' && /^[a-z]/.test(line)) {
+        current += ` ${line}`;
+      } else {
+        if (current !== '') blocks.push(current);
+        current = line;
+      }
+    }
+    if (current !== '') blocks.push(current);
+  }
+  return blocks;
 }
 
 /** Scheme and host lowercased, fragment dropped, one trailing slash dropped. The query string is kept: it can select the page. */
