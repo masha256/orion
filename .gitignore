@@ -9,3 +9,4 @@ orion.db.*
 *.db-shm
 .env
 signals.jsonl
+update.log

@@ -55,6 +55,8 @@ One cron line gives a daily signal:
 15 0 * * *  cd /path/to/orion && ORION_HOME="$PWD" orion update vvv --out signals.jsonl 2>> update.log
 ```
 
+`./run-daily.sh [asset]` is the same line as a script for any scheduler: it needs no environment (`ORION_HOME` defaults to its own directory, and it calls `dist/cli/index.js` directly, so no `npm link`), prints the signal on stdout and the fetch summary on stderr, keeps both in `signals.jsonl` and `update.log`, and exits with `orion update`'s code. For an agent-driven scheduler that checks the result and notifies you, see `docs/ops/hermes-daily-job.md`.
+
 - A backfill is resumable: each completed UTC day commits on its own, and the next run carries on after the last one. `--backfill-days <n>` re-scans the last `n` days; re-scanned days supersede the old rows.
 - Fetched flow rows never silently overwrite hand-entered ones. Without `--adopt`, a fetch that would overlap them writes nothing for that scan and lists the conflicting rows. `--adopt` rejects only rows whose source is `manual`.
 - Several metrics can share one burn-flow scan (same token, sink, and allowlist) and so share its cursor: `--metric` on any one of them fetches every metric that shares its scan, at no extra cost.
