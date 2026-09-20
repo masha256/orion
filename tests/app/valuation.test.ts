@@ -7,7 +7,7 @@ import { openDb, type Db } from '../../src/db/connection.js';
 import { insertObservation, rejectObservation } from '../../src/db/observations.js';
 import type { OrionError } from '../../src/types.js';
 import { MINI_ASSET_YAML, miniAssumptions } from '../helpers/assets.js';
-import { AS_OF, miniObservations } from '../helpers/obs.js';
+import { AS_OF, miniObservations, obs } from '../helpers/obs.js';
 
 const NOW = new Date(AS_OF);
 let db: Db;
@@ -40,7 +40,8 @@ describe('runValuation', () => {
     expect(signal.signal_id).toBe(`mini-20260630T000000Z-${runId}`);
     expect(signal.horizons!['12m'].expected_target).toBeCloseTo(10, 6);
     expect(signal.provenance.config_hash).toBe(loaded.hash);
-    expect(signal.change).toEqual({ prev_signal_id: null, target_delta_pct: null, cause: 'none', rationale: '' });
+    expect(signal.change).toEqual({ prev_signal_id: null, target_delta_pct: null, cause: 'none', causes: [], author: null, rationale: '' });
+    expect(signal.provenance.agent_run_id).toBeNull();
   });
 
   it('blocks with reasons when data or assumptions are missing', () => {
@@ -187,6 +188,75 @@ describe('whatIf', () => {
   it('reports why it cannot run', () => {
     const r = whatIf(db, loaded, NOW, []);
     expect('blocked' in r && r.blocked.length).toBeGreaterThan(0);
+  });
+
+  const target12m = (r: ReturnType<typeof whatIf>) => ('output' in r ? r.output.horizons['12m'].expectedTarget : null);
+
+  it('previews an observation that is not in the database, displacing the level it would replace', () => {
+    seedObservations();
+    seedAssumptions();
+    // Capture stays at 10 percent of revenue, so doubling revenue doubles the flows and the target.
+    const staged = obs('revenue_run_rate_usd', 2000, '2026-06-20', { id: -1, source: 'manual', status: 'provisional' });
+    expect(target12m(whatIf(db, loaded, NOW, []))).toBeCloseTo(10, 6);
+    expect(target12m(whatIf(db, loaded, NOW, [], { addObservations: [staged] }))).toBeCloseTo(20, 6);
+    // Same metric and observed-at as the stored row: the addition wins although its temporary id is lower.
+    const sameInstant = obs('revenue_run_rate_usd', 3000, '2026-06-15', { id: -2, source: 'manual' });
+    expect(target12m(whatIf(db, loaded, NOW, [], { addObservations: [sameInstant] }))).toBeCloseTo(30, 6);
+    const n = db.prepare('SELECT COUNT(*) AS n FROM observations').get() as { n: number };
+    expect(n.n).toBe(7);
+  });
+
+  it('previews the removal of an observation', () => {
+    seedObservations();
+    seedAssumptions();
+    const revenue = db.prepare("SELECT id FROM observations WHERE metric_key = 'revenue_run_rate_usd'").get() as { id: number };
+    const r = whatIf(db, loaded, NOW, [], { removeObservationIds: [revenue.id] });
+    expect('blocked' in r && r.blocked).toEqual(['missing_metric:revenue_run_rate_usd']);
+  });
+
+  it('runs under a config override, and reports an override that is invalid', () => {
+    seedObservations();
+    seedAssumptions({});
+    createAssumptionSet(db, {
+      assetId: 'mini', author: 'user', rationale: 'bull discounts less', createdAt: AS_OF,
+      values: { ...miniAssumptions(), bull: { ...miniAssumptions().bull, discount_rate_base: 0.05 } },
+    });
+    expect(target12m(whatIf(db, loaded, NOW, []))).toBeCloseTo(12.5, 6); // 0.25 * 10 + 0.5 * 10 + 0.25 * 20
+    const allBull = { ...loaded.config, scenario_probabilities: { bear: 0, base: 0, bull: 1 } };
+    expect(target12m(whatIf(db, loaded, NOW, [], { config: allBull }))).toBeCloseTo(20, 6);
+    const broken = { ...loaded.config, modules: [{ ...loaded.config.modules[0], type: 'no_such_module' }] };
+    const r = whatIf(db, loaded, NOW, [], { config: broken });
+    expect('blocked' in r && r.blocked[0]).toMatch(/^invalid_config:/);
+  });
+});
+
+describe('change causes', () => {
+  it('reports a config change, which no other field would explain', () => {
+    seedObservations();
+    seedAssumptions();
+    runValuation(db, loaded, NOW);
+    const renamed = parseAssetYaml(MINI_ASSET_YAML.replace('name: Mini Test Asset', 'name: Mini Renamed'));
+    const { signal } = runValuation(db, renamed, NOW);
+    expect(signal.change).toMatchObject({ cause: 'config', causes: ['config'], author: null, rationale: '' });
+  });
+
+  it('names the author of an assumption change, and says both when more than one thing changed', () => {
+    seedObservations();
+    seedAssumptions();
+    runValuation(db, loaded, NOW);
+    createAssumptionSet(db, { assetId: 'mini', author: 'analyst', rationale: 'growth up', values: miniAssumptions({ rev_growth_y1: 0.1 }), createdAt: AS_OF });
+    const second = runValuation(db, loaded, NOW, { agentRunId: 7 }).signal;
+    expect(second.change).toMatchObject({ cause: 'assumptions', causes: ['assumptions'], author: 'analyst', rationale: 'growth up' });
+    expect(second.provenance.agent_run_id).toBe(7);
+    const stored = db.prepare('SELECT agent_run_id FROM valuation_runs WHERE id = ?').get(second.provenance.run_id) as { agent_run_id: number };
+    expect(stored.agent_run_id).toBe(7);
+
+    insertObservation(db, { assetId: 'mini', metricKey: 'price_usd', observedAt: '2026-06-29T12:00:00Z', value: 11, source: 'onchain', fetchedAt: AS_OF });
+    createAssumptionSet(db, { assetId: 'mini', author: 'user', rationale: 'back to flat', values: miniAssumptions(), createdAt: AS_OF });
+    const renamed = parseAssetYaml(MINI_ASSET_YAML.replace('name: Mini Test Asset', 'name: Mini Renamed'));
+    const third = runValuation(db, renamed, NOW).signal;
+    expect(third.change).toMatchObject({ cause: 'both', causes: ['data', 'assumptions', 'config'], author: 'user', rationale: 'back to flat' });
+    expect(third.provenance.agent_run_id).toBeNull();
   });
 });
 

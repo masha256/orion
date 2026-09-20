@@ -42,7 +42,12 @@ export const SignalSchema = z.strictObject({
   change: z.strictObject({
     prev_signal_id: z.string().nullable(),
     target_delta_pct: z.number().nullable(),
-    cause: z.enum(['data', 'assumptions', 'both', 'none']),
+    /** `both` means more than one cause; `causes` says which. */
+    cause: z.enum(['data', 'assumptions', 'config', 'both', 'none']),
+    /** Added in sub-project 3 (additive). In the fixed order data, assumptions, config. Signals stored before it have no such key. */
+    causes: z.array(z.enum(['data', 'assumptions', 'config'])).optional(),
+    /** Added in sub-project 3 (additive). The new assumption set's author when assumptions are a cause, else null. */
+    author: z.string().nullable().optional(),
     rationale: z.string(),
   }),
   provenance: z.strictObject({
@@ -51,6 +56,8 @@ export const SignalSchema = z.strictObject({
     assumption_set_version: z.number().int().nullable(),
     engine_version: z.string(),
     config_hash: z.string(),
+    /** Added in sub-project 3 (additive). The agent run that triggered this valuation, else null. */
+    agent_run_id: z.number().int().nullable().optional(),
   }),
 });
 

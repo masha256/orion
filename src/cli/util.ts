@@ -80,7 +80,10 @@ export function signalSummary(s: Signal): string[] {
   }
   if (s.change.prev_signal_id) {
     const delta = s.change.target_delta_pct === null ? 'n/a' : `${s.change.target_delta_pct.toFixed(1)}%`;
-    lines.push(`change: ${s.change.cause}, 12m target ${delta} vs ${s.change.prev_signal_id}${s.change.rationale ? ` (${s.change.rationale})` : ''}`);
+    // `causes` and `author` are absent on signals stored before sub-project 3.
+    const cause = s.change.cause === 'both' && s.change.causes ? s.change.causes.join(' + ') : s.change.cause;
+    const by = s.change.author ? ` by ${s.change.author}` : '';
+    lines.push(`change: ${cause}${by}, 12m target ${delta} vs ${s.change.prev_signal_id}${s.change.rationale ? ` (${s.change.rationale})` : ''}`);
   }
   return lines;
 }

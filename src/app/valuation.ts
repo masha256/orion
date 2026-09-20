@@ -3,7 +3,7 @@ import type { AssetConfig } from '../config/schema.js';
 import { listOpenAnomalies } from '../db/anomalies.js';
 import { getAssumptionSetById, getLatestAssumptionSet } from '../db/assumptions.js';
 import type { Db } from '../db/connection.js';
-import { getObservationsByIds } from '../db/observations.js';
+import { getObservationsByIds, type Observation } from '../db/observations.js';
 import {
   createSnapshot, getConfigVersion, getLatestSignal, getSnapshot, getValuationRun, insertSignal, insertValuationRun,
   saveConfigVersion, updateRunStatus,
@@ -18,7 +18,7 @@ import { buildSignal } from '../signals/build.js';
 import type { Signal } from '../signals/schema.js';
 import { OrionError, SCENARIOS, STD_METRICS, type AssumptionValues, type Scenario } from '../types.js';
 import { canonicalJson } from '../util/canonical.js';
-import { eligibleObservations } from './eligibility.js';
+import { eligibleObservations, narrowToUsable } from './eligibility.js';
 
 function tryEngine(asset: AssetConfig, drivers: Drivers, values: AssumptionValues): { output: EngineOutput } | { error: string } {
   try {
@@ -33,7 +33,12 @@ function compactStamp(iso: string): string {
   return iso.replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
 }
 
-export function runValuation(db: Db, loaded: LoadedAsset, now: Date): { runId: number; signal: Signal } {
+export function runValuation(
+  db: Db,
+  loaded: LoadedAsset,
+  now: Date,
+  opts: { agentRunId?: number } = {},
+): { runId: number; signal: Signal } {
   const { config: asset, hash } = loaded;
   const asOf = now.toISOString();
 
@@ -68,20 +73,28 @@ export function runValuation(db: Db, loaded: LoadedAsset, now: Date): { runId: n
       status: 'pending',
       outputJson: engine ? canonicalJson(engine) : null,
       createdAt: asOf,
+      agentRunId: opts.agentRunId ?? null,
     });
 
     const prev = getLatestSignal(db, asset.id);
-    let cause: Signal['change']['cause'] = 'none';
+    const causes: NonNullable<Signal['change']['causes']> = [];
     let delta: number | null = null;
     if (prev) {
       const prevSnapshot = getSnapshot(db, prev.provenance.snapshot_id);
       const dataChanged = JSON.stringify(prevSnapshot?.observationIds ?? []) !== JSON.stringify(observations.map((o) => o.id).sort((a, b) => a - b));
       const assumptionsChanged = prev.provenance.assumption_set_version !== (set?.version ?? null);
-      cause = dataChanged && assumptionsChanged ? 'both' : dataChanged ? 'data' : assumptionsChanged ? 'assumptions' : 'none';
+      // A config change (an approved proposal, or a hand edit) moves the target for a reason a consumer could not otherwise see.
+      const configChanged = prev.provenance.config_hash !== hash;
+      if (dataChanged) causes.push('data');
+      if (assumptionsChanged) causes.push('assumptions');
+      if (configChanged) causes.push('config');
       const before = prev.horizons?.['12m'].expected_target;
       const after = engine?.horizons['12m'].expectedTarget;
       if (before !== undefined && after !== undefined && before !== 0) delta = (after / before - 1) * 100;
     }
+
+    const cause: Signal['change']['cause'] = causes.length > 1 ? 'both' : (causes[0] ?? 'none');
+    const assumptionsAreACause = causes.includes('assumptions');
 
     const priceObs = latestLevel(observations.filter((o) => o.metricKey === STD_METRICS.price), asOf);
     const signal = buildSignal({
@@ -98,7 +111,9 @@ export function runValuation(db: Db, loaded: LoadedAsset, now: Date): { runId: n
         prev_signal_id: prev?.signal_id ?? null,
         target_delta_pct: delta,
         cause,
-        rationale: set && (cause === 'assumptions' || cause === 'both') ? set.rationale : '',
+        causes,
+        author: set && assumptionsAreACause ? set.author : null,
+        rationale: set && assumptionsAreACause ? set.rationale : '',
       },
       provenance: {
         run_id: runId,
@@ -106,6 +121,7 @@ export function runValuation(db: Db, loaded: LoadedAsset, now: Date): { runId: n
         assumption_set_version: set?.version ?? null,
         engine_version: ENGINE_VERSION,
         config_hash: hash,
+        agent_run_id: opts.agentRunId ?? null,
       },
     });
 
@@ -115,15 +131,40 @@ export function runValuation(db: Db, loaded: LoadedAsset, now: Date): { runId: n
   })();
 }
 
+export interface WhatIfOptions {
+  /** Run with this config instead of the loaded one: how a config proposal's effect is computed. */
+  config?: AssetConfig;
+  /**
+   * Observations to treat as eligible although they are not (yet) in the database, or not yet eligible: staged research,
+   * a proposed observation, a provisional row whose confirmation is proposed. Each displaces any eligible row with the
+   * same metric and observed-at, as a confirmed insert would supersede it.
+   */
+  addObservations?: Observation[];
+  /** Eligible observations to leave out: how rejecting one is previewed. */
+  removeObservationIds?: number[];
+}
+
+/** Eligible observations with the what-if additions and removals applied, narrowed again so a new level displaces the old. */
+function whatIfObservations(db: Db, asset: AssetConfig, asOf: string, opts: WhatIfOptions): Observation[] {
+  const eligible = eligibleObservations(db, asset, asOf);
+  const add = opts.addObservations ?? [];
+  if (add.length === 0 && (opts.removeObservationIds ?? []).length === 0) return eligible;
+  const removed = new Set(opts.removeObservationIds ?? []);
+  const displaced = new Set(add.map((o) => `${o.metricKey}@${o.observedAt}`));
+  const kept = eligible.filter((o) => !removed.has(o.id) && !displaced.has(`${o.metricKey}@${o.observedAt}`));
+  return narrowToUsable(asset, [...kept, ...add], asOf);
+}
+
 export function whatIf(
   db: Db,
   loaded: LoadedAsset,
   now: Date,
   overrides: { key: string; value: number; scenario?: Scenario }[],
+  opts: WhatIfOptions = {},
 ): { blocked: string[] } | { output: EngineOutput } {
-  const asset = loaded.config;
+  const asset = opts.config ?? loaded.config;
   const asOf = now.toISOString();
-  const report = computeDrivers(asset, eligibleObservations(db, asset, asOf), asOf, requiredExtraMetrics(asset));
+  const report = computeDrivers(asset, whatIfObservations(db, asset, asOf, opts), asOf, requiredExtraMetrics(asset));
   const set = getLatestAssumptionSet(db, asset.id);
   const blocked = [
     ...validateAssetModules(asset).map((e) => `invalid_config:${e}`),

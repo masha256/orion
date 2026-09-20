@@ -8,6 +8,7 @@ import { runEngine } from '../../src/engine/run.js';
 import { buildSignal, type BuildSignalInput } from '../../src/signals/build.js';
 import { emitSignal } from '../../src/signals/emit.js';
 import { gradeDataQuality } from '../../src/signals/quality.js';
+import { signalSummary } from '../../src/cli/util.js';
 import { SignalSchema } from '../../src/signals/schema.js';
 import { miniAsset, miniAssumptions } from '../helpers/assets.js';
 import { AS_OF, miniObservations, obs } from '../helpers/obs.js';
@@ -129,5 +130,28 @@ describe('buildSignal with open anomalies', () => {
     expect(s.status_reasons).toEqual(['missing_metric:effective_supply']);
     expect(s.data_quality.grade).toBe('D');
     expect(s.data_quality.open_anomalies).toBe(1);
+  });
+});
+
+describe('the sub-project 3 change fields', () => {
+  it('are optional: a signal stored before them still parses, and still summarizes', () => {
+    const old = buildSignal(input());
+    expect(old.change.causes).toBeUndefined();
+    expect(old.provenance.agent_run_id).toBeUndefined();
+    expect(SignalSchema.parse(JSON.parse(JSON.stringify(old)))).toEqual(old);
+    const withPrev = { ...old, change: { ...old.change, prev_signal_id: 'mini-0', cause: 'both' as const } };
+    expect(signalSummary(withPrev).at(-1)).toBe('change: both, 12m target n/a vs mini-0');
+  });
+
+  it('carry causes, author, and the agent run, and the summary names them', () => {
+    const base = input();
+    const s = buildSignal({
+      ...base,
+      change: { prev_signal_id: 'mini-0', target_delta_pct: -3.1, cause: 'both', causes: ['data', 'assumptions'], author: 'analyst', rationale: 'growth down' },
+      provenance: { ...base.provenance, agent_run_id: 3 },
+    });
+    expect(s.provenance.agent_run_id).toBe(3);
+    expect(signalSummary(s).at(-1)).toBe('change: data + assumptions by analyst, 12m target -3.1% vs mini-0 (growth down)');
+    expect(() => SignalSchema.parse({ ...s, change: { ...s.change, causes: ['weather'] } })).toThrow();
   });
 });

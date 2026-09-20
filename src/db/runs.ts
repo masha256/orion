@@ -12,6 +12,8 @@ export interface ValuationRunRow {
   status: string;
   outputJson: string | null;
   createdAt: string;
+  /** The agent run that triggered this valuation. Not an engine input: replay ignores it. */
+  agentRunId?: number | null;
 }
 
 export function saveConfigVersion(db: Db, hash: string, assetId: string, config: unknown, nowIso: string): void {
@@ -43,10 +45,13 @@ export function getSnapshot(db: Db, id: number): { id: number; assetId: string; 
 export function insertValuationRun(db: Db, row: Omit<ValuationRunRow, 'id'>): number {
   const info = db
     .prepare(
-      `INSERT INTO valuation_runs (asset_id, snapshot_id, assumption_set_id, engine_version, config_hash, status, output_json, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO valuation_runs (asset_id, snapshot_id, assumption_set_id, engine_version, config_hash, status, output_json, created_at, agent_run_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(row.assetId, row.snapshotId, row.assumptionSetId, row.engineVersion, row.configHash, row.status, row.outputJson, row.createdAt);
+    .run(
+      row.assetId, row.snapshotId, row.assumptionSetId, row.engineVersion, row.configHash, row.status, row.outputJson, row.createdAt,
+      row.agentRunId ?? null,
+    );
   return Number(info.lastInsertRowid);
 }
 
@@ -58,13 +63,14 @@ export function getValuationRun(db: Db, id: number): ValuationRunRow | null {
   const r = db.prepare('SELECT * FROM valuation_runs WHERE id = ?').get(id) as
     | {
         id: number; asset_id: string; snapshot_id: number; assumption_set_id: number | null; engine_version: string;
-        config_hash: string; status: string; output_json: string | null; created_at: string;
+        config_hash: string; status: string; output_json: string | null; created_at: string; agent_run_id: number | null;
       }
     | undefined;
   if (!r) return null;
   return {
     id: r.id, assetId: r.asset_id, snapshotId: r.snapshot_id, assumptionSetId: r.assumption_set_id,
     engineVersion: r.engine_version, configHash: r.config_hash, status: r.status, outputJson: r.output_json, createdAt: r.created_at,
+    agentRunId: r.agent_run_id,
   };
 }
 
