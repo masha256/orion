@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { anthropicModelClient, type ModelClient } from '../agent/model.js';
 import { openDb, type Db } from '../db/connection.js';
 import { realFetchDeps } from '../ingest/deps.js';
 import type { FetchDeps, FetchResult } from '../ingest/run.js';
@@ -15,6 +16,26 @@ export interface CliContext {
   /** Progress lines. Never stdout, which may be carrying JSON. */
   stderr?: (line: string) => void;
   setExitCode?: (code: number) => void;
+  /** The model behind `orion agent run`. Tests inject a scripted model; by default the real client is built from the environment. */
+  modelClient?: () => ModelClient;
+}
+
+export function modelClientFor(ctx: CliContext): ModelClient {
+  return ctx.modelClient ? ctx.modelClient() : anthropicModelClient(loadEnv(ctx.home, process.env));
+}
+
+/**
+ * Runs a command action. Under `--json` an OrionError is printed as JSON on stdout, with exit code 1, instead of being
+ * thrown to the top-level handler, which prints text. Anything that is not an OrionError still propagates.
+ */
+export async function guarded(ctx: CliContext, json: boolean | undefined, action: () => void | Promise<void>): Promise<void> {
+  try {
+    await action();
+  } catch (err) {
+    if (!json || !(err instanceof OrionError)) throw err;
+    ctx.stdout(JSON.stringify({ error: { code: err.code, message: err.message } }, null, 2));
+    ctx.setExitCode?.(1);
+  }
 }
 
 export function dbPath(ctx: CliContext): string {

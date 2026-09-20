@@ -7,6 +7,7 @@ import { loadAsset } from '../../config/load.js';
 import { getLatestAssumptionSet, listAssumptionSets } from '../../db/assumptions.js';
 import { OrionError, SCENARIOS, type AssumptionValues, type Scenario } from '../../types.js';
 import { fmt, output, parseNumber, signalSummary, withDb, type CliContext } from '../util.js';
+import { registerProposals } from './proposals.js';
 
 const isScenario = (x: string): x is Scenario => (SCENARIOS as readonly string[]).includes(x);
 const collect = (value: string, previous: string[]): string[] => [...previous, value];
@@ -146,4 +147,6 @@ export function registerModel(program: Command, ctx: CliContext): void {
       ]);
       if (!result.identical) throw new OrionError('replay_mismatch', `run ${runId} did not reproduce`);
     });
+
+  registerProposals(model, ctx);
 }
