@@ -188,6 +188,17 @@ describe('verified citations', () => {
     expect(textBlocks('<p>One paragraph\nwrapped in the source.</p>\n\n<p>Another.</p>')).toEqual(['One paragraph wrapped in the source.', 'Another.']);
   });
 
+  it('treats every tag as a block boundary unless it is a known inline tag, so an unlisted element cannot be a splice route', () => {
+    const figures =
+      '<figure><figcaption>Acme revenue for the first quarter was 12 million dollars</figcaption></figure>\n' +
+      '<figure><figcaption>zenith revenue for the second quarter was 90 million dollars</figcaption></figure>';
+    expect(textBlocks(figures)).toHaveLength(2);
+    const f = [{ url: 'https://x.example.com/f', text: figures }];
+    expect(verifyCitation(f, 'https://x.example.com/f', 'was 12 million dollars zenith revenue for the second quarter')?.refused).toBe('quote_spans_blocks');
+    expect(textBlocks('<div><my-card>Acme fell</my-card><my-card>zenith grew</my-card></div>')).toEqual(['Acme fell', 'zenith grew']);
+    expect(textBlocks('<p>revenue grew<sup>1</sup> to <span class="n">$90</span> <em>million</em></p>')).toEqual(['revenue grew 1 to $90 million']);
+  });
+
   it('refuses a page that was not fetched, a quote that is not there, and a quote too short to mean anything', () => {
     expect(verifyCitation(pages, 'https://other.example.com/x', 'annualized revenue of $100 million')?.refused).toBe('citation_not_fetched');
     expect(verifyCitation(pages, 'https://news.example.com/venice-revenue', 'annualized revenue of $200 million')?.refused).toBe('quote_not_found');

@@ -171,17 +171,31 @@ export function normalizeText(text: string): string {
     .trim();
 }
 
-const BLOCK_TAG =
-  /<\/?(?:address|article|aside|blockquote|caption|dd|details|div|dl|dt|figcaption|figure|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|summary|table|tbody|td|tfoot|th|thead|tr|ul)\b[^>]*>/gi;
-const LINE_BREAK_TAG = /<br\b[^>]*>/gi;
 const SCRIPT_OR_STYLE = /<(script|style)\b[\s\S]*?<\/\1\s*>/gi;
+
+/** Tags that sit inside a sentence. In an HTML page every OTHER tag, known or not, is a block boundary: listing block tags instead would make every tag left off the list a way to splice a quote. */
+const INLINE_TAGS = new Set([
+  'a', 'abbr', 'b', 'bdi', 'bdo', 'cite', 'code', 'data', 'dfn', 'em', 'font', 'i', 'img', 'kbd', 'mark', 'q', 's', 'samp', 'small',
+  'span', 'strong', 'sub', 'sup', 'time', 'u', 'var', 'wbr',
+]);
+const ANY_TAG = /<\/?([a-z][a-z0-9-]*)\b[^>]*>/gi;
 /** A known HTML tag name, not any `<letters>`: plain text is full of `List<int>` and `<placeholder>`. */
 const LOOKS_LIKE_HTML =
-  /<\/?(?:a|article|b|blockquote|body|br|code|div|em|footer|h[1-6]|head|header|html|i|img|li|main|nav|ol|p|pre|section|span|strong|table|td|th|tr|ul)\b[^>]*>/i;
+  /<\/?(?:a|address|article|aside|b|blockquote|body|br|caption|dd|details|div|dl|dt|em|figcaption|figure|footer|form|h[1-6]|head|header|hr|html|i|img|li|main|nav|ol|p|pre|section|span|strong|summary|table|tbody|td|tfoot|th|thead|tr|ul)\b[^>]*>/i;
+
+/** One chunk of an HTML page with its line structure made explicit: whitespace collapsed, <br> a single newline, every non-inline tag a blank line. */
+function markHtmlBreaks(chunk: string): string {
+  return chunk.replace(/\s+/g, ' ').replace(ANY_TAG, (tag: string, name: string) => {
+    const n = name.toLowerCase();
+    if (n === 'br') return '\n';
+    return INLINE_TAGS.has(n) ? tag : '\n\n';
+  });
+}
 
 /**
- * The page cut into blocks, each normalized: paragraphs, table cells, list items, headings; for plain text, runs separated
- * by a blank line. A quote must sit inside ONE block. Flattening the whole page would let a quote be spliced from two
+ * The page cut into blocks, each normalized. In HTML, a block boundary is every tag that is not a known inline tag
+ * (known or not: an unlisted tag is a boundary too, never an inline exception); for plain text, runs separated by a
+ * blank line. A quote must sit inside ONE block. Flattening the whole page would let a quote be spliced from two
  * unrelated blocks (a figure from one table row, a claim from the next) and still "occur" in the page.
  *
  * A single line break (a <br>, or one newline in plain text) is ambiguous: a wrapped sentence, or the next row of a table.
@@ -195,7 +209,7 @@ export function textBlocks(text: string): string[] {
   // Blank lines are hard breaks in every page, and they are split off BEFORE any HTML handling, so a wrong guess about
   // HTML can never merge two paragraphs. (A blank line inside one HTML paragraph then costs only a false refusal.)
   for (const chunk of text.replace(SCRIPT_OR_STYLE, '\n\n').split(/\n[ \t\r]*\n/)) {
-    const marked = html ? chunk.replace(/\s+/g, ' ').replace(BLOCK_TAG, '\n\n').replace(LINE_BREAK_TAG, '\n') : chunk;
+    const marked = html ? markHtmlBreaks(chunk) : chunk;
     for (const hard of marked.split(/\n[ \t\r]*\n/)) {
       let current = '';
       for (const line of hard.split('\n').map(normalizeText).filter((l) => l !== '')) {
