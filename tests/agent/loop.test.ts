@@ -112,6 +112,36 @@ describe('the tool-use loop', () => {
     expect(result).toMatchObject({ stop: 'error', detail: 'RateLimitError: 429 slow down', usage: { requests: 1 } });
   });
 
+  it('ends as an error when a tool throws unexpectedly, keeping the usage and the turn that asked for it', async () => {
+    class ToolBug extends Error {}
+    const h = harness([calls(toolUse('get_drivers', {}, 'a')), calls(toolUse('explode', {}, 'b')), say('never reached')], {
+      runTool: (name) => {
+        if (name === 'explode') throw new ToolBug('undefined is not a function');
+        return { content: '{"ok":true}', isError: false };
+      },
+    });
+    const result = await h.run();
+    expect(result).toMatchObject({ stop: 'error', detail: 'ToolBug: undefined is not a function', usage: { requests: 2, inputTokens: 200 } });
+    expect(result.responses).toHaveLength(2);
+    expect(h.model.requests).toHaveLength(2);
+    expect(h.messages.at(-1)).toMatchObject({ role: 'assistant' }); // the turn is kept; no half-built results message follows it
+  });
+
+  it('runs only the client tool calls in a turn that also used a server tool, and answers only those', async () => {
+    const mixed = {
+      content: [
+        { type: 'server_tool_use', id: 'srv1', name: 'web_search', input: { query: 'venice revenue' } },
+        { type: 'web_search_tool_result', tool_use_id: 'srv1', content: [] },
+        toolUse('write_journal', {}, 'c1'),
+      ],
+      stop_reason: 'tool_use',
+    };
+    const h = harness([mixed, say('Done.')]);
+    expect((await h.run()).stop).toBe('finished');
+    expect(h.ran.map((r) => r.name)).toEqual(['write_journal']);
+    expect(h.model.toolResults(1).map((r) => r.tool_use_id)).toEqual(['c1']);
+  });
+
   it('adds up server tool usage and records each response', async () => {
     const searched = { ...calls(toolUse('write_journal', {})), model: 'claude-opus-4-8', usage: { server_tool_use: { web_search_requests: 2, web_fetch_requests: 1 } } };
     const result = await harness([searched, say('Done.')]).run();
