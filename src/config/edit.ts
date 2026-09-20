@@ -14,12 +14,18 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 
 const show = (path: PathSegment[]): string => path.map(String).join(' > ');
 
+/** Paths come from model output. These segments would walk into Object.prototype instead of the config. */
+const PROTOTYPE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 /** Turns id segments into list indexes by walking the plain object. Throws `invalid_path` when a parent is missing or is not a container. */
 function concretePath(root: unknown, path: PathSegment[]): (string | number)[] {
   if (path.length === 0) throw new OrionError('invalid_path', 'a config path needs at least one segment');
   const out: (string | number)[] = [];
   let node: unknown = root;
   path.forEach((segment, i) => {
+    if (typeof segment === 'string' && PROTOTYPE_KEYS.has(segment)) {
+      throw new OrionError('invalid_path', `${show(path)}: "${segment}" is not a config key`);
+    }
     const last = i === path.length - 1;
     if (Array.isArray(node)) {
       const index = typeof segment === 'number' ? segment : node.findIndex((item) => isRecord(item) && item.id === segment);
@@ -30,9 +36,11 @@ function concretePath(root: unknown, path: PathSegment[]): (string | number)[] {
       node = node[index];
     } else if (isRecord(node)) {
       if (typeof segment !== 'string') throw new OrionError('invalid_path', `${show(path)}: "${segment}" indexes a map; use a key`);
-      if (!last && !(segment in node)) throw new OrionError('invalid_path', `${show(path)}: "${segment}" does not exist`);
+      // Own keys only: an inherited property (toString, hasOwnProperty) is never a config key.
+      const own = Object.hasOwn(node, segment);
+      if (!last && !own) throw new OrionError('invalid_path', `${show(path)}: "${segment}" does not exist`);
       out.push(segment);
-      node = node[segment];
+      node = own ? node[segment] : undefined;
     } else {
       throw new OrionError('invalid_path', `${show(path)}: "${segment}" is inside a value that is not a map or a list`);
     }
@@ -43,7 +51,9 @@ function concretePath(root: unknown, path: PathSegment[]): (string | number)[] {
 /** The value at a path, or `null` when the last key is absent. Null is also what an explicit YAML null reads as. */
 export function getAtPath(root: unknown, path: PathSegment[]): unknown {
   let node: unknown = root;
-  for (const segment of concretePath(root, path)) node = (node as Record<string | number, unknown>)[segment];
+  for (const segment of concretePath(root, path)) {
+    node = Array.isArray(node) || (isRecord(node) && Object.hasOwn(node, segment)) ? (node as Record<string | number, unknown>)[segment] : undefined;
+  }
   return node === undefined ? null : node;
 }
 

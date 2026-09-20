@@ -134,6 +134,29 @@ describe('applyEditsToYaml', () => {
     expect(codeOf(() => applyEditsToYaml(YAML, [{ path: ['modules', 'nope', 'weight'], value: 1 }]))).toBe('invalid_path');
     expect(codeOf(() => applyEditsToYaml('a: [unclosed', []))).toBe('invalid_yaml');
   });
+
+  it('refuses prototype keys in a path, in every mode, and pollutes nothing', () => {
+    const obj = parseYaml(YAML) as unknown;
+    for (const bad of [['__proto__', 'polluted'], ['constructor', 'prototype', 'polluted'], ['assumptions', '__proto__', 'polluted'], ['modules', 'prototype']]) {
+      expect(codeOf(() => applyEditsToObject(obj, [{ path: bad, value: 'x' }]))).toBe('invalid_path');
+      expect(codeOf(() => applyEditsToYaml(YAML, [{ path: bad, value: 'x' }]))).toBe('invalid_path');
+      expect(codeOf(() => getAtPath(obj, bad))).toBe('invalid_path');
+    }
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    // An inherited property is not a config key: it reads as absent, and a path through it has no parent.
+    expect(getAtPath(obj, ['assumptions', 'toString'])).toBeNull();
+    expect(codeOf(() => getAtPath(obj, ['assumptions', 'toString', 'name']))).toBe('invalid_path');
+  });
+
+  it('removes the same list item from the YAML as from the object, and a later edit sees the shifted list', () => {
+    const edits: ConfigEdit[] = [
+      { path: ['modules', 'hc'], value: null },
+      { path: ['modules', 0, 'weight'], value: 1 },
+    ];
+    const fromYaml = parseYaml(applyEditsToYaml(YAML, edits)) as unknown;
+    expect(fromYaml).toEqual(applyEditsToObject(parseYaml(YAML), edits));
+    expect((getAtPath(fromYaml, ['modules']) as { id: string; weight: number }[]).map((m) => [m.id, m.weight])).toEqual([['fm', 1]]);
+  });
 });
 
 describe('the real VVV config', () => {
