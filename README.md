@@ -73,4 +73,24 @@ orion data resolve 4 --note "allowlisted the new buyback Safe"
 - Configuration, from the environment or `<ORION_HOME>/.env` (git-ignored): `ORION_BASE_RPC_URL` (default `https://mainnet.base.org`; the RPC must return `blockTimestamp` on logs, which Base's does) and `COINGECKO_API_KEY` (optional demo key; keyless works, more slowly).
 - Still manual for VVV: `revenue_run_rate_usd`, and ANNOUNCED future emission cuts (`orion data set vvv emission_rate_annual <n> --at <effective date>`). Once the date passes, the daily on-chain read governs.
 
+## Maintaining the system
+
+With the cron line in place, the daily signal takes care of itself. What is left for you:
+
+| When | Command | Why |
+|---|---|---|
+| Whenever you want the number | `orion signal latest vvv` | Read the latest signal. |
+| Weekly, or when a signal says `degraded` | `orion data anomalies vvv` | See what opened. |
+| After checking an anomaly | `orion data ack <id> --note "..."` or `orion data resolve <id> --note "..."` | Close it. `ack`: understood and accepted. `resolve`: the cause is fixed. |
+| Weekly | `orion data sources vvv` | Last fetch outcome and age of the value in force, per metric. |
+| Weekly | `tail update.log` | Catch a source that keeps failing. Three failed runs in a row also open an advisory anomaly. |
+| When Venice discloses revenue | `orion data set vvv revenue_run_rate_usd <n> --at <date> [--provisional --citation <url>]` | Revenue has no API. The advisory `revenue_disclosure_stale` anomaly says when usage has moved since the last figure. |
+| When Venice announces an emission cut | `orion data set vvv emission_rate_annual <n> --at <effective date>` | Announced cuts exist only on their blog. Once the date passes, the daily on-chain read takes over. |
+| When your views change | `orion model assumptions set vvv <key> <value> --scenario <s> --rationale "..."` | The next daily run picks it up. |
+| Rarely | `orion data fetch vvv --backfill-days <n>` | Re-scan burns after an allowlist change, or after adding a metric to the burn scan. |
+
+Exit codes of `orion update`, for whatever watches the cron job: `0` for an `ok` or `degraded` signal, `2` for `blocked`, `1` for an error. A signal is always emitted, including `blocked`.
+
+Known limitation: an anomaly never closes itself, and an acknowledgement holds only until the same condition is seen again. The daily fetch re-evaluates every cross-check, so a mismatch that persists after you `ack` it opens a new anomaly on the next run, and on a critical metric the signal is `degraded` again. For a disagreement you expect to last, widen that cross-check's `tolerance_pct` in `assets/<id>.yaml` instead. See `docs/superpowers/notes/2026-09-19-ingestion-followups.md`.
+
 Every command accepts `--json`. Signals follow schema v1 (spec section 9). Orion emits signals only. It is not investment advice.
