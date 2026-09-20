@@ -1,4 +1,4 @@
-import { MS_PER_DAY, type RunType } from '../types.js';
+import { MS_PER_DAY, OrionError, type RunType } from '../types.js';
 import type { Db } from './connection.js';
 
 export type AgentOutcome = 'running' | 'completed' | 'budget_exhausted' | 'refused' | 'no_journal' | 'conflict' | 'error';
@@ -109,9 +109,15 @@ export interface FinishAgentRunInput {
   transcript: unknown;
 }
 
-/** The run record survives whatever the outcome: this is never part of the ledger's transaction. */
+/**
+ * The run record survives whatever the outcome: this is never part of the ledger's transaction. A run is finished exactly
+ * once. "Finished" means its transcript exists, not that its outcome left `running`: abandonStaleRuns marks a run as
+ * abandoned without a transcript, and if that process was alive after all, its one finish must still record what happened.
+ */
 export function finishAgentRun(db: Db, id: number, input: FinishAgentRunInput): AgentRun {
   db.transaction(() => {
+    const finished = db.prepare('SELECT 1 FROM agent_transcripts WHERE run_id = ?').get(id);
+    if (finished) throw new OrionError('agent_run_already_finished', `agent run ${id} was already finished; its record and transcript are not rewritten`);
     const u = input.usage;
     db.prepare(
       `UPDATE agent_runs SET outcome = ?, ended_at = ?, requests = ?, input_tokens = ?, cache_read_tokens = ?, cache_write_tokens = ?,
@@ -121,7 +127,7 @@ export function finishAgentRun(db: Db, id: number, input: FinishAgentRunInput): 
       u.outputTokens, u.webSearches, u.webFetches, input.error, input.summary === null ? null : JSON.stringify(input.summary), id,
     );
     db.prepare(
-      'INSERT INTO agent_transcripts (run_id, messages_json) VALUES (?, ?) ON CONFLICT (run_id) DO UPDATE SET messages_json = excluded.messages_json',
+      'INSERT INTO agent_transcripts (run_id, messages_json) VALUES (?, ?)',
     ).run(id, JSON.stringify(input.transcript));
   })();
   return getAgentRun(db, id)!;

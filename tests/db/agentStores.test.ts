@@ -59,6 +59,23 @@ describe('agent runs', () => {
     expect(getTranscript(db, id)).toEqual({ messages: [{ role: 'user' }] });
   });
 
+  it('finishes a run exactly once: a second finish throws and rewrites nothing', () => {
+    const id = startAgentRun(db, run());
+    const first = { outcome: 'completed' as const, endedAt: '2026-09-20T00:05:00Z', usage: ZERO_USAGE, error: null, summary: { n: 1 }, transcript: ['first'] };
+    finishAgentRun(db, id, first);
+    expect(codeOf(() => finishAgentRun(db, id, { ...first, outcome: 'error', error: 'late', summary: { n: 2 }, transcript: ['second'] }))).toBe('agent_run_already_finished');
+    expect(getAgentRun(db, id)).toMatchObject({ outcome: 'completed', error: null, summary: { n: 1 } });
+    expect(getTranscript(db, id)).toEqual(['first']);
+  });
+
+  it('lets a run that was marked abandoned still record its one real finish', () => {
+    const id = startAgentRun(db, run({ startedAt: '2026-09-20T00:00:00Z' }));
+    expect(abandonStaleRuns(db, 'mini', '2026-09-20T02:00:00Z')).toBe(1);
+    finishAgentRun(db, id, { outcome: 'completed', endedAt: '2026-09-20T02:30:00Z', usage: ZERO_USAGE, error: null, summary: null, transcript: ['late but real'] });
+    expect(getAgentRun(db, id)).toMatchObject({ outcome: 'completed', error: null });
+    expect(getTranscript(db, id)).toEqual(['late but real']);
+  });
+
   it('lists newest first, by asset, and finds the last completed non-dry run', () => {
     const a = startAgentRun(db, run());
     const b = startAgentRun(db, run({ dryRun: true }));
