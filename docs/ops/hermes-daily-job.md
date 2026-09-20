@@ -78,10 +78,11 @@ HARD RULES
       node dist/cli/index.js signal history vvv --json
       node dist/cli/index.js data anomalies vvv --json
       node dist/cli/index.js data sources vvv --json
+      node dist/cli/index.js model proposals list vvv --json
       tail -n 80 update.log
 - NEVER run any other orion command. In particular never: data ack, data resolve, data set, data confirm,
   data reject, data fetch (with or without --adopt or --backfill-days), model run, model assumptions set or
-  import, init. Those are my decisions. If you believe one is needed, say which and why in the alert, and stop.
+  import, model proposals approve or reject, agent run, persona assign, init. Those are my decisions. If you believe one is needed, say which and why in the alert, and stop.
 - NEVER edit, move, copy over or delete anything under /path/to/orion: not orion.db or its -wal and -shm
   files, not .env, not assets/, not signals.jsonl or update.log. Never run git, npm or sqlite3 there.
 - Do not read or print .env.
@@ -96,3 +97,14 @@ HARD RULES
 - A retry after exit 1 is safe: the burn scan resumes from its cursor and does not re-scan a finished day, and level readings are simply newer observations. The only cost is an extra run and an extra line in `signals.jsonl`. `blocked` is a data condition, and a retry cannot change it.
 - "Yesterday" comes from `signals.jsonl` rather than the agent's memory, so a restarted or re-provisioned agent compares against the right thing.
 - A daily message on success is the dead-man's switch for the scheduler itself: a stalled agent, an expired model key, or a broken gateway all look like silence.
+
+## Pending proposals (sub-project 3)
+
+Once the analyst agent is running (`orion agent run`), it files proposals for changes it may not make itself. They wait in the database until you decide. `model proposals list vvv --json` is read-only, so it is on the job's allowed list above. If you want the daily message to mention them, add this line to the job prompt's report section:
+
+```
+- If `model proposals list vvv --json` returns any rows, add one line per proposal: its id, kind, and rationale, and
+  the stored effect on the 12m target when it has one. Do not approve or reject anything.
+```
+
+The job never runs `orion agent run` itself. Scheduling the agent is sub-project 4.
