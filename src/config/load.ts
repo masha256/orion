@@ -9,12 +9,19 @@ import { AssetConfigSchema, type AssetConfig } from './schema.js';
 export interface LoadedAsset {
   config: AssetConfig;
   hash: string;
+  /** The object as written, before schema defaults. Absent when a caller built the LoadedAsset by hand. */
+  raw?: unknown;
+}
+
+/** What a config proposal's paths and filed-against values refer to: the config as written, else as parsed. */
+export function rawConfig(loaded: LoadedAsset): unknown {
+  return loaded.raw ?? loaded.config;
 }
 
 export function parseAssetObject(obj: unknown): LoadedAsset {
   try {
     const config = AssetConfigSchema.parse(obj);
-    return { config, hash: sha256(canonicalJson(config)) };
+    return { config, hash: sha256(canonicalJson(config)), raw: obj };
   } catch (err) {
     if (err instanceof ZodError) {
       const lines = err.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`);

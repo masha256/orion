@@ -45,7 +45,7 @@ metrics:
     unit: tokens
     staleness_days: 7
     critical: true
-    source: { type: erc20_supply, token: token, subtract_balances: [burn_sink] }
+    source: { type: erc20_supply, token: token, subtract_balances: [ burn_sink ] }
     cross_checks:
       - { tolerance_pct: 0.1, source: { type: http_json, url: "https://outerface.venice.ai/api/app/vvv/vvv_stats", path: totalSupplyCryptoBaseUnit, decimals: 18 } }
 
@@ -104,7 +104,7 @@ metrics:
     cadence: daily
     staleness_days: 4
     critical: true
-    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [aerodrome_pool, buyback_safe], unit: usd, price_coingecko_id: venice-token }
+    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [ aerodrome_pool, buyback_safe ], unit: usd, price_coingecko_id: venice-token }
     cross_checks:
       - { tolerance_pct: 5, source: { type: defillama, slug: venice, data_type: dailyHoldersRevenue, compare: monthly_sum } }
 
@@ -114,7 +114,7 @@ metrics:
     unit: tokens
     cadence: daily
     staleness_days: 4
-    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [aerodrome_pool, buyback_safe], unit: tokens }
+    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [ aerodrome_pool, buyback_safe ], unit: tokens }
     cross_checks:
       - { tolerance_pct: 0.1, source: { type: adapter, name: vvv.burn_history_tokens, params: { url: "https://outerface.venice.ai/api/app/vvv/vvv_burn_history" } } }
 
@@ -124,7 +124,7 @@ metrics:
     unit: usd
     cadence: daily
     staleness_days: 4
-    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [aerodrome_pool, buyback_safe], count_from: [aerodrome_pool], unit: usd, price_coingecko_id: venice-token }
+    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [ aerodrome_pool, buyback_safe ], count_from: [ aerodrome_pool ], unit: usd, price_coingecko_id: venice-token }
 
   # Momentum, not a revenue estimate: mean programmatic burn USD per day over 30 completed days.
   # It never feeds a valuation module. Known limits: the 5 USD band mixes Pro+ sign-ups and credit
