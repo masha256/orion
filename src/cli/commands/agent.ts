@@ -74,6 +74,8 @@ export function registerAgent(program: Command, ctx: CliContext): void {
     .action((assetId: string | undefined, opts: { limit?: string; json?: boolean }) =>
       guarded(ctx, opts.json, () => {
         const limit = opts.limit === undefined ? 20 : parseNumber(opts.limit, '--limit');
+        // SQLite reads a negative LIMIT as "no limit": refuse it here rather than return every row.
+        if (!Number.isInteger(limit) || limit < 1) throw new OrionError('invalid_limit', `--limit must be a positive whole number, got ${opts.limit}`);
         const list = withDb(ctx, (db) => listAgentRuns(db, { assetId, limit }));
         output(ctx, opts.json, list, () => (list.length === 0 ? ['no agent runs'] : list.map(runLine)));
       }),

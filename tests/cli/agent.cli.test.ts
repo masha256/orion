@@ -164,6 +164,16 @@ describe('orion agent run', () => {
     expect(json.estimated_cost_usd).toBeCloseTo((300 * 5 + 150 * 25) / 1_000_000, 9);
     await expect(orion('agent', 'runs', 'show', '9')).rejects.toMatchObject({ code: 'agent_run_not_found' });
   });
+
+  it('refuses a --limit that is not a positive whole number, rather than let SQLite read it as no limit', async () => {
+    for (const bad of ['-5', '0', '2.5', 'many']) {
+      await expect(orion('agent', 'runs', 'list', '--limit', bad)).rejects.toMatchObject({ code: bad === 'many' ? 'invalid_number' : 'invalid_limit' });
+    }
+    const out = JSON.parse(await orion('agent', 'runs', 'list', '--limit', '-5', '--json')) as { error: { code: string } };
+    expect(out.error.code).toBe('invalid_limit');
+    expect(exitCode).toBe(1);
+    expect(await orion('agent', 'runs', 'list', '--limit', '3')).toBe('no agent runs');
+  });
 });
 
 describe('orion model proposals', () => {
