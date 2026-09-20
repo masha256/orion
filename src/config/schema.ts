@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { STD_METRICS } from '../types.js';
+import { SCENARIOS, STD_METRICS } from '../types.js';
 import { CrossCheckSchema, IngestSchema, SourceSchema, sourceIssues } from './sources.js';
 
 const MetricDefSchema = z.strictObject({
@@ -33,7 +33,36 @@ const ModuleInstanceSchema = z.strictObject({
   params: z.record(z.string(), z.unknown()).default({}),
 });
 
-const BoundSchema = z.strictObject({ min: z.number(), max: z.number() });
+const RangeSchema = z.strictObject({ min: z.number(), max: z.number() });
+
+/**
+ * `min`/`max` are the key-wide bounds and bind every author. The optional per-scenario sub-ranges are agent bands:
+ * they bind the agent only. Optional with no default, so existing config hashes do not move.
+ */
+const BoundSchema = z.strictObject({
+  min: z.number(),
+  max: z.number(),
+  bear: RangeSchema.optional(),
+  base: RangeSchema.optional(),
+  bull: RangeSchema.optional(),
+});
+
+const BudgetOverrideSchema = z.strictObject({
+  requests: z.number().int().positive().optional(),
+  input_tokens: z.number().int().positive().optional(),
+  output_tokens: z.number().int().positive().optional(),
+  web_searches: z.number().int().nonnegative().optional(),
+  web_fetches: z.number().int().nonnegative().optional(),
+  proposals: z.number().int().nonnegative().optional(),
+});
+
+/** The agent's own limits. No tool can reach this block and no proposal may touch it. */
+const AgentConfigSchema = z.strictObject({
+  max_step_fraction: z.number().gt(0).max(1).optional(),
+  budgets: z
+    .strictObject({ weekly: BudgetOverrideSchema.optional(), triage: BudgetOverrideSchema.optional(), deep: BudgetOverrideSchema.optional() })
+    .optional(),
+});
 
 const ProbabilitiesSchema = z.strictObject({ bear: z.number(), base: z.number(), bull: z.number() });
 
@@ -52,6 +81,7 @@ export const AssetConfigSchema = z
     modules: z.array(ModuleInstanceSchema).min(1),
     scenario_probabilities: ProbabilitiesSchema.default({ bear: 0.25, base: 0.5, bull: 0.25 }),
     assumptions: z.record(z.string(), BoundSchema),
+    agent: AgentConfigSchema.optional(),
     total_return_variants: z
       .array(z.strictObject({ id: z.string(), yield_multiplier_metric: z.string() }))
       .default([]),
@@ -110,6 +140,12 @@ export const AssetConfigSchema = z
 
     for (const [key, b] of Object.entries(a.assumptions)) {
       if (b.min > b.max) issue(`assumptions: "${key}" has min greater than max`);
+      for (const s of SCENARIOS) {
+        const band = b[s];
+        if (!band) continue;
+        if (band.min > band.max) issue(`assumptions: "${key}" ${s} band has min greater than max`);
+        else if (band.min < b.min || band.max > b.max) issue(`assumptions: "${key}" ${s} band must lie inside [${b.min}, ${b.max}]`);
+      }
     }
     for (const v of a.total_return_variants) {
       if (a.metrics[v.yield_multiplier_metric]?.type !== 'level') {
@@ -121,6 +157,10 @@ export const AssetConfigSchema = z
     const move = a.review_triggers.revenue_stale_move_pct;
     if (move !== undefined && !(typeof move === 'number' && Number.isFinite(move) && move > 0)) {
       issue('review_triggers: revenue_stale_move_pct must be a positive number');
+    }
+    const provisionalMove = a.review_triggers.provisional_move_pct;
+    if (provisionalMove !== undefined && !(typeof provisionalMove === 'number' && Number.isFinite(provisionalMove) && provisionalMove > 0)) {
+      issue('review_triggers: provisional_move_pct must be a positive number');
     }
   });
 
