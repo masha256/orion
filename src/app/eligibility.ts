@@ -50,6 +50,16 @@ export function narrowToUsable(asset: AssetConfig, observations: Observation[], 
   return kept.sort(byTimeThenId);
 }
 
+/**
+ * The value the signal uses now for a level or schedule metric: the newest eligible observation at or before `asOf`.
+ * Null when nothing is in force, and always for flow and event metrics, which have no single value in force.
+ */
+export function valueInForce(db: Db, asset: AssetConfig, metricKey: string, asOf: string): number | null {
+  const def = asset.metrics[metricKey];
+  if (!def || def.type === 'flow' || def.type === 'event') return null;
+  return latestLevel(eligibleObservations(db, asset, asOf).filter((o) => o.metricKey === metricKey), asOf)?.value ?? null;
+}
+
 export function eligibleObservations(db: Db, asset: AssetConfig, asOf: string): Observation[] {
   const active = listActiveObservations(db, asset.id).filter((o) => {
     const def = asset.metrics[o.metricKey];

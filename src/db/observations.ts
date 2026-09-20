@@ -91,6 +91,20 @@ export function listActiveObservations(db: Db, assetId: string, metricKey?: stri
   return rows.map(fromRow);
 }
 
+/** Newest first. Active rows only, unless `includeInactive` (which adds superseded and rejected rows). */
+export function listObservations(
+  db: Db,
+  assetId: string,
+  metricKey: string,
+  opts: { includeInactive?: boolean; limit?: number } = {},
+): Observation[] {
+  const where = opts.includeInactive ? '' : ` AND ${ACTIVE}`;
+  const rows = db
+    .prepare(`SELECT * FROM observations WHERE asset_id = ? AND metric_key = ?${where} ORDER BY observed_at DESC, id DESC LIMIT ?`)
+    .all(assetId, metricKey, opts.limit ?? 10) as Row[];
+  return rows.map(fromRow);
+}
+
 export function insertObservation(db: Db, input: NewObservation): Observation {
   if (!Number.isFinite(input.value)) throw new OrionError('invalid_value', 'observation value must be a finite number');
   if (input.periodDays !== undefined && input.periodDays !== null && !(Number.isFinite(input.periodDays) && input.periodDays > 0)) {
