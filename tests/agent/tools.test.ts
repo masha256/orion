@@ -198,10 +198,28 @@ describe('record_provisional_observation', () => {
     const p = w.ledger.proposals()[0];
     expect(p.change).toMatchObject({ kind: 'observation', metricKey: 'revenue_run_rate_usd', value: 2000, observedAt: '2026-06-28T00:00:00.000Z' });
     expect(p.filedAgainst).toEqual({ inForce: 1000 });
-    expect(p.rationale).toMatch(/^Founder interview \(revenue_run_rate_usd is critical and 2000 is more than 25% from the value in force \(1000\)\)$/);
+    expect(p.rationale).toMatch(/^Founder interview \(revenue_run_rate_usd is critical and 2000 is more than 25% from the last confirmed value \(1000\)\)$/);
     const effect = p.effect as { '12m': { from: number; to: number } };
     expect(effect['12m'].from).toBeCloseTo(10, 6);
     expect(effect['12m'].to).toBeCloseTo(20, 6);
+  });
+
+  it('measures the move from the last CONFIRMED value, so provisional rows cannot compound the guard across runs', () => {
+    // An earlier run's research is live in the signal: 1250, provisional. The confirmed value is still 1000.
+    insertObservation(w.db, {
+      assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-20', value: 1250, source: 'manual', status: 'provisional',
+      citationUrl: 'https://news.example.com/earlier', fetchedAt: AS_OF,
+    });
+    w.pages.push({ url: 'https://news.example.com/next', text: 'The company now reports annualized revenue of $1,500.' });
+    // 1500 is 20 percent above 1250, but 50 percent above the confirmed 1000: it must go to the user.
+    const r = research({ value: 1500, citation_url: 'https://news.example.com/next', quoted_text: 'reports annualized revenue of $1,500' });
+    expect(r).toMatchObject({ isError: false, result: { recorded: false } });
+    expect(w.ledger.observations()).toEqual([]);
+    expect(w.ledger.proposals()[0].filedAgainst).toEqual({ inForce: 1000 });
+    // A value within 25 percent of the confirmed 1000 still goes live.
+    w.pages.push({ url: 'https://news.example.com/small', text: 'The company now reports annualized revenue of $1,200.' });
+    expect(research({ value: 1200, observed_at: '2026-06-29', citation_url: 'https://news.example.com/small', quoted_text: 'reports annualized revenue of $1,200' }))
+      .toMatchObject({ isError: false, result: { recorded: true, in_signal: true } });
   });
 
   it('keeps a row inert when the metric does not allow provisional data', () => {

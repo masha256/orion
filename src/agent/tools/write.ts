@@ -196,7 +196,8 @@ const recordProvisionalObservation = defineTool({
     const citation = verifyCitation(ctx.fetchedPages(), input.citation_url, input.quoted_text);
     if (citation) throw new ToolRefusal(citation);
 
-    const inForce = valueInForce(ctx.db, asset, input.metric, now.toISOString());
+    // The last CONFIRMED value: measuring from a provisional row would let the guard compound from run to run.
+    const inForce = valueInForce(ctx.db, asset, input.metric, now.toISOString(), { confirmedOnly: true });
     const movePct = provisionalMovePct(asset);
     const route = routeObservation({ allowProvisional: def.allow_provisional, critical: def.critical, inForce, value: input.value, movePct });
     const periodDays = input.period_days ?? null;
@@ -212,8 +213,8 @@ const recordProvisionalObservation = defineTool({
       };
       const why =
         inForce === null
-          ? `${input.metric} is critical and nothing is in force to compare ${input.value} against`
-          : `${input.metric} is critical and ${input.value} is more than ${movePct}% from the value in force (${inForce})`;
+          ? `${input.metric} is critical and there is no confirmed value to compare ${input.value} against`
+          : `${input.metric} is critical and ${input.value} is more than ${movePct}% from the last confirmed value (${inForce})`;
       const staged = fileProposal(ctx, {
         change, filedAgainst: { inForce }, rationale: input.note?.trim() ? `${input.note.trim()} (${why})` : why, evidence: [],
         effect: computeEffect(ctx, [], { addObservations: [preview] }),

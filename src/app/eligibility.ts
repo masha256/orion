@@ -51,13 +51,18 @@ export function narrowToUsable(asset: AssetConfig, observations: Observation[], 
 }
 
 /**
- * The value the signal uses now for a level or schedule metric: the newest eligible observation at or before `asOf`.
- * Null when nothing is in force, and always for flow and event metrics, which have no single value in force.
+ * The value in force for a level or schedule metric: the newest observation at or before `asOf`. By default, what the
+ * signal uses (eligible rows, so provisional ones count on a metric that allows them). With `confirmedOnly`, the newest
+ * CONFIRMED row: the baseline the agent's move guard measures from, so that provisional rows, the agent's own above all,
+ * can never walk the baseline. Null when there is none, and always for flow and event metrics.
  */
-export function valueInForce(db: Db, asset: AssetConfig, metricKey: string, asOf: string): number | null {
+export function valueInForce(db: Db, asset: AssetConfig, metricKey: string, asOf: string, opts: { confirmedOnly?: boolean } = {}): number | null {
   const def = asset.metrics[metricKey];
   if (!def || def.type === 'flow' || def.type === 'event') return null;
-  return latestLevel(eligibleObservations(db, asset, asOf).filter((o) => o.metricKey === metricKey), asOf)?.value ?? null;
+  const rows = opts.confirmedOnly
+    ? listActiveObservations(db, asset.id, metricKey).filter((o) => o.status === 'confirmed')
+    : eligibleObservations(db, asset, asOf).filter((o) => o.metricKey === metricKey);
+  return latestLevel(rows, asOf)?.value ?? null;
 }
 
 export function eligibleObservations(db: Db, asset: AssetConfig, asOf: string): Observation[] {
