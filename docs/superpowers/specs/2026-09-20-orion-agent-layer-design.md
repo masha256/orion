@@ -1,7 +1,7 @@
 # Orion Sub-project 3: The Agent Layer
 
 Date: 2026-09-20
-Status: Draft for review
+Status: Approved by the user on 2026-09-20 (section 17 records what planning changed the same day)
 Parent: `docs/superpowers/specs/2026-09-18-orion-valuation-framework-design.md` (the umbrella spec; binding where this document is silent, amended where section 15 says so)
 Builds on: sub-projects 1 and 2, on `main` at `ef0fe8c`, 335 tests, engine 1.2.0
 
@@ -53,8 +53,8 @@ At Opus 5 list prices ($5 input, $25 output per million tokens) with prompt cach
 - The `observations.source` CHECK constraint allows `onchain`, `api`, `manual`. Provisional status, not source, drives provenance.
 - An acknowledged anomaly stands across recurrences; a resolved one whose condition persists reopens at the next fetch (ingestion spec 6.3).
 - Claude API (from the `claude-api` skill reference, cached 2026-06-24): `claude-opus-5` runs adaptive thinking by default and rejects `budget_tokens` and sampling parameters; server tools `web_search_20260209` and `web_fetch_20260209` run on Anthropic's side and can end a turn with `stop_reason: "pause_turn"`; the SDK's tool runner does not resume `pause_turn`; `fallbacks: "default"` needs `client.beta.messages` and beta header `server-side-fallback-2026-07-01`; top-level `cache_control: {type: "ephemeral"}` caches the growing prefix; parallel tool calls must be answered in one user message.
-- (unverified; section 12) Whether `web_fetch_20260209`, which filters page content with server-side code, still returns the full page text to the client transcript. Citation verification reads it there.
-- (unverified; section 12) Whether the `yaml` Document API preserves the flow-style maps and comments in `assets/vvv.yaml` through `setIn`.
+- (STILL unverified: no API credentials were available during planning; it is the first user checkpoint in the plan) Whether `web_fetch_20260209`, which filters page content with server-side code, still returns the full page text to the client transcript. Citation verification reads it there.
+- (verified 2026-09-20 during planning; section 17) The `yaml` Document API preserves `assets/vvv.yaml` only with `lineWidth: 0`, in-place scalar edits, and four lines of bracket padding normalized once.
 
 ## 3. Components
 
@@ -438,3 +438,20 @@ Commander errors not JSON under `--json` for existing commands; offset-less time
 - A resolved anomaly whose condition persists reopens at the next fetch; the agent's remedy for a persistent, understood condition is an acknowledgement proposal.
 - Transcripts grow the database; a deep run can store a few megabytes.
 - Proposal effects are computed at filing time and are not refreshed as data moves.
+
+## 17. Amendments made during planning (2026-09-20)
+
+The plan's code was prototyped and run before the plan was written. These are the places where doing so changed or sharpened this spec. Where this section and an earlier one disagree, this section governs.
+
+1. **YAML round trip (sections 2, 6.3, 12).** A plain `yaml` round trip re-wraps every flow map longer than 80 columns. The edit prints with `lineWidth: 0`, changes scalars in place (so a comment on the line survives), and makes new collections flow-style. `assets/vvv.yaml` is normalized once on four lines (`[burn_sink]` becomes `[ burn_sink ]`), and a test pins that the real file round-trips byte for byte. The config hash is computed from the parsed config and does not move.
+2. **Proposal storage (section 11.1).** `change` and `filed_against` are stored as written, not as canonical JSON: a config edit's value is later written into the YAML, and canonical JSON would reorder `{ min, max }`. Duplicate detection compares canonical forms in code.
+3. **Filed-against values for config proposals (sections 5.6, 6.3)** are read from the asset config as written (`LoadedAsset.raw`, the YAML object before schema defaults), which is the same view approve checks against. An absent key reads as `null`.
+4. **`apply_assumption_change` with `scenario: all` (section 5.3).** A value outside any scenario's band is refused (`out_of_band`, listing the scenarios) and nothing is staged. Automatic conversion to a proposal applies to single-scenario calls only, because a proposal is for one scenario and one request must never become a mix of writes and proposals.
+5. **`propose_change` input (section 5.6)** is one flat object with per-kind fields checked in code, because the API requires each tool's input schema to be an object at the top level. For the anomaly and observation kinds the proposal's `note` is the rationale. A proposal that changes nothing is refused (`no_change`).
+6. **`record_provisional_observation` (section 5.5)** takes an optional `note`, which becomes part of the rationale when the move guard turns the observation into a proposal.
+7. **Budget visibility (section 4.4).** Each client tool result ends with a `budget: {...}` line after the result JSON, rather than wrapping the result.
+8. **Credentials in preflight (sections 1, 4.2).** The SDK resolves credentials lazily, at the first request. Preflight therefore checks for a credential source (an API key or auth token in `.env` or the environment, `ANTHROPIC_PROFILE`, workload identity federation variables, or an SDK profile directory) and fails with `no_credentials` when there is none. It is a hint, not proof: a wrong key ends the run as `error`. Keys found in `<ORION_HOME>/.env` are passed to the SDK explicitly, since the SDK reads only the process environment.
+9. **VVV's starting bands (section 11.2).** The midpoint rule applies to keys whose three calibrated values are strictly ordered. `growth_fade_years`, `capture_ramp_years.burn`, and `staked_ratio_horizon` are not, and get no bands: the agent uses their key-wide bounds. Discount keys fall from bear to bull, so their bands do too.
+10. **`valueInForce` (sections 5.5, 6.2)** is the newest eligible level, or schedule step, at or before now, shared by the move guard and by approve's staleness check.
+11. **The run summary (section 11.1)** always carries what the run staged, so a failed or dry run still shows what it would have written.
+12. **Not done during planning:** any live API call. The `web_fetch` probe of section 12 item 1 is `scripts/probe-web-fetch.mjs` and the plan's first user checkpoint; the fetch tool type is one constant so the probe's answer is a one-line change.
