@@ -53,6 +53,11 @@ describe('personas', () => {
     expect(p).toMatchObject({ model: 'claude-sonnet-5', effort: 'medium' });
   });
 
+  it('treats temperament and sectors as optional descriptive metadata: a persona with only a name loads', () => {
+    const p = parsePersona('---\nname: analyst\n---\nYou are an analyst.\n');
+    expect(p).toMatchObject({ name: 'analyst', model: 'claude-opus-5', effort: 'high', temperament: '', sectors: [] });
+  });
+
   it('rejects missing frontmatter, an empty body, unknown keys, and a bad effort', () => {
     expect(codeOf(() => parsePersona('You are an analyst.'))).toBe('invalid_persona');
     expect(codeOf(() => parsePersona('---\nname: analyst\n---\n   \n'))).toBe('invalid_persona');
@@ -79,6 +84,11 @@ describe('skills', () => {
     });
     expect(codeOf(() => parseSkill(skill('x', '')))).toBe('invalid_skill');
     expect(codeOf(() => parseSkill(skill('x', 'daily')))).toBe('invalid_skill');
+  });
+
+  it('rejects unknown frontmatter keys and a missing description', () => {
+    expect(codeOf(() => parseSkill(skill('x', 'weekly').replace('description:', 'summary:')))).toBe('invalid_skill');
+    expect(codeOf(() => parseSkill(skill('x', 'weekly').replace('run_types:', 'priority: 1\nrun_types:')))).toBe('invalid_skill');
   });
 
   it('selects the skills for a run type, sorted by name', () => {
