@@ -39,7 +39,7 @@ describe('the shipped persona and skills', () => {
   it('tell the agent the research rules the tool layer enforces', () => {
     const research = loadSkills(ROOT).find((s) => s.name === 'disclosure-research')!.body;
     expect(research).toContain('one paragraph, table cell, or list item');
-    expect(research).toContain('already exists at the same metric and date');
+    expect(research).toContain('already exists at the same metric and time');
   });
 });
 

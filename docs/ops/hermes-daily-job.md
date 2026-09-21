@@ -39,7 +39,10 @@ Signal fields you need:
 - horizons["12m"].expected_target, horizons["12m"].upside_pct, horizons["6m"].expected_target
 - data_quality.grade (A to D), data_quality.stale_metrics, data_quality.provisional_metrics
 - data_quality.anomalies: the OPEN anomalies, each with id, kind, metric, severity ("degrading" or "advisory")
-- change.target_delta_pct: percent change of the 12m target against the previous signal; change.cause
+- change.target_delta_pct: percent change of the 12m target against the previous signal
+- change.cause: "data", "assumptions", "config" (the asset YAML changed) or "both"; change.causes lists every
+  cause present, so use that when cause is "both". change.author names who changed the assumptions: "user", or
+  the analyst persona's name when the agent did. Report the cause and the author; judge neither.
 - provenance.engine_version, provenance.assumption_set_version
 
 In stderr (the fetch summary):
@@ -63,8 +66,9 @@ then the relevant stderr lines quoted verbatim) when any of these is true:
 - stderr has a FAILED source, an OUTSIDE check, a conflict, or an unlisted sender
 - the absolute value of change.target_delta_pct is 5 or more
 - stale_metrics is not empty
-- provenance.engine_version or provenance.assumption_set_version differs from yesterday's (say which; this is
-  informational when I deployed or changed assumptions myself)
+- provenance.engine_version or provenance.assumption_set_version differs from yesterday's (say which, and for the
+  assumption set give change.author; this is informational when I deployed, changed assumptions myself, or ran
+  the analyst agent, and change.author says which)
 
 For "yesterday", use the line of /path/to/orion/signals.jsonl whose signal_id equals today's
 change.prev_signal_id (the file holds every asset's signals). When today's run produced no signal, use the

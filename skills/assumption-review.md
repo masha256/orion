@@ -14,4 +14,6 @@ A useful order:
 
 If revenue_disclosure_stale is open, the revenue level under your growth assumptions may be out of date. Look for a newer disclosure (the disclosure-research skill) before touching rev_growth_y1, growth_fade_years, or terminal_growth. If you find none, say so in the rationale of any growth change you still make, or leave growth alone.
 
+Once you have recorded a newer revenue figure that went live in this run, resolve the revenue_disclosure_stale anomaly, citing the new observation's id: it will not close by itself, because it is keyed to the old disclosure. If your figure became a proposal instead, leave the anomaly open.
+
 Most weeks the right number of changes is zero or one. Write the journal so that your next run can tell what you watched and what would have made you act.

@@ -80,12 +80,12 @@ orion data resolve 4 --note "allowlisted the new buyback Safe"
 An AI analyst persona maintains the assumptions, looks into anomalies, and researches the figures no API publishes. It never writes a target: the engine still does all the math. What it may do is enforced in code, not in its prompt.
 
 ```bash
-orion persona assign vvv ai-infra-analyst                # once: who covers the asset
-orion agent run vvv --type weekly                        # review what moved; adjust within its bands
-orion agent run vvv --type triage --anomaly 7            # look into one anomaly
-orion agent run vvv --type triage --note "https://..."   # a lead to verify; never evidence by itself
-orion agent run vvv --type deep                          # monthly: re-underwrite the thesis
-orion agent run vvv --type weekly --dry-run              # everything except the commit (spends tokens)
+orion persona assign vvv ai-infra-analyst                            # once: who covers the asset
+orion agent run vvv --type weekly --out signals.jsonl                # review what moved; adjust within its bands
+orion agent run vvv --type triage --anomaly 7 --out signals.jsonl    # look into one anomaly
+orion agent run vvv --type triage --note "https://..." --out signals.jsonl   # a lead to verify; never evidence by itself
+orion agent run vvv --type deep --out signals.jsonl                  # monthly: re-underwrite the thesis
+orion agent run vvv --type weekly --dry-run                          # everything except the commit (spends tokens)
 orion agent runs list vvv
 orion agent runs show 3 [--transcript]                   # outcome, what was committed, tokens, estimated cost
 orion model proposals list                               # what it wants and may not do itself
@@ -98,7 +98,9 @@ Credentials: put `ANTHROPIC_API_KEY=...` in `<ORION_HOME>/.env` (or the environm
 
 What the agent can do directly: change an assumption inside its band for that scenario (the `bear`/`base`/`bull` sub-ranges under `assumptions:` in the asset YAML) and within the max step per run (25 percent of the band's width), citing at least one observation it has seen in that run; resolve an open anomaly with evidence; record a researched figure as a provisional observation, citing a page it fetched in that run and quoting it verbatim; write its journal. Everything else becomes a proposal: a value outside its band or step, any change to the asset YAML, acknowledging an anomaly, confirming or rejecting an observation, and a researched value on a critical metric that moves more than `review_triggers.provisional_move_pct` (25) from the last confirmed value (its own earlier provisional figures never move that baseline). A quote it cites must sit inside one paragraph, table cell, or list item of the fetched page, so it cannot be spliced from unrelated parts; and it cannot record a figure where an observation already exists at the same metric and time: it proposes rejecting that one instead. While a `degrading` anomaly is open it cannot change assumptions at all. It can never touch `agent:` settings, persona or skill files, or a signal.
 
-A run either finishes cleanly, journal entry included, and commits everything together, or commits nothing (`budget_exhausted`, `refused`, `no_journal`, `conflict`, `error`). The run row, the transcript, and the token counts are kept either way. `conflict` means the world changed mid-run (you saved an assumption set, say): run it again. After a commit that can move a signal the run values the asset and prints the signal; `change.author` and `provenance.agent_run_id` say who moved it. Exit codes: `0` completed, `2` completed with a `blocked` signal, `1` anything else.
+A run either finishes cleanly, journal entry included, and commits everything together, or commits nothing (`budget_exhausted`, `refused`, `no_journal`, `conflict`, `error`). The run row, the transcript, and the token counts are kept either way. `conflict` means the world changed mid-run (you saved an assumption set, or edited `assets/<id>.yaml`, while it ran): run it again. After a commit that can move a signal the run values the asset and prints the signal; `change.author` and `provenance.agent_run_id` say who moved it. Exit codes: `0` completed, `2` completed with a `blocked` signal, `1` anything else.
+
+Give every real agent run `--out signals.jsonl`, the same file the daily job appends to: a signal an agent run produced can be the one the next daily signal names in `change.prev_signal_id`, and whatever reads `signals.jsonl` (the Hermes job above compares against it) must be able to find it there. A `--dry-run` writes no signal and needs no `--out`.
 
 Approving a config proposal edits `assets/<id>.yaml` in place, keeping comments and layout: review it with `git diff` and commit it. A proposal is refused as stale when what it was filed against has changed; reject it with a note. Personas and skills are markdown files in `personas/` and `skills/`; edit them like any other file, and runs record the hash of what they used. Per-run budgets (requests, tokens, web searches and fetches) have defaults in code and can be overridden under `agent:` in the asset YAML. There is no scheduler yet: run the agent by hand, or from your own cron, until sub-project 4.
 
@@ -116,9 +118,9 @@ With the cron line in place, the daily signal takes care of itself. What is left
 | When Venice discloses revenue | `orion data set vvv revenue_run_rate_usd <n> --at <date> [--provisional --citation <url>]` | Revenue has no API. The advisory `revenue_disclosure_stale` anomaly says when usage has moved since the last figure. |
 | When Venice announces an emission cut | `orion data set vvv emission_rate_annual <n> --at <effective date>` | Announced cuts exist only on their blog. Once the date passes, the daily on-chain read takes over. |
 | When your views change | `orion model assumptions set vvv <key> <value> --scenario <s> --rationale "..."` | The next daily run picks it up. |
-| Weekly | `orion agent run vvv --type weekly`, then `orion model proposals list` | The analyst reviews what moved; decide what it proposed. |
-| Monthly | `orion agent run vvv --type deep` | Re-underwrite the thesis; expect structural proposals. |
-| When an anomaly opens | `orion agent run vvv --type triage --anomaly <id>` | It resolves what has passed and proposes an acknowledgement for what will persist. |
+| Weekly | `orion agent run vvv --type weekly --out signals.jsonl`, then `orion model proposals list` | The analyst reviews what moved; decide what it proposed. |
+| Monthly | `orion agent run vvv --type deep --out signals.jsonl` | Re-underwrite the thesis; expect structural proposals. |
+| When an anomaly opens | `orion agent run vvv --type triage --anomaly <id> --out signals.jsonl` | It resolves what has passed and proposes an acknowledgement for what will persist. |
 | Rarely | `orion data fetch vvv --backfill-days <n>` | Re-scan burns after an allowlist change, or after adding a metric to the burn scan. |
 
 Exit codes of `orion update`, for whatever watches the cron job: `0` for an `ok` or `degraded` signal, `2` for `blocked`, `1` for an error. A signal is always emitted, including `blocked`.
