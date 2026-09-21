@@ -212,6 +212,12 @@ describe('verified citations', () => {
 
   it('refuses a page that was not fetched, a quote that is not there, and a quote too short to mean anything', () => {
     expect(verifyCitation(pages, 'https://other.example.com/x', 'annualized revenue of $100 million')?.refused).toBe('citation_not_fetched');
+    // The pages it DID fetch, normalized, so a redirect or a www. variant costs one retry rather than several guesses.
+    const notFetched = verifyCitation(pages, 'https://other.example.com/x', 'annualized revenue of $100 million')!;
+    expect(notFetched.fetched_urls).toEqual(['https://news.example.com/venice-revenue']);
+    expect(notFetched.message).toContain('fetched_urls');
+    const many = Array.from({ length: 25 }, (_, i) => ({ url: `https://x.example.com/p${i}`, text: 'x' }));
+    expect((verifyCitation(many, 'https://other.example.com/x', 'annualized revenue of $100 million')!.fetched_urls as string[])).toHaveLength(20);
     expect(verifyCitation(pages, 'https://news.example.com/venice-revenue', 'annualized revenue of $200 million')?.refused).toBe('quote_not_found');
     expect(verifyCitation(pages, 'https://news.example.com/venice-revenue', 'annualized revenue of $999 million')?.refused).toBe('quote_not_found');
     expect(verifyCitation(pages, 'https://news.example.com/venice-revenue', '$100 million')?.refused).toBe('quote_too_short');

@@ -25,6 +25,24 @@ export function unproposableEdits(edits: ConfigEdit[]): ConfigEdit[] {
   return edits.filter((e) => UNPROPOSABLE_ROOTS.includes(String(e.path[0])));
 }
 
+/** Metric settings that decide what research may do with that metric unattended. */
+const AGENT_LIMIT_METRIC_KEYS = new Set(['source', 'allow_provisional', 'critical']);
+
+/**
+ * True when any of these edits would widen (or narrow) what the agent may do without asking. A proposal may legitimately
+ * do this, so it is not refused; the user is told, because approving it changes the rules the NEXT run plays by.
+ * Bands and bounds decide what it may apply; provisional_move_pct decides when research goes live rather than to the
+ * user; a metric's source, allow_provisional, and critical decide whether it may write there at all.
+ */
+export function changesAgentLimits(edits: ConfigEdit[]): boolean {
+  return edits.some((e) => {
+    const path = e.path.map(String);
+    if (path[0] === 'assumptions') return true;
+    if (path.length === 2 && path[0] === 'review_triggers' && path[1] === 'provisional_move_pct') return true;
+    return path[0] === 'metrics' && path.length >= 3 && AGENT_LIMIT_METRIC_KEYS.has(path[path.length - 1]);
+  });
+}
+
 /** Turns id segments into list indexes by walking the plain object. Throws `invalid_path` when a parent is missing or is not a container. */
 function concretePath(root: unknown, path: PathSegment[]): (string | number)[] {
   if (path.length === 0) throw new OrionError('invalid_path', 'a config path needs at least one segment');

@@ -163,6 +163,9 @@ export interface FetchedPage {
 
 export const MIN_QUOTE_LENGTH = 20;
 
+/** How many fetched urls a refusal lists back: enough to spot the one the model meant, not enough to flood the turn. */
+const MAX_LISTED_URLS = 20;
+
 const ENTITIES: Record<string, string> = {
   amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
   lsquo: "'", rsquo: "'", ldquo: '"', rdquo: '"', ndash: '-', mdash: '-', hellip: '...',
@@ -259,9 +262,13 @@ export function verifyCitation(pages: FetchedPage[], citationUrl: string, quoted
   const target = normalizeUrl(citationUrl);
   const fetched = pages.filter((p) => normalizeUrl(p.url) === target);
   if (fetched.length === 0) {
+    // Listing what WAS fetched costs one retry for a redirect or a www. variant, instead of several blind guesses.
     return {
       refused: 'citation_not_fetched',
-      message: `${citationUrl} was not fetched with web_fetch in this run; fetch the page you are citing, then record the observation`,
+      message:
+        `${citationUrl} was not fetched with web_fetch in this run; fetch the page you are citing, then record the observation. ` +
+        'fetched_urls lists the pages you have fetched, as this run sees them: if one of those is the page you mean, cite it exactly.',
+      fetched_urls: [...new Set(pages.map((p) => normalizeUrl(p.url)))].slice(0, MAX_LISTED_URLS),
     };
   }
   if (fetched.some((p) => textBlocks(p.text).some((block) => block.includes(quote)))) return null;

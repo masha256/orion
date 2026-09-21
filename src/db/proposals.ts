@@ -122,11 +122,21 @@ export function recentlyDecidedProposals(db: Db, assetId: string, limit: number)
   return rows.map(fromRow);
 }
 
-/** A pending proposal for the asset with exactly this change, if any. Canonical JSON makes key order irrelevant. */
+/**
+ * What a change actually decides, with the free text the model wrote left out: the `note` the anomaly and observation
+ * kinds carry, and the observation kind's `quotedText`. Two proposals that ask for the same thing in different words are
+ * the same proposal; comparing the wording too would let the agent refile the same decision indefinitely.
+ */
+export function proposalIdentity(change: ProposalChange): string {
+  const { note: _note, quotedText: _quotedText, ...decision } = change as ProposalChange & { note?: string; quotedText?: string };
+  return canonicalJson(decision);
+}
+
+/** A pending proposal for the asset that decides the same thing, if any. Canonical JSON makes key order irrelevant. */
 export function findPendingDuplicate(db: Db, assetId: string, change: ProposalChange): Proposal | null {
   const rows = db.prepare("SELECT * FROM proposals WHERE asset_id = ? AND kind = ? AND status = 'pending' ORDER BY id").all(assetId, change.kind) as Row[];
-  const wanted = canonicalJson(change);
-  return rows.map(fromRow).find((p) => canonicalJson(p.change) === wanted) ?? null;
+  const wanted = proposalIdentity(change);
+  return rows.map(fromRow).find((p) => proposalIdentity(p.change) === wanted) ?? null;
 }
 
 /** Decisions are final. */

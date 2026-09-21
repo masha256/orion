@@ -49,6 +49,11 @@ export function rejectProposal(db: Db, id: number, note: string, now: Date): Pro
  */
 export function approveProposal(db: Db, home: string, id: number, opts: { note?: string; now: Date }): { proposal: Proposal; result: ApproveResult } {
   const p = pending(db, id);
+  // The asset id becomes part of a file path below, and it comes off a stored row. A row from an older build, or one
+  // edited in the database, must not be able to steer a write out of <home>/assets. Checked before any path is built.
+  if (!/^[a-z0-9-]+$/.test(p.assetId)) {
+    throw new OrionError('invalid_proposal', `proposal ${id} names "${p.assetId}", which is not an asset id`);
+  }
   const nowIso = opts.now.toISOString();
   const note = opts.note?.trim() || null;
   const change = p.change;

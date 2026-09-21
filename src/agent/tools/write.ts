@@ -5,7 +5,7 @@ import { applyEditsToObject, getAtPath, UNPROPOSABLE_ROOTS, unproposableEdits } 
 import { parseAssetObject, rawConfig } from '../../config/load.js';
 import { getAnomaly, listOpenAnomalies } from '../../db/anomalies.js';
 import { getObservationsByIds, listActiveObservations, type Observation } from '../../db/observations.js';
-import { findPendingDuplicate, type ProposalChange, type ProposalEffect } from '../../db/proposals.js';
+import { findPendingDuplicate, proposalIdentity, type ProposalChange, type ProposalEffect } from '../../db/proposals.js';
 import { requiredAssumptionKeys, validateAssetModules, validateAssumptions } from '../../engine/requirements.js';
 import { SCENARIOS, type Scenario } from '../../types.js';
 import { canonicalJson } from '../../util/canonical.js';
@@ -57,8 +57,8 @@ function fileProposal(
     refuse('proposal_budget', `this run may file at most ${ctx.budgets.proposals} proposals`);
   }
   const pending = findPendingDuplicate(ctx.db, ctx.loaded.config.id, p.change);
-  const same = canonicalJson(p.change);
-  if (pending || ctx.ledger.proposals().some((s) => canonicalJson(s.change) === same)) {
+  const same = proposalIdentity(p.change);
+  if (pending || ctx.ledger.proposals().some((s) => proposalIdentity(s.change) === same)) {
     refuse('duplicate_proposal', 'an identical proposal is already pending', pending ? { proposal_id: pending.id } : { staged_in_this_run: true });
   }
   ctx.ledger.stageProposal(p);

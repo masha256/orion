@@ -26,7 +26,10 @@ export function registerSignal(program: Command, ctx: CliContext): void {
     .option('--limit <n>', 'maximum signals, newest first', '20')
     .option('--json', 'JSON output')
     .action((assetId: string, opts: { limit: string; json?: boolean }) => {
-      const list = withDb(ctx, (db) => listSignals(db, assetId, parseNumber(opts.limit, '--limit')));
+      const limit = parseNumber(opts.limit, '--limit');
+      // SQLite reads a negative LIMIT as "no limit": refuse it here rather than return every row.
+      if (!Number.isInteger(limit) || limit < 1) throw new OrionError('invalid_limit', `--limit must be a positive whole number, got ${opts.limit}`);
+      const list = withDb(ctx, (db) => listSignals(db, assetId, limit));
       output(ctx, opts.json, list, () =>
         list.length === 0
           ? ['no signals']

@@ -318,6 +318,26 @@ describe('propose_change', () => {
     const third = anomaly('advisory', 'c');
     expect(propose({ kind: 'acknowledge_anomaly', anomaly_id: third.id }).result.refused).toBe('proposal_budget');
   });
+
+  it('sees through wording: the same decision re-filed in other words is the same proposal', () => {
+    const open = anomaly('degrading', 'a');
+    insertProposal(w.db, {
+      assetId: 'mini', persona: 'analyst', agentRunId: null, change: { kind: 'acknowledge_anomaly', anomalyId: open.id, note: 'the API lags by design' },
+      filedAgainst: { status: 'open' }, rationale: 'the API lags by design', evidence: [], effect: null, createdAt: AS_OF,
+    });
+    expect(propose({ kind: 'acknowledge_anomaly', anomaly_id: open.id, rationale: 'this source is known to report late' }))
+      .toMatchObject({ isError: true, result: { refused: 'duplicate_proposal' } });
+
+    // And the same again for one staged earlier in this run.
+    const other = anomaly('advisory', 'b');
+    expect(propose({ kind: 'acknowledge_anomaly', anomaly_id: other.id, rationale: 'first wording' }).isError).toBe(false);
+    expect(propose({ kind: 'acknowledge_anomaly', anomaly_id: other.id, rationale: 'quite different wording' }))
+      .toMatchObject({ isError: true, result: { refused: 'duplicate_proposal', staged_in_this_run: true } });
+
+    // A different anomaly is a different proposal, however similar the words.
+    const third = anomaly('advisory', 'c');
+    expect(propose({ kind: 'acknowledge_anomaly', anomaly_id: third.id, rationale: 'first wording' }).isError).toBe(false);
+  });
 });
 
 describe('model-authored text', () => {

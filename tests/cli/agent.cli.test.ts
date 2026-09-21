@@ -213,9 +213,21 @@ describe('orion model proposals', () => {
   it('approving a config proposal edits the YAML and says to review and commit it', async () => {
     const p = fileProposal({ kind: 'config', edits: [{ path: ['assumptions', 'rev_growth_y1', 'base'], value: { min: 0, max: 2 } }] }, [{ min: 0, max: 1 }]);
     const out = await orion('model', 'proposals', 'approve', String(p.id));
-    expect(out).toContain('assumptions.rev_growth_y1.base: {"max":1,"min":0} -> {"max":2,"min":0}');
+    // " > ", not ".": assumption keys contain dots, so a dotted path is ambiguous.
+    expect(out).toContain('assumptions > rev_growth_y1 > base: {"max":1,"min":0} -> {"max":2,"min":0}');
     expect(out).toContain('review it with "git diff", then commit it');
     expect(readFileSync(join(home, 'assets', 'mini.yaml'), 'utf8')).toContain('rev_growth_y1: { min: -0.5, max: 5, base: { min: 0, max: 2 } }');
+  });
+
+  it('marks a config proposal that would change what the agent may do by itself, in the list and in show', async () => {
+    const band = fileProposal({ kind: 'config', edits: [{ path: ['assumptions', 'rev_growth_y1', 'base'], value: { min: 0, max: 2 } }] }, [{ min: 0, max: 1 }]);
+    const weight = fileProposal({ kind: 'config', edits: [{ path: ['modules', 'hc', 'weight'], value: 1 }] }, [1]);
+    const listed = await orion('model', 'proposals', 'list', 'mini');
+    expect(listed).toContain(`#${band.id}`);
+    expect(listed.split('\n').find((l) => l.includes(`#${band.id}`))).toContain("[changes the agent's limits]");
+    expect(listed.split('\n').find((l) => l.includes(`#${weight.id}`))).not.toContain("[changes the agent's limits]");
+    expect(await orion('model', 'proposals', 'show', String(band.id))).toContain("[changes the agent's limits]");
+    expect(await orion('model', 'proposals', 'show', String(weight.id))).not.toContain("[changes the agent's limits]");
   });
 
   it('rejects with a required note, and reports a stale or missing proposal as JSON under --json', async () => {

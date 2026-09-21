@@ -44,6 +44,18 @@ const codeOf = (fn: () => unknown): string | undefined => {
 const anomaly = () =>
   raiseAnomaly(w.db, { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey: 'x', severity: 'degrading', detail: {}, seenAt: AS_OF });
 
+describe('a proposal row that is not what the agent files', () => {
+  it('refuses an asset id that is not an asset id, before any file path is built from it', () => {
+    const p = file({ kind: 'config', edits: [{ path: ['symbol'], value: 'EVIL' }] }, ['MINI'], { assetId: '../evil' });
+    expect(codeOf(() => approve(p.id))).toBe('invalid_proposal');
+    expect(getProposal(w.db, p.id)!.status).toBe('pending');
+    // The database kinds are refused just as early: the check runs before anything reads or writes.
+    const value = file({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 }, { assetId: 'MINI/../..' });
+    expect(codeOf(() => approve(value.id))).toBe('invalid_proposal');
+    expect(existsSync(join(home, 'assets', '..', 'evil.yaml'))).toBe(false);
+  });
+});
+
 describe('approving an assumption value', () => {
   const growth = (value: number) => file({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value }, { value: 0 });
 

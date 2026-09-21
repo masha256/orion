@@ -101,6 +101,12 @@ describe('orion cli', () => {
     await orion('signal', 'emit', 'mini', '--out', out);
     expect(JSON.parse(readFileSync(out, 'utf8').trim()).signal_id).toBe(signal.signal_id);
     expect(JSON.parse(await orion('signal', 'history', 'mini', '--json'))).toHaveLength(1);
+    // SQLite reads a negative LIMIT as "no limit": the guard refuses it rather than return every row.
+    for (const bad of ['-5', '0', '2.5']) {
+      await expect(orion('signal', 'history', 'mini', '--limit', bad)).rejects.toMatchObject({ code: 'invalid_limit' });
+    }
+    await expect(orion('signal', 'history', 'mini', '--limit', 'many')).rejects.toMatchObject({ code: 'invalid_number' });
+    expect(JSON.parse(await orion('signal', 'history', 'mini', '--limit', '1', '--json'))).toHaveLength(1);
   });
 
   it('refuses out-of-bounds assumptions', async () => {

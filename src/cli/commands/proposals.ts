@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 import { approveProposal, rejectProposal, type ApproveResult } from '../../app/proposals.js';
+import { changesAgentLimits } from '../../config/edit.js';
 import { getObservationsByIds } from '../../db/observations.js';
 import { getProposal, listProposals, type Proposal } from '../../db/proposals.js';
 import { MS_PER_DAY, OrionError } from '../../types.js';
@@ -12,7 +13,8 @@ function changeSummary(p: Proposal): string {
     case 'assumption_value':
       return `${c.key} (${c.scenario}) -> ${c.value}`;
     case 'config':
-      return c.edits.map((e) => `${e.path.join('.')} = ${e.value === null ? '(delete)' : JSON.stringify(e.value)}`).join('; ');
+      // " > ", as src/config/edit.ts prints a path: assumption keys contain dots, so a dotted path is ambiguous.
+      return c.edits.map((e) => `${e.path.join(' > ')} = ${e.value === null ? '(delete)' : JSON.stringify(e.value)}`).join('; ');
     case 'acknowledge_anomaly':
       return `acknowledge anomaly #${c.anomalyId}`;
     case 'withdraw_acknowledgement':
@@ -36,7 +38,9 @@ function effectSummary(p: Proposal): string {
 function proposalLine(p: Proposal, now: Date): string {
   const age = Math.floor((now.getTime() - Date.parse(p.createdAt)) / MS_PER_DAY);
   const effect = effectSummary(p);
-  return `#${p.id}  ${p.assetId}  ${p.persona}  ${p.change.kind}  ${p.status}  ${changeSummary(p)}${effect ? `  [${effect}]` : ''}  ${age}d old`;
+  // Approving one of these changes the rules the next run plays by, not just a number: say so where the user decides.
+  const limits = p.change.kind === 'config' && changesAgentLimits(p.change.edits) ? "  [changes the agent's limits]" : '';
+  return `#${p.id}  ${p.assetId}  ${p.persona}  ${p.change.kind}  ${p.status}  ${changeSummary(p)}${effect ? `  [${effect}]` : ''}${limits}  ${age}d old`;
 }
 
 function approvedLines(result: ApproveResult): string[] {
@@ -51,7 +55,7 @@ function approvedLines(result: ApproveResult): string[] {
       return [
         `edited ${result.file}:`,
         // Canonical JSON, so old and new print with the same key order whatever order the YAML or the proposal used.
-        ...result.changes.map((c) => `  ${c.path.join('.')}: ${canonicalJson(c.from)} -> ${c.to === null ? '(deleted)' : canonicalJson(c.to)}`),
+        ...result.changes.map((c) => `  ${c.path.join(' > ')}: ${canonicalJson(c.from)} -> ${c.to === null ? '(deleted)' : canonicalJson(c.to)}`),
         'review it with "git diff", then commit it',
       ];
   }

@@ -211,6 +211,24 @@ describe('the world changes mid-run', () => {
     nothingWritten();
   });
 
+  it('conflicts when a degrading anomaly opened after the tool checked, and writes nothing', () => {
+    stageEverything();
+    const a = anomaly(); // raised between the tool's check and the commit
+    expect(() => ledger.commit(db, asset, { agentRunId: null, now: NOW })).toThrow(
+      new RegExp(`a degrading anomaly opened during the run \\(#${a.id}\\); assumption changes are blocked`),
+    );
+    expect(getLatestAssumptionSet(db, 'mini')!.version).toBe(1);
+    nothingWritten();
+  });
+
+  it('counts a resolution staged in this run as resolved, exactly as the tool did', () => {
+    const a = anomaly();
+    stageEverything();
+    ledger.stageResolution({ anomalyId: a.id, note: 'cleared', evidence: [priceId] });
+    expect(ledger.commit(db, asset, { agentRunId: null, now: NOW }).setVersion).toBe(2);
+    expect(getAnomaly(db, a.id)).toMatchObject({ status: 'resolved' });
+  });
+
   it('conflicts on evidence that cites a staged id this run never staged', () => {
     ledger.stageAssumptionChange({ key: 'rev_growth_y1', scenario: 'base', value: 0.1, rationale: 'up', evidence: [-9] });
     expect(() => ledger.commit(db, asset, { agentRunId: null, now: NOW })).toThrow(AgentConflict);

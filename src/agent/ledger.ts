@@ -1,6 +1,6 @@
 import { saveAssumptions } from '../app/assumptions.js';
 import type { AssetConfig } from '../config/schema.js';
-import { decideAnomaly, getAnomaly } from '../db/anomalies.js';
+import { decideAnomaly, getAnomaly, listOpenAnomalies } from '../db/anomalies.js';
 import { insertAssumptionChange } from '../db/assumptionChanges.js';
 import { getLatestAssumptionSet, type AssumptionSet } from '../db/assumptions.js';
 import type { Db } from '../db/connection.js';
@@ -8,6 +8,7 @@ import { insertJournalEntry } from '../db/journal.js';
 import { insertObservation, listActiveObservations, type Observation } from '../db/observations.js';
 import { insertProposal, type ProposalChange, type ProposalEffect } from '../db/proposals.js';
 import { OrionError, type AssumptionValues, type Scenario } from '../types.js';
+import { blockingAnomalies } from './guardrails.js';
 
 /**
  * Everything an agent run wants to write, held in memory until the run finishes cleanly. Tools validate against the
@@ -223,6 +224,12 @@ export class Ledger {
           const latest = getLatestAssumptionSet(db, this.assetId);
           if (!latest || latest.version !== this.startSet.version) {
             throw new AgentConflict(`assumption set v${latest?.version ?? 'none'} was saved during the run (it began on v${this.startSet.version})`);
+          }
+          // The tool checked this when the change was staged; a degrading anomaly may have opened since. Resolutions
+          // staged in this run count as resolved here, exactly as they did then: they are about to be written.
+          const blocking = blockingAnomalies(listOpenAnomalies(db, this.assetId), this.resolvedAnomalyIds());
+          if (blocking.length > 0) {
+            throw new AgentConflict(`a degrading anomaly opened during the run (${blocking.map((id) => `#${id}`).join(', ')}); assumption changes are blocked`);
           }
         }
         for (const r of this.resolutions.values()) {

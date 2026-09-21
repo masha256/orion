@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
-import { applyEditsToObject, applyEditsToYaml, getAtPath, roundTrips } from '../../src/config/edit.js';
+import { applyEditsToObject, applyEditsToYaml, changesAgentLimits, getAtPath, roundTrips } from '../../src/config/edit.js';
 import { parseAssetYaml, rawConfig } from '../../src/config/load.js';
 import type { ConfigEdit, OrionError } from '../../src/types.js';
 
@@ -183,5 +183,32 @@ describe('the real VVV config', () => {
     expect(getAtPath(rawConfig(loaded), ['metrics', 'revenue_run_rate_usd', 'fetcher'])).toBeNull();
     expect(loaded.config.metrics.revenue_run_rate_usd.fetcher).toBe('manual');
     expect(rawConfig({ config: loaded.config, hash: loaded.hash })).toBe(loaded.config);
+  });
+});
+
+describe('edits that change what the agent may do by itself', () => {
+  const changes = (path: (string | number)[]): boolean => changesAgentLimits([{ path, value: 1 }]);
+
+  it('flags bands and bounds, the move threshold, and a metric\'s source, provisional flag, or criticality', () => {
+    expect(changes(['assumptions', 'rev_growth_y1', 'base'])).toBe(true);
+    expect(changes(['assumptions', 'rev_growth_y1'])).toBe(true);
+    expect(changes(['assumptions'])).toBe(true);
+    expect(changes(['review_triggers', 'provisional_move_pct'])).toBe(true);
+    expect(changes(['metrics', 'revenue_run_rate_usd', 'source'])).toBe(true);
+    expect(changes(['metrics', 'revenue_run_rate_usd', 'allow_provisional'])).toBe(true);
+    expect(changes(['metrics', 'revenue_run_rate_usd', 'critical'])).toBe(true);
+  });
+
+  it('leaves ordinary config alone', () => {
+    expect(changes(['modules', 'hc', 'weight'])).toBe(false);
+    expect(changes(['scenario_probabilities'])).toBe(false);
+    expect(changes(['review_triggers', 'revenue_stale_move_pct'])).toBe(false);
+    expect(changes(['metrics', 'revenue_run_rate_usd', 'staleness_days'])).toBe(false);
+    expect(changes(['metrics', 'revenue_run_rate_usd', 'source', 'field'])).toBe(false); // not the source itself
+    expect(changesAgentLimits([])).toBe(false);
+  });
+
+  it('flags a batch where any one edit reaches a limit', () => {
+    expect(changesAgentLimits([{ path: ['modules', 'hc', 'weight'], value: 1 }, { path: ['assumptions', 'rev_growth_y1', 'max'], value: 9 }])).toBe(true);
   });
 });
