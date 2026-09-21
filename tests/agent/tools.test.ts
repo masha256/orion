@@ -320,6 +320,43 @@ describe('propose_change', () => {
   });
 });
 
+describe('model-authored text', () => {
+  it('is stripped of control characters before it is staged, with newlines kept', () => {
+    seeRevenue();
+    w.call('apply_assumption_change', {
+      key: 'rev_growth_y1', scenario: 'base', value: 0.1, evidence: [w.ids.revenue_run_rate_usd], rationale: ' usage\u0007 is up\nand steady ',
+    });
+    expect(w.ledger.assumptionChanges()[0].rationale).toBe('usage is up\nand steady');
+    w.call('write_journal', { thesis: 'steady\u0007', open_questions: ['what\u0000 next?', ' \u0007 '], summary: 'review\u001Bed' });
+    expect(w.ledger.journal()).toEqual({ thesis: 'steady', openQuestions: ['what next?'], summary: 'reviewed' });
+  });
+
+  it('is cleaned before the citation is verified, so a stray control character in a quote costs nothing', () => {
+    const r = research({ quoted_text: 'annualized revenue reached \u0000$1,100 in September' });
+    expect(r).toMatchObject({ isError: false, result: { recorded: true } });
+    expect(w.ledger.observations()[0].quotedText).toBe(QUOTE); // the CLEANED quote is what is stored
+  });
+
+  it('is refused as ordinary invalid input when it is too long, so the model can shorten it and retry', () => {
+    seeRevenue();
+    const e = [w.ids.revenue_run_rate_usd];
+    const apply = (rationale: string) => w.call('apply_assumption_change', { key: 'rev_growth_y1', scenario: 'base', value: 0.1, evidence: e, rationale });
+    expect(apply('r'.repeat(2001)).result.refused).toBe('invalid_input');
+    expect(apply('r'.repeat(2000)).isError).toBe(false);
+    expect(research({ quoted_text: QUOTE + 'x'.repeat(601) }).result.refused).toBe('invalid_input');
+    expect(research({ citation_url: `https://x.example.com/${'a'.repeat(2000)}` }).result.refused).toBe('invalid_input');
+    expect(research({ note: 'n'.repeat(2001) }).result.refused).toBe('invalid_input');
+    expect(w.call('resolve_anomaly', { id: anomaly('advisory').id, note: 'n'.repeat(2001), evidence: e }).result.refused).toBe('invalid_input');
+    expect(w.call('propose_change', { kind: 'acknowledge_anomaly', anomaly_id: 1, rationale: 'r'.repeat(2001) }).result.refused).toBe('invalid_input');
+    const journal = (over: Record<string, unknown>) => w.call('write_journal', { thesis: 't', open_questions: [], summary: 's', ...over });
+    expect(journal({ thesis: 't'.repeat(4001) }).result.refused).toBe('invalid_input');
+    expect(journal({ summary: 's'.repeat(4001) }).result.refused).toBe('invalid_input');
+    expect(journal({ open_questions: ['q'.repeat(501)] }).result.refused).toBe('invalid_input');
+    expect(journal({ open_questions: Array.from({ length: 21 }, () => 'q') }).result.refused).toBe('invalid_input');
+    expect(journal({ open_questions: Array.from({ length: 20 }, () => 'q') }).isError).toBe(false);
+  });
+});
+
 describe('write_journal', () => {
   it('stages one entry, replaces it on a second call, and refuses blanks', () => {
     expect(w.call('write_journal', { thesis: ' ', open_questions: [], summary: 's' }).result.refused).toBe('invalid_input');

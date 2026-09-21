@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  allowedRange, blockingAnomalies, checkEvidence, checkStep, maxStep, normalizeText, normalizeUrl, placeValue, routeObservation, textBlocks,
-  verifyCitation, type EvidenceRef,
+  allowedRange, blockingAnomalies, checkEvidence, checkStep, cleanText, maxStep, normalizeText, normalizeUrl, placeValue, routeObservation,
+  textBlocks, verifyCitation, type EvidenceRef,
 } from '../../src/agent/guardrails.js';
 import { parseAssetYaml } from '../../src/config/load.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
@@ -18,6 +18,17 @@ describe('anomaly block', () => {
     expect(blockingAnomalies(open, new Set([1]))).toEqual([3]);
     expect(blockingAnomalies(open, new Set([1, 3]))).toEqual([]);
     expect(blockingAnomalies([{ id: 2, severity: 'advisory' }], new Set())).toEqual([]);
+  });
+});
+
+describe('cleaning model-authored text', () => {
+  it('drops control characters, keeps newlines and tabs, and trims', () => {
+    expect(cleanText('  a bell\u0007 and a NUL\u0000  ')).toBe('a bell and a NUL');
+    expect(cleanText('an escape \u001B[31mred\u001B[0m')).toBe('an escape [31mred[0m'); // the ESC goes; its text does not
+    expect(cleanText('\u009B5n and a delete\u007F')).toBe('5n and a delete');
+    expect(cleanText('carriage\u000Dreturn and a vertical\u000Btab')).toBe('carriagereturn and a verticaltab');
+    expect(cleanText('line one\nline two\tindented')).toBe('line one\nline two\tindented');
+    expect(cleanText(' \u0000 \u0007 ')).toBe('');
   });
 });
 

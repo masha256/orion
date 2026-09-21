@@ -15,6 +15,18 @@ export interface Refusal {
 
 const EPSILON = 1e-9;
 
+// ---- Model-authored text -------------------------------------------------------------------------------------------
+
+/**
+ * Text the model wrote, made safe to keep. It is stored, printed to a terminal, fed back into every later run's context
+ * pack, and read by the Hermes job's agent, so a terminal escape or a stray NUL in it would travel a long way. C0
+ * control characters go (newline and tab stay: a rationale may be several lines), with DEL and the C1 control sequence
+ * introducer, and the result is trimmed. The classes are \u escapes because these sources are ASCII only.
+ */
+export function cleanText(s: string): string {
+  return s.replace(/[\u0000-\u0008\u000B-\u001F\u007F\u009B]/g, '').trim();
+}
+
 // ---- Anomaly block -------------------------------------------------------------------------------------------------
 
 export interface AnomalyRef {

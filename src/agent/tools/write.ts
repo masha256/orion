@@ -9,7 +9,9 @@ import { findPendingDuplicate, type ProposalChange, type ProposalEffect } from '
 import { requiredAssumptionKeys, validateAssetModules, validateAssumptions } from '../../engine/requirements.js';
 import { SCENARIOS, type Scenario } from '../../types.js';
 import { canonicalJson } from '../../util/canonical.js';
-import { allowedRange, blockingAnomalies, checkEvidence, checkStep, placeValue, routeObservation, verifyCitation, type EvidenceRef } from '../guardrails.js';
+import {
+  allowedRange, blockingAnomalies, checkEvidence, checkStep, cleanText, placeValue, routeObservation, verifyCitation, type EvidenceRef,
+} from '../guardrails.js';
 import { computeEffect } from './think.js';
 import { defineTool, refuse, ToolRefusal, type AgentTool, type ToolContext } from './types.js';
 
@@ -28,8 +30,20 @@ function requireEvidence(ctx: ToolContext, ids: number[]): void {
   if (refusal) throw new ToolRefusal(refusal);
 }
 
+/**
+ * Maximum lengths for everything the model writes. Nothing here needs to be long, and every one of these strings is
+ * stored, printed, and read back into a later run's context. Too long is an ordinary `invalid_input` refusal: the model
+ * shortens it and calls again.
+ */
+const MAX_QUOTE = 600;
+const MAX_RATIONALE = 2000;
+const MAX_URL = 2000;
+const MAX_JOURNAL_TEXT = 4000;
+const MAX_OPEN_QUESTION = 500;
+const MAX_OPEN_QUESTIONS = 20;
+
 function requireText(value: string, field: string): string {
-  const text = value.trim();
+  const text = cleanText(value);
   if (text === '') refuse('invalid_input', `${field} must not be blank`);
   return text;
 }
@@ -64,7 +78,7 @@ const applyAssumptionChange = defineTool({
     scenario: z.enum([...SCENARIOS, 'all']),
     value: z.number(),
     evidence: z.array(z.number().int()),
-    rationale: z.string(),
+    rationale: z.string().max(MAX_RATIONALE),
   }),
   run(ctx, input) {
     const asset = ctx.loaded.config;
@@ -133,7 +147,7 @@ const resolveAnomaly = defineTool({
     'Resolves an open anomaly, with a note saying what you found and at least one observation id as evidence. A resolved anomaly whose ' +
     'condition persists reopens at the next fetch: for a persistent, understood condition, propose an acknowledgement instead. ' +
     'Acknowledged anomalies are read-only to you.',
-  input: z.strictObject({ id: z.number().int(), note: z.string(), evidence: z.array(z.number().int()) }),
+  input: z.strictObject({ id: z.number().int(), note: z.string().max(MAX_RATIONALE), evidence: z.array(z.number().int()) }),
   run(ctx, input) {
     const anomaly = getAnomaly(ctx.db, input.id);
     if (!anomaly || anomaly.assetId !== ctx.loaded.config.id) refuse('anomaly_not_found', `no anomaly ${input.id} on ${ctx.loaded.config.id}`);
@@ -165,12 +179,17 @@ const recordProvisionalObservation = defineTool({
     value: z.number(),
     observed_at: z.string(),
     period_days: z.number().positive().optional(),
-    citation_url: z.string(),
-    quoted_text: z.string(),
-    note: z.string().optional(),
+    citation_url: z.string().max(MAX_URL),
+    quoted_text: z.string().max(MAX_QUOTE),
+    note: z.string().max(MAX_RATIONALE).optional(),
   }),
   run(ctx, input) {
     const asset = ctx.loaded.config;
+    // Cleaned once, here: the CLEANED quote is what is verified against the page, and what is stored. Verifying the raw
+    // text and storing the cleaned one (or the other way round) would mean the stored quote was never the checked one.
+    const citationUrl = cleanText(input.citation_url);
+    const quotedText = cleanText(input.quoted_text);
+    const note = input.note === undefined ? '' : cleanText(input.note);
     const def = asset.metrics[input.metric];
     if (!def) refuse('unknown_metric', `${input.metric} is not a metric of ${asset.id}`);
     if (def.source !== undefined) refuse('fetched_metric', `${input.metric} is fetched from a configured source; research never writes onto a fetched metric`);
@@ -194,7 +213,7 @@ const recordProvisionalObservation = defineTool({
       );
     }
 
-    const citation = verifyCitation(ctx.fetchedPages(), input.citation_url, input.quoted_text);
+    const citation = verifyCitation(ctx.fetchedPages(), citationUrl, quotedText);
     if (citation) throw new ToolRefusal(citation);
 
     // The last CONFIRMED value: measuring from a provisional row would let the guard compound from run to run.
@@ -205,27 +224,25 @@ const recordProvisionalObservation = defineTool({
 
     if (route === 'proposal') {
       const change: ProposalChange = {
-        kind: 'observation', metricKey: input.metric, value: input.value, observedAt, periodDays,
-        citationUrl: input.citation_url, quotedText: input.quoted_text,
+        kind: 'observation', metricKey: input.metric, value: input.value, observedAt, periodDays, citationUrl, quotedText,
       };
       const preview: Observation = {
         id: -1_000_000, assetId: asset.id, metricKey: input.metric, observedAt, periodDays, value: input.value, source: 'manual',
-        sourceDetail: null, status: 'confirmed', citationUrl: input.citation_url, quotedText: input.quoted_text, fetchedAt: now.toISOString(), supersededBy: null,
+        sourceDetail: null, status: 'confirmed', citationUrl, quotedText, fetchedAt: now.toISOString(), supersededBy: null,
       };
       const why =
         inForce === null
           ? `${input.metric} is critical and there is no confirmed value to compare ${input.value} against`
           : `${input.metric} is critical and ${input.value} is more than ${movePct}% from the last confirmed value (${inForce})`;
       const staged = fileProposal(ctx, {
-        change, filedAgainst: { inForce }, rationale: input.note?.trim() ? `${input.note.trim()} (${why})` : why, evidence: [],
+        change, filedAgainst: { inForce }, rationale: note ? `${note} (${why})` : why, evidence: [],
         effect: computeEffect(ctx, [], { addObservations: [preview] }),
       });
       return { recorded: false, converted_to_proposal: staged, reason: `${why}; it cannot be cited as evidence until the user approves it` };
     }
 
     const staged = ctx.ledger.stageObservation({
-      metricKey: input.metric, value: input.value, observedAt, periodDays, citationUrl: input.citation_url, quotedText: input.quoted_text,
-      live: route === 'live',
+      metricKey: input.metric, value: input.value, observedAt, periodDays, citationUrl, quotedText, live: route === 'live',
     });
     return {
       recorded: true,
@@ -253,7 +270,7 @@ const proposeChange = defineTool({
     'Proposals that can move the target store the computed effect. The rationale is what the user reads: make the case.',
   input: z.strictObject({
     kind: z.enum(PROPOSABLE_KINDS),
-    rationale: z.string(),
+    rationale: z.string().max(MAX_RATIONALE),
     evidence: z.array(z.number().int()).optional(),
     key: z.string().optional(),
     scenario: z.enum(SCENARIOS).optional(),
@@ -347,11 +364,15 @@ const writeJournal = defineTool({
   description:
     'Your journal entry for this run: the only thing the next run will remember. thesis is your running view of the asset; open_questions ' +
     'is what the next run should look at; summary is what you did in this run and why. Required before you finish. A second call replaces the first.',
-  input: z.strictObject({ thesis: z.string(), open_questions: z.array(z.string()), summary: z.string() }),
+  input: z.strictObject({
+    thesis: z.string().max(MAX_JOURNAL_TEXT),
+    open_questions: z.array(z.string().max(MAX_OPEN_QUESTION)).max(MAX_OPEN_QUESTIONS),
+    summary: z.string().max(MAX_JOURNAL_TEXT),
+  }),
   run(ctx, input) {
     ctx.ledger.setJournal({
       thesis: requireText(input.thesis, 'thesis'),
-      openQuestions: input.open_questions.map((q) => q.trim()).filter((q) => q !== ''),
+      openQuestions: input.open_questions.map((q) => cleanText(q)).filter((q) => q !== ''),
       summary: requireText(input.summary, 'summary'),
     });
     return { staged: true };
