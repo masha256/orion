@@ -129,6 +129,21 @@ describe('orion agent run', () => {
     expect(exitCode).toBe(1);
   });
 
+  it('exits 1 and commits nothing when the asset config is edited while the run is in flight', async () => {
+    const file = join(home, 'assets', 'mini.yaml');
+    const editTheConfigMidRun = () => {
+      writeFileSync(file, readFileSync(file, 'utf8').replace('name: Mini Test Asset', 'name: Mini Test Asset Renamed'));
+      return calls(journalCall());
+    };
+    script = [calls(growth()), editTheConfigMidRun, say('Done.')];
+    const out = await orion('agent', 'run', 'mini', '--type', 'weekly');
+    expect(out).toContain('conflict');
+    expect(out).toContain('the asset config changed during the run');
+    expect(out).toContain('discarded rev_growth_y1 (base) 0 -> 0.2');
+    expect(exitCode).toBe(1);
+    expect(withDb((db) => db.prepare('SELECT COUNT(*) AS n FROM journal').get() as { n: number }).n).toBe(0);
+  });
+
   it('exits 2 when the run completes but its signal is blocked', async () => {
     withDb((db) => db.prepare("UPDATE observations SET status = 'rejected' WHERE metric_key = 'price_usd'").run());
     const a = withDb((db) =>

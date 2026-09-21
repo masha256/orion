@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { runAgent, type RunAgentOptions } from '../../src/agent/run.js';
+import { runAgent, type RunAgentDeps, type RunAgentOptions } from '../../src/agent/run.js';
 import { runValuation } from '../../src/app/valuation.js';
 import { getAgentRun, getTranscript, listAgentRuns, startAgentRun } from '../../src/db/agentRuns.js';
 import { getAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
@@ -24,9 +24,9 @@ beforeEach(() => {
 });
 
 const count = (table: string): number => (w.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
-const run = (script: ScriptStep[], opts: Partial<RunAgentOptions> = {}) => {
+const run = (script: ScriptStep[], opts: Partial<RunAgentOptions> = {}, deps: Partial<RunAgentDeps> = {}) => {
   model = scriptedModel(script);
-  return runAgent(w.db, w.loaded, { runType: 'weekly', ...opts }, { home, now: () => new Date(AS_OF), modelClient: () => model });
+  return runAgent(w.db, w.loaded, { runType: 'weekly', ...opts }, { home, now: () => new Date(AS_OF), modelClient: () => model, ...deps });
 };
 const growthCall = (value: number) =>
   toolUse('apply_assumption_change', { key: 'rev_growth_y1', scenario: 'base', value, evidence: [w.ids.revenue_run_rate_usd], rationale: 'usage is accelerating' });
@@ -174,6 +174,43 @@ describe('runs that do not finish cleanly', () => {
     expect(result.run.error).toMatch(/assumption set v2 was saved during the run/);
     expect(getLatestAssumptionSet(w.db, 'mini')).toMatchObject({ version: 2, author: 'user' });
     expect(count('journal')).toBe(0);
+  });
+
+  it('ends as conflict when the asset config changed under the run, and writes nothing', async () => {
+    // The run began on w.loaded; halfway through, the file on disk becomes a tightened config with a different hash.
+    const tightened = {
+      ...w.loaded,
+      hash: `${'b'.repeat(64)}`,
+      config: { ...w.loaded.config, assumptions: { ...w.loaded.config.assumptions, rev_growth_y1: { min: -0.5, max: 0.05 } } },
+    };
+    let current = w.loaded;
+    const userEditsTheConfig = () => {
+      current = tightened;
+      return calls(journalCall());
+    };
+    const result = await run([calls(growthCall(0.2)), userEditsTheConfig, say('Done.')], {}, { reload: () => current });
+    expect(result.run.outcome).toBe('conflict');
+    expect(result.run.error).toBe(`the asset config changed during the run (${w.loaded.hash.slice(0, 12)} -> ${'b'.repeat(12)}); nothing was committed`);
+    expect(result.committed).toBeNull();
+    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1);
+    expect(count('journal')).toBe(0);
+  });
+
+  it('keeps a commit that stood when something after it throws, and records the message as a valuation error', async () => {
+    // deps.now is called for the run start, the commit, the valuation, and the finish. Blow up on the valuation's call.
+    let calledNow = 0;
+    const now = () => {
+      calledNow += 1;
+      if (calledNow === 3) throw new Error('the clock stopped');
+      return new Date(AS_OF);
+    };
+    const result = await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')], {}, { now });
+    expect(result.run.outcome).toBe('completed');
+    expect(result.run.error).toBeNull();
+    expect(result.committed).toMatchObject({ setVersion: 2 });
+    expect(result.signal).toBeNull();
+    expect(result.run.summary!.valuation_error).toContain('the clock stopped');
+    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(2);
   });
 
   it('does everything but commit on a dry run', async () => {

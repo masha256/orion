@@ -51,7 +51,9 @@ export function registerAgent(program: Command, ctx: CliContext): void {
         const anomalyId = opts.anomaly === undefined ? undefined : parseNumber(opts.anomaly, '--anomaly');
         const loaded = loadAsset(ctx.home, assetId);
         const result = await withDbAsync(ctx, (db) =>
-          runAgent(db, loaded, { runType, anomalyId, note: opts.note, dryRun: opts.dryRun }, { home: ctx.home, now: ctx.now, modelClient: () => modelClientFor(ctx) }),
+          runAgent(db, loaded, { runType, anomalyId, note: opts.note, dryRun: opts.dryRun }, {
+            home: ctx.home, now: ctx.now, modelClient: () => modelClientFor(ctx), reload: () => loadAsset(ctx.home, assetId),
+          }),
         );
         if (result.signal && opts.out) emitSignal(result.signal, { write: () => undefined, outFile: opts.out });
         output(ctx, opts.json, result, () => [

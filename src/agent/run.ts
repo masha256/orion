@@ -33,6 +33,11 @@ export interface RunAgentDeps {
   now: () => Date;
   /** Built during preflight, so missing credentials fail before a run row exists. Tests pass a scripted model. */
   modelClient: () => ModelClient;
+  /**
+   * Reads the asset config again, from wherever `loaded` came from. Called once, just before the commit: a run that was
+   * checked against the config it began on must not commit under a config the user changed while it ran.
+   */
+  reload?: () => LoadedAsset;
 }
 
 export interface RunAgentResult {
@@ -113,25 +118,32 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
     error = loop.stop === 'finished' ? null : loop.detail;
 
     if (outcome === 'completed' && opts.dryRun !== true) {
-      try {
-        committed = ledger.commit(db, asset, { agentRunId: runId, now: deps.now() });
-      } catch (err) {
-        if (!(err instanceof AgentConflict)) throw err;
+      // Bands, bounds, the move guard, and the run's config hash all came from `loaded`. If the file moved under the run,
+      // every check it passed was against a config that is no longer the one in force: commit nothing.
+      const current = deps.reload?.();
+      if (current && current.hash !== loaded.hash) {
         outcome = 'conflict';
-        error = err.message;
-      }
-      if (committed && movesSignal(committed)) {
+        error = `the asset config changed during the run (${loaded.hash.slice(0, 12)} -> ${current.hash.slice(0, 12)}); nothing was committed`;
+      } else {
         try {
-          signal = runValuation(db, loaded, deps.now(), { agentRunId: runId }).signal;
+          committed = ledger.commit(db, asset, { agentRunId: runId, now: deps.now() });
         } catch (err) {
-          // The commit stands. The next `orion update` values the asset as usual.
-          valuationError = err instanceof Error ? err.message : String(err);
+          if (!(err instanceof AgentConflict)) throw err;
+          outcome = 'conflict';
+          error = err.message;
         }
+        // A failure here is caught below: the commit stands, and the next `orion update` values the asset as usual.
+        if (committed && movesSignal(committed)) signal = runValuation(db, loaded, deps.now(), { agentRunId: runId }).signal;
       }
     }
   } catch (err) {
-    outcome = 'error';
-    error = err instanceof Error ? `${err.constructor.name}: ${err.message}` : String(err);
+    const message = err instanceof Error ? `${err.constructor.name}: ${err.message}` : String(err);
+    // Once the commit has gone through, its writes are live. Calling the run `error` would hide them and invite a rerun.
+    if (committed) valuationError = message;
+    else {
+      outcome = 'error';
+      error = message;
+    }
   }
 
   const staged = ledger.preview();
