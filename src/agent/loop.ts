@@ -9,7 +9,9 @@ import type { ToolOutcome } from './tools/types.js';
  * caller supplies how to run a tool and how to tell whether the run may finish.
  */
 
-export const MAX_TOKENS_PER_RESPONSE = 16_000;
+/** Requests are streamed, and the run's output budget is what bounds the cost; a long adaptive-thinking turn that hits
+ * this cap would throw the whole run away. */
+export const MAX_TOKENS_PER_RESPONSE = 32_000;
 
 export type LoopStop = 'finished' | 'budget_exhausted' | 'refused' | 'no_journal' | 'error';
 
@@ -49,6 +51,11 @@ function exhausted(usage: AgentUsage, budgets: RunBudgets): string | null {
   if (usage.requests >= budgets.requests) return `requests (${budgets.requests})`;
   if (inputSpent(usage) >= budgets.inputTokens) return `input tokens (${budgets.inputTokens})`;
   if (usage.outputTokens >= budgets.outputTokens) return `output tokens (${budgets.outputTokens})`;
+  // STRICTLY greater, unlike the budgets above. `max_uses` bounds one request's server-side loop, not the run's total,
+  // so without this a 25-request run could search 125 times. Reaching the limit exactly is a run doing precisely what
+  // it was allowed, and ending there would throw that run away; only a LATER request spending past the total ends it.
+  if (usage.webSearches > budgets.webSearches) return `web searches (${budgets.webSearches})`;
+  if (usage.webFetches > budgets.webFetches) return `web fetches (${budgets.webFetches})`;
   return null;
 }
 
@@ -61,6 +68,8 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
     requests_left: Math.max(0, budgets.requests - usage.requests),
     input_tokens_left: Math.max(0, budgets.inputTokens - inputSpent(usage)),
     output_tokens_left: Math.max(0, budgets.outputTokens - usage.outputTokens),
+    web_searches_left: Math.max(0, budgets.webSearches - usage.webSearches),
+    web_fetches_left: Math.max(0, budgets.webFetches - usage.webFetches),
   });
   let reminded = false;
 
@@ -95,6 +104,14 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
     if (response.stop_reason === 'max_tokens' || response.stop_reason === 'model_context_window_exceeded') return done('error', response.stop_reason);
     // A server tool hit its own iteration limit: send the conversation back as it is and the server resumes.
     if (response.stop_reason === 'pause_turn') continue;
+
+    // A `fallback` block means the server switched models mid-turn, after the model before it declined. Anything that
+    // model had already emitted may be a tool call it never finished, and a truncated input can still parse. Nothing
+    // before the last handover is run.
+    const lastFallback = response.content.map((b) => b.type).lastIndexOf('fallback');
+    if (lastFallback >= 0 && response.content.some((b, i) => b.type === 'tool_use' && i < lastFallback)) {
+      return done('error', 'tool call precedes a model fallback; not run');
+    }
 
     const calls = response.content.filter((b) => b.type === 'tool_use');
     if (response.stop_reason === 'tool_use' && calls.length > 0) {

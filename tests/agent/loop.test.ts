@@ -33,9 +33,12 @@ describe('the tool-use loop', () => {
     expect(result).toMatchObject({ stop: 'finished', detail: null });
     expect(h.ran).toEqual([{ name: 'get_drivers', input: {} }, { name: 'write_journal', input: { thesis: 't' } }]);
     expect(h.model.requests).toHaveLength(3);
-    expect(h.model.requests[0]).toMatchObject({ model: 'claude-opus-5', effort: 'high', system: 'system prompt', maxTokens: 16000 });
+    expect(h.model.requests[0]).toMatchObject({ model: 'claude-opus-5', effort: 'high', system: 'system prompt', maxTokens: 32000 });
     expect(h.model.toolResults(1)).toEqual([
-      { tool_use_id: 'a', is_error: false, result: { ok: 'get_drivers' }, budget: { requests_left: 24, input_tokens_left: 599_900, output_tokens_left: 39_950 } },
+      {
+        tool_use_id: 'a', is_error: false, result: { ok: 'get_drivers' },
+        budget: { requests_left: 24, input_tokens_left: 599_900, output_tokens_left: 39_950, web_searches_left: 5, web_fetches_left: 5 },
+      },
     ]);
     expect(result.usage).toMatchObject({ requests: 3, inputTokens: 300, outputTokens: 150 });
     expect(h.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user', 'assistant']);
@@ -142,6 +145,53 @@ describe('the tool-use loop', () => {
     expect(h.model.toolResults(1).map((r) => r.tool_use_id)).toEqual(['c1']);
   });
 
+  it('ends the run once web use has gone PAST the run budget, and counts what is left in every tool result', async () => {
+    const searched = (n: number) => ({ ...calls(toolUse('get_drivers', {}, 'a')), usage: { server_tool_use: { web_search_requests: n, web_fetch_requests: 0 } } });
+    const budgets = { ...DEFAULT_BUDGETS.weekly, webSearches: 2 };
+
+    // Spending exactly the budget is the run doing what it was allowed: it goes on, and the model sees nothing left.
+    const atLimit = harness([searched(2), calls(toolUse('write_journal', {}, 'j')), say('Done.')], { budgets });
+    expect((await atLimit.run()).stop).toBe('finished');
+    expect(atLimit.model.toolResults(1)[0].budget).toMatchObject({ web_searches_left: 0, web_fetches_left: 5 });
+
+    // A later request that spends beyond the run's total ends it.
+    const over = harness([searched(3), calls(toolUse('get_drivers', {}, 'b'))], { budgets });
+    const result = await over.run();
+    expect(result).toMatchObject({ stop: 'budget_exhausted', detail: 'web searches (2)', usage: { webSearches: 3 } });
+    expect(over.model.requests).toHaveLength(1);
+  });
+
+  it('ends the run on a web fetch budget the same way', async () => {
+    const fetched = { ...calls(toolUse('get_drivers', {}, 'a')), usage: { server_tool_use: { web_search_requests: 0, web_fetch_requests: 4 } } };
+    const h = harness([fetched, calls(toolUse('write_journal', {}, 'j'))], { budgets: { ...DEFAULT_BUDGETS.weekly, webFetches: 3 } });
+    expect(await h.run()).toMatchObject({ stop: 'budget_exhausted', detail: 'web fetches (3)' });
+  });
+
+  it('never reports a negative amount of web budget left', async () => {
+    // The overspending request's own tool results are built before the loop notices, so this is the one place the
+    // figure could go negative. The run ends right after, so the results are read from the conversation itself.
+    const searched = { ...calls(toolUse('get_drivers', {}, 'a')), usage: { server_tool_use: { web_search_requests: 9, web_fetch_requests: 9 } } };
+    const h = harness([searched], { budgets: { ...DEFAULT_BUDGETS.weekly, webSearches: 5, webFetches: 5 } });
+    expect((await h.run()).stop).toBe('budget_exhausted');
+    const results = (h.messages.at(-1) as { content: { content: string }[] }).content;
+    expect(JSON.parse(results[0].content.split('\n\nbudget: ')[1]) as Record<string, number>).toMatchObject({ web_searches_left: 0, web_fetches_left: 0 });
+  });
+
+  it('runs no tool call that precedes a model fallback, and ends the run', async () => {
+    // The model that declined may have been cut off mid-tool-call; its partial input can still parse.
+    const fallback = { type: 'fallback', from: { model: 'claude-opus-5' }, to: { model: 'claude-sonnet-5' }, trigger: { type: 'refusal' } };
+    const h = harness([{ content: [toolUse('apply_assumption_change', { key: 'rev' }, 'a'), fallback, text('Carrying on.')], stop_reason: 'tool_use' }]);
+    expect(await h.run()).toMatchObject({ stop: 'error', detail: 'tool call precedes a model fallback; not run' });
+    expect(h.ran).toEqual([]);
+  });
+
+  it('runs a tool call the fallback model itself made', async () => {
+    const fallback = { type: 'fallback', from: { model: 'claude-opus-5' }, to: { model: 'claude-sonnet-5' }, trigger: { type: 'refusal' } };
+    const h = harness([{ content: [fallback, toolUse('write_journal', {}, 'a')], stop_reason: 'tool_use' }, say('Done.')]);
+    expect((await h.run()).stop).toBe('finished');
+    expect(h.ran.map((r) => r.name)).toEqual(['write_journal']);
+  });
+
   it('adds up server tool usage and records each response', async () => {
     const searched = { ...calls(toolUse('write_journal', {})), model: 'claude-opus-4-8', usage: { server_tool_use: { web_search_requests: 2, web_fetch_requests: 1 } } };
     const result = await harness([searched, say('Done.')]).run();
@@ -154,7 +204,9 @@ describe('web tools', () => {
   it('declares the server tools with the run\'s limits, and leaves one out when its limit is zero', () => {
     expect(webTools({ webSearches: 5, webFetches: 3 })).toEqual([
       { type: 'web_search_20260209', name: 'web_search', max_uses: 5 },
-      { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 3, max_content_tokens: 25000 },
+      // allowed_callers keeps the fetch out of server-side code execution, where the page text would never reach the
+      // transcript and so every citation of it would be refused.
+      { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 3, max_content_tokens: 25000, allowed_callers: ['direct'] },
     ]);
     expect(webTools({ webSearches: 0, webFetches: 0 })).toEqual([]);
   });

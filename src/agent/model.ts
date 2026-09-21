@@ -33,7 +33,12 @@ export function webTools(limits: { webSearches: number; webFetches: number }): M
   const tools: ModelTool[] = [];
   if (limits.webSearches > 0) tools.push({ type: WEB_SEARCH_TOOL_TYPE, name: 'web_search', max_uses: limits.webSearches });
   if (limits.webFetches > 0) {
-    tools.push({ type: WEB_FETCH_TOOL_TYPE, name: 'web_fetch', max_uses: limits.webFetches, max_content_tokens: MAX_FETCH_CONTENT_TOKENS });
+    tools.push({
+      type: WEB_FETCH_TOOL_TYPE, name: 'web_fetch', max_uses: limits.webFetches, max_content_tokens: MAX_FETCH_CONTENT_TOKENS,
+      // Direct calls only. A fetch from inside server-side code execution would keep the page text out of the
+      // transcript, so `fetchedPages` would never see it and every citation of that page would be refused.
+      allowed_callers: ['direct'],
+    });
   }
   return tools;
 }
