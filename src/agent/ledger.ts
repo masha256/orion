@@ -214,6 +214,9 @@ export class Ledger {
   commit(db: Db, asset: AssetConfig, ctx: { agentRunId: number | null; now: Date }): CommitSummary {
     const nowIso = ctx.now.toISOString();
     const changes = this.assumptionChanges();
+    // IMMEDIATE, not the default DEFERRED: this transaction reads before it writes, and a deferred one takes the write
+    // lock only at its first write. Another connection committing in between makes SQLite refuse this one at once with
+    // SQLITE_BUSY_SNAPSHOT, which busy_timeout cannot retry away. Taking the lock at BEGIN means it waits instead.
     return db.transaction((): CommitSummary => {
       try {
         if (changes.length > 0) {
@@ -289,7 +292,7 @@ export class Ledger {
         if (err instanceof OrionError) throw new AgentConflict(`${err.code}: ${err.message}`);
         throw err;
       }
-    })();
+    }).immediate();
   }
 }
 

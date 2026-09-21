@@ -213,6 +213,23 @@ describe('runs that do not finish cleanly', () => {
     expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(2);
   });
 
+  it('still finishes the run row when the transcript cannot be stored, keeping a minimal one instead', async () => {
+    // A run left `running` while its writes are live is the worst outcome: abandonStaleRuns would later call it
+    // `error/abandoned`. Stand in for whatever makes the transcript unstorable with a size limit.
+    w.db.exec(
+      "CREATE TRIGGER no_large_transcripts BEFORE INSERT ON agent_transcripts WHEN length(NEW.messages_json) > 400 " +
+        "BEGIN SELECT RAISE(ABORT, 'transcript too large'); END",
+    );
+    const result = await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')]);
+    expect(result.run).toMatchObject({ outcome: 'completed', error: null });
+    expect(result.committed).toMatchObject({ setVersion: 2 });
+    expect(getTranscript(w.db, result.run.id)).toEqual({
+      error: expect.stringContaining('transcript too large'),
+      note: 'the full transcript could not be stored',
+    });
+    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(2);
+  });
+
   it('does everything but commit on a dry run', async () => {
     const result = await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')], { dryRun: true });
     expect(result.run).toMatchObject({ outcome: 'completed', dryRun: true });

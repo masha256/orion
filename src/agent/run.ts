@@ -147,10 +147,20 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   }
 
   const staged = ledger.preview();
-  const run = finishAgentRun(db, runId, {
-    outcome, endedAt: deps.now().toISOString(), usage, error,
-    summary: { committed, staged, signal_id: signal?.signal_id ?? null, valuation_error: valuationError },
-    transcript: { system, tools: tools.map((t) => ('name' in t ? t.name : t.type)), messages, responses },
-  });
+  const finish = (transcript: unknown): AgentRun =>
+    finishAgentRun(db, runId, {
+      outcome, endedAt: deps.now().toISOString(), usage, error,
+      summary: { committed, staged, signal_id: signal?.signal_id ?? null, valuation_error: valuationError },
+      transcript,
+    });
+
+  let run: AgentRun;
+  try {
+    run = finish({ system, tools: tools.map((t) => ('name' in t ? t.name : t.type)), messages, responses });
+  } catch (err) {
+    // The run row matters more than the transcript: left `running`, it is swept to `error/abandoned` later while its
+    // writes are live. Try once more with a transcript that cannot itself be the problem. A second failure is real.
+    run = finish({ error: err instanceof Error ? err.message : String(err), note: 'the full transcript could not be stored' });
+  }
   return { run, staged, committed, signal };
 }

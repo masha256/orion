@@ -55,6 +55,9 @@ export function approveProposal(db: Db, home: string, id: number, opts: { note?:
 
   if (change.kind === 'config') return approveConfig(db, home, p, note, nowIso);
 
+  // IMMEDIATE: every kind below checks what the proposal was filed against before it writes, and a deferred transaction
+  // takes the write lock only at that first write. A concurrent commit in between would fail this one with
+  // SQLITE_BUSY_SNAPSHOT, which busy_timeout cannot retry away.
   return db.transaction(() => {
     let result: ApproveResult;
     switch (change.kind) {
@@ -130,7 +133,7 @@ export function approveProposal(db: Db, home: string, id: number, opts: { note?:
       }
     }
     return { proposal: decideProposal(db, id, 'approved', note, nowIso), result };
-  })();
+  }).immediate();
 }
 
 /** Writes beside the file, then renames over it: a crash never leaves half a config, and a failure never leaves the temp file. */

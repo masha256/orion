@@ -115,6 +115,9 @@ export interface FinishAgentRunInput {
  * abandoned without a transcript, and if that process was alive after all, its one finish must still record what happened.
  */
 export function finishAgentRun(db: Db, id: number, input: FinishAgentRunInput): AgentRun {
+  // IMMEDIATE: the already-finished check reads before anything is written, and a deferred transaction would take the
+  // write lock only afterwards. Another connection committing in between would fail this one outright, leaving the run
+  // row `running` although its domain writes are live.
   db.transaction(() => {
     const finished = db.prepare('SELECT 1 FROM agent_transcripts WHERE run_id = ?').get(id);
     if (finished) throw new OrionError('agent_run_already_finished', `agent run ${id} was already finished; its record and transcript are not rewritten`);
@@ -129,7 +132,7 @@ export function finishAgentRun(db: Db, id: number, input: FinishAgentRunInput): 
     db.prepare(
       'INSERT INTO agent_transcripts (run_id, messages_json) VALUES (?, ?)',
     ).run(id, JSON.stringify(input.transcript));
-  })();
+  }).immediate();
   return getAgentRun(db, id)!;
 }
 
