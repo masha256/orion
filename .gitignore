@@ -9,5 +9,7 @@ orion.db.*
 *.db-shm
 .env
 signals.jsonl
+ticks.jsonl
 update.log
+tick.log
 probe-web-fetch-*.txt

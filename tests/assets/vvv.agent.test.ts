@@ -20,7 +20,7 @@ function calibrated(): AssumptionValues {
 describe('the shipped persona and skills', () => {
   it('load, and every run type gets at least one skill', () => {
     expect(listPersonaNames(ROOT)).toEqual(['ai-infra-analyst']);
-    expect(loadPersona(ROOT, 'ai-infra-analyst')).toMatchObject({ model: 'claude-opus-5', effort: 'high' });
+    expect(loadPersona(ROOT, 'ai-infra-analyst')).toMatchObject({ model: 'claude-opus-5-5', effort: 'high' });
     expect(loadSkills(ROOT).map((s) => s.name)).toEqual(['anomaly-triage', 'assumption-review', 'disclosure-research', 'tokenomics-audit']);
     expect(skillsFor(ROOT, 'weekly').map((s) => s.name)).toEqual(['assumption-review', 'disclosure-research']);
     expect(skillsFor(ROOT, 'triage').map((s) => s.name)).toEqual(['anomaly-triage', 'disclosure-research']);

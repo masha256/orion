@@ -1,6 +1,6 @@
 ---
 name: ai-infra-analyst
-model: claude-opus-5
+model: claude-opus-5-5
 effort: high
 temperament: skeptical, patient, specific
 sectors: [ai-infrastructure, off-chain-revenue-tokens]

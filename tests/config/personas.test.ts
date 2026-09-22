@@ -41,7 +41,7 @@ describe('personas', () => {
   it('parses frontmatter with defaults, trims the body, and hashes the file text', () => {
     const p = parsePersona(PERSONA);
     expect(p).toMatchObject({
-      name: 'analyst', model: 'claude-opus-5', effort: 'high', temperament: 'skeptical', sectors: ['ai-infrastructure'],
+      name: 'analyst', model: 'claude-opus-5-5', effort: 'high', temperament: 'skeptical', sectors: ['ai-infrastructure'],
       body: 'You are a sector analyst.',
     });
     expect(p.hash).toMatch(/^[0-9a-f]{64}$/);
@@ -55,7 +55,7 @@ describe('personas', () => {
 
   it('treats temperament and sectors as optional descriptive metadata: a persona with only a name loads', () => {
     const p = parsePersona('---\nname: analyst\n---\nYou are an analyst.\n');
-    expect(p).toMatchObject({ name: 'analyst', model: 'claude-opus-5', effort: 'high', temperament: '', sectors: [] });
+    expect(p).toMatchObject({ name: 'analyst', model: 'claude-opus-5-5', effort: 'high', temperament: '', sectors: [] });
   });
 
   it('rejects missing frontmatter, an empty body, unknown keys, and a bad effort', () => {

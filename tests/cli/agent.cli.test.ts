@@ -67,7 +67,7 @@ beforeEach(async () => {
 
 describe('orion persona', () => {
   it('lists personas with what they cover and the skills, shows one, and assigns one', async () => {
-    expect(await orion('persona', 'list')).toContain('analyst  claude-opus-5  effort high  covers: nothing');
+    expect(await orion('persona', 'list')).toContain('analyst  claude-opus-5-5  effort high  covers: nothing');
     expect(await orion('persona', 'assign', 'mini', 'analyst')).toBe('analyst now covers mini');
     const listed = await orion('persona', 'list');
     expect(listed).toContain('covers: mini');
@@ -99,7 +99,7 @@ describe('orion agent run', () => {
     const out = await orion('agent', 'run', 'mini', '--type', 'weekly', '--out', join(home, 'signals.jsonl'));
     expect(out).toContain('#1  2026-06-30T00:00:00.000Z  mini  weekly  analyst  completed');
     expect(out).toContain('3 requests');
-    expect(out).toContain('about $0.01 at list price'); // 300 input and 150 output tokens at Opus 5 prices is half a cent
+    expect(out).toContain('about $0.00 at list price'); // 300 input and 150 output tokens at Opus 5.5 prices is 0.42 cents
     expect(out).toContain('committed rev_growth_y1 (base) 0 -> 0.2: usage is accelerating');
     expect(out).toContain('committed journal: reviewed');
     expect(out).toContain('MINI  ok  grade');
@@ -189,13 +189,13 @@ describe('orion agent run', () => {
     await orion('agent', 'run', 'mini', '--type', 'weekly');
     expect(await orion('agent', 'runs', 'list', 'mini')).toContain('#1  2026-06-30T00:00:00.000Z  mini  weekly  analyst  completed');
     const shown = await orion('agent', 'runs', 'show', '1');
-    expect(shown).toContain('model claude-opus-5');
+    expect(shown).toContain('model claude-opus-5-5');
     expect(shown).toContain('committed rev_growth_y1 (base) 0 -> 0.2');
     expect(shown).toContain('signal mini-');
     expect(shown).not.toContain('context pack');
     expect(await orion('agent', 'runs', 'show', '1', '--transcript')).toContain('This is your context pack');
     const json = JSON.parse(await orion('agent', 'runs', 'show', '1', '--json')) as { estimated_cost_usd: number };
-    expect(json.estimated_cost_usd).toBeCloseTo((300 * 5 + 150 * 25) / 1_000_000, 9);
+    expect(json.estimated_cost_usd).toBeCloseTo((300 * 4 + 150 * 20) / 1_000_000, 9);
     await expect(orion('agent', 'runs', 'show', '9')).rejects.toMatchObject({ code: 'agent_run_not_found' });
   });
 

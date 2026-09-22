@@ -8,7 +8,7 @@ import { sha256 } from '../util/canonical.js';
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type Effort = (typeof EFFORTS)[number];
 
-export const DEFAULT_MODEL = 'claude-opus-5';
+export const DEFAULT_MODEL = 'claude-opus-5-5';
 
 const NAME = /^[a-z0-9][a-z0-9-]*$/;
 

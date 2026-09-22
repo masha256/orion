@@ -37,7 +37,7 @@ describe('a weekly run that changes an assumption', () => {
     runValuation(w.db, w.loaded, new Date(AS_OF)); // a previous signal to compare against
     const result = await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')]);
 
-    expect(result.run).toMatchObject({ outcome: 'completed', persona: 'analyst', runType: 'weekly', trigger: 'manual', dryRun: false, model: 'claude-opus-5', error: null });
+    expect(result.run).toMatchObject({ outcome: 'completed', persona: 'analyst', runType: 'weekly', trigger: 'manual', dryRun: false, model: 'claude-opus-5-5', error: null });
     expect(result.run.usage).toMatchObject({ requests: 3, inputTokens: 300, outputTokens: 150 });
     expect(result.committed).toMatchObject({ setVersion: 2, observationIds: [], resolvedAnomalyIds: [], proposalIds: [] });
 
