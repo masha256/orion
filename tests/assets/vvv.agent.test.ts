@@ -66,7 +66,8 @@ describe('the agent bands in assets/vvv.yaml', () => {
         // The bear DIEM growth value sits on the key floor, so its band can only be a sliver above it.
         if (key === 'diem_target_supply_growth' && s === 'bear') continue;
         const v = values[s][key];
-        expect(b[s].max - v, `${key} ${s}`).toBeCloseTo(v - b[s].min, 6);
+        const band = b[s]!;
+        expect(band.max - v, `${key} ${s}`).toBeCloseTo(v - band.min, 6);
       }
     }
     // The bull growth band is narrower than the mirror rule gives (one step was $4.4 of the 12m value): half a step each way.
@@ -90,8 +91,10 @@ describe('the agent bands in assets/vvv.yaml', () => {
     }
   });
 
-  it('leave the budgets at their defaults and set the move threshold explicitly', () => {
-    expect(budgetsFor(config, 'weekly')).toEqual(DEFAULT_BUDGETS.weekly);
+  it('raise the weekly input budget, leave the other budgets at their defaults, and set the move threshold explicitly', () => {
+    // The first live dry run (2026-09-21) read a ~96k-token prefix per request and used 542k of the 600k default in 5 requests.
+    expect(budgetsFor(config, 'weekly')).toEqual({ ...DEFAULT_BUDGETS.weekly, inputTokens: 2_000_000 });
+    expect(budgetsFor(config, 'triage')).toEqual(DEFAULT_BUDGETS.triage);
     expect(provisionalMovePct(config)).toBe(25);
     expect(config.metrics.revenue_run_rate_usd).toMatchObject({ critical: true, allow_provisional: true });
     expect(config.metrics.revenue_run_rate_usd.source).toBeUndefined(); // research may write here; it may not write onto a fetched metric

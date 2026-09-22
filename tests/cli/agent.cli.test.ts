@@ -118,7 +118,11 @@ describe('orion agent run', () => {
     expect(json.staged.assumptionChanges).toHaveLength(1);
     expect(existsSync(join(home, 's.jsonl'))).toBe(false);
     script = [calls(growth()), calls(journalCall()), say('Done.')];
-    expect(await orion('agent', 'run', 'mini', '--type', 'weekly', '--dry-run')).toContain('would commit rev_growth_y1 (base) 0 -> 0.2');
+    const text = await orion('agent', 'run', 'mini', '--type', 'weekly', '--dry-run');
+    expect(text).toContain('would commit rev_growth_y1 (base) 0 -> 0.2');
+    // A dry run never runs the valuation, so it must not claim that nothing could move a signal.
+    expect(text).toContain('no signal: a dry run commits nothing');
+    expect(text).not.toContain('nothing this run committed');
   });
 
   it('exits 1 when the run does not complete, and says what was discarded', async () => {

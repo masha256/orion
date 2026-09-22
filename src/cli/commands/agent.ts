@@ -60,7 +60,9 @@ export function registerAgent(program: Command, ctx: CliContext): void {
           runLine(result.run),
           usageLine(result.run),
           ...stagedLines(result.staged, result.committed ? 'committed' : result.run.dryRun ? 'would commit' : 'discarded'),
-          ...(result.signal ? signalSummary(result.signal) : ['no signal: nothing this run committed can move one']),
+          ...(result.signal
+            ? signalSummary(result.signal)
+            : [result.run.dryRun ? 'no signal: a dry run commits nothing and runs no valuation' : 'no signal: nothing this run committed can move one']),
         ]);
         if (result.run.outcome !== 'completed') ctx.setExitCode?.(1);
         else if (result.signal?.status === 'blocked') ctx.setExitCode?.(2);

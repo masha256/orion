@@ -210,6 +210,14 @@ assumptions:
   diem_target_supply_growth: { min: 0, max: 1, bear: { min: 0, max: 0.0125 }, base: { min: 0.05, max: 0.15 }, bull: { min: 0.175, max: 0.325 } }
   diem_discount_rate: { min: 0.05, max: 0.5, bear: { min: 0.225, max: 0.275 }, base: { min: 0.175, max: 0.225 }, bull: { min: 0.125, max: 0.175 } }
 
+# The agent's own limits. Nothing under agent: can be changed by a proposal; edit it here. Budgets not listed keep the
+# defaults in src/config/agentPolicy.ts. Every request re-reads a prefix of about 100k tokens, and cache reads count in
+# full, so the first live dry run (2026-09-21) used 542k of the 600k default weekly input budget in 5 requests, at about
+# $1.00. Cache reads are the cheap part: 2M input tokens bounds a weekly run at roughly $4 to $5 at list price.
+agent:
+  budgets:
+    weekly: { input_tokens: 2000000 }
+
 review_triggers:
   driver_deviation_pct: 25
   provisional_move_pct: 25 # a researched value on a critical metric further than this from the last confirmed value becomes a proposal
