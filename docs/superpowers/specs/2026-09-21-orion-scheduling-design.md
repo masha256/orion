@@ -281,7 +281,7 @@ All under a temp `ORION_HOME`, with the scripted fake model and the fetch harnes
 ## 14. Known limitations
 
 - A firing whose run failed at preflight stays standing with `agent_run_id` null; the instance will not re-fire until it clears. The report shows the failure the day it happens.
-- The lock's 2-hour TTL is a constant. A run that legitimately outlives it (none can within the budgets) would be taken over by the next tick.
+- The lock's 2-hour TTL is a constant. Budgets bound requests and tokens, not time; a run that outlives it is taken over by the next acquirer. The scheduler's timeout must exceed it (the Hermes doc says 150 minutes).
 - Deviation is measured on the base scenario only; the bands already say how far the agent may move `rev_growth_y1`, and the trigger's job is to make it look.
 - A tick per asset means two assets tick sequentially from two jobs; the lock is per asset, so they do not interfere.
 

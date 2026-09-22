@@ -7,9 +7,9 @@ The scheduled agent runs `run-daily.sh`, reads the tick report it prints, and me
 1. `git clone`, then `npm install && npm run build`. No `npm link` is needed: the script calls `dist/cli/index.js` directly.
 2. Put `orion.db` in the repo root. Secrets go in `<repo>/.env` (`chmod 600`): `ORION_BASE_RPC_URL`, `COINGECKO_API_KEY`, and `ANTHROPIC_API_KEY` for the analyst agent. Orion reads that file itself, so the scheduled agent needs no environment variables and never sees the keys.
 3. Assign the persona once: `ORION_HOME=/path/to/orion node dist/cli/index.js persona assign vvv ai-infra-analyst`.
-4. Prove it without spending on the agent yet: `ORION_HOME=/path/to/orion node dist/cli/index.js tick vvv --no-agent`. The report's `agent_would_run` says what the first real tick will start (a `deep` run on a fresh asset, about $3 to $4). Then prove the script under an empty environment, which is what a scheduler gives you: `env -i PATH=/usr/bin:/bin /path/to/orion/run-daily.sh vvv` (this one runs the agent if a run is due; set `agent.cadence.enabled: false` in the asset YAML first if you want to hold that back).
+4. Prove it without spending on the agent yet: `ORION_HOME=/path/to/orion node dist/cli/index.js tick vvv --no-agent`. The report's `agent_would_run` says what the first real tick will start (a `deep` run on any asset that has never had one, about $3 to $4). Then prove the script under an empty environment, which is what a scheduler gives you: `env -i PATH=/usr/bin:/bin /path/to/orion/run-daily.sh vvv` (this one runs the agent if a run is due; set `agent.cadence.enabled: false` in the asset YAML first if you want to hold that back).
    When node is not on that PATH, set `ORION_NODE=/absolute/path/to/node` in the job's environment.
-5. Schedule the job once a day, any time after 00:05 UTC. Give it a 30-minute timeout: a data-only day takes under a minute; a day with a `deep` run takes several.
+5. Schedule the job once a day, any time after 00:05 UTC. Give it a 150-minute timeout: longer than the run lock's two hours. A data-only day takes under a minute; a deep run can take an hour. A tick killed by the scheduler prints no report, leaves the asset locked for up to two hours and its agent run marked running until the next tick takes the lock over, loses that run's spend, and counts as that interval's attempt.
 
 `run-daily.sh` contract: stdout is the tick report as one JSON line; stderr is the fetch and signal summaries, the agent run's progress lines, or the error; exit code `0` completed (signal `ok` or `degraded`) or `run_in_progress`, `2` signal `blocked`, `1` no signal (the fetch or the valuation could not run). Orion keeps every report in `ticks.jsonl` and every signal in `signals.jsonl`; the script keeps stderr in `tick.log`.
 
@@ -29,9 +29,9 @@ STEP 1. Run this exactly once and capture stdout, stderr and the exit code:
 
 STEP 2. Read the result. stdout is one JSON line: the tick report.
 - Exit 0 with report.outcome "completed": a normal tick. report.signal has the signal's status ("ok" or "degraded").
-- Exit 0 with report.outcome "run_in_progress": another Orion run held the asset's lock; nothing ran today. report.lock says who. Do not retry.
+- Exit 0 with report.outcome "run_in_progress": another Orion run held the asset's lock; nothing ran today. report.lock says who. Retry once after 30 minutes: the lock is released when the other run ends, and the check costs nothing.
 - Exit 2: report.signal.status is "blocked"; the signal itself is the last line of /path/to/orion/signals.jsonl whose asset is "vvv", and its status_reasons say why. Do not retry.
-- Exit 1: report.outcome is "error" and report.error says why; there is no signal. Wait 10 minutes and retry ONCE. If it fails again, report the failure.
+- Exit 1, with or without a report line: report.outcome is "error" and report.error says why, when there is a report line; there is no signal. Wait 10 minutes and retry ONCE. If it fails again, report the failure.
 - Any other outcome (timeout, script missing, empty stdout): report it as a failure, with what you saw.
 
 Report fields you need:
@@ -64,7 +64,7 @@ When agent is not null, add one line:
     analyst deep run #7 completed | 14 requests, 1.1M input tokens | changed assumptions (set v5) | 1 observation | 2 proposals (#12 assumption_value, #13 config)
 
 Send an ALERT instead (first line starts with "ORION ALERT", then the one-line summary if there is a signal,
-then the relevant report fields and stderr lines quoted verbatim (the tick's stderr carries no model text: source names, ids, numbers, and Orion's own messages)) when any of these is true:
+then the relevant report fields and stderr lines quoted verbatim (the tick's stderr carries no model text: source names, ids, numbers, and Orion's own messages; a source error may quote one malformed value from a third-party API)) when any of these is true:
 - the exit code is 1 (after the retry) or 2, or the run failed in any other way
 - report.outcome is "run_in_progress" or "error"
 - signal.status is "degraded" or "blocked"
@@ -82,7 +82,7 @@ then the relevant report fields and stderr lines quoted verbatim (the tick's std
 - the signal's provenance.engine_version differs from yesterday's
 
 HARD RULES
-- The only command you may run that changes anything is run-daily.sh, once per day, plus the single retry above.
+- The only command you may run that changes anything is run-daily.sh, once per day, plus the single retry above (exit 1, or run_in_progress).
 - You may run these read-only commands to add detail to an alert, from /path/to/orion with
   ORION_HOME=/path/to/orion set:
       node dist/cli/index.js signal latest vvv --json
@@ -111,7 +111,7 @@ HARD RULES
 ## Why the rules are what they are
 
 - An acknowledgement stands when the condition recurs, so a wrong `ack` hides a real problem for good. That is why the agent may not close anomalies.
-- A retry after exit 1 is safe: the tick's fetch resumes from its cursor and does not re-scan a finished day, level readings are simply newer observations, and the analyst run, if one was due, is only attempted once the fetch and valuation succeed. `blocked` is a data condition, and a retry cannot change it. `run_in_progress` means Orion is already busy on the asset (a run you launched by hand, or yesterday's tick still going); a retry would find the same lock.
+- A retry after exit 1 is safe: the tick's fetch resumes from its cursor and does not re-scan a finished day, level readings are simply newer observations, and the analyst run, if one was due, is only attempted once the fetch and valuation succeed. `blocked` is a data condition, and a retry cannot change it. `run_in_progress` means Orion is already busy on the asset (a run you launched by hand, or yesterday's tick still going); the lock is released as soon as that run ends, and a run cannot legitimately outlive the scheduler's 150-minute timeout, so retrying once after 30 minutes is likely to find it free.
 - The tick runs the analyst at most once per day per asset, and a failed analyst run is not retried until its interval passes, so the daily message is also the cost ceiling: one `deep` run is about $3 to $4, a `weekly` about $1 to $2, a `triage` under $2.
 - "Yesterday" comes from `signals.jsonl` rather than the agent's memory, so a restarted or re-provisioned agent compares against the right thing. Every signal, the tick's and the analyst's, is in that file.
 - A daily message on success is the dead-man's switch for the scheduler itself: a stalled agent, an expired model key, or a broken gateway all look like silence.
