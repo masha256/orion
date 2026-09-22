@@ -39,10 +39,13 @@ export interface TickResult {
   exitCode: 0 | 1 | 2;
 }
 
+const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+// The report promises Orion's own codes; an SDK error's text is provider-controlled, so it is capped rather than trusted whole.
 const errorOf = (err: unknown): { code: string; message: string } =>
   err instanceof OrionError
-    ? { code: err.code, message: err.message }
-    : { code: err instanceof Error ? err.constructor.name : 'error', message: err instanceof Error ? err.message : String(err) };
+    ? { code: err.code, message: err.message.slice(0, 300) }
+    : { code: err instanceof Error ? err.constructor.name : 'error', message: message(err).slice(0, 300) };
 
 /**
  * The scheduled loop, in one process: lock, ingest and signal, trigger evaluation, then the one agent run that is due or
@@ -88,6 +91,7 @@ export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps, opt
 
       // ---- triggers ----
       const agentAllowed = opts.noAgent !== true && cadenceFor(asset).enabled;
+      // The trigger and cadence clock is deliberately deps.now(), not the valuation's asOf (which may sit ahead of now by the chain head): the fetch can take minutes.
       const evaluation = evaluateTriggers(db, loaded, deps.now(), { record: agentAllowed });
       report.triggers_fired = evaluation.fired.map((f) => ({ kind: f.kind, key: f.key, detail: f.detail }));
       report.triggers_recorded = agentAllowed;
@@ -105,10 +109,16 @@ export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps, opt
         return;
       }
       report.agent = await agentStage(db, loaded, deps, choice.runType, choice.trigger);
-      if (report.agent.run_id !== null) attachRun(db, evaluation.fired.map((f) => f.id), report.agent.run_id);
+      if (report.agent.run_id !== null) {
+        try {
+          attachRun(db, evaluation.fired.map((f) => f.id), report.agent.run_id);
+        } catch (err) {
+          deps.onProgress?.(`warning: the firings could not be linked to agent run #${report.agent.run_id} (${message(err)})`);
+        }
+      }
     }, {
       onTakeover: (n) => deps.onProgress?.(`took over an expired run lock; ${n} stuck run(s) marked abandoned`),
-      onReleaseError: (err) => deps.onProgress?.(`warning: the run lock could not be released (${err instanceof Error ? err.message : String(err)}); it expires on its own`),
+      onReleaseError: (err) => deps.onProgress?.(`warning: the run lock could not be released (${message(err)}); the next tick finds it held until it expires`),
     });
   } catch (err) {
     if (!(err instanceof OrionError) || err.code !== 'run_in_progress') throw err;
@@ -128,7 +138,6 @@ async function agentStage(db: Db, loaded: LoadedAsset, deps: TickDeps, runType: 
   deps.onProgress?.(`agent ${runType} run (${trigger.kind}${trigger.firings.length > 0 ? `: ${trigger.firings.map((f: Firing) => `${f.kind} ${f.key}`).join(', ')}` : ''})`);
   try {
     const result = await runAgent(db, loaded, { runType, trigger }, { home: deps.home, now: deps.now, modelClient: deps.modelClient, reload: deps.reload });
-    if (result.signal) deps.onSignal(result.signal);
     const u = result.run.usage;
     stage.run_id = result.run.id;
     stage.outcome = result.run.outcome;
@@ -139,8 +148,15 @@ async function agentStage(db: Db, loaded: LoadedAsset, deps: TickDeps, runType: 
     };
     stage.proposals = (result.committed?.proposalIds ?? []).map((id) => ({ id, kind: getProposal(db, id)?.change.kind ?? 'unknown' }));
     stage.signal_id = result.signal?.signal_id ?? null;
-    if (result.run.outcome !== 'completed') stage.error = { code: result.run.outcome, message: result.run.error ?? '' };
+    if (result.run.outcome !== 'completed') stage.error = { code: result.run.outcome, message: (result.run.error ?? '').slice(0, 300) };
     deps.onProgress?.(`agent run #${result.run.id} ${result.run.outcome}`);
+    if (result.signal) {
+      try {
+        deps.onSignal(result.signal);
+      } catch (err) {
+        deps.onProgress?.(`warning: the agent's signal could not be delivered (${message(err)}); it is in the database`);
+      }
+    }
   } catch (err) {
     stage.error = errorOf(err);
     deps.onProgress?.(`agent run failed before it could be recorded: ${stage.error.code}: ${stage.error.message}`);
