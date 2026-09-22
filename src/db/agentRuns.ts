@@ -1,4 +1,4 @@
-import { MS_PER_DAY, OrionError, type RunType } from '../types.js';
+import { OrionError, type RunType } from '../types.js';
 import type { Db } from './connection.js';
 
 export type AgentOutcome = 'running' | 'completed' | 'budget_exhausted' | 'refused' | 'no_journal' | 'conflict' | 'error';
@@ -111,7 +111,7 @@ export interface FinishAgentRunInput {
 
 /**
  * The run record survives whatever the outcome: this is never part of the ledger's transaction. A run is finished exactly
- * once. "Finished" means its transcript exists, not that its outcome left `running`: abandonStaleRuns marks a run as
+ * once. "Finished" means its transcript exists, not that its outcome left `running`: a lock takeover marks a run as
  * abandoned without a transcript, and if that process was alive after all, its one finish must still record what happened.
  */
 export function finishAgentRun(db: Db, id: number, input: FinishAgentRunInput): AgentRun {
@@ -165,13 +165,13 @@ export function lastCompletedRun(db: Db, assetId: string): AgentRun | null {
   return row ? fromRow(row) : null;
 }
 
-const ABANDON_AFTER_MS = MS_PER_DAY / 24;
-
-/** A killed process leaves a `running` row behind. There is no run lock yet, so age is the only test. Returns how many were marked. */
-export function abandonStaleRuns(db: Db, assetId: string, nowIso: string): number {
-  const cutoff = new Date(new Date(nowIso).getTime() - ABANDON_AFTER_MS).toISOString();
+/**
+ * A killed process leaves a `running` row behind. The run lock decides when that has happened (its holder's lock expired
+ * and was taken over); this marks the rows. Returns how many were marked.
+ */
+export function abandonRunningRuns(db: Db, assetId: string, nowIso: string): number {
   const info = db
-    .prepare("UPDATE agent_runs SET outcome = 'error', error = 'abandoned', ended_at = ? WHERE asset_id = ? AND outcome = 'running' AND started_at < ?")
-    .run(new Date(nowIso).toISOString(), assetId, cutoff);
+    .prepare("UPDATE agent_runs SET outcome = 'error', error = 'abandoned', ended_at = ? WHERE asset_id = ? AND outcome = 'running'")
+    .run(new Date(nowIso).toISOString(), assetId);
   return info.changes;
 }

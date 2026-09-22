@@ -202,4 +202,26 @@ ALTER TABLE anomalies ADD COLUMN decided_by TEXT;
 ALTER TABLE valuation_runs ADD COLUMN agent_run_id INTEGER;
 `,
   },
+  {
+    id: 4,
+    sql: `
+CREATE TABLE run_locks (
+  asset_id TEXT PRIMARY KEY,
+  holder TEXT NOT NULL,
+  acquired_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+
+CREATE TABLE trigger_firings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('open_anomaly', 'driver_deviation', 'staleness', 'provisional', 'calendar')),
+  key TEXT NOT NULL,
+  fired_at TEXT NOT NULL,
+  agent_run_id INTEGER REFERENCES agent_runs(id),
+  detail_json TEXT NOT NULL
+);
+CREATE UNIQUE INDEX idx_trigger_firings_instance ON trigger_firings (asset_id, kind, key);
+`,
+  },
 ];

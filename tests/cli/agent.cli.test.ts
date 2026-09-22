@@ -6,6 +6,7 @@ import { buildProgram } from '../../src/cli/program.js';
 import { raiseAnomaly } from '../../src/db/anomalies.js';
 import { openDb } from '../../src/db/connection.js';
 import { insertProposal, type ProposalChange } from '../../src/db/proposals.js';
+import { acquireRunLock, getRunLock, releaseRunLock } from '../../src/db/runLocks.js';
 import type { OrionError } from '../../src/types.js';
 import { AGENT_ASSET_YAML, PERSONA_MD } from '../helpers/agentWorld.js';
 import { calls, journalCall, say, scriptedModel, toolUse, type ScriptStep } from '../helpers/fakeModel.js';
@@ -167,6 +168,20 @@ describe('orion agent run', () => {
     expect(out.error.code).toBe('triage_needs_target');
     expect(exitCode).toBe(1);
     expect(await orion('agent', 'runs', 'list')).toBe('no agent runs');
+  });
+
+  it('exits 1 with run_in_progress while another holder has the asset\'s lock, and releases its own lock afterwards', async () => {
+    withDb((db) => acquireRunLock(db, 'mini', 'tick pid 999', AS_OF));
+    script = [calls(journalCall()), say('Done.')];
+    await expect(orion('agent', 'run', 'mini', '--type', 'weekly')).rejects.toMatchObject({ code: 'run_in_progress' });
+    const out = JSON.parse(await orion('agent', 'run', 'mini', '--type', 'weekly', '--json')) as { error: { code: string; message: string } };
+    expect(out.error).toEqual({ code: 'run_in_progress', message: 'asset mini is locked by tick pid 999 since 2026-06-30T00:00:00.000Z' });
+    expect(exitCode).toBe(1);
+    expect(await orion('agent', 'runs', 'list')).toBe('no agent runs');
+    withDb((db) => releaseRunLock(db, 'mini', 'tick pid 999'));
+    await orion('agent', 'run', 'mini', '--type', 'weekly');
+    expect(exitCode).toBeUndefined();
+    expect(withDb((db) => getRunLock(db, 'mini'))).toBeNull();
   });
 
   it('lists past runs and shows one with its cost estimate and, on request, its transcript', async () => {

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  abandonStaleRuns, finishAgentRun, getAgentRun, getTranscript, lastCompletedRun, listAgentRuns, startAgentRun, ZERO_USAGE,
+  abandonRunningRuns, finishAgentRun, getAgentRun, getTranscript, lastCompletedRun, listAgentRuns, startAgentRun, ZERO_USAGE,
   type StartAgentRunInput,
 } from '../../src/db/agentRuns.js';
 import { decideAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
@@ -70,7 +70,7 @@ describe('agent runs', () => {
 
   it('lets a run that was marked abandoned still record its one real finish', () => {
     const id = startAgentRun(db, run({ startedAt: '2026-09-20T00:00:00Z' }));
-    expect(abandonStaleRuns(db, 'mini', '2026-09-20T02:00:00Z')).toBe(1);
+    expect(abandonRunningRuns(db, 'mini', '2026-09-20T02:00:00Z')).toBe(1);
     finishAgentRun(db, id, { outcome: 'completed', endedAt: '2026-09-20T02:30:00Z', usage: ZERO_USAGE, error: null, summary: null, transcript: ['late but real'] });
     expect(getAgentRun(db, id)).toMatchObject({ outcome: 'completed', error: null });
     expect(getTranscript(db, id)).toEqual(['late but real']);
@@ -91,14 +91,17 @@ describe('agent runs', () => {
     expect(lastCompletedRun(db, 'other')).toBeNull();
   });
 
-  it('marks running rows older than an hour as abandoned, and only those', () => {
+  it('abandons every running row of the asset, whatever its age, and no other asset\'s', () => {
     const old = startAgentRun(db, run({ startedAt: '2026-09-20T00:00:00Z' }));
-    const fresh = startAgentRun(db, run({ startedAt: '2026-09-20T01:30:00Z' }));
+    const fresh = startAgentRun(db, run({ startedAt: '2026-09-20T01:59:00Z' }));
     const elsewhere = startAgentRun(db, run({ assetId: 'other', startedAt: '2026-09-20T00:00:00Z' }));
-    expect(abandonStaleRuns(db, 'mini', '2026-09-20T02:00:00Z')).toBe(1);
+    const done = startAgentRun(db, run());
+    finishAgentRun(db, done, { outcome: 'completed', endedAt: '2026-09-20T00:05:00Z', usage: ZERO_USAGE, error: null, summary: null, transcript: [] });
+    expect(abandonRunningRuns(db, 'mini', '2026-09-20T02:00:00Z')).toBe(2);
     expect(getAgentRun(db, old)).toMatchObject({ outcome: 'error', error: 'abandoned', endedAt: '2026-09-20T02:00:00.000Z' });
-    expect(getAgentRun(db, fresh)!.outcome).toBe('running');
+    expect(getAgentRun(db, fresh)).toMatchObject({ outcome: 'error', error: 'abandoned' });
     expect(getAgentRun(db, elsewhere)!.outcome).toBe('running');
+    expect(getAgentRun(db, done)!.outcome).toBe('completed');
   });
 });
 

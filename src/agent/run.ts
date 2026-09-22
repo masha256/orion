@@ -2,7 +2,7 @@ import { runValuation } from '../app/valuation.js';
 import { budgetsFor } from '../config/agentPolicy.js';
 import type { LoadedAsset } from '../config/load.js';
 import { loadPersona, skillsFor } from '../config/personas.js';
-import { abandonStaleRuns, finishAgentRun, startAgentRun, ZERO_USAGE, type AgentOutcome, type AgentRun, type AgentUsage } from '../db/agentRuns.js';
+import { finishAgentRun, startAgentRun, ZERO_USAGE, type AgentOutcome, type AgentRun, type AgentUsage } from '../db/agentRuns.js';
 import { getAnomaly } from '../db/anomalies.js';
 import { getLatestAssumptionSet } from '../db/assumptions.js';
 import type { Db } from '../db/connection.js';
@@ -79,7 +79,6 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   const client = deps.modelClient();
 
   const started = deps.now();
-  abandonStaleRuns(db, asset.id, started.toISOString());
   const budgets = budgetsFor(asset, opts.runType);
   const system = buildSystemPrompt(persona, skills, opts.runType);
   const configHash = sha256([loaded.hash, persona.hash, ...skills.map((s) => s.hash), TOOL_LAYER_VERSION, sha256(OPERATING_RULES)].join('\n'));
@@ -168,8 +167,8 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   try {
     run = finish({ system, tools: tools.map((t) => ('name' in t ? t.name : t.type)), messages, responses });
   } catch (err) {
-    // The run row matters more than the transcript: left `running`, it is swept to `error/abandoned` later while its
-    // writes are live. Try once more with a transcript that cannot itself be the problem. A second failure is real.
+    // The run row matters more than the transcript: left `running`, the next lock takeover calls it `error/abandoned`
+    // while its writes are live. Try once more with a transcript that cannot itself be the problem. A second failure is real.
     run = finish({ error: err instanceof Error ? err.message : String(err), note: 'the full transcript could not be stored' });
   }
   return { run, staged, committed, signal };

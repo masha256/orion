@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import { estimateCostUsd } from '../../agent/cost.js';
 import { runAgent, type RunAgentResult } from '../../agent/run.js';
+import { lockHolder, withRunLock } from '../../app/lock.js';
 import { loadAsset } from '../../config/load.js';
 import { getAgentRun, getTranscript, listAgentRuns, type AgentRun } from '../../db/agentRuns.js';
 import { emitSignal } from '../../signals/emit.js';
@@ -51,9 +52,11 @@ export function registerAgent(program: Command, ctx: CliContext): void {
         const anomalyId = opts.anomaly === undefined ? undefined : parseNumber(opts.anomaly, '--anomaly');
         const loaded = loadAsset(ctx.home, assetId);
         const result = await withDbAsync(ctx, (db) =>
-          runAgent(db, loaded, { runType, anomalyId, note: opts.note, dryRun: opts.dryRun }, {
-            home: ctx.home, now: ctx.now, modelClient: () => modelClientFor(ctx), reload: () => loadAsset(ctx.home, assetId),
-          }),
+          withRunLock(db, assetId, lockHolder('agent run'), ctx.now(), () =>
+            runAgent(db, loaded, { runType, anomalyId, note: opts.note, dryRun: opts.dryRun }, {
+              home: ctx.home, now: ctx.now, modelClient: () => modelClientFor(ctx), reload: () => loadAsset(ctx.home, assetId),
+            }),
+          ),
         );
         if (result.signal && opts.out) emitSignal(result.signal, { write: () => undefined, outFile: opts.out });
         output(ctx, opts.json, result, () => [

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runAgent, type RunAgentDeps, type RunAgentOptions } from '../../src/agent/run.js';
 import { runValuation } from '../../src/app/valuation.js';
-import { getAgentRun, getTranscript, listAgentRuns, startAgentRun } from '../../src/db/agentRuns.js';
+import { getAgentRun, getTranscript, listAgentRuns } from '../../src/db/agentRuns.js';
 import { getAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
 import { listAssumptionChanges } from '../../src/db/assumptionChanges.js';
 import { createAssumptionSet, getLatestAssumptionSet } from '../../src/db/assumptions.js';
@@ -226,7 +226,7 @@ describe('runs that do not finish cleanly', () => {
   });
 
   it('still finishes the run row when the transcript cannot be stored, keeping a minimal one instead', async () => {
-    // A run left `running` while its writes are live is the worst outcome: abandonStaleRuns would later call it
+    // A run left `running` while its writes are live is the worst outcome: the next lock takeover would call it
     // `error/abandoned`. Stand in for whatever makes the transcript unstorable with a size limit.
     w.db.exec(
       "CREATE TRIGGER no_large_transcripts BEFORE INSERT ON agent_transcripts WHEN length(NEW.messages_json) > 400 " +
@@ -272,15 +272,6 @@ describe('preflight', () => {
     w.db.prepare('DELETE FROM assumptions').run();
     w.db.prepare('DELETE FROM assumption_sets').run();
     expect(await codeOf(run([]))).toBe('no_assumption_set');
-  });
-
-  it('marks a stale running row as abandoned when the next run starts', async () => {
-    const stale = startAgentRun(w.db, {
-      assetId: 'mini', persona: 'analyst', runType: 'weekly', trigger: 'manual', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm',
-      startedAt: '2026-06-29T00:00:00Z',
-    });
-    await run([calls(journalCall()), say('Done.')]);
-    expect(getAgentRun(w.db, stale)).toMatchObject({ outcome: 'error', error: 'abandoned' });
   });
 
   it('records a config hash that moves with the persona file', async () => {

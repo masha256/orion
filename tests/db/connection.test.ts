@@ -40,6 +40,6 @@ describe('openDb', () => {
     const db = openDb(':memory:');
     migrate(db);
     const row = db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number };
-    expect(row.n).toBe(3);
+    expect(row.n).toBe(4);
   });
 });
