@@ -6,6 +6,7 @@ import { registerInit } from './commands/init.js';
 import { registerModel } from './commands/model.js';
 import { registerPersona } from './commands/persona.js';
 import { registerSignal } from './commands/signal.js';
+import { registerTick } from './commands/tick.js';
 import { registerUpdate } from './commands/update.js';
 import type { CliContext } from './util.js';
 
@@ -25,6 +26,7 @@ export function buildProgram(ctx: CliContext): Command {
   registerModel(program, ctx);
   registerSignal(program, ctx);
   registerUpdate(program, ctx);
+  registerTick(program, ctx);
   registerPersona(program, ctx);
   registerAgent(program, ctx);
   return program;

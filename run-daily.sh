@@ -1,13 +1,14 @@
 #!/bin/sh
-# Daily Orion run, for a scheduler (cron, or an agent's cron) to call. Usage: ./run-daily.sh [asset]
+# Daily Orion tick, for a scheduler (cron, or an agent's cron) to call. Usage: ./run-daily.sh [asset]
 #
-#   stdout     the signal, one JSON line (nothing on exit 1)
-#   stderr     the fetch summary, or the error
-#   exit code  orion update's own: 0 ok or degraded, 2 blocked, 1 error
+#   stdout     the tick report, one JSON line (nothing only when orion itself could not start)
+#   stderr     the fetch and signal summaries, the agent run's progress, or the error
+#   exit code  orion tick's own: 0 completed (signal ok or degraded) or run_in_progress, 2 signal blocked, 1 no signal
 #
-# Both streams are also kept: the signal in <ORION_HOME>/signals.jsonl, stderr in <ORION_HOME>/update.log.
-# Needs no environment. ORION_HOME defaults to this directory; secrets belong in <ORION_HOME>/.env, which
-# orion reads itself. Set ORION_NODE to node's absolute path when the scheduler's PATH does not have it.
+# orion tick keeps the report in <ORION_HOME>/ticks.jsonl and every signal in <ORION_HOME>/signals.jsonl itself;
+# this script keeps stderr in <ORION_HOME>/tick.log. Needs no environment. ORION_HOME defaults to this directory;
+# secrets (RPC, CoinGecko, ANTHROPIC_API_KEY for the agent) belong in <ORION_HOME>/.env, which orion reads itself.
+# Set ORION_NODE to node's absolute path when the scheduler's PATH does not have it.
 
 asset="${1:-vvv}"
 here="$(cd "$(dirname "$0")" && pwd)" || exit 1
@@ -29,12 +30,12 @@ cd "$ORION_HOME" || exit 1
 err="$(mktemp)" || exit 1
 trap 'rm -f "$err"' EXIT
 
-"$node" "$cli" update "$asset" --out signals.jsonl 2>"$err"
+"$node" "$cli" tick "$asset" 2>"$err"
 code=$?
 
 {
-  echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) update $asset exit $code"
+  echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) tick $asset exit $code"
   cat "$err"
-} >>update.log
+} >>tick.log
 cat "$err" >&2
 exit "$code"

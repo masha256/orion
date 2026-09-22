@@ -47,15 +47,16 @@ orion data fetch vvv --adopt        # first real run: a 90-day burn backfill (ab
                                     # --adopt rejects the hand-entered monthly burn rows the daily rows replace
 orion data sources vvv              # per metric: source, cross-checks, last fetch outcome, age of the value in force
 orion update vvv --out signals.jsonl   # fetch, value, emit one JSON line. Exit 0 ok or degraded, 2 blocked, 1 error
+orion tick vvv                         # the scheduled entry point: update, then the triggers, then the one agent run that is due (see Scheduling)
 ```
 
-One cron line gives a daily signal:
+One cron line gives a daily signal and runs the analyst on its schedule:
 
 ```
-15 0 * * *  cd /path/to/orion && ORION_HOME="$PWD" orion update vvv --out signals.jsonl 2>> update.log
+15 0 * * *  cd /path/to/orion && ORION_HOME="$PWD" orion tick vvv 2>> tick.log
 ```
 
-`./run-daily.sh [asset]` is the same line as a script for any scheduler: it needs no environment (`ORION_HOME` defaults to its own directory, and it calls `dist/cli/index.js` directly, so no `npm link`), prints the signal on stdout and the fetch summary on stderr, keeps both in `signals.jsonl` and `update.log`, and exits with `orion update`'s code. For an agent-driven scheduler that checks the result and notifies you, see `docs/ops/hermes-daily-job.md`.
+`./run-daily.sh [asset]` is the same line as a script for any scheduler: it needs no environment (`ORION_HOME` defaults to its own directory, and it calls `dist/cli/index.js` directly, so no `npm link`), prints the tick report on stdout and the fetch and signal summaries on stderr, keeps the report in `ticks.jsonl`, every signal in `signals.jsonl`, and stderr in `tick.log`, and exits with `orion tick`'s code. For an agent-driven scheduler that checks the result and notifies you, see `docs/ops/hermes-daily-job.md`. `orion update` stays as the data-only command for a manual refresh.
 
 - A backfill is resumable: each completed UTC day commits on its own, and the next run carries on after the last one. `--backfill-days <n>` re-scans the last `n` days; re-scanned days supersede the old rows.
 - Fetched flow rows never silently overwrite hand-entered ones. Without `--adopt`, a fetch that would overlap them writes nothing for that scan and lists the conflicting rows. `--adopt` rejects only rows whose source is `manual`.
@@ -100,9 +101,44 @@ What the agent can do directly: change an assumption inside its band for that sc
 
 A run either finishes cleanly, journal entry included, and commits everything together, or commits nothing (`budget_exhausted`, `refused`, `no_journal`, `conflict`, `error`). The run row, the transcript, and the token counts are kept either way. `conflict` means the world changed mid-run (you saved an assumption set, or edited `assets/<id>.yaml`, while it ran): run it again. After a commit that can move a signal the run values the asset and prints the signal; `change.author` and `provenance.agent_run_id` say who moved it. Exit codes: `0` completed, `2` completed with a `blocked` signal, `1` anything else.
 
-Give every real agent run `--out signals.jsonl`, the same file the daily job appends to: a signal an agent run produced can be the one the next daily signal names in `change.prev_signal_id`, and whatever reads `signals.jsonl` (the Hermes job above compares against it) must be able to find it there. A `--dry-run` writes no signal and needs no `--out`.
+Give every real agent run you launch by hand `--out signals.jsonl`, the same file `orion tick` appends to: a signal an agent run produced can be the one the next daily signal names in `change.prev_signal_id`, and whatever reads `signals.jsonl` (the Hermes job above compares against it) must be able to find it there. A `--dry-run` writes no signal and needs no `--out`. Runs that tick starts write there by themselves.
 
-Approving a config proposal edits `assets/<id>.yaml` in place, keeping comments and layout: review it with `git diff` and commit it. A proposal is refused as stale when what it was filed against has changed; reject it with a note. Personas and skills are markdown files in `personas/` and `skills/`; edit them like any other file, and runs record the hash of what they used. Per-run budgets (requests, tokens, web searches and fetches) have defaults in code and can be overridden under `agent:` in the asset YAML. There is no scheduler yet: run the agent by hand, or from your own cron, until sub-project 4.
+Approving a config proposal edits `assets/<id>.yaml` in place, keeping comments and layout: review it with `git diff` and commit it. A proposal is refused as stale when what it was filed against has changed; reject it with a note. Personas and skills are markdown files in `personas/` and `skills/`; edit them like any other file, and runs record the hash of what they used. Per-run budgets (requests, tokens, web searches and fetches) have defaults in code and can be overridden under `agent:` in the asset YAML.
+
+## Scheduling
+
+`orion tick <asset>` is the one entry point a scheduler calls. In one process, in order: take the asset's run lock; fetch, value, and append the signal to `<ORION_HOME>/signals.jsonl`; evaluate the review triggers; then start the one agent run that is due or triggered; then print the tick report (one JSON line) and append it to `<ORION_HOME>/ticks.jsonl`. Design: `docs/superpowers/specs/2026-09-21-orion-scheduling-design.md`.
+
+```bash
+orion tick vvv                # the daily job
+orion tick vvv --no-agent     # everything but the agent: the report says which run it would have started, and records no trigger
+```
+
+Exit codes: `0` when there is a signal (`ok` or `degraded`), or when another run holds the lock (`run_in_progress`); `2` when the signal is `blocked`; `1` when there is no signal because the fetch or the valuation could not run. The agent stage never changes the exit code: a run that fails is in the report's `agent.outcome` and `agent.error`, and the data-only signal was already written.
+
+**When the agent runs.** A `deep` run is due when none started in the last `deep_days` (30); a `weekly` when neither a weekly nor a deep started in the last `weekly_days` (7). Every attempt counts, whatever its outcome or who launched it, so a failed run waits out its interval rather than being retried daily, and a run you launched by hand is not repeated. On a fresh asset the first scheduled run is `deep`. When nothing is due and a trigger fired this tick, tick runs `triage` with the firings as its target; when a scheduled run is due, it absorbs them (they appear in its context pack as `trigger.triggers_this_tick`). At most one run starts per tick.
+
+```yaml
+agent:
+  cadence:
+    weekly_days: 7      # default 7
+    deep_days: 30       # default 30
+    enabled: true       # false: tick never starts a run for this asset and records no trigger; the report says what it would have run
+```
+
+**Triggers** come from `review_triggers` in the asset YAML and Orion's own data. Each instance fires once, on the tick it first holds, and is recorded in the `trigger_firings` table with the run that handled it:
+
+| kind | instance | fires when | fires again |
+|---|---|---|---|
+| `open_anomaly` | the anomaly id | an anomaly is open, either severity | a new anomaly is a new id |
+| `staleness` | the metric | a `critical` metric is past its `staleness_days` | after it was fresh again |
+| `driver_deviation` | `revenue_run_rate_usd` | revenue is further than `driver_deviation_pct` (25) from where the base scenario's growth path, started at the last completed agent run (before any, at the current assumption set), says it should be; not while revenue itself is stale, and not for a week after the anchor | after it came back inside |
+| `provisional` | the observation id | you entered a provisional observation (the agent's own research rows do not count) | never |
+| `calendar` | the date | a `review_triggers.calendar` event's date has arrived, for seven days | never |
+
+**The run lock** is one row per asset in `run_locks`. `orion tick` and `orion agent run` take it; a second one finds it held and exits (`run_in_progress` for tick, exit 0; an error and exit 1 for `agent run`). A lock older than two hours belongs to a process that died: the next acquirer takes it over and marks any `running` agent run of the asset `error/abandoned`. Nothing else takes the lock; SQLite serialises the short commands itself.
+
+**The report** (`ticks.jsonl`, one line per tick) names ids, kinds, counts, and Orion's own codes: `outcome`, the ingest's failed sources and raised anomalies, the signal's id, status, grade, 12m target and delta, the triggers that fired, and the agent run's type, trigger, outcome, token usage, what it committed (by count) and proposed (id and kind), and its signal id. Nothing in it was written by a model or read from a web page.
 
 ## Maintaining the system
 
