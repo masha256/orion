@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -39,6 +39,21 @@ describe('emitTickReport', () => {
     expect(() => emitTickReport(invalid, { write: (line) => written.push(line), outFile })).toThrow(ZodError);
     expect(written).toHaveLength(0);
     expect(existsSync(outFile)).toBe(false);
+  });
+
+  it('guards its own append: a write failure is reported, not thrown, and write already ran', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'orion-tickreport-'));
+    writeFileSync(join(dir, 'file.txt'), 'not a directory');
+    const outFile = join(dir, 'file.txt', 'ticks.jsonl');
+    const written: string[] = [];
+    const appendErrors: unknown[] = [];
+    const report = minimalReport();
+
+    expect(() => emitTickReport(report, { write: (line) => written.push(line), outFile, onAppendError: (err) => appendErrors.push(err) })).not.toThrow();
+
+    expect(written).toHaveLength(1);
+    expect(appendErrors).toHaveLength(1);
+    expect(appendErrors[0]).toBeInstanceOf(Error);
   });
 
   it('with no outFile, only calls write', () => {

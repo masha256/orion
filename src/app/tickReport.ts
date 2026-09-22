@@ -73,8 +73,15 @@ export function tickId(asset: string, startedAt: Date): string {
 }
 
 /** One JSON line to `write`, and appended to `outFile` when given. Throws if the report does not fit its own schema. */
-export function emitTickReport(report: TickReport, opts: { write: (line: string) => void; outFile?: string }): void {
+export function emitTickReport(report: TickReport, opts: { write: (line: string) => void; outFile?: string; onAppendError?: (err: unknown) => void }): void {
   const line = JSON.stringify(TickReportSchema.parse(report));
   opts.write(line);
-  if (opts.outFile) appendFileSync(opts.outFile, line + '\n', 'utf8');
+  // The line on stdout is the delivery; the file is a copy. Losing the copy is not fatal.
+  if (opts.outFile) {
+    try {
+      appendFileSync(opts.outFile, line + '\n', 'utf8');
+    } catch (err) {
+      opts.onAppendError?.(err);
+    }
+  }
 }

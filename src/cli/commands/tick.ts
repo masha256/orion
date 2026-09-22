@@ -40,7 +40,10 @@ export function registerTick(program: Command, ctx: CliContext): void {
           { noAgent: !opts.agent },
         ),
       );
-      emitTickReport(report, { write: ctx.stdout, outFile: join(ctx.home, TICKS_FILE) });
+      emitTickReport(report, {
+        write: ctx.stdout, outFile: join(ctx.home, TICKS_FILE),
+        onAppendError: (err) => ctx.stderr?.(`warning: the report could not be appended to ticks.jsonl (${err instanceof Error ? err.message : String(err)})`),
+      });
       if (exitCode !== 0) ctx.setExitCode?.(exitCode);
     });
 }
