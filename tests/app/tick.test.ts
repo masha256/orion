@@ -214,4 +214,13 @@ describe('tickAsset', () => {
     expect(exitCode).toBe(0);
     expect(progress.some((l) => l.startsWith('warning: the run lock could not be released (simulated'))).toBe(true);
   });
+
+  it('reports a signal that could not be delivered and goes on', async () => {
+    const { report, exitCode } = await tick([calls(journalCall()), say('Done.')], {}, { onSignal: () => { throw new Error('simulated: EACCES'); } });
+    expect(report.outcome).toBe('completed');
+    expect(exitCode).toBe(0);
+    expect(report.signal).not.toBeNull();
+    expect(report.agent!.outcome).toBe('completed');
+    expect(progress.filter((l) => l.startsWith('warning: the signal could not be delivered (simulated') || l.startsWith("warning: the agent's signal could not be delivered (simulated")).length).toBe(1);
+  });
 });

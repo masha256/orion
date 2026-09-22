@@ -77,7 +77,7 @@ export function parseNumber(text: string, label: string): number {
 
 export const fmt = (n: number): string => n.toFixed(4);
 
-export function signalSummary(s: Signal): string[] {
+export function signalSummary(s: Signal, opts: { rationale?: boolean } = {}): string[] {
   const lines = [`${s.asset.toUpperCase()}  ${s.status}  grade ${s.data_quality.grade}  (${s.signal_id})`];
   if (s.spot) lines.push(`spot ${fmt(s.spot.price)} at ${s.spot.ts}`);
   for (const [name, h] of Object.entries(s.horizons ?? {})) {
@@ -104,7 +104,7 @@ export function signalSummary(s: Signal): string[] {
     // `causes` and `author` are absent on signals stored before sub-project 3.
     const cause = s.change.cause === 'both' && s.change.causes ? s.change.causes.join(' + ') : s.change.cause;
     const by = s.change.author ? ` by ${s.change.author}` : '';
-    lines.push(`change: ${cause}${by}, 12m target ${delta} vs ${s.change.prev_signal_id}${s.change.rationale ? ` (${s.change.rationale})` : ''}`);
+    lines.push(`change: ${cause}${by}, 12m target ${delta} vs ${s.change.prev_signal_id}${opts.rationale !== false && s.change.rationale ? ` (${s.change.rationale})` : ''}`);
   }
   return lines;
 }

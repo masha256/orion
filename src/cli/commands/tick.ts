@@ -29,7 +29,8 @@ export function registerTick(program: Command, ctx: CliContext): void {
             home: ctx.home, now: ctx.now, fetchDeps: ingestDepsFor(ctx), modelClient: () => modelClientFor(ctx), reload: () => loadAsset(ctx.home, assetId),
             onSignal: (signal) => {
               emitSignal(signal, { write: () => undefined, outFile: signalsFile });
-              for (const line of signalSummary(signal)) ctx.stderr?.(line);
+              // The rationale is model text; the tick's stderr is read by a second agent and carries none.
+              for (const line of signalSummary(signal, { rationale: false })) ctx.stderr?.(line);
             },
             onFetch: (fetch) => {
               for (const line of fetchSummary(fetch)) ctx.stderr?.(line);

@@ -61,16 +61,19 @@ describe('orion tick', () => {
     expect(stderr.some((l) => l.includes('12m'))).toBe(true); // the signal summary
     expect(exitCodes).toEqual([]);
     expect(await orion('agent', 'runs', 'list')).toContain('mini  deep  analyst  completed');
+    expect(JSON.parse(await orion('tick', 'mini', '--json')).outcome).toBe('completed');
   });
 
   it('appends the agent\'s signal too when the run moved one, and the next tick runs nothing', async () => {
     const revenueId = JSON.parse(await orion('data', 'show', 'mini', 'revenue_run_rate_usd', '--json'))[0].id as number;
-    script = [calls(toolUse('apply_assumption_change', { key: 'rev_growth_y1', scenario: 'base', value: 0.2, evidence: [revenueId], rationale: 'up' })), calls(journalCall()), say('Done.')];
+    script = [calls(toolUse('apply_assumption_change', { key: 'rev_growth_y1', scenario: 'base', value: 0.2, evidence: [revenueId], rationale: 'usage is accelerating markedly' })), calls(journalCall()), say('Done.')];
     const first = JSON.parse(await orion('tick', 'mini')) as TickReport;
     expect(first.agent).toMatchObject({ committed: { assumption_set_version: 2 } });
     const signals = lines('signals.jsonl') as { signal_id: string; provenance: { assumption_set_version: number; agent_run_id: number | null } }[];
     expect(signals.map((s) => s.provenance.assumption_set_version)).toEqual([1, 2]);
     expect(signals[1]).toMatchObject({ signal_id: first.agent!.signal_id, provenance: { agent_run_id: first.agent!.run_id } });
+    expect(stderr.some((l) => l.includes('usage is accelerating markedly'))).toBe(false);
+    expect(stderr.some((l) => l.startsWith('change: assumptions by analyst'))).toBe(true);
     const second = JSON.parse(await orion('tick', 'mini')) as TickReport;
     expect(second.agent).toBeNull(); // the deep run today satisfies the schedule
     expect(lines('ticks.jsonl')).toHaveLength(2);

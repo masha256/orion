@@ -116,6 +116,8 @@ orion tick vvv --no-agent     # everything but the agent: the report says which 
 
 Exit codes: `0` when there is a signal (`ok` or `degraded`), or when another run holds the lock (`run_in_progress`); `2` when the signal is `blocked`; `1` when there is no signal because the fetch or the valuation could not run. The agent stage never changes the exit code: a run that fails is in the report's `agent.outcome` and `agent.error`, and the data-only signal was already written.
 
+The report on stdout is the delivery; the two files are copies. If a file cannot be appended, tick warns on stderr and goes on; every signal and report is also in the database.
+
 **When the agent runs.** A `deep` run is due when none started in the last `deep_days` (30); a `weekly` when neither a weekly nor a deep started in the last `weekly_days` (7). Every attempt counts, whatever its outcome or who launched it, so a failed run waits out its interval rather than being retried daily, and a run you launched by hand is not repeated. On a fresh asset the first scheduled run is `deep`. When nothing is due and a trigger fired this tick, tick runs `triage` with the firings as its target; when a scheduled run is due, it absorbs them (they appear in its context pack as `trigger.triggers_this_tick`). At most one run starts per tick.
 
 ```yaml

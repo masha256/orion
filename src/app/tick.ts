@@ -83,7 +83,11 @@ export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps, opt
         report.error = errorOf(err);
         return;
       }
-      deps.onSignal(signal);
+      try {
+        deps.onSignal(signal);
+      } catch (err) {
+        deps.onProgress?.(`warning: the signal could not be delivered (${message(err)}); it is in the database`);
+      }
       report.signal = {
         signal_id: signal.signal_id, status: signal.status, grade: signal.data_quality.grade,
         expected_target_12m: signal.horizons?.['12m'].expected_target ?? null, target_delta_pct: signal.change.target_delta_pct, cause: signal.change.cause,
