@@ -26,7 +26,10 @@ describe('cleaning model-authored text', () => {
     expect(cleanText('  a bell\u0007 and a NUL\u0000  ')).toBe('a bell and a NUL');
     expect(cleanText('an escape \u001B[31mred\u001B[0m')).toBe('an escape [31mred[0m'); // the ESC goes; its text does not
     expect(cleanText('\u009B5n and a delete\u007F')).toBe('5n and a delete');
-    expect(cleanText('carriage\u000Dreturn and a vertical\u000Btab')).toBe('carriagereturn and a verticaltab');
+    // A lone CR, a vertical tab, or a form feed is a line break in some source: a space, so the words stay apart and a
+    // quote spanning one still matches after normalizeText. CRLF is one newline.
+    expect(cleanText('carriage\u000Dreturn and a vertical\u000Btab and a form\u000Cfeed')).toBe('carriage return and a vertical tab and a form feed');
+    expect(cleanText('windows\r\nline')).toBe('windows\nline');
     expect(cleanText('line one\nline two\tindented')).toBe('line one\nline two\tindented');
     expect(cleanText(' \u0000 \u0007 ')).toBe('');
   });

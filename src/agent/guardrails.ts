@@ -21,10 +21,16 @@ const EPSILON = 1e-9;
  * Text the model wrote, made safe to keep. It is stored, printed to a terminal, fed back into every later run's context
  * pack, and read by the Hermes job's agent, so a terminal escape or a stray NUL in it would travel a long way. C0
  * control characters go (newline and tab stay: a rationale may be several lines), with DEL and the C1 control sequence
- * introducer, and the result is trimmed. The classes are \u escapes because these sources are ASCII only.
+ * introducer, and the result is trimmed. CRLF becomes one newline; a lone CR, a vertical tab, or a form feed is a line
+ * break in some source, so it becomes a space rather than vanishing (which would fuse two words and make a quote that
+ * spans one unmatchable). The classes are \u escapes because these sources are ASCII only.
  */
 export function cleanText(s: string): string {
-  return s.replace(/[\u0000-\u0008\u000B-\u001F\u007F\u009B]/g, '').trim();
+  return s
+    .replace(/\u000D\u000A/g, '\n')
+    .replace(/[\u000B\u000C\u000D]/g, ' ')
+    .replace(/[\u0000-\u0008\u000E-\u001F\u007F\u009B]/g, '')
+    .trim();
 }
 
 // ---- Anomaly block -------------------------------------------------------------------------------------------------
