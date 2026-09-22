@@ -3,7 +3,9 @@ name: anomaly-triage
 description: Work out what an anomaly means, resolve it when its cause is gone, and otherwise tell the user what you found and what you propose.
 run_types: [triage]
 ---
-A triage run has a target: an anomaly, a note from the user, or both. The note is a lead. Verify it by research before you rely on any of it.
+A triage run has a target: an anomaly, a note from the user, or the triggers Orion's scheduled tick raised. The note is a lead. Verify it by research before you rely on any of it.
+
+When the pack's `trigger.triggers_this_tick` is not empty, the run was launched automatically and those entries are the target. Each names a kind, the key it fired on, and Orion's own numbers in `detail`: `open_anomaly` (an anomaly opened; its id is the key), `staleness` (a critical metric is past its staleness window; research a newer figure), `driver_deviation` (revenue has drifted further from the base scenario's implied path than the threshold; `detail` gives the anchor, the implied and actual values, and the deviation), `provisional` (the user entered a provisional observation; verify it), `calendar` (a dated event has arrived; check whether it happened as described). Take them in the order given, and say in the journal what each one turned out to be.
 
 For an anomaly, first work out which kind of problem it is:
 

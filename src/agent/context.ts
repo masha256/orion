@@ -5,6 +5,7 @@ import { lastCompletedRun } from '../db/agentRuns.js';
 import { getAnomaly, listAnomalies } from '../db/anomalies.js';
 import type { Db } from '../db/connection.js';
 import { listFetchRuns } from '../db/fetchRuns.js';
+import type { Firing } from '../db/triggerFirings.js';
 import { listJournal } from '../db/journal.js';
 import { listProposals, recentlyDecidedProposals } from '../db/proposals.js';
 import { listSignals } from '../db/runs.js';
@@ -17,6 +18,8 @@ import type { Ledger } from './ledger.js';
 export interface RunTrigger {
   anomalyId?: number;
   note?: string;
+  /** What `orion tick` saw fire this tick. Empty on a manual run. */
+  firings?: Firing[];
 }
 
 export interface ContextPackInput {
@@ -62,6 +65,8 @@ export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, in
       anomaly: target ? describeAnomaly(target) : null,
       // A lead to verify by research. It is not an observation, so it can never be cited as evidence.
       unverified_note: input.trigger.note ?? null,
+      // Conditions Orion's own data raised this tick: what to look into first. Details hold Orion's numbers, never text from a model or a page.
+      triggers_this_tick: (input.trigger.firings ?? []).map((f) => ({ kind: f.kind, key: f.key, fired_at: f.firedAt, detail: f.detail })),
     },
     drivers_now: describeDrivers(report, nowIso),
     drivers_at_previous_run: previousDrivers && { run_started_at: previous?.startedAt, ...previousDrivers },

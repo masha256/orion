@@ -9,6 +9,7 @@ import { decideAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
 import { insertJournalEntry } from '../../src/db/journal.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { decideProposal, insertProposal } from '../../src/db/proposals.js';
+import { insertFiring } from '../../src/db/triggerFirings.js';
 import { AGENT_ASSET_YAML, agentWorld, PERSONA_MD, type AgentWorld } from '../helpers/agentWorld.js';
 import { AS_OF } from '../helpers/obs.js';
 
@@ -51,6 +52,18 @@ describe('the context pack', () => {
     expect(p.anomalies.acknowledged_read_only).toMatchObject([{ id: acked.id, read_only: true, note: 'known lag', occurrences: 1 }]);
     expect(p.trigger.anomaly).toMatchObject({ id: open.id, detail: { check: 11 } });
     expect(p.trigger.unverified_note).toBe('Venice announced a new burn policy');
+  });
+
+  it('lists the triggers that fired this tick with the target, and an empty list on a manual run', () => {
+    expect(pack().trigger.triggers_this_tick).toEqual([]);
+    const firing = insertFiring(w.db, {
+      assetId: 'mini', kind: 'staleness', key: 'revenue_run_rate_usd', firedAt: AS_OF, detail: { freshness: '2026-04-01T00:00:00.000Z', staleness_days: 60 },
+    });
+    const p = pack({ firings: [firing] });
+    expect(p.trigger.triggers_this_tick).toEqual([
+      { kind: 'staleness', key: 'revenue_run_rate_usd', fired_at: AS_OF, detail: { freshness: '2026-04-01T00:00:00.000Z', staleness_days: 60 } },
+    ]);
+    expect(p.trigger.anomaly).toBeNull();
   });
 
   it('shows pending proposals, how the user decided earlier ones, the journal, and the signal history', () => {

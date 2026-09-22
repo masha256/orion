@@ -7,6 +7,7 @@ import { getAnomaly } from '../db/anomalies.js';
 import { getLatestAssumptionSet } from '../db/assumptions.js';
 import type { Db } from '../db/connection.js';
 import { getCoverage } from '../db/coverage.js';
+import type { Firing } from '../db/triggerFirings.js';
 import type { Signal } from '../signals/schema.js';
 import { OrionError, type RunType } from '../types.js';
 import { sha256 } from '../util/canonical.js';
@@ -21,11 +22,19 @@ import { AGENT_TOOLS, runTool, toApiTools, type ToolContext } from './tools/inde
 /** Bump when a tool's behaviour or a guardrail changes: runs record which tool layer they ran under. */
 export const TOOL_LAYER_VERSION = '1.0.0';
 
+/** Why `orion tick` launched the run. Absent, the run was launched by hand and is recorded as `manual`. */
+export interface RunTriggerContext {
+  /** `schedule`: the run was due; `trigger`: it is a triage run for the firings. Either way the firings are in the pack. */
+  kind: 'schedule' | 'trigger';
+  firings: Firing[];
+}
+
 export interface RunAgentOptions {
   runType: RunType;
   anomalyId?: number;
   note?: string;
   dryRun?: boolean;
+  trigger?: RunTriggerContext;
 }
 
 export interface RunAgentDeps {
@@ -69,7 +78,8 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   const startSet = getLatestAssumptionSet(db, asset.id);
   if (!startSet) throw new OrionError('no_assumption_set', `no assumption set for ${asset.id}; import one first`);
   const note = opts.note?.trim() || undefined;
-  if (opts.runType === 'triage' && opts.anomalyId === undefined && note === undefined) {
+  const firings = opts.trigger?.firings ?? [];
+  if (opts.runType === 'triage' && opts.anomalyId === undefined && note === undefined && firings.length === 0) {
     throw new OrionError('triage_needs_target', 'a triage run needs --anomaly <id>, --note <text>, or both');
   }
   if (opts.anomalyId !== undefined) {
@@ -84,8 +94,12 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   const system = buildSystemPrompt(persona, skills, opts.runType);
   const configHash = sha256([loaded.hash, persona.hash, ...skills.map((s) => s.hash), TOOL_LAYER_VERSION, sha256(OPERATING_RULES)].join('\n'));
   const runId = startAgentRun(db, {
-    assetId: asset.id, persona: persona.name, runType: opts.runType, trigger: 'manual',
-    triggerDetail: { ...(opts.anomalyId !== undefined ? { anomalyId: opts.anomalyId } : {}), ...(note !== undefined ? { note } : {}) },
+    assetId: asset.id, persona: persona.name, runType: opts.runType, trigger: opts.trigger?.kind ?? 'manual',
+    triggerDetail: {
+      ...(opts.anomalyId !== undefined ? { anomalyId: opts.anomalyId } : {}),
+      ...(note !== undefined ? { note } : {}),
+      ...(opts.trigger ? { firings: firings.map((f) => ({ kind: f.kind, key: f.key, detail: f.detail })) } : {}),
+    },
     dryRun: opts.dryRun === true, configHash, model: persona.model, startedAt: started.toISOString(),
   });
 
@@ -102,7 +116,7 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   let valuationError: string | null = null;
 
   try {
-    const pack = buildContextPack(db, loaded, ledger, { runType: opts.runType, budgets, now: started, trigger: { anomalyId: opts.anomalyId, note } });
+    const pack = buildContextPack(db, loaded, ledger, { runType: opts.runType, budgets, now: started, trigger: { anomalyId: opts.anomalyId, note, firings } });
     messages.push({ role: 'user', content: renderContextPack(pack) });
     const ctx: ToolContext = { db, loaded, ledger, now: deps.now, budgets, fetchedPages: () => fetchedPagesFrom(messages) };
 

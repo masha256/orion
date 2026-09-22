@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { runAgent, type RunAgentDeps, type RunAgentOptions } from '../../src/agent/run.js';
 import { runValuation } from '../../src/app/valuation.js';
 import { getAgentRun, getTranscript, listAgentRuns } from '../../src/db/agentRuns.js';
+import { insertFiring } from '../../src/db/triggerFirings.js';
 import { getAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
 import { listAssumptionChanges } from '../../src/db/assumptionChanges.js';
 import { createAssumptionSet, getLatestAssumptionSet } from '../../src/db/assumptions.js';
@@ -256,8 +257,21 @@ describe('runs that do not finish cleanly', () => {
 describe('preflight', () => {
   const codeOf = async (p: Promise<unknown>): Promise<string | undefined> => p.then(() => undefined, (err: OrionError) => err.code);
 
+  it('records why tick launched it: the trigger kind on the row, the firings in the detail and the pack; a tick triage needs no anomaly or note', async () => {
+    const firing = insertFiring(w.db, { assetId: 'mini', kind: 'calendar', key: '2026-07-01', firedAt: AS_OF, detail: { note: 'Emission cut' } });
+    const triage = await run([calls(journalCall()), say('Done.')], { runType: 'triage', trigger: { kind: 'trigger', firings: [firing] } });
+    expect(triage.run).toMatchObject({ outcome: 'completed', runType: 'triage', trigger: 'trigger', triggerDetail: { firings: [{ kind: 'calendar', key: '2026-07-01', detail: { note: 'Emission cut' } }] } });
+    const pack = JSON.parse((model.requests[0].messages[0].content as string).slice((model.requests[0].messages[0].content as string).indexOf('{'))) as { trigger: { triggers_this_tick: unknown[] } };
+    expect(pack.trigger.triggers_this_tick).toEqual([{ kind: 'calendar', key: '2026-07-01', fired_at: AS_OF, detail: { note: 'Emission cut' } }]);
+
+    const scheduled = await run([calls(journalCall()), say('Done.')], { runType: 'deep', trigger: { kind: 'schedule', firings: [] } });
+    expect(scheduled.run).toMatchObject({ trigger: 'schedule', triggerDetail: { firings: [] } });
+    expect(triage.run.trigger).not.toBe(scheduled.run.trigger);
+  });
+
   it('fails before any model call and before a run row exists', async () => {
     expect(await codeOf(run([], { runType: 'triage' }))).toBe('triage_needs_target');
+    expect(await codeOf(run([], { runType: 'triage', trigger: { kind: 'trigger', firings: [] } }))).toBe('triage_needs_target');
     expect(await codeOf(run([], { runType: 'triage', anomalyId: 999 }))).toBe('anomaly_not_found');
     w.db.prepare('DELETE FROM coverage').run();
     expect(await codeOf(run([]))).toBe('no_persona_assigned');
