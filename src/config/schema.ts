@@ -73,7 +73,17 @@ const AgentConfigSchema = z.strictObject({
 });
 
 const CalendarEventSchema = z.strictObject({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be a date, YYYY-MM-DD'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be a date, YYYY-MM-DD').refine(
+    (d) => {
+      if (Number.isNaN(Date.parse(d))) return false;
+      try {
+        return new Date(d).toISOString().slice(0, 10) === d;
+      } catch {
+        return false;
+      }
+    },
+    'must be a real date, YYYY-MM-DD',
+  ),
   note: z.string().min(1),
 });
 

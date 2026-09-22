@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dueRunType } from '../../src/app/cadence.js';
 import { cadenceFor, DEFAULT_CADENCE } from '../../src/config/agentPolicy.js';
@@ -50,8 +52,10 @@ describe('cadence config', () => {
     expect(messageOf(`${MINI_ASSET_YAML}agent:\n  cadence: { monthly_days: 30 }\n`)).toMatch(/agent\.cadence/);
   });
 
-  it('does not move the config hash of an asset that says nothing about cadence or triggers', () => {
-    // The umbrella fixtures' hashes are pinned elsewhere; here: defaults are applied by the readers, not by the schema.
+  it('leaves the config hashes where they were: no schema default was added', () => {
+    // Pinned on main 3e1d547 before sub-project 4. A schema change that adds a default moves these; a deliberate edit of assets/vvv.yaml moves the second, and then this pin is updated on purpose.
+    expect(parseAssetYaml(MINI_ASSET_YAML).hash).toBe('6db2927f57c7349c1bcf199b769c3b5f4fee8dea4fb6ae4492f12b866f7b5395');
+    expect(parseAssetYaml(readFileSync(join(process.cwd(), 'assets', 'vvv.yaml'), 'utf8')).hash).toBe('818344948ae1fbd26a9bac2c0c85e76a43040643cf6b3b40cd9a115e0227752c');
     expect(asset.agent).toBeUndefined();
     expect(asset.review_triggers).toEqual({});
   });
