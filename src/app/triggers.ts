@@ -46,9 +46,10 @@ export function currentTriggerInstances(db: Db, loaded: LoadedAsset, now: Date):
     out.push({ kind: 'open_anomaly', key: String(a.id), detail: { kind: a.kind, metric: a.metricKey, severity: a.severity, first_seen_at: a.firstSeenAt } });
   }
 
-  const report = computeDrivers(asset, eligibleObservations(db, asset, nowIso), nowIso, requiredExtraMetrics(asset));
+  const eligible = eligibleObservations(db, asset, nowIso);
+  const report = computeDrivers(asset, eligible, nowIso, requiredExtraMetrics(asset));
   for (const metric of report.staleCritical) {
-    const newest = listActiveObservations(db, asset.id, metric).at(-1);
+    const newest = eligible.filter((o) => o.metricKey === metric).sort((a, b) => (a.observedAt < b.observedAt ? -1 : a.observedAt > b.observedAt ? 1 : a.id - b.id)).at(-1);
     out.push({ kind: 'staleness', key: metric, detail: { staleness_days: asset.metrics[metric]?.staleness_days ?? null, newest_observed_at: newest?.observedAt ?? null } });
   }
 

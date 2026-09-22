@@ -97,4 +97,13 @@ describe('review triggers', () => {
     expect(messageOf(`${MINI_ASSET_YAML}review_triggers:\n  calendar:\n    - { date: "2026-10-01" }\n`)).toMatch(/review_triggers\.calendar\.0\.note/);
     expect(messageOf(`${MINI_ASSET_YAML}review_triggers: { deviation_pct: 25 }\n`)).toMatch(/review_triggers/);
   });
+
+  it('rejects duplicate calendar dates but accepts different dates', () => {
+    expect(messageOf(
+      `${MINI_ASSET_YAML}review_triggers:\n  calendar:\n    - { date: "2026-10-01", note: "Event 1" }\n    - { date: "2026-10-01", note: "Event 2" }\n`,
+    )).toMatch(/review_triggers: calendar dates must be unique \(2026-10-01\)/);
+    expect(messageOf(
+      `${MINI_ASSET_YAML}review_triggers:\n  calendar:\n    - { date: "2026-10-01", note: "Event 1" }\n    - { date: "2026-10-02", note: "Event 2" }\n`,
+    )).toBe('');
+  });
 });

@@ -189,6 +189,13 @@ export const AssetConfigSchema = z
       const v = a.review_triggers[key];
       if (v !== undefined && !(Number.isFinite(v) && v > 0)) issue(`review_triggers: ${key} must be a positive number`);
     }
+    const calendarDates = new Set<string>();
+    for (const e of a.review_triggers.calendar ?? []) {
+      if (calendarDates.has(e.date)) {
+        issue(`review_triggers: calendar dates must be unique (${e.date})`);
+      }
+      calendarDates.add(e.date);
+    }
   });
 
 export type AssetConfig = z.infer<typeof AssetConfigSchema>;

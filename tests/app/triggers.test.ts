@@ -54,11 +54,18 @@ describe('trigger conditions', () => {
     expect(instances(daysLater(8)).sort()).toEqual(['staleness:effective_supply', 'staleness:price_usd']);
   });
 
+  it('staleness detail uses eligible observations, ignoring provisional and future-dated rows', () => {
+    w = agentWorld(PRICE_3_YAML);
+    set('price_usd', 15, daysLater(4), { status: 'provisional', citationUrl: 'https://example.com/p' });
+    expect(evaluate(daysLater(4)).fired[0].detail).toEqual({ staleness_days: 3, newest_observed_at: '2026-06-29T00:00:00.000Z' });
+  });
+
   it('provisional: a user-entered provisional row fires; the agent\'s own research rows do not', () => {
     const mine = set('revenue_run_rate_usd', 1100, daysLater(1), { status: 'provisional', citationUrl: 'https://example.com/q' });
     set('revenue_run_rate_usd', 1150, daysLater(2), { status: 'provisional', citationUrl: 'https://example.com/r', sourceDetail: 'research:analyst:run 3' });
+    const deck = set('revenue_run_rate_usd', 1120, daysLater(3), { status: 'provisional', citationUrl: 'https://example.com/s', sourceDetail: 'entered from the quarterly deck' });
     const e = evaluate();
-    expect(fired(e)).toEqual([`provisional:${mine.id}`]);
+    expect(fired(e)).toEqual([`provisional:${mine.id}`, `provisional:${deck.id}`]);
     expect(e.fired[0].detail).toEqual({ metric: 'revenue_run_rate_usd', observed_at: iso(daysLater(1)), value: 1100 });
   });
 
