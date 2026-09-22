@@ -90,6 +90,9 @@ describe('review triggers', () => {
 
   it('rejects a non-positive threshold, a malformed calendar event, and an unknown key', () => {
     expect(messageOf(`${MINI_ASSET_YAML}review_triggers: { driver_deviation_pct: -5 }\n`)).toMatch(/driver_deviation_pct must be a positive number/);
+    expect(messageOf(`${MINI_ASSET_YAML}review_triggers:\n  calendar:\n    - { date: "2026-02-30", note: "Invalid date" }\n`)).toMatch(/review_triggers\.calendar\.0\.date: must be a real date, YYYY-MM-DD/);
+    expect(messageOf(`${MINI_ASSET_YAML}review_triggers:\n  calendar:\n    - { date: "2026-13-45", note: "Invalid date" }\n`)).toMatch(/review_triggers\.calendar\.0\.date: must be a real date, YYYY-MM-DD/);
+    expect(messageOf(`${MINI_ASSET_YAML}review_triggers:\n  calendar:\n    - { date: "2026-02-28", note: "Valid date" }\n`)).toBe('');
     expect(messageOf(`${MINI_ASSET_YAML}review_triggers:\n  calendar:\n    - { date: "October 1st", note: "Emission cut" }\n`)).toMatch(/review_triggers\.calendar\.0\.date: must be a date, YYYY-MM-DD/);
     expect(messageOf(`${MINI_ASSET_YAML}review_triggers:\n  calendar:\n    - { date: "2026-10-01" }\n`)).toMatch(/review_triggers\.calendar\.0\.note/);
     expect(messageOf(`${MINI_ASSET_YAML}review_triggers: { deviation_pct: 25 }\n`)).toMatch(/review_triggers/);
