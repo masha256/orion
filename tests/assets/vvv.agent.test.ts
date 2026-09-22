@@ -56,13 +56,26 @@ describe('the agent bands in assets/vvv.yaml', () => {
     }
   });
 
-  it('follow the midpoint rule where the three calibrated values are strictly ordered, and are absent elsewhere', () => {
-    expect(agentBand(config, 'rev_growth_y1', 'bear')).toEqual({ min: -0.3, max: 0.625 });
-    expect(agentBand(config, 'rev_growth_y1', 'base')).toEqual({ min: 0.625, max: 1.5 });
-    expect(agentBand(config, 'rev_growth_y1', 'bull')).toEqual({ min: 1.5, max: 2.5 });
+  it('follow the mirror rule where the three calibrated values are strictly ordered, and are absent elsewhere', () => {
+    // Calibrated 2026-09-21 from a sensitivity sweep: each band is symmetric around the calibrated value, so the agent
+    // can argue a driver down as far as up, and the outer edges no longer reach the key-wide bounds, where the 12m
+    // value was most sensitive (the bull discount rate could be walked to 8 percent for +$3.2 with no room the other way).
+    for (const [key, b] of Object.entries(config.assumptions)) {
+      if (!b.bear || !b.base || !b.bull) continue;
+      for (const s of SCENARIOS) {
+        // The bear DIEM growth value sits on the key floor, so its band can only be a sliver above it.
+        if (key === 'diem_target_supply_growth' && s === 'bear') continue;
+        const v = values[s][key];
+        expect(b[s].max - v, `${key} ${s}`).toBeCloseTo(v - b[s].min, 6);
+      }
+    }
+    // The bull growth band is narrower than the mirror rule gives (one step was $4.4 of the 12m value): half a step each way.
+    expect(agentBand(config, 'rev_growth_y1', 'bull')).toEqual({ min: 1.75, max: 2.25 });
+    expect(agentBand(config, 'rev_growth_y1', 'bear')).toEqual({ min: -0.125, max: 0.625 });
     // Discount rates fall from bear to bull, so their bands do too.
-    expect(agentBand(config, 'discount_rate_base', 'bear')).toEqual({ min: 0.175, max: 0.3 });
-    expect(agentBand(config, 'discount_rate_base', 'bull')).toEqual({ min: 0.08, max: 0.135 });
+    expect(agentBand(config, 'discount_rate_base', 'bear')).toEqual({ min: 0.175, max: 0.225 });
+    expect(agentBand(config, 'discount_rate_base', 'bull')).toEqual({ min: 0.105, max: 0.135 });
+    expect(agentBand(config, 'diem_target_supply_growth', 'bear')).toEqual({ min: 0, max: 0.0125 });
     for (const key of ['growth_fade_years', 'capture_ramp_years.burn', 'staked_ratio_horizon']) {
       expect(Object.keys(config.assumptions[key]).sort(), key).toEqual(['max', 'min']);
     }

@@ -189,23 +189,26 @@ total_return_variants:
 # on 2026-09-19 to "medium": about one scenario's worth of room beyond the bear and bull values in
 # calibration/vvv-assumptions.yaml. Outside these, the agent must file a proposal.
 # min/max bind everyone. The bear/base/bull sub-ranges are AGENT BANDS: they bind the agent only, and its max step per run is
-# a fraction (agent.max_step_fraction, default 0.25) of the band's width. Starting bands follow the midpoint rule: each band runs
-# halfway to the neighbouring scenario's calibrated value (calibration/vvv-assumptions.yaml), the outer edges at min and max.
-# Keys whose three calibrated values are not strictly ordered have no bands; the agent uses min/max for them.
+# a fraction (agent.max_step_fraction, default 0.25) of the band's width. Bands follow the mirror rule (chosen by the user on
+# 2026-09-21 from a sensitivity sweep): each band is symmetric around the scenario's calibrated value, reaching halfway to the
+# neighbouring scenario's value on the inner side and as far again on the outer side, so the agent can argue a driver down as
+# far as up and the outer edges stop short of min/max. Two exceptions: the bull rev_growth_y1 band is half that width (one
+# full step moved the 12m value by $4.4), and the bear diem_target_supply_growth value sits on the floor, so its band is a
+# sliver above it. Keys whose three calibrated values are not strictly ordered have no bands; the agent uses min/max for them.
 assumptions:
-  rev_growth_y1: { min: -0.3, max: 2.5, bear: { min: -0.3, max: 0.625 }, base: { min: 0.625, max: 1.5 }, bull: { min: 1.5, max: 2.5 } }
+  rev_growth_y1: { min: -0.3, max: 2.5, bear: { min: -0.125, max: 0.625 }, base: { min: 0.625, max: 1.375 }, bull: { min: 1.75, max: 2.25 } }
   growth_fade_years: { min: 1, max: 8 }
-  terminal_growth: { min: 0, max: 0.05, bear: { min: 0, max: 0.025 }, base: { min: 0.025, max: 0.035 }, bull: { min: 0.035, max: 0.05 } }
-  capture_rate_terminal.burn: { min: 0.02, max: 0.40, bear: { min: 0.02, max: 0.095 }, base: { min: 0.095, max: 0.25 }, bull: { min: 0.25, max: 0.40 } }
+  terminal_growth: { min: 0, max: 0.05, bear: { min: 0.015, max: 0.025 }, base: { min: 0.025, max: 0.035 }, bull: { min: 0.035, max: 0.045 } }
+  capture_rate_terminal.burn: { min: 0.02, max: 0.40, bear: { min: 0.02, max: 0.06 }, base: { min: 0.095, max: 0.205 }, bull: { min: 0.30, max: 0.40 } }
   capture_ramp_years.burn: { min: 0, max: 8 }
-  discount_rate_base: { min: 0.08, max: 0.30, bear: { min: 0.175, max: 0.30 }, base: { min: 0.135, max: 0.175 }, bull: { min: 0.08, max: 0.135 } }
-  discount_premium_discretionary: { min: 0, max: 0.15, bear: { min: 0.07, max: 0.15 }, base: { min: 0.05, max: 0.07 }, bull: { min: 0, max: 0.05 } }
-  multiple.fm_revenue: { min: 3, max: 20, bear: { min: 3, max: 8.5 }, base: { min: 8.5, max: 13.5 }, bull: { min: 13.5, max: 20 } }
-  multiple.fm_holder_flow: { min: 8, max: 60, bear: { min: 8, max: 22.5 }, base: { min: 22.5, max: 40 }, bull: { min: 40, max: 60 } }
-  regime_multiplier: { min: 0.4, max: 1.6, bear: { min: 0.4, max: 0.8 }, base: { min: 0.8, max: 1.15 }, bull: { min: 1.15, max: 1.6 } }
+  discount_rate_base: { min: 0.08, max: 0.30, bear: { min: 0.175, max: 0.225 }, base: { min: 0.135, max: 0.165 }, bull: { min: 0.105, max: 0.135 } }
+  discount_premium_discretionary: { min: 0, max: 0.15, bear: { min: 0.07, max: 0.09 }, base: { min: 0.05, max: 0.07 }, bull: { min: 0.03, max: 0.05 } }
+  multiple.fm_revenue: { min: 3, max: 20, bear: { min: 3.5, max: 8.5 }, base: { min: 8.5, max: 13.5 }, bull: { min: 13.5, max: 18.5 } }
+  multiple.fm_holder_flow: { min: 8, max: 60, bear: { min: 8, max: 22 }, base: { min: 22.5, max: 37.5 }, bull: { min: 40, max: 60 } }
+  regime_multiplier: { min: 0.4, max: 1.6, bear: { min: 0.4, max: 0.8 }, base: { min: 0.85, max: 1.15 }, bull: { min: 1.15, max: 1.45 } }
   staked_ratio_horizon: { min: 0.1, max: 0.9 }
-  diem_target_supply_growth: { min: 0, max: 1, bear: { min: 0, max: 0.05 }, base: { min: 0.05, max: 0.175 }, bull: { min: 0.175, max: 1 } }
-  diem_discount_rate: { min: 0.05, max: 0.5, bear: { min: 0.225, max: 0.5 }, base: { min: 0.175, max: 0.225 }, bull: { min: 0.05, max: 0.175 } }
+  diem_target_supply_growth: { min: 0, max: 1, bear: { min: 0, max: 0.0125 }, base: { min: 0.05, max: 0.15 }, bull: { min: 0.175, max: 0.325 } }
+  diem_discount_rate: { min: 0.05, max: 0.5, bear: { min: 0.225, max: 0.275 }, base: { min: 0.175, max: 0.225 }, bull: { min: 0.125, max: 0.175 } }
 
 review_triggers:
   driver_deviation_pct: 25
