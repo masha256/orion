@@ -100,6 +100,12 @@ describe('dueRunType', () => {
     expect(dueRunType(db, fast, daysLater(5))).toBe('deep');
   });
 
+  it('has half a day of slack: due a minute before the boundary, not yet at 6.4 days', () => {
+    attempt('deep');
+    expect(dueRunType(db, asset, new Date(daysLater(7).getTime() - 60_000))).toBe('weekly');
+    expect(dueRunType(db, asset, daysLater(6.4))).toBeNull();
+  });
+
   it('ignores other assets', () => {
     startAgentRun(db, { assetId: 'other', persona: 'p', runType: 'deep', trigger: 'schedule', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: T0.toISOString() });
     expect(dueRunType(db, asset, T0)).toBe('deep');

@@ -34,10 +34,10 @@ describe('revenueDeviation', () => {
     expect(d.deviation_pct).toBeLessThan(0);
   });
 
-  it('does not measure against an anchor younger than a week, or a path that is not positive', () => {
+  it('does not measure against an anchor younger than a week (half a day of slack), or a path that is not positive', () => {
     const anchor = { value: 1000, asOf: '2026-01-01T00:00:00.000Z' };
-    expect(revenueDeviation(anchor, 5000, BASE, new Date(Date.parse(anchor.asOf) + days(DEVIATION_MIN_ANCHOR_AGE_DAYS) - 1))).toBeNull();
-    expect(revenueDeviation(anchor, 5000, BASE, new Date(Date.parse(anchor.asOf) + days(DEVIATION_MIN_ANCHOR_AGE_DAYS)))).not.toBeNull();
+    expect(revenueDeviation(anchor, 5000, BASE, new Date(Date.parse(anchor.asOf) + days(DEVIATION_MIN_ANCHOR_AGE_DAYS - 0.5) - 60_000))).toBeNull();
+    expect(revenueDeviation(anchor, 5000, BASE, new Date(Date.parse(anchor.asOf) + days(DEVIATION_MIN_ANCHOR_AGE_DAYS - 0.5)))).not.toBeNull();
     expect(revenueDeviation({ value: 0, asOf: anchor.asOf }, 5000, BASE, new Date(Date.parse(anchor.asOf) + days(30)))).toBeNull();
   });
 });

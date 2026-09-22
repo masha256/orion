@@ -48,7 +48,9 @@ export function revenueAnchor(db: Db, asset: AssetConfig): RevenueAnchor | null 
  */
 export function revenueDeviation(anchor: { value: number; asOf: string }, actual: number, base: ScenarioAssumptions, now: Date): RevenueDeviation | null {
   const elapsedMs = now.getTime() - new Date(anchor.asOf).getTime();
-  if (elapsedMs < DEVIATION_MIN_ANCHOR_AGE_DAYS * MS_PER_DAY) return null;
+  // The two ends of the interval are read after fetches of different length; half a tick of slack keeps a run from
+  // slipping a day on jitter.
+  if (elapsedMs < (DEVIATION_MIN_ANCHOR_AGE_DAYS - 0.5) * MS_PER_DAY) return null;
   const elapsedYears = elapsedMs / (DAYS_PER_YEAR * MS_PER_DAY);
   const implied = revenueAt(elapsedYears, anchor.value, base);
   if (!(implied > 0)) return null;

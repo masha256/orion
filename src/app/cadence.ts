@@ -13,7 +13,9 @@ import { MS_PER_DAY } from '../types.js';
 export function dueRunType(db: Db, asset: AssetConfig, now: Date): 'deep' | 'weekly' | null {
   const cadence = cadenceFor(asset);
   const elapsedDays = (since: string | null) => (since === null ? Infinity : (now.getTime() - new Date(since).getTime()) / MS_PER_DAY);
-  if (elapsedDays(lastAttemptAt(db, asset.id, ['deep'])) >= cadence.deepDays) return 'deep';
-  if (elapsedDays(lastAttemptAt(db, asset.id, ['weekly', 'deep'])) >= cadence.weeklyDays) return 'weekly';
+  // The two ends of the interval are read after fetches of different length; half a tick of slack keeps a run from
+  // slipping a day on jitter.
+  if (elapsedDays(lastAttemptAt(db, asset.id, ['deep'])) >= cadence.deepDays - 0.5) return 'deep';
+  if (elapsedDays(lastAttemptAt(db, asset.id, ['weekly', 'deep'])) >= cadence.weeklyDays - 0.5) return 'weekly';
   return null;
 }
