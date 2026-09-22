@@ -19,13 +19,15 @@ describe('trigger firings', () => {
     expect(listFirings(db, 'mini').map((f) => f.id)).toEqual([a.id, b.id]);
 
     const run = startAgentRun(db, { assetId: 'mini', persona: 'p', runType: 'triage', trigger: 'trigger', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: T0 });
-    attachRun(db, [a.id, b.id], run);
+    expect(attachRun(db, [a.id, b.id], run)).toBe(2);
     expect(listFirings(db, 'mini').map((f) => f.agentRunId)).toEqual([run, run]);
 
     expect(deleteFiring(db, b.id)).toBe(true);
     expect(deleteFiring(db, b.id)).toBe(false);
     expect(getFiring(db, b.id)).toBeNull();
     expect(listFirings(db, 'mini')).toHaveLength(1);
+
+    expect(attachRun(db, [9999], run)).toBe(0);
   });
 
   it('holds one live row per (asset, kind, key)', () => {

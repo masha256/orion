@@ -50,6 +50,37 @@ describe('withRunLock', () => {
     expect(getRunLock(A, 'mini')).toBeNull(); // pid 2 released its own; pid 1's release found nothing of its own
   });
 
+  it('a release that throws never masks the body\'s outcome, and is reported', async () => {
+    // Proxy that fails DELETE statements for run_locks
+    const failingDb = new Proxy(A, {
+      get(target, prop) {
+        const v = Reflect.get(target, prop);
+        if (prop !== 'prepare') return typeof v === 'function' ? v.bind(target) : v;
+        return (sql: string) => {
+          if (sql.startsWith('DELETE FROM run_locks')) throw new Error('simulated: database is locked');
+          return target.prepare(sql);
+        };
+      },
+    }) as Db;
+
+    // Body returns 42; release throws
+    const value = await withRunLock(failingDb, 'mini', 'tick pid 1', T0, async () => 42, {
+      onReleaseError: (err) => {
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toContain('simulated');
+      },
+    });
+    expect(value).toBe(42);
+    expect(getRunLock(B, 'mini')!.holder).toBe('tick pid 1'); // the row leaked
+
+    // Body throws 'boom'; release also throws (use a different asset to avoid run_in_progress)
+    await expect(
+      withRunLock(failingDb, 'other', 'agent pid 2', T0, async () => { throw new Error('boom'); }, {
+        onReleaseError: () => { /* no-op */ },
+      }),
+    ).rejects.toThrow('boom'); // the real error, not the release error
+  });
+
   it('names the command and the pid in the holder', () => {
     expect(lockHolder('tick')).toBe(`tick pid ${process.pid}`);
   });

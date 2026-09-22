@@ -31,9 +31,9 @@ export function getRunLock(db: Db, assetId: string): RunLock | null {
 /**
  * Takes the asset's lock for `holder`, or throws `run_in_progress` naming who holds it. An expired lock is taken over,
  * and every `running` agent run of the asset is marked `error/abandoned` at that moment: the process that held the lock
- * is gone, and this is how a stuck run is detected. Returns how many runs were abandoned.
+ * is gone, and this is how a stuck run is detected. Returns how many runs were abandoned and whether a prior lock existed.
  */
-export function acquireRunLock(db: Db, assetId: string, holder: string, nowIso: string): { abandoned: number } {
+export function acquireRunLock(db: Db, assetId: string, holder: string, nowIso: string): { abandoned: number; tookOver: boolean } {
   const now = new Date(nowIso).toISOString();
   const expires = new Date(new Date(nowIso).getTime() + LOCK_TTL_MS).toISOString();
   // IMMEDIATE: the check reads before it writes; a deferred transaction losing that race fails outright.
@@ -45,7 +45,7 @@ export function acquireRunLock(db: Db, assetId: string, holder: string, nowIso: 
     db.prepare(
       'INSERT INTO run_locks (asset_id, holder, acquired_at, expires_at) VALUES (?, ?, ?, ?) ON CONFLICT (asset_id) DO UPDATE SET holder = excluded.holder, acquired_at = excluded.acquired_at, expires_at = excluded.expires_at',
     ).run(assetId, holder, now, expires);
-    return { abandoned: held ? abandonRunningRuns(db, assetId, now) : 0 };
+    return { abandoned: held ? abandonRunningRuns(db, assetId, now) : 0, tookOver: !!held };
   }).immediate();
 }
 

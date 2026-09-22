@@ -55,8 +55,8 @@ export function registerAgent(program: Command, ctx: CliContext): void {
           withRunLock(db, assetId, lockHolder('agent run'), ctx.now(), () =>
             runAgent(db, loaded, { runType, anomalyId, note: opts.note, dryRun: opts.dryRun }, {
               home: ctx.home, now: ctx.now, modelClient: () => modelClientFor(ctx), reload: () => loadAsset(ctx.home, assetId),
-            }),
-          ),
+            })
+          , { onReleaseError: (err) => ctx.stderr?.(`warning: the run lock could not be released (${err instanceof Error ? err.message : String(err)}); it expires on its own`) }),
         );
         if (result.signal && opts.out) emitSignal(result.signal, { write: () => undefined, outFile: opts.out });
         output(ctx, opts.json, result, () => [

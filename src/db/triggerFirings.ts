@@ -53,7 +53,12 @@ export function deleteFiring(db: Db, id: number): boolean {
   return db.prepare('DELETE FROM trigger_firings WHERE id = ?').run(id).changes === 1;
 }
 
-export function attachRun(db: Db, ids: number[], agentRunId: number): void {
-  const stmt = db.prepare('UPDATE trigger_firings SET agent_run_id = ? WHERE id = ?');
-  for (const id of ids) stmt.run(agentRunId, id);
+/** Attaches a run to one or more firings in a single transaction. Returns the number of rows updated. */
+export function attachRun(db: Db, ids: number[], agentRunId: number): number {
+  return db.transaction(() => {
+    const stmt = db.prepare('UPDATE trigger_firings SET agent_run_id = ? WHERE id = ?');
+    let sum = 0;
+    for (const id of ids) sum += stmt.run(agentRunId, id).changes;
+    return sum;
+  })();
 }
