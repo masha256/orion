@@ -56,12 +56,33 @@ const BudgetOverrideSchema = z.strictObject({
   proposals: z.number().int().nonnegative().optional(),
 });
 
-/** The agent's own limits. No tool can reach this block and no proposal may touch it. */
+/** When `orion tick` runs the scheduled agent. All optional with no defaults, so existing config hashes do not move. */
+const CadenceSchema = z.strictObject({
+  weekly_days: z.number().int().positive().optional(),
+  deep_days: z.number().int().positive().optional(),
+  enabled: z.boolean().optional(),
+});
+
+/** The agent's own limits and schedule. No tool can reach this block and no proposal may touch it. */
 const AgentConfigSchema = z.strictObject({
   max_step_fraction: z.number().gt(0).max(1).optional(),
   budgets: z
     .strictObject({ weekly: BudgetOverrideSchema.optional(), triage: BudgetOverrideSchema.optional(), deep: BudgetOverrideSchema.optional() })
     .optional(),
+  cadence: CadenceSchema.optional(),
+});
+
+const CalendarEventSchema = z.strictObject({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be a date, YYYY-MM-DD'),
+  note: z.string().min(1),
+});
+
+/** All optional with no defaults, so existing config hashes do not move. The percent fields are checked in the refine below. */
+const ReviewTriggersSchema = z.strictObject({
+  driver_deviation_pct: z.number().optional(),
+  provisional_move_pct: z.number().optional(),
+  revenue_stale_move_pct: z.number().optional(),
+  calendar: z.array(CalendarEventSchema).optional(),
 });
 
 const ProbabilitiesSchema = z.strictObject({ bear: z.number(), base: z.number(), bull: z.number() });
@@ -85,7 +106,7 @@ export const AssetConfigSchema = z
     total_return_variants: z
       .array(z.strictObject({ id: z.string(), yield_multiplier_metric: z.string() }))
       .default([]),
-    review_triggers: z.record(z.string(), z.unknown()).default({}),
+    review_triggers: ReviewTriggersSchema.default({}),
     peer_set: z.array(z.string()).default([]),
   })
   .superRefine((a, ctx) => {
@@ -154,13 +175,9 @@ export const AssetConfigSchema = z
     }
 
     for (const message of sourceIssues(a, required)) issue(message);
-    const move = a.review_triggers.revenue_stale_move_pct;
-    if (move !== undefined && !(typeof move === 'number' && Number.isFinite(move) && move > 0)) {
-      issue('review_triggers: revenue_stale_move_pct must be a positive number');
-    }
-    const provisionalMove = a.review_triggers.provisional_move_pct;
-    if (provisionalMove !== undefined && !(typeof provisionalMove === 'number' && Number.isFinite(provisionalMove) && provisionalMove > 0)) {
-      issue('review_triggers: provisional_move_pct must be a positive number');
+    for (const key of ['driver_deviation_pct', 'provisional_move_pct', 'revenue_stale_move_pct'] as const) {
+      const v = a.review_triggers[key];
+      if (v !== undefined && !(Number.isFinite(v) && v > 0)) issue(`review_triggers: ${key} must be a positive number`);
     }
   });
 
@@ -175,6 +192,5 @@ export type ModuleKind = ModuleInstanceDef['kind'];
 
 /** Percent move in usage_index since the revenue disclosure that raises the stale-revenue alert. Default 30. */
 export function revenueStaleMovePct(asset: AssetConfig): number {
-  const v = asset.review_triggers.revenue_stale_move_pct;
-  return typeof v === 'number' ? v : 30;
+  return asset.review_triggers.revenue_stale_move_pct ?? 30;
 }

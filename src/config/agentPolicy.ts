@@ -19,6 +19,23 @@ export interface RunBudgets {
 
 export const DEFAULT_MAX_STEP_FRACTION = 0.25;
 export const DEFAULT_PROVISIONAL_MOVE_PCT = 25;
+export const DEFAULT_DRIVER_DEVIATION_PCT = 25;
+
+export interface Cadence {
+  /** A `weekly` run is due when no weekly or deep run started within this many days. */
+  weeklyDays: number;
+  /** A `deep` run is due when no deep run started within this many days. */
+  deepDays: number;
+  /** False: `orion tick` starts no agent run for the asset and records no trigger firing. */
+  enabled: boolean;
+}
+
+export const DEFAULT_CADENCE: Cadence = { weeklyDays: 7, deepDays: 30, enabled: true };
+
+export interface CalendarEvent {
+  date: string;
+  note: string;
+}
 
 export const DEFAULT_BUDGETS: Record<RunType, RunBudgets> = {
   weekly: { requests: 25, inputTokens: 600_000, outputTokens: 40_000, webSearches: 5, webFetches: 5, proposals: 10 },
@@ -46,8 +63,21 @@ export function maxStepFraction(asset: AssetConfig): number {
 
 /** Percent move from the value in force beyond which a researched value on a critical metric becomes a proposal. */
 export function provisionalMovePct(asset: AssetConfig): number {
-  const v = asset.review_triggers.provisional_move_pct;
-  return typeof v === 'number' ? v : DEFAULT_PROVISIONAL_MOVE_PCT;
+  return asset.review_triggers.provisional_move_pct ?? DEFAULT_PROVISIONAL_MOVE_PCT;
+}
+
+/** Percent deviation of the revenue driver from its assumption-implied path that fires the `driver_deviation` trigger. */
+export function driverDeviationPct(asset: AssetConfig): number {
+  return asset.review_triggers.driver_deviation_pct ?? DEFAULT_DRIVER_DEVIATION_PCT;
+}
+
+export function calendarEvents(asset: AssetConfig): CalendarEvent[] {
+  return asset.review_triggers.calendar ?? [];
+}
+
+export function cadenceFor(asset: AssetConfig): Cadence {
+  const c = asset.agent?.cadence;
+  return { weeklyDays: c?.weekly_days ?? DEFAULT_CADENCE.weeklyDays, deepDays: c?.deep_days ?? DEFAULT_CADENCE.deepDays, enabled: c?.enabled ?? DEFAULT_CADENCE.enabled };
 }
 
 export function budgetsFor(asset: AssetConfig, runType: RunType): RunBudgets {

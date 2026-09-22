@@ -1,5 +1,5 @@
 import { eligibleObservations } from '../app/eligibility.js';
-import type { RunBudgets } from '../config/agentPolicy.js';
+import { calendarEvents, type RunBudgets } from '../config/agentPolicy.js';
 import type { LoadedAsset } from '../config/load.js';
 import { lastCompletedRun } from '../db/agentRuns.js';
 import { getAnomaly, listAnomalies } from '../db/anomalies.js';
@@ -53,7 +53,7 @@ export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, in
 
   const signals = listSignals(db, asset.id, TARGET_HISTORY);
   const horizonEnd = input.now.getTime() + CALENDAR_DAYS * MS_PER_DAY;
-  const calendar = Array.isArray(asset.review_triggers.calendar) ? (asset.review_triggers.calendar as { date?: unknown; note?: unknown }[]) : [];
+  const calendar = calendarEvents(asset);
 
   return {
     asset: { id: asset.id, symbol: asset.symbol, name: asset.name },
@@ -82,8 +82,8 @@ export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, in
       run.detail.sources.filter((s) => s.status === 'failed').map((s) => ({ fetch_run_started_at: run.startedAt, source: s.sourceId, error: s.error })),
     ),
     calendar: calendar.filter((e) => {
-      const at = typeof e.date === 'string' ? Date.parse(e.date) : Number.NaN;
-      return Number.isFinite(at) && at >= input.now.getTime() - MS_PER_DAY && at <= horizonEnd;
+      const at = Date.parse(e.date);
+      return at >= input.now.getTime() - MS_PER_DAY && at <= horizonEnd;
     }),
   };
 }

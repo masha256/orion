@@ -1,0 +1,103 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { dueRunType } from '../../src/app/cadence.js';
+import { cadenceFor, DEFAULT_CADENCE } from '../../src/config/agentPolicy.js';
+import { parseAssetYaml } from '../../src/config/load.js';
+import type { AssetConfig } from '../../src/config/schema.js';
+import { finishAgentRun, startAgentRun, ZERO_USAGE, type AgentOutcome } from '../../src/db/agentRuns.js';
+import { openDb, type Db } from '../../src/db/connection.js';
+import type { RunType } from '../../src/types.js';
+import { MINI_ASSET_YAML } from '../helpers/assets.js';
+
+const T0 = new Date('2026-09-21T00:00:00.000Z');
+const daysLater = (d: number) => new Date(T0.getTime() + d * 86_400_000);
+
+let db: Db;
+let asset: AssetConfig;
+beforeEach(() => {
+  db = openDb(':memory:');
+  asset = parseAssetYaml(MINI_ASSET_YAML).config;
+});
+
+function attempt(runType: RunType, opts: { at?: Date; outcome?: Exclude<AgentOutcome, 'running'>; dryRun?: boolean; trigger?: string } = {}): number {
+  const at = (opts.at ?? T0).toISOString();
+  const id = startAgentRun(db, {
+    assetId: 'mini', persona: 'analyst', runType, trigger: opts.trigger ?? 'schedule', triggerDetail: {}, dryRun: opts.dryRun ?? false,
+    configHash: 'x', model: 'm', startedAt: at,
+  });
+  finishAgentRun(db, id, { outcome: opts.outcome ?? 'completed', endedAt: at, usage: ZERO_USAGE, error: null, summary: null, transcript: [] });
+  return id;
+}
+
+describe('cadence config', () => {
+  it('defaults to weekly 7, deep 30, enabled, and reads overrides from agent.cadence', () => {
+    expect(cadenceFor(asset)).toEqual(DEFAULT_CADENCE);
+    const over = parseAssetYaml(`${MINI_ASSET_YAML}agent:\n  cadence: { weekly_days: 3, deep_days: 14, enabled: false }\n`).config;
+    expect(cadenceFor(over)).toEqual({ weeklyDays: 3, deepDays: 14, enabled: false });
+    expect(cadenceFor(parseAssetYaml(`${MINI_ASSET_YAML}agent:\n  cadence: { deep_days: 60 }\n`).config)).toEqual({ ...DEFAULT_CADENCE, deepDays: 60 });
+  });
+
+  it('rejects a non-positive or fractional interval and an unknown key', () => {
+    const messageOf = (yaml: string) => {
+      try {
+        parseAssetYaml(yaml);
+      } catch (err) {
+        return (err as Error).message;
+      }
+      return '';
+    };
+    expect(messageOf(`${MINI_ASSET_YAML}agent:\n  cadence: { weekly_days: 0 }\n`)).toMatch(/agent\.cadence\.weekly_days/);
+    expect(messageOf(`${MINI_ASSET_YAML}agent:\n  cadence: { deep_days: 1.5 }\n`)).toMatch(/agent\.cadence\.deep_days/);
+    expect(messageOf(`${MINI_ASSET_YAML}agent:\n  cadence: { monthly_days: 30 }\n`)).toMatch(/agent\.cadence/);
+  });
+
+  it('does not move the config hash of an asset that says nothing about cadence or triggers', () => {
+    // The umbrella fixtures' hashes are pinned elsewhere; here: defaults are applied by the readers, not by the schema.
+    expect(asset.agent).toBeUndefined();
+    expect(asset.review_triggers).toEqual({});
+  });
+});
+
+describe('dueRunType', () => {
+  it('owes a deep run first on a fresh asset', () => {
+    expect(dueRunType(db, asset, T0)).toBe('deep');
+  });
+
+  it('a deep run satisfies the week; weekly is due at 7 days and not at 6; deep at 30', () => {
+    attempt('deep');
+    expect(dueRunType(db, asset, T0)).toBeNull();
+    expect(dueRunType(db, asset, daysLater(6))).toBeNull();
+    expect(dueRunType(db, asset, daysLater(7))).toBe('weekly');
+    attempt('weekly', { at: daysLater(7) });
+    expect(dueRunType(db, asset, daysLater(13))).toBeNull();
+    expect(dueRunType(db, asset, daysLater(14))).toBe('weekly');
+    attempt('weekly', { at: daysLater(14) });
+    attempt('weekly', { at: daysLater(21) });
+    attempt('weekly', { at: daysLater(28) });
+    expect(dueRunType(db, asset, daysLater(29))).toBeNull();
+    expect(dueRunType(db, asset, daysLater(30))).toBe('deep');
+  });
+
+  it('a failed attempt counts, a dry run does not, a manual run counts', () => {
+    attempt('deep');
+    attempt('weekly', { at: daysLater(7), outcome: 'budget_exhausted' });
+    expect(dueRunType(db, asset, daysLater(8))).toBeNull(); // not retried the next day
+    expect(dueRunType(db, asset, daysLater(14))).toBe('weekly');
+    attempt('weekly', { at: daysLater(14), dryRun: true });
+    expect(dueRunType(db, asset, daysLater(14))).toBe('weekly'); // the dry run is not an attempt
+    attempt('weekly', { at: daysLater(14), trigger: 'manual' });
+    expect(dueRunType(db, asset, daysLater(15))).toBeNull();
+  });
+
+  it('deep takes precedence when both are due, and the intervals come from agent.cadence', () => {
+    const fast = parseAssetYaml(`${MINI_ASSET_YAML}agent:\n  cadence: { weekly_days: 2, deep_days: 5 }\n`).config;
+    attempt('deep');
+    attempt('weekly', { at: daysLater(2) });
+    expect(dueRunType(db, fast, daysLater(4))).toBe('weekly');
+    expect(dueRunType(db, fast, daysLater(5))).toBe('deep');
+  });
+
+  it('ignores other assets', () => {
+    startAgentRun(db, { assetId: 'other', persona: 'p', runType: 'deep', trigger: 'schedule', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: T0.toISOString() });
+    expect(dueRunType(db, asset, T0)).toBe('deep');
+  });
+});

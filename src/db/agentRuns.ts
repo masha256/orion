@@ -165,6 +165,16 @@ export function lastCompletedRun(db: Db, assetId: string): AgentRun | null {
   return row ? fromRow(row) : null;
 }
 
+/** When the newest non-dry run of any of these types started, whatever its trigger or outcome; null when there is none. */
+export function lastAttemptAt(db: Db, assetId: string, runTypes: RunType[]): string | null {
+  if (runTypes.length === 0) return null;
+  const marks = runTypes.map(() => '?').join(', ');
+  const row = db
+    .prepare(`SELECT MAX(started_at) AS at FROM agent_runs WHERE asset_id = ? AND dry_run = 0 AND run_type IN (${marks})`)
+    .get(assetId, ...runTypes) as { at: string | null };
+  return row.at;
+}
+
 /**
  * A killed process leaves a `running` row behind. The run lock decides when that has happened (its holder's lock expired
  * and was taken over); this marks the rows. Returns how many were marked.

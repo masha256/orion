@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { agentBand, budgetsFor, DEFAULT_BUDGETS, keyBounds, maxStepFraction, provisionalMovePct } from '../../src/config/agentPolicy.js';
+import { agentBand, budgetsFor, calendarEvents, DEFAULT_BUDGETS, driverDeviationPct, keyBounds, maxStepFraction, provisionalMovePct } from '../../src/config/agentPolicy.js';
 import { parseAssetYaml } from '../../src/config/load.js';
 import type { OrionError } from '../../src/types.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
@@ -75,5 +75,23 @@ describe('existing configs', () => {
       expect(parsed.agent).toBeUndefined();
       for (const b of Object.values(parsed.assumptions)) expect(Object.keys(b).sort()).toEqual(['max', 'min']);
     }
+  });
+});
+
+describe('review triggers', () => {
+  it('defaults the deviation threshold to 25 and the calendar to empty, and reads what the asset sets', () => {
+    const asset = parseAssetYaml(MINI_ASSET_YAML).config;
+    expect(driverDeviationPct(asset)).toBe(25);
+    expect(calendarEvents(asset)).toEqual([]);
+    const set = parseAssetYaml(`${MINI_ASSET_YAML}review_triggers:\n  driver_deviation_pct: 10\n  calendar:\n    - { date: "2026-10-01", note: "Emission cut" }\n`).config;
+    expect(driverDeviationPct(set)).toBe(10);
+    expect(calendarEvents(set)).toEqual([{ date: '2026-10-01', note: 'Emission cut' }]);
+  });
+
+  it('rejects a non-positive threshold, a malformed calendar event, and an unknown key', () => {
+    expect(messageOf(`${MINI_ASSET_YAML}review_triggers: { driver_deviation_pct: -5 }\n`)).toMatch(/driver_deviation_pct must be a positive number/);
+    expect(messageOf(`${MINI_ASSET_YAML}review_triggers:\n  calendar:\n    - { date: "October 1st", note: "Emission cut" }\n`)).toMatch(/review_triggers\.calendar\.0\.date: must be a date, YYYY-MM-DD/);
+    expect(messageOf(`${MINI_ASSET_YAML}review_triggers:\n  calendar:\n    - { date: "2026-10-01" }\n`)).toMatch(/review_triggers\.calendar\.0\.note/);
+    expect(messageOf(`${MINI_ASSET_YAML}review_triggers: { deviation_pct: 25 }\n`)).toMatch(/review_triggers/);
   });
 });
