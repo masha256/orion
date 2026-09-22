@@ -10,7 +10,7 @@ function minimalReport(): TickReport {
   return {
     schema_version: 1, tick_id: 'tick_mini_20260919T120005Z', asset: 'mini', started_at: '2026-09-19T12:00:05.000Z', ended_at: '2026-09-19T12:00:05.000Z',
     outcome: 'run_in_progress', lock: { holder: 'tick pid 1', acquired_at: '2026-09-19T12:00:00.000Z' },
-    ingest: null, signal: null, triggers_fired: [], triggers_recorded: false, agent: null, agent_would_run: null, error: null,
+    ingest: null, signal: null, triggers_fired: [], triggers_recorded: false, triggers_standing: [], agent: null, agent_would_run: null, error: null,
   };
 }
 

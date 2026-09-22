@@ -40,6 +40,8 @@ export const TickReportSchema = z.strictObject({
   /** Fired this tick; under `triggers_recorded: false`, what would have fired. */
   triggers_fired: z.array(z.strictObject({ kind: z.enum(TRIGGER_KINDS), key: z.string(), detail: z.record(z.string(), z.unknown()) })),
   triggers_recorded: z.boolean(),
+  /** Instances that fired on an earlier tick and still hold; agent_run_id null means no run ever got a row for it. */
+  triggers_standing: z.array(z.strictObject({ kind: z.enum(TRIGGER_KINDS), key: z.string(), agent_run_id: z.number().int().nullable() })),
   agent: z
     .strictObject({
       run_type: z.enum(RUN_TYPES),

@@ -56,7 +56,7 @@ export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps, opt
   const started = deps.now();
   const report: TickReport = {
     schema_version: 1, tick_id: tickId(asset.id, started), asset: asset.id, started_at: started.toISOString(), ended_at: started.toISOString(),
-    outcome: 'completed', lock: null, ingest: null, signal: null, triggers_fired: [], triggers_recorded: false, agent: null, agent_would_run: null, error: null,
+    outcome: 'completed', lock: null, ingest: null, signal: null, triggers_fired: [], triggers_recorded: false, triggers_standing: [], agent: null, agent_would_run: null, error: null,
   };
   const finish = (): TickResult => {
     report.ended_at = deps.now().toISOString();
@@ -99,13 +99,18 @@ export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps, opt
       const evaluation = evaluateTriggers(db, loaded, deps.now(), { record: agentAllowed });
       report.triggers_fired = evaluation.fired.map((f) => ({ kind: f.kind, key: f.key, detail: f.detail }));
       report.triggers_recorded = agentAllowed;
+      report.triggers_standing = evaluation.standing.map((f) => ({ kind: f.kind, key: f.key, agent_run_id: f.agentRunId }));
 
       // ---- the one agent run ----
+      // A standing firing whose run never got a row (a preflight failure) is retried daily at no spend; one whose run
+      // failed keeps its run id and waits (decision 1).
+      const unhandled = evaluation.standing.filter((f) => f.agentRunId === null);
+      const firings = [...evaluation.fired, ...unhandled];
       const due = dueRunType(db, asset, deps.now());
       const choice: { runType: RunType; trigger: RunTriggerContext } | null = due
-        ? { runType: due, trigger: { kind: 'schedule', firings: evaluation.fired } }
-        : evaluation.fired.length > 0
-          ? { runType: 'triage', trigger: { kind: 'trigger', firings: evaluation.fired } }
+        ? { runType: due, trigger: { kind: 'schedule', firings } }
+        : firings.length > 0
+          ? { runType: 'triage', trigger: { kind: 'trigger', firings } }
           : null;
       if (!choice) return;
       if (!agentAllowed) {
@@ -115,7 +120,7 @@ export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps, opt
       report.agent = await agentStage(db, loaded, deps, choice.runType, choice.trigger);
       if (report.agent.run_id !== null) {
         try {
-          attachRun(db, evaluation.fired.map((f) => f.id), report.agent.run_id);
+          attachRun(db, firings.map((f) => f.id), report.agent.run_id);
         } catch (err) {
           deps.onProgress?.(`warning: the firings could not be linked to agent run #${report.agent.run_id} (${message(err)})`);
         }

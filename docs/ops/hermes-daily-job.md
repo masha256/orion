@@ -42,6 +42,8 @@ Report fields you need:
 - ingest.sources_failed (source ids), ingest.anomalies_raised (each with id, kind, metric, severity "degrading" or
   "advisory": opened today, or seen again while still open)
 - triggers_fired: the review conditions Orion raised today, each with kind and key
+- triggers_standing: conditions raised on an earlier day that still hold, each with kind, key, and the agent run that
+  handled it (null: no run has handled it yet)
 - agent: null when no analyst run started today; otherwise run_type ("weekly", "triage", "deep"), trigger_kind
   ("schedule" or "trigger"), outcome ("completed", or why not), usage.requests and usage.input_tokens,
   committed (assumption_set_version when it changed the assumptions, and counts of observations, anomalies_resolved,
@@ -73,6 +75,7 @@ then the relevant report fields and stderr lines quoted verbatim (the tick's std
 - the absolute value of signal.target_delta_pct is 5 or more
 - the signal's stale_metrics is not empty
 - triggers_fired is not empty (say which kinds and keys)
+- triggers_standing has an entry whose agent_run_id is null
 - agent is not null and its outcome is not "completed", or agent.error is set
 - agent.proposals is not empty (list id and kind; nothing else)
 - agent.committed.assumption_set_version is set (the analyst changed the assumptions; give the signal's change.author)

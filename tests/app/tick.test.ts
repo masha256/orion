@@ -9,6 +9,7 @@ import { finishAgentRun, getAgentRun, listAgentRuns, startAgentRun, ZERO_USAGE }
 import { raiseAnomaly } from '../../src/db/anomalies.js';
 import { createAssumptionSet, getLatestAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb, type Db } from '../../src/db/connection.js';
+import { assignPersona } from '../../src/db/coverage.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { acquireRunLock, getRunLock } from '../../src/db/runLocks.js';
 import { listFirings } from '../../src/db/triggerFirings.js';
@@ -99,10 +100,25 @@ describe('tickAsset', () => {
     expect(getAgentRun(h.db, report.agent!.run_id!)!.triggerDetail).toEqual({ firings: [{ kind: 'open_anomaly', key: String(a.id), detail: expect.any(Object) }] });
     expect(listFirings(h.db, 'mini')).toMatchObject([{ kind: 'open_anomaly', key: String(a.id), agentRunId: report.agent!.run_id }]);
     expect(model.requests[0].messages[0].content).toContain('"triggers_this_tick"');
-    // The next tick: the anomaly is still open, but it fired already. Nothing runs.
+    // The next tick: the anomaly is still open, but it fired already. Nothing runs; it shows up standing.
     const next = await tick();
     expect(next.report.triggers_fired).toEqual([]);
+    expect(next.report.triggers_standing).toEqual([{ kind: 'open_anomaly', key: String(a.id), agent_run_id: report.agent!.run_id }]);
     expect(next.report.agent).toBeNull();
+  });
+
+  it('retries a firing whose run never got a row', async () => {
+    const a = raiseAnomaly(h.db, { assetId: 'mini', kind: 'source_failure_streak', metricKey: '', dedupeKey: 'cg', severity: 'advisory', detail: {}, seenAt: NOW.toISOString() });
+    h.db.prepare('DELETE FROM coverage').run();
+    const first = await tick();
+    expect(first.report.agent).toMatchObject({ run_id: null, error: { code: 'no_persona_assigned' } });
+    assignPersona(h.db, 'mini', 'analyst', NOW.toISOString());
+    const { report } = await tick([calls(growth()), calls(journalCall()), say('Done.')]);
+    expect(report.triggers_fired).toEqual([]);
+    expect(report.triggers_standing).toEqual([{ kind: 'open_anomaly', key: String(a.id), agent_run_id: null }]); // still null: this snapshot is from before this tick's run
+    expect(report.agent).toMatchObject({ run_type: 'deep', outcome: 'completed' }); // a fresh asset owes deep
+    expect(getAgentRun(h.db, report.agent!.run_id!)!.triggerDetail.firings).toHaveLength(1);
+    expect(listFirings(h.db, 'mini')[0].agentRunId).toBe(report.agent!.run_id);
   });
 
   it('lets a due scheduled run absorb the firings instead of running triage', async () => {
