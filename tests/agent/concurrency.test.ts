@@ -129,7 +129,8 @@ describe('Ledger.commit against a second connection', () => {
 });
 
 describe('runValuation against a second connection', () => {
-  it('holds the write lock across the snapshot reads, so a commit underneath it waits rather than failing the valuation', () => {
+  it('keeps a competing writer out for the whole valuation (passes deferred too: runValuation writes first; .immediate() makes that independent of statement order)', () => {
+    // Not a discriminating test: saveConfigVersion's INSERT OR IGNORE already takes the write lock before the first read. It pins the property, not the mechanism.
     for (const o of miniObservations()) {
       insertObservation(A, { assetId: o.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, source: o.source, fetchedAt: o.fetchedAt });
     }
@@ -154,8 +155,8 @@ describe('the flow ingest against a second connection', () => {
   it('holds the write lock across each day\'s supersede reads, so a commit underneath it waits rather than failing the scan', async () => {
     B.pragma('busy_timeout = 50');
     let theOtherWrite = 'never attempted';
-    // The day transaction's first read is insertObservation's supersede lookup: (asset, metric, observed_at). The scan's
-    // own conflict search reads the same metric earlier, with a LIMIT argument instead of a timestamp.
+    // The day transaction's first read is insertObservation's supersede lookup, bound as (asset, metric, observed_at). The scan's own
+    // conflict search reads the same metric earlier but binds only (asset, metric), so the length check keeps the hook out of it.
     const insideDayTransaction = (args: unknown[]) => args.length === 3 && args[1] === 'flow_usd.fees' && typeof args[2] === 'string';
     const watched = interleaving(A, () => {
       try {
