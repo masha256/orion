@@ -210,6 +210,29 @@ describe('verified citations', () => {
     expect(textBlocks('<p>revenue grew<sup>1</sup> to <span class="n">$90</span> <em>million</em></p>')).toEqual(['revenue grew 1 to $90 million']);
   });
 
+  it('reads the markdown web_fetch returns: a link is its text, an image its alt text, whichever side of the comparison holds the markup', () => {
+    // Shapes taken from a live web_fetch_20260209 of en.wikipedia.org/wiki/Venice on 2026-09-21.
+    const md = 'Venice[[a]](./Venice#cite_note-3) is a coastal city in [northeastern Italy](https://en.wikipedia.org/wiki/Northeastern_Italy) and the capital of the [region](https://en.wikipedia.org/wiki/Regions_of_Italy) of Veneto.';
+    expect(normalizeText(md)).toBe('Venice[a] is a coastal city in northeastern Italy and the capital of the region of Veneto.');
+    expect(normalizeText('see ![revenue chart](https://x.example.com/c.png) for Q2')).toBe('see revenue chart for Q2');
+    expect(normalizeText('a [bracketed] aside and a (parenthetical) one')).toBe('a [bracketed] aside and a (parenthetical) one');
+    const p = [{ url: 'https://x.example.com/md', text: md }];
+    expect(verifyCitation(p, 'https://x.example.com/md', 'is a coastal city in northeastern Italy and the capital')).toBeNull();
+    expect(verifyCitation(p, 'https://x.example.com/md', 'a coastal city in [northeastern Italy](https://en.wikipedia.org/wiki/Northeastern_Italy) and')).toBeNull();
+  });
+
+  it('cuts a markdown table row into cells, so a row is no more a splice route than an HTML row', () => {
+    const table = '| Period | Revenue |\n| --- | --- |\n| Q1 2026 | revenue fell 40 percent to $12 million |\n| Q2 2026 | revenue grew 15 percent to $90 million |';
+    expect(textBlocks(table)).toEqual(['Period', 'Revenue', 'Q1 2026', 'revenue fell 40 percent to $12 million', 'Q2 2026', 'revenue grew 15 percent to $90 million']);
+    const t = [{ url: 'https://x.example.com/mt', text: table }];
+    // Without the pipes the splice is not even in the flattened page; with them it is, and it still spans cells.
+    expect(verifyCitation(t, 'https://x.example.com/mt', '$12 million Q2 2026 revenue grew 15 percent')?.refused).toBe('quote_not_found');
+    expect(verifyCitation(t, 'https://x.example.com/mt', 'Q2 2026 | revenue grew 15 percent')?.refused).toBe('quote_spans_blocks');
+    expect(verifyCitation(t, 'https://x.example.com/mt', 'revenue grew 15 percent to $90 million')).toBeNull();
+    // A pipe inside prose is not a table.
+    expect(textBlocks('either $12 million | or $90 million, the report said')).toEqual(['either $12 million | or $90 million, the report said']);
+  });
+
   it('refuses a page that was not fetched, a quote that is not there, and a quote too short to mean anything', () => {
     expect(verifyCitation(pages, 'https://other.example.com/x', 'annualized revenue of $100 million')?.refused).toBe('citation_not_fetched');
     // The pages it DID fetch, normalized, so a redirect or a www. variant costs one retry rather than several guesses.

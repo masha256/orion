@@ -171,11 +171,19 @@ const ENTITIES: Record<string, string> = {
   lsquo: "'", rsquo: "'", ldquo: '"', rdquo: '"', ndash: '-', mdash: '-', hellip: '...',
 };
 
-/** Tags out, entities decoded, typographic quotes and dashes made plain, whitespace collapsed. Case is kept. */
+/**
+ * A markdown link or image, `[text](target)` or `![alt](target)`, as web_fetch_20260209 renders an HTML page (seen live:
+ * body sentences carry one link per proper noun). The text stays, the target goes: a quote in the page's plain words
+ * must pass, and so must one that copied the markup, so BOTH sides of the comparison go through this.
+ */
+const MARKDOWN_LINK = /!?\[((?:[^\[\]]|\[[^\[\]]*\])*)\]\([^\s()]*(?:\([^\s()]*\)[^\s()]*)*\)/g;
+
+/** Tags out, markdown links reduced to their text, entities decoded, typographic quotes and dashes made plain, whitespace collapsed. Case is kept. */
 export function normalizeText(text: string): string {
   return text
     .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
     .replace(/<[^>]*>/g, ' ')
+    .replace(MARKDOWN_LINK, '$1')
     .replace(/&#(\d+);/g, (_, n: string) => String.fromCodePoint(Number(n)))
     .replace(/&#x([0-9a-f]+);/gi, (_, n: string) => String.fromCodePoint(parseInt(n, 16)))
     .replace(/&([a-z]+);/gi, (m, name: string) => ENTITIES[name.toLowerCase()] ?? m)
@@ -218,6 +226,17 @@ function markHtmlBreaks(chunk: string): string {
  * on purpose: a refusal costs the agent one retry with a shorter quote; a wrong acceptance lets an invented claim in.
  * In HTML, a single newline in the source is only whitespace. A blank line is a hard break in every page.
  */
+/**
+ * The cells of a markdown table row (`| a | b |`, as web_fetch renders an HTML table), or null for any other line.
+ * The separator row (`| --- | --- |`) yields no cells. A pipe inside prose does not start with one, so it is not a row.
+ */
+function markdownCells(line: string): string[] | null {
+  const t = line.trim();
+  if (!t.startsWith('|')) return null;
+  const cells = t.replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+  return cells.filter((c) => !/^:?-+:?$/.test(c));
+}
+
 export function textBlocks(text: string): string[] {
   const html = LOOKS_LIKE_HTML.test(text);
   const blocks: string[] = [];
@@ -227,7 +246,17 @@ export function textBlocks(text: string): string[] {
     const marked = html ? markHtmlBreaks(chunk) : chunk;
     for (const hard of marked.split(/\n[ \t\r]*\n/)) {
       let current = '';
-      for (const line of hard.split('\n').map(normalizeText).filter((l) => l !== '')) {
+      for (const raw of hard.split('\n')) {
+        const cells = markdownCells(raw);
+        if (cells) {
+          // A table row: every cell is its own block, and a lower-case cell never continues the cell before it.
+          if (current !== '') blocks.push(current);
+          current = '';
+          blocks.push(...cells.map(normalizeText).filter((c) => c !== ''));
+          continue;
+        }
+        const line = normalizeText(raw);
+        if (line === '') continue;
         if (current !== '' && /^[a-z]/.test(line)) {
           current += ` ${line}`;
         } else {

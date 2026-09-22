@@ -10,3 +10,4 @@ orion.db.*
 .env
 signals.jsonl
 update.log
+probe-web-fetch-*.txt

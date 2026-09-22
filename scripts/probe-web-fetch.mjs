@@ -2,6 +2,7 @@
 // Orion verifies citations against that text (src/agent/research.ts), so the answer decides WEB_FETCH_TOOL_TYPE in
 // src/agent/model.ts. Usage, from the repo root:  node scripts/probe-web-fetch.mjs [tool_type] [url]
 // Credentials: ANTHROPIC_API_KEY in the environment, or an `ant auth login` profile.
+import { writeFileSync } from "node:fs";
 import Anthropic from "@anthropic-ai/sdk";
 
 const toolType = process.argv[2] ?? "web_fetch_20260209";
@@ -28,7 +29,18 @@ for (const block of message.content) {
   pages += 1;
   console.log(`url: ${block.content.url}`);
   console.log(`source.type: ${source.type}  length: ${source.data?.length ?? 0}`);
-  console.log(`first 200 chars: ${JSON.stringify(String(source.data ?? "").slice(0, 200))}`);
+  const text = String(source.data ?? "");
+  console.log(`first 200 chars: ${JSON.stringify(text.slice(0, 200))}`);
+  // Line shape decides whether the citation verifier (src/agent/guardrails.ts textBlocks) will see whole paragraphs or
+  // hard-wrapped lines: a page whose longest line is under ~120 characters with many lower-case line starts is wrapped.
+  const lines = text.split("\n");
+  const longest = Math.max(...lines.map((l) => l.length));
+  const lowerStarts = lines.filter((l) => /^[a-z]/.test(l)).length;
+  console.log(`lines: ${lines.length}  longest line: ${longest} chars  lines starting lower-case: ${lowerStarts}`);
+  console.log(`markdown escapes (backslash + punctuation): ${(text.match(/\\[\\`*_{}\[\]()#+\-.!|>]/g) ?? []).length}  links [text](url): ${(text.match(/\]\(https?:\/\//g) ?? []).length}`);
+  const out = `probe-web-fetch-${pages}.txt`;
+  writeFileSync(out, text);
+  console.log(`full text saved to ${out}`);
 }
 console.log(`stop_reason: ${message.stop_reason}  usage: ${JSON.stringify(message.usage)}`);
 console.log(
