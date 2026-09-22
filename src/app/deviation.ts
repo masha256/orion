@@ -5,12 +5,11 @@ import type { Db } from '../db/connection.js';
 import { computeDrivers } from '../drivers/compute.js';
 import { revenueAt } from '../engine/paths.js';
 import { requiredExtraMetrics } from '../engine/requirements.js';
-import { MS_PER_DAY, type ScenarioAssumptions } from '../types.js';
+import { DAYS_PER_YEAR, MS_PER_DAY, type ScenarioAssumptions } from '../types.js';
 import { eligibleObservations } from './eligibility.js';
 
 /** A week of growth is inside the noise of a run-rate figure: an anchor younger than this is not measured against. */
 export const DEVIATION_MIN_ANCHOR_AGE_DAYS = 7;
-const DAYS_PER_YEAR = 365.25;
 
 export interface RevenueAnchor {
   /** The revenue driver as of `asOf`, from the observations usable then. */
@@ -46,7 +45,7 @@ export function revenueAnchor(db: Db, asset: AssetConfig): RevenueAnchor | null 
 
 /**
  * Where the base scenario said revenue would be by `now`, against where it is. Null when the anchor is too young to
- * measure against, or the implied path is not positive.
+ * measure against, or the implied path is not positive. Elapsed years are measured with the engine's own DAYS_PER_YEAR.
  */
 export function revenueDeviation(anchor: { value: number; asOf: string }, actual: number, base: ScenarioAssumptions, now: Date): RevenueDeviation | null {
   const elapsedMs = now.getTime() - new Date(anchor.asOf).getTime();

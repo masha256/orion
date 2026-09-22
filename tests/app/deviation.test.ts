@@ -17,7 +17,7 @@ const days = (n: number) => n * 86_400_000;
 describe('revenueDeviation', () => {
   it('measures actual against the base path from the anchor: doubling in a year at 100 percent growth', () => {
     const anchor = { value: 1000, asOf: '2026-01-01T00:00:00.000Z' };
-    const now = new Date(Date.parse(anchor.asOf) + 365.25 * days(1));
+    const now = new Date(Date.parse(anchor.asOf) + 365 * days(1));
     const d = revenueDeviation(anchor, 2500, BASE, now)!;
     expect(d.elapsed_years).toBeCloseTo(1, 9);
     expect(d.implied).toBeCloseTo(2000, 6);
@@ -30,7 +30,7 @@ describe('revenueDeviation', () => {
     const anchor = { value: 1000, asOf: '2026-01-01T00:00:00.000Z' };
     const now = new Date(Date.parse(anchor.asOf) + 500 * days(1));
     const d = revenueDeviation(anchor, 1500, BASE, now)!;
-    expect(d.implied).toBeCloseTo(revenueAt(500 / 365.25, 1000, BASE), 9);
+    expect(d.implied).toBeCloseTo(revenueAt(500 / 365, 1000, BASE), 9);
     expect(d.deviation_pct).toBeLessThan(0);
   });
 
