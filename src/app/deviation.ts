@@ -1,5 +1,4 @@
 import type { AssetConfig } from '../config/schema.js';
-import { lastCompletedRun } from '../db/agentRuns.js';
 import { getLatestAssumptionSet } from '../db/assumptions.js';
 import type { Db } from '../db/connection.js';
 import { computeDrivers } from '../drivers/compute.js';
@@ -15,7 +14,7 @@ export interface RevenueAnchor {
   /** The revenue driver as of `asOf`, from the observations usable then. */
   value: number;
   asOf: string;
-  /** Where `asOf` came from: the last completed agent run's start, else the current assumption set's creation. */
+  /** Where `asOf` came from: always the current assumption set's creation. Kept for the report and the pack. */
   from: 'agent_run' | 'assumption_set';
 }
 
@@ -29,18 +28,18 @@ export interface RevenueDeviation {
 }
 
 /**
- * The point the base scenario's path is measured from: the last time an analyst reviewed the assumptions against the
- * data. Pure functions over stored rows, so the same anchor is computed on every tick until the next review.
+ * The point the base scenario's path is measured from: the current assumption set's creation. A review that changed
+ * nothing does not reset the clock; an assumption change (the agent's or the user's) creates a new set and moves the
+ * anchor. Pure function over stored rows, so the same anchor is computed on every tick until the next assumption change.
  */
 export function revenueAnchor(db: Db, asset: AssetConfig): RevenueAnchor | null {
-  const run = lastCompletedRun(db, asset.id);
   const set = getLatestAssumptionSet(db, asset.id);
-  const at = run ? { asOf: run.startedAt, from: 'agent_run' as const } : set ? { asOf: set.createdAt, from: 'assumption_set' as const } : null;
-  if (!at) return null;
-  const report = computeDrivers(asset, eligibleObservations(db, asset, at.asOf), at.asOf, requiredExtraMetrics(asset));
+  const asOf = set?.createdAt ?? null;
+  if (asOf === null) return null;
+  const report = computeDrivers(asset, eligibleObservations(db, asset, asOf), asOf, requiredExtraMetrics(asset));
   const revenue = report.drivers?.revenueRunRate;
   if (!revenue) return null;
-  return { value: revenue.value, asOf: at.asOf, from: at.from };
+  return { value: revenue.value, asOf, from: 'assumption_set' };
 }
 
 /**

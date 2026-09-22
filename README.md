@@ -134,7 +134,7 @@ agent:
 |---|---|---|---|
 | `open_anomaly` | the anomaly id | an anomaly is open, either severity | a new anomaly is a new id |
 | `staleness` | the metric | a `critical` metric is past its `staleness_days` | after it was fresh again |
-| `driver_deviation` | `revenue_run_rate_usd` | revenue is further than `driver_deviation_pct` (25) from where the base scenario's growth path, started at the last completed agent run (before any, at the current assumption set), says it should be; not while revenue itself is stale, and not for a week after the anchor | after it came back inside |
+| `driver_deviation` | `revenue_run_rate_usd` | revenue is further than `driver_deviation_pct` (25) from where the base scenario's growth path, started at the current assumption set's creation (an assumption change, the agent's or yours, moves it), says it should be; not while revenue itself is stale, and not for a week after the anchor | after it came back inside |
 | `provisional` | the observation id | you entered a provisional observation (the agent's own research rows do not count) | never |
 | `calendar` | the date | a `review_triggers.calendar` event's date has arrived, for seven days | never |
 

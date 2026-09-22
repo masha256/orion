@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { CALENDAR_WINDOW_DAYS, currentTriggerInstances, evaluateTriggers } from '../../src/app/triggers.js';
 import { finishAgentRun, startAgentRun, ZERO_USAGE } from '../../src/db/agentRuns.js';
 import { decideAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
+import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { attachRun, listFirings } from '../../src/db/triggerFirings.js';
 import { AGENT_ASSET_YAML, agentWorld, type AgentWorld } from '../helpers/agentWorld.js';
+import { miniAssumptions } from '../helpers/assets.js';
 import { AS_OF } from '../helpers/obs.js';
 
 const T0 = new Date(AS_OF);
@@ -104,13 +106,15 @@ describe('driver_deviation', () => {
     expect(instances(daysLater(71))).toEqual(['staleness:revenue_run_rate_usd']); // now it is: staleness owns the datum
   });
 
-  it('measures from the last completed review, and the threshold comes from the asset', () => {
+  it('measures from the current assumption set, and the threshold comes from the asset', () => {
     set('revenue_run_rate_usd', 1300, daysLater(10));
     const run = startAgentRun(w.db, { assetId: 'mini', persona: 'analyst', runType: 'weekly', trigger: 'schedule', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: iso(daysLater(11)) });
     finishAgentRun(w.db, run, { outcome: 'completed', endedAt: iso(daysLater(11)), usage: ZERO_USAGE, error: null, summary: null, transcript: [] });
-    expect(instances(daysLater(20))).toEqual([]); // the review saw 1300; the path now starts there
-    set('revenue_run_rate_usd', 1690, daysLater(20));
-    expect(instances(daysLater(20))).toEqual(['driver_deviation:revenue_run_rate_usd']); // 30 percent over 1300
+    expect(instances(daysLater(20))).toEqual(['driver_deviation:revenue_run_rate_usd']); // the completed run does not move the anchor; still 30 percent over the 1000 anchor
+    createAssumptionSet(w.db, { assetId: 'mini', author: 'user', rationale: 'held', values: miniAssumptions(), createdAt: iso(daysLater(20)) });
+    expect(instances(daysLater(28))).toEqual([]); // anchor 8 days old, now at 1300: the path starts there
+    set('revenue_run_rate_usd', 1690, daysLater(28));
+    expect(instances(daysLater(28))).toEqual(['driver_deviation:revenue_run_rate_usd']); // 30 percent over 1300
     w = agentWorld(`${RELAXED_YAML}review_triggers:\n  driver_deviation_pct: 40\n`);
     set('revenue_run_rate_usd', 1300, daysLater(10));
     expect(instances(daysLater(10))).toEqual([]);

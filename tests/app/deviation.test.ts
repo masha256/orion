@@ -69,14 +69,17 @@ describe('revenueAnchor', () => {
     expect(revenueAnchor(db, asset)).toEqual({ value: 1000, asOf: AS_OF, from: 'assumption_set' });
   });
 
-  it('moves to the last completed non-dry run\'s start, and reads the revenue as of that instant', () => {
+  it('stays at the assumption set\'s creation whatever agent runs happened since', () => {
     store(miniObservations({ revenue: 1000 }));
     createAssumptionSet(db, { assetId: 'mini', author: 'user', rationale: 'initial', values: miniAssumptions(), createdAt: AS_OF });
     const later = new Date(Date.parse(AS_OF) + days(10)).toISOString();
-    insertObservation(db, { assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: new Date(Date.parse(AS_OF) + days(12)).toISOString(), value: 1300, source: 'manual', fetchedAt: later });
+    const daysLater12 = new Date(Date.parse(AS_OF) + days(12)).toISOString();
+    insertObservation(db, { assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: daysLater12, value: 1300, source: 'manual', fetchedAt: later });
     completedRun(later);
     completedRun(new Date(Date.parse(AS_OF) + days(20)).toISOString(), true); // a dry run is not a review
-    expect(revenueAnchor(db, asset)).toEqual({ value: 1000, asOf: later, from: 'agent_run' }); // the 1300 row is dated after the run started
+    expect(revenueAnchor(db, asset)).toEqual({ value: 1000, asOf: AS_OF, from: 'assumption_set' }); // completed runs do not move the anchor
+    createAssumptionSet(db, { assetId: 'mini', author: 'user', rationale: 'checked in', values: miniAssumptions(), createdAt: daysLater12 });
+    expect(revenueAnchor(db, asset)).toEqual({ value: 1300, asOf: daysLater12, from: 'assumption_set' }); // a new set moves the anchor
   });
 
   it('is null when the drivers cannot be computed as of the anchor', () => {
