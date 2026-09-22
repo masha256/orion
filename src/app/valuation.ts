@@ -42,6 +42,9 @@ export function runValuation(
   const { config: asset, hash } = loaded;
   const asOf = now.toISOString();
 
+  // IMMEDIATE: the snapshot is read long before the run is written. A deferred transaction takes the write lock only at
+  // that first write, and a commit by another connection in between fails it outright with SQLITE_BUSY_SNAPSHOT, which
+  // busy_timeout cannot retry away. Taking the lock at BEGIN makes the other connection wait instead.
   return db.transaction(() => {
     saveConfigVersion(db, hash, asset.id, asset, asOf);
     const observations = eligibleObservations(db, asset, asOf);
@@ -128,7 +131,7 @@ export function runValuation(
     updateRunStatus(db, runId, signal.status);
     insertSignal(db, runId, signal);
     return { runId, signal };
-  })();
+  }).immediate();
 }
 
 export interface WhatIfOptions {

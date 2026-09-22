@@ -35,9 +35,10 @@ export interface RunAgentDeps {
   modelClient: () => ModelClient;
   /**
    * Reads the asset config again, from wherever `loaded` came from. Called once, just before the commit: a run that was
-   * checked against the config it began on must not commit under a config the user changed while it ran.
+   * checked against the config it began on must not commit under a config the user changed while it ran. Required: a
+   * caller that forgot it would silently lose that check.
    */
-  reload?: () => LoadedAsset;
+  reload: () => LoadedAsset;
 }
 
 export interface RunAgentResult {
@@ -123,7 +124,7 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
       let current: LoadedAsset | undefined;
       let reloadError: string | null = null;
       try {
-        current = deps.reload?.();
+        current = deps.reload();
       } catch (err) {
         reloadError = err instanceof Error ? `${err.constructor.name}: ${err.message}` : String(err);
       }

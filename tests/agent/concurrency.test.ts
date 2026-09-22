@@ -3,12 +3,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Ledger } from '../../src/agent/ledger.js';
+import { runValuation } from '../../src/app/valuation.js';
 import { parseAssetYaml } from '../../src/config/load.js';
 import type { AssetConfig } from '../../src/config/schema.js';
 import { createAssumptionSet, getLatestAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb, type Db } from '../../src/db/connection.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
+import { getLatestSignal } from '../../src/db/runs.js';
+import { fetchAsset } from '../../src/ingest/run.js';
 import { MINI_ASSET_YAML, miniAssumptions } from '../helpers/assets.js';
+import { harness } from '../helpers/fetchHarness.js';
+import { miniObservations } from '../helpers/obs.js';
 
 /**
  * Two connections to ONE file database, which is what a scheduled run and a manual command are. `openDb` puts SQLite in
@@ -46,9 +51,10 @@ type AnyFn = (...args: unknown[]) => unknown;
 /**
  * The real connection, with one hook: the moment a statement prepared on it first reads rows, `onFirstRead` fires, once.
  * That is the instant a second connection can slip a write into, and the only way to reach it from a test, because
- * better-sqlite3 runs a transaction synchronously and nothing outside it can interleave.
+ * better-sqlite3 runs a transaction synchronously and nothing outside it can interleave. `when` narrows "first read" to
+ * the first read whose bound parameters satisfy it, for code that reads before the transaction under test begins.
  */
-function interleaving(db: Db, onFirstRead: () => void): Db {
+function interleaving(db: Db, onFirstRead: () => void, when: (args: unknown[]) => boolean = () => true): Db {
   let fired = false;
   const watchStatement = (stmt: object): object =>
     new Proxy(stmt, {
@@ -57,7 +63,7 @@ function interleaving(db: Db, onFirstRead: () => void): Db {
         if (typeof value !== 'function') return value;
         return (...args: unknown[]) => {
           const out = (value as AnyFn).apply(target, args);
-          if ((prop === 'get' || prop === 'all') && !fired) {
+          if ((prop === 'get' || prop === 'all') && !fired && when(args)) {
             fired = true;
             onFirstRead();
           }
@@ -119,5 +125,50 @@ describe('Ledger.commit against a second connection', () => {
     B.exec('ROLLBACK');
     expect(waited).toBeGreaterThanOrEqual(200);
     expect(getLatestAssumptionSet(A, 'mini')!.version).toBe(1); // nothing was written
+  });
+});
+
+describe('runValuation against a second connection', () => {
+  it('holds the write lock across the snapshot reads, so a commit underneath it waits rather than failing the valuation', () => {
+    for (const o of miniObservations()) {
+      insertObservation(A, { assetId: o.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, source: o.source, fetchedAt: o.fetchedAt });
+    }
+    B.pragma('busy_timeout = 50');
+    let theOtherWrite = 'never attempted';
+    const watched = interleaving(A, () => {
+      try {
+        otherWrite(B);
+        theOtherWrite = 'committed';
+      } catch (err) {
+        theOtherWrite = err instanceof Error ? err.message : String(err);
+      }
+    });
+    const { signal } = runValuation(watched, parseAssetYaml(MINI_ASSET_YAML), NOW);
+    expect(signal.status).not.toBe('blocked');
+    expect(theOtherWrite).toMatch(/database is locked/);
+    expect(getLatestSignal(B, 'mini')!.signal_id).toBe(signal.signal_id);
+  });
+});
+
+describe('the flow ingest against a second connection', () => {
+  it('holds the write lock across each day\'s supersede reads, so a commit underneath it waits rather than failing the scan', async () => {
+    B.pragma('busy_timeout = 50');
+    let theOtherWrite = 'never attempted';
+    // The day transaction's first read is insertObservation's supersede lookup: (asset, metric, observed_at). The scan's
+    // own conflict search reads the same metric earlier, with a LIMIT argument instead of a timestamp.
+    const insideDayTransaction = (args: unknown[]) => args.length === 3 && args[1] === 'flow_usd.fees' && typeof args[2] === 'string';
+    const watched = interleaving(A, () => {
+      try {
+        otherWrite(B);
+        theOtherWrite = 'committed';
+      } catch (err) {
+        theOtherWrite = err instanceof Error ? err.message : String(err);
+      }
+    }, insideDayTransaction);
+    const h = harness({ db: watched });
+    const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
+    expect(r.sources.find((s) => s.sourceId.startsWith('transfer_flow'))!.status).toBe('ok');
+    expect(theOtherWrite).toMatch(/database is locked/);
+    expect(listActiveObservations(B, 'mini', 'flow_usd.fees').length).toBeGreaterThan(0);
   });
 });

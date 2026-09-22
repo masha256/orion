@@ -26,7 +26,7 @@ beforeEach(() => {
 const count = (table: string): number => (w.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
 const run = (script: ScriptStep[], opts: Partial<RunAgentOptions> = {}, deps: Partial<RunAgentDeps> = {}) => {
   model = scriptedModel(script);
-  return runAgent(w.db, w.loaded, { runType: 'weekly', ...opts }, { home, now: () => new Date(AS_OF), modelClient: () => model, ...deps });
+  return runAgent(w.db, w.loaded, { runType: 'weekly', ...opts }, { home, now: () => new Date(AS_OF), modelClient: () => model, reload: () => w.loaded, ...deps });
 };
 const growthCall = (value: number) =>
   toolUse('apply_assumption_change', { key: 'rev_growth_y1', scenario: 'base', value, evidence: [w.ids.revenue_run_rate_usd], rationale: 'usage is accelerating' });

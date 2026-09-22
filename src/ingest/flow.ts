@@ -227,6 +227,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
       });
       const ids = new Map<string, number | null>(group.members.map((m) => [m.metricKey, null]));
       if (!dryRun) {
+        // IMMEDIATE: each insert reads for rows to supersede before it writes; see runValuation for why deferred fails.
         db.transaction(() => {
           for (const m of group.members) {
             for (const c of conflicts) {
@@ -243,7 +244,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
             ids.set(m.metricKey, o.id);
           }
           advanceCursor(db, asset.id, group.scanKey, { lastBlock: Number(next.number) - 1, lastDay: day }, nowIso);
-        })();
+        }).immediate();
       }
       for (const m of group.members) {
         const value = sums.get(m.metricKey)!;
