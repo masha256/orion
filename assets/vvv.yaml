@@ -36,9 +36,11 @@ metrics:
     cross_checks:
       - { tolerance_pct: 2, source: { type: http_json, url: "https://outerface.venice.ai/api/app/vvv/vvv_stats", path: price } }
 
-  # Manual, or agent-researched and provisional: revenue settles off-chain and has no API. The
-  # advisory revenue_disclosure_stale anomaly says when usage has moved since the figure was disclosed.
-  revenue_run_rate_usd: { type: level, unit: usd, cadence: event, staleness_days: 60, critical: true, allow_provisional: true }
+  # Agent-researched, user-confirmed: revenue settles off-chain and has no API. The agent records each
+  # disclosure as a provisional row; nothing reaches the signal until `orion data confirm` (the user's rule of
+  # 2026-09-22: no researched figure goes live unconfirmed, so allow_provisional stays off). The advisory
+  # revenue_disclosure_stale anomaly says when usage has moved since the figure was disclosed.
+  revenue_run_rate_usd: { type: level, unit: usd, cadence: event, staleness_days: 60, critical: true }
 
   effective_supply:
     type: level
@@ -81,10 +83,11 @@ metrics:
     cross_checks:
       - { tolerance_pct: 1, source: { type: adapter, name: vvv.staker_share_from_api, params: { url: "https://outerface.venice.ai/api/app/vvv/vvv_staking_yield" } } }
 
-  # The chain gives the rate in force. An ANNOUNCED future cut exists only on Venice's blog: enter it by
-  # hand with its effective date (orion data set vvv emission_rate_annual <n> --at <date>). Once that
-  # date passes, the daily on-chain read is the newest schedule row and governs; if the cut is delayed,
-  # the signal follows the chain.
+  # The chain gives the rate in force. An ANNOUNCED future cut exists only on Venice's blog. The agent's
+  # research tool refuses fetched metrics, so until that follow-up lands (scheduling follow-ups note,
+  # 2026-09-22) this is the one figure still entered by hand, with its effective date
+  # (orion data set vvv emission_rate_annual <n> --at <date>). Once that date passes, the daily on-chain
+  # read is the newest schedule row and governs; if the cut is delayed, the signal follows the chain.
   emission_rate_annual:
     type: schedule
     unit: tokens_per_year

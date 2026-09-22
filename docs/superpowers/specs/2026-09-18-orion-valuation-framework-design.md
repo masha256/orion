@@ -20,7 +20,7 @@ Specialized AI analyst personas maintain the assumptions behind each target. A d
 | Market conditions | Orion never forecasts the market. Each scenario carries an explicit regime multiplier that scales multiple-based modules only. |
 | Governance | Bounded autonomy. In-range changes are applied by the agent with cited rationale. Out-of-range and structural changes become proposals for the user. |
 | Personas | One lead sector-analyst persona per asset. A persona may cover many assets. |
-| Data | Free sources first, manual entry for gaps, and the agent may research unstructured disclosures and record them as provisional observations with citations. |
+| Data | Free sources first. What no API publishes, the agent researches and records as a provisional observation with a verified citation; the user confirms or rejects it and never sources a figure by hand. Nothing researched reaches a signal unconfirmed (`allow_provisional` stays off). Assumptions are the user's views and stay theirs: the agent moves them only within its bands. (Stated by the user 2026-09-22; gaps in the scheduling follow-ups note.) |
 | Generality | VVV is the only asset built in v1. HYPE and AERO are design-time contrast cases and ship as synthetic test fixtures. |
 | Output | Versioned JSON signals are the product. Human-readable reporting stays thin. |
 | Architecture | Shared code modules behind one interface, plus declarative per-asset config. Custom per-asset modules are allowed for unique mechanisms. |

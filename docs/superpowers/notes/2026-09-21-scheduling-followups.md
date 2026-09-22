@@ -75,6 +75,16 @@ Triaged by the final review as safe to carry. Pick them up where later work touc
 - Final: minor (follow-ups): M7 vvv hash pin tax; M11 improbable double takeover; the rest of the ledger's deferred items as the reviewer's triage table says.
 - Final: residual (recorded): triggers_standing is snapshotted before the run, so the tick that retries an unhandled firing still shows agent_run_id null (self-corrects next tick); "today" wording in the pack field name and the assumption-review sentence; README says "a week" where the slack makes it 6.5 days (fixed in the docs commit).
 
+## Research principle and its gaps (2026-09-22)
+
+The user's rule, stated 2026-09-22 and now the umbrella spec's Data principle: the user never researches or hand-enters a figure. Every manually maintained metric is an agent research target; the user confirms or rejects what the agent recorded, and nothing researched reaches a signal unconfirmed. `allow_provisional` is off on `revenue_run_rate_usd` from this date (the vvv hash pin moved with it). Assumptions remain the user's views. What the design does not yet honour, in the order to fix it:
+
+- `record_provisional_observation` refuses any metric with a `source`, so an announced future emission cut (a fetched `schedule` metric) has no agent path and the README still routes it through `orion data set`. Needed: research may add a FUTURE-dated row to a fetched `schedule` or `event` metric; the fetch owns the present. VVV's 2026-10-01 calendar trigger assumes that entry was made.
+- The confirm queue is invisible: the tick report and the Hermes job list proposals, not provisional rows awaiting confirmation. Needed: `pending_observations` in the tick report and in the Hermes notification, and a `--provisional` filter on `orion data show`.
+- Onboarding a new asset assumes a human research pass (VVV was seeded from `calibration/vvv-seed-2026-09-18.sh`). Needed: the first `deep` run on an empty asset is a bootstrap whose job is to populate every manual metric as provisional rows, with a skill and a research budget sized for it; the asset stays `blocked` until the user confirms them, which is the intended path.
+- A flow whose primary is an API series rather than a transfer log (HYPE's buybacks, AERO's fee share) cannot be fetched today and would fall to research, the wrong owner for a thesis-carrying daily number. Needed: a flow primary source backed by a DefiLlama or HTTP series (`defillama` is cross-check only now). This is the one ingest change both contrast assets need.
+- With the flag off, the move guard in `routeObservation` never applies to revenue: every researched figure is a provisional row and the user's confirm is the guard. The agent-layer spec's section 15 amendment 6 is now reachable only on a metric that opts back in.
+
 ## Task 9: deploy checkpoints (the user's)
 
 From the plan's Task 9 and the final review's deploy notes:

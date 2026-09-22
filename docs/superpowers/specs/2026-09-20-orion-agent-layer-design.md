@@ -442,6 +442,7 @@ Commander errors not JSON under `--json` for existing commands; offset-less time
 - A resolved anomaly whose condition persists reopens at the next fetch; the agent's remedy for a persistent, understood condition is an acknowledgement proposal.
 - Transcripts grow the database; a deep run can store a few megabytes.
 - Proposal effects are computed at filing time and are not refreshed as data moves.
+- Research cannot write onto a fetched metric, so an announced change to a fetched `schedule` or `event` metric (an emission cut on Venice's blog) still needs `orion data set`. The user's rule of 2026-09-22 (the agent researches, the user confirms) wants a future-dated exception; see the scheduling follow-ups note.
 
 ## 17. Amendments made during planning (2026-09-20)
 

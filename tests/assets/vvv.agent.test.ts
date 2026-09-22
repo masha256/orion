@@ -96,7 +96,8 @@ describe('the agent bands in assets/vvv.yaml', () => {
     expect(budgetsFor(config, 'weekly')).toEqual({ ...DEFAULT_BUDGETS.weekly, inputTokens: 2_000_000 });
     expect(budgetsFor(config, 'triage')).toEqual(DEFAULT_BUDGETS.triage);
     expect(provisionalMovePct(config)).toBe(25);
-    expect(config.metrics.revenue_run_rate_usd).toMatchObject({ critical: true, allow_provisional: true });
+    // The user's rule (2026-09-22): no researched figure goes live unconfirmed, so allow_provisional stays off.
+    expect(config.metrics.revenue_run_rate_usd).toMatchObject({ critical: true, allow_provisional: false });
     expect(config.metrics.revenue_run_rate_usd.source).toBeUndefined(); // research may write here; it may not write onto a fetched metric
   });
 });

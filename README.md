@@ -74,7 +74,7 @@ orion data resolve 4 --note "allowlisted the new buyback Safe"
 
   An open `degrading` anomaly on a critical metric makes the signal `degraded` with grade D until it is resolved or acknowledged. Advisory anomalies (a usage move since the last revenue disclosure, a source failing three runs in a row) are listed in `data_quality.anomalies` and change nothing else.
 - Configuration, from the environment or `<ORION_HOME>/.env` (git-ignored): `ORION_BASE_RPC_URL` (default `https://mainnet.base.org`; the RPC must return `blockTimestamp` on logs, which Base's does) and `COINGECKO_API_KEY` (optional demo key; keyless works, more slowly).
-- Still manual for VVV: `revenue_run_rate_usd`, and ANNOUNCED future emission cuts (`orion data set vvv emission_rate_annual <n> --at <effective date>`). Once the date passes, the daily on-chain read governs.
+- Still manual for VVV: `revenue_run_rate_usd`, which the analyst researches and records as a provisional row for you to `orion data confirm` (no researched figure reaches the signal unconfirmed), and ANNOUNCED future emission cuts, which the research tool cannot write because the metric is fetched: `orion data set vvv emission_rate_annual <n> --at <effective date>` until that follow-up lands. Once the date passes, the daily on-chain read governs.
 
 ## The analyst agent
 
@@ -153,8 +153,8 @@ With the cron line in place, the daily signal takes care of itself. What is left
 | After checking an anomaly | `orion data ack <id> --note "..."` or `orion data resolve <id> --note "..."` | Close it. `ack`: understood and accepted. `resolve`: the cause is fixed. |
 | Weekly | `orion data sources vvv` | Last fetch outcome and age of the value in force, per metric. |
 | Weekly | `tail update.log` | Catch a source that keeps failing. Three failed runs in a row also open an advisory anomaly. |
-| When Venice discloses revenue | `orion data set vvv revenue_run_rate_usd <n> --at <date> [--provisional --citation <url>]` | Revenue has no API. The advisory `revenue_disclosure_stale` anomaly says when usage has moved since the last figure. |
-| When Venice announces an emission cut | `orion data set vvv emission_rate_annual <n> --at <effective date>` | Announced cuts exist only on their blog. Once the date passes, the daily on-chain read takes over. |
+| When the analyst records a revenue disclosure | `orion data confirm <id>` (`orion data show vvv revenue_run_rate_usd` lists the provisional row) | Revenue has no API. The analyst researches it and you confirm it; until you do it stays out of the signal. The advisory `revenue_disclosure_stale` anomaly says when usage has moved since the last figure. |
+| When Venice announces an emission cut | `orion data set vvv emission_rate_annual <n> --at <effective date>` | The one figure still entered by hand: the research tool refuses fetched metrics (scheduling follow-ups note, 2026-09-22). Once the date passes, the daily on-chain read takes over. |
 | When your views change | `orion model assumptions set vvv <key> <value> --scenario <s> --rationale "..."` | The next daily run picks it up. |
 | Weekly | `orion agent run vvv --type weekly --out signals.jsonl`, then `orion model proposals list` | The analyst reviews what moved; decide what it proposed. |
 | Monthly | `orion agent run vvv --type deep --out signals.jsonl` | Re-underwrite the thesis; expect structural proposals. |

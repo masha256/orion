@@ -6,7 +6,7 @@ import { runValuation } from '../../src/app/valuation.js';
 import { loadAsset } from '../../src/config/load.js';
 import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb } from '../../src/db/connection.js';
-import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
+import { confirmObservation, insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import type { AssumptionValues } from '../../src/types.js';
@@ -121,10 +121,11 @@ describe('assets/vvv.yaml ingestion', () => {
     expect(w.rpc.stats.multicall).toBeLessThanOrEqual(4); // levels, two adapters, token decimals: never one call per read
   });
 
-  it('produces a signal once the manual metrics and the calibrated assumptions are in', async () => {
+  it('produces a signal once the researched revenue figure is confirmed and the calibrated assumptions are in', async () => {
     const w = world();
     await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps, { backfillDays: 2 });
-    insertObservation(w.db, {
+    // The analyst's researched row. The user's rule (2026-09-22): it reaches no signal until the user confirms it.
+    const researched = insertObservation(w.db, {
       assetId: 'vvv', metricKey: 'revenue_run_rate_usd', observedAt: '2026-08-17', value: 100_000_000, source: 'manual', status: 'provisional',
       citationUrl: 'https://example.com/revenue', fetchedAt: NOW.toISOString(),
     });
@@ -132,10 +133,15 @@ describe('assets/vvv.yaml ingestion', () => {
     const values: AssumptionValues = { bear: { ...raw.all, ...raw.bear }, base: { ...raw.all, ...raw.base }, bull: { ...raw.all, ...raw.bull } };
     createAssumptionSet(w.db, { assetId: 'vvv', author: 'user', rationale: 'calibrated', values, createdAt: NOW.toISOString() });
 
+    const before = runValuation(w.db, loadAsset(ROOT, 'vvv'), NOW).signal;
+    expect(before.status).toBe('blocked');
+    expect(before.status_reasons).toEqual(['missing_metric:revenue_run_rate_usd']);
+
+    confirmObservation(w.db, researched.id, NOW.toISOString());
     const { signal } = runValuation(w.db, loadAsset(ROOT, 'vvv'), NOW);
     expect(signal.status_reasons).toEqual([]);
     expect(signal.status).toBe('ok');
-    expect(signal.data_quality.grade).toBe('C'); // the revenue figure is provisional
+    expect(signal.data_quality.grade).toBe('B'); // the revenue figure is a confirmed manual row
     expect(signal.spot!.price).toBe(26.03);
   });
 });

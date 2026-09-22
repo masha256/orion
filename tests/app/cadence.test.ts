@@ -55,7 +55,7 @@ describe('cadence config', () => {
   it('leaves the config hashes where they were: no schema default was added', () => {
     // Pinned on main 3e1d547 before sub-project 4. A schema change that adds a default moves these; a deliberate edit of assets/vvv.yaml moves the second, and then this pin is updated on purpose.
     expect(parseAssetYaml(MINI_ASSET_YAML).hash).toBe('6db2927f57c7349c1bcf199b769c3b5f4fee8dea4fb6ae4492f12b866f7b5395');
-    expect(parseAssetYaml(readFileSync(join(process.cwd(), 'assets', 'vvv.yaml'), 'utf8')).hash).toBe('818344948ae1fbd26a9bac2c0c85e76a43040643cf6b3b40cd9a115e0227752c');
+    expect(parseAssetYaml(readFileSync(join(process.cwd(), 'assets', 'vvv.yaml'), 'utf8')).hash).toBe('360988f5fd4ba608f00f76ebcade1cf98f8a484c254b0b470d1888a3ae2d44f4');
     expect(asset.agent).toBeUndefined();
     expect(asset.review_triggers).toEqual({});
   });
