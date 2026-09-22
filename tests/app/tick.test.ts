@@ -151,6 +151,25 @@ describe('tickAsset', () => {
     expect(signals).toHaveLength(1);
   });
 
+  it('reports a revaluation failure after a live commit, without discarding it', async () => {
+    // deps.now is called 8 times over the tick (tick's own started/ended, triggers, dueRunType, and inside runAgent:
+    // its started, the commit, the valuation, and the finish); blow up on the valuation's call, the 6th overall.
+    let calledNow = 0;
+    const now = () => {
+      calledNow += 1;
+      if (calledNow === 6) throw new Error('the clock stopped');
+      return h.deps.now();
+    };
+    const { report, exitCode } = await tick([calls(growth()), calls(journalCall()), say('Done.')], {}, { now });
+    expect(exitCode).toBe(0);
+    expect(report.agent).toMatchObject({
+      outcome: 'completed', committed: { assumption_set_version: 2 }, signal_id: null, error: { code: 'valuation_error' },
+    });
+    expect(report.agent!.error!.message).toContain('the clock stopped');
+    expect(getLatestAssumptionSet(h.db, 'mini')!.version).toBe(2);
+    expect(progress.some((l) => l.includes('committed but the revaluation failed: Error: the clock stopped'))).toBe(true);
+  });
+
   it('under --no-agent evaluates without recording and says what would have run', async () => {
     raiseAnomaly(h.db, { assetId: 'mini', kind: 'source_failure_streak', metricKey: '', dedupeKey: 'cg', severity: 'advisory', detail: {}, seenAt: NOW.toISOString() });
     const { report, exitCode } = await tick([], { noAgent: true });

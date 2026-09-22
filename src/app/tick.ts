@@ -158,6 +158,14 @@ async function agentStage(db: Db, loaded: LoadedAsset, deps: TickDeps, runType: 
     stage.proposals = (result.committed?.proposalIds ?? []).map((id) => ({ id, kind: getProposal(db, id)?.change.kind ?? 'unknown' }));
     stage.signal_id = result.signal?.signal_id ?? null;
     if (result.run.outcome !== 'completed') stage.error = { code: result.run.outcome, message: (result.run.error ?? '').slice(0, 300) };
+    // A revaluation that throws after a live commit does not undo it (see runAgent); the run is still "completed" but
+    // the report must say the numbers may be behind. `summary.valuation_error` round-trips through JSON as null when
+    // there was none, never undefined, so this checks for a value, not merely a defined key.
+    const valuationError = result.run.summary?.valuation_error;
+    if (valuationError != null && stage.error === null) {
+      stage.error = { code: 'valuation_error', message: String(valuationError).slice(0, 300) };
+      deps.onProgress?.(`agent run #${result.run.id} committed but the revaluation failed: ${String(valuationError).slice(0, 300)}`);
+    }
     deps.onProgress?.(`agent run #${result.run.id} ${result.run.outcome}`);
     if (result.signal) {
       try {
