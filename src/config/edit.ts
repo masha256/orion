@@ -38,8 +38,10 @@ export function changesAgentLimits(edits: ConfigEdit[]): boolean {
   return edits.some((e) => {
     const path = e.path.map(String);
     if (path[0] === 'assumptions') return true;
-    if (path.length === 2 && path[0] === 'review_triggers' && path[1] === 'provisional_move_pct') return true;
-    return path[0] === 'metrics' && path.length >= 3 && AGENT_LIMIT_METRIC_KEYS.has(path[path.length - 1]);
+    // A path that stops ABOVE a limit replaces the whole node, limit included, without naming it.
+    if (path[0] === 'review_triggers') return path.length === 1 || path[1] === 'provisional_move_pct';
+    if (path[0] === 'metrics') return path.length <= 2 || (path.length === 3 && AGENT_LIMIT_METRIC_KEYS.has(path[2]!));
+    return false;
   });
 }
 

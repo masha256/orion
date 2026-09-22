@@ -199,6 +199,14 @@ describe('edits that change what the agent may do by itself', () => {
     expect(changes(['metrics', 'revenue_run_rate_usd', 'critical'])).toBe(true);
   });
 
+  it('flags a whole-node edit that replaces a limit along with everything around it', () => {
+    // A proposal that rewrites metrics.<key> or review_triggers wholesale can flip critical, allow_provisional, source,
+    // or provisional_move_pct without ever naming them.
+    expect(changes(['metrics'])).toBe(true);
+    expect(changes(['metrics', 'revenue_run_rate_usd'])).toBe(true);
+    expect(changes(['review_triggers'])).toBe(true);
+  });
+
   it('leaves ordinary config alone', () => {
     expect(changes(['modules', 'hc', 'weight'])).toBe(false);
     expect(changes(['scenario_probabilities'])).toBe(false);
