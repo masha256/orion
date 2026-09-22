@@ -5,6 +5,8 @@ run_types: [weekly, deep]
 ---
 Start from the difference between the drivers now and the drivers at the previous run, and from your last journal entry's open questions. The question for each assumption is not "is this number right" but "has anything happened that should move it".
 
+When the pack's `trigger.triggers_this_tick` is not empty, Orion's scheduled tick raised those conditions today: cover each of them in the journal, in the order given.
+
 A useful order:
 
 1. Read what moved: price, revenue, holder flows and capture rate, usage index, supply and emissions. Note which moves are data (a new observation) and which are just time passing.

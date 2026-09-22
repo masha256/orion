@@ -65,7 +65,7 @@ export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, in
       anomaly: target ? describeAnomaly(target) : null,
       // A lead to verify by research. It is not an observation, so it can never be cited as evidence.
       unverified_note: input.trigger.note ?? null,
-      // Conditions Orion's own data raised this tick: what to look into first. Details hold Orion's numbers, never text from a model or a page.
+      // Conditions Orion's own data raised this tick: what to look into first. Details hold Orion's numbers and ids, never text from a model or a page (a calendar note is the user's own YAML).
       triggers_this_tick: (input.trigger.firings ?? []).map((f) => ({ kind: f.kind, key: f.key, fired_at: f.firedAt, detail: f.detail })),
     },
     drivers_now: describeDrivers(report, nowIso),

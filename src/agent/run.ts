@@ -145,9 +145,9 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
       if (reloadError !== null) {
         outcome = 'conflict';
         error = `the asset config could not be reloaded at the end of the run (${reloadError}); nothing was committed`;
-      } else if (current && current.hash !== loaded.hash) {
+      } else if (!current || current.hash !== loaded.hash) {
         outcome = 'conflict';
-        error = `the asset config changed during the run (${loaded.hash.slice(0, 12)} -> ${current.hash.slice(0, 12)}); nothing was committed`;
+        error = `the asset config changed during the run (${loaded.hash.slice(0, 12)} -> ${current?.hash.slice(0, 12) ?? 'none'}); nothing was committed`;
       } else {
         try {
           committed = ledger.commit(db, asset, { agentRunId: runId, now: deps.now() });

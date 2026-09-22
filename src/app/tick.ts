@@ -97,7 +97,9 @@ export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps, opt
       const agentAllowed = opts.noAgent !== true && cadenceFor(asset).enabled;
       // The trigger and cadence clock is deliberately deps.now(), not the valuation's asOf (which may sit ahead of now by the chain head): the fetch can take minutes.
       const evaluation = evaluateTriggers(db, loaded, deps.now(), { record: agentAllowed });
-      report.triggers_fired = evaluation.fired.map((f) => ({ kind: f.kind, key: f.key, detail: f.detail }));
+      // A calendar firing's detail is the user's own YAML note; the report promises no free text, so it is dropped here.
+      // The row and the pack (built from `firings` below, not the report) keep it.
+      report.triggers_fired = evaluation.fired.map((f) => ({ kind: f.kind, key: f.key, detail: f.kind === 'calendar' ? {} : f.detail }));
       report.triggers_recorded = agentAllowed;
       report.triggers_standing = evaluation.standing.map((f) => ({ kind: f.kind, key: f.key, agent_run_id: f.agentRunId }));
 

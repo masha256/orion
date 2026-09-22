@@ -55,7 +55,8 @@ export function currentTriggerInstances(db: Db, loaded: LoadedAsset, now: Date):
 
   const revenue = report.drivers?.revenueRunRate;
   const set = getLatestAssumptionSet(db, asset.id);
-  if (revenue && set && !report.staleCritical.includes(STD_METRICS.revenue)) {
+  // A stale revenue is never measured, critical or not: staleness owns a critical one; a non-critical one is simply not evaluated.
+  if (revenue && set && !report.staleMetrics.includes(STD_METRICS.revenue)) {
     const anchor = revenueAnchor(db, asset);
     const deviation = anchor ? revenueDeviation(anchor, revenue.value, set.values.base, now) : null;
     const threshold = driverDeviationPct(asset);
