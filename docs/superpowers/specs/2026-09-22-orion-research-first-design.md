@@ -109,7 +109,7 @@ An empty inbox prints `nothing to decide`. A non-empty inbox is not by itself an
 
 | Reply | Command Hermes runs |
 |---|---|
-| `confirm <id> [note]` | `node dist/cli/index.js data confirm <id> --json` |
+| `confirm <id>` | `node dist/cli/index.js data confirm <id> --json` (confirm takes no note; words after the id are ignored and Hermes says so) |
 | `reject <id> [note]` | `node dist/cli/index.js data reject <id> --note "<note>" --json` |
 | `approve <id> [note]` | `node dist/cli/index.js model proposals approve <id> --note "<note>" --json` |
 | `decline <id> [note]` | `node dist/cli/index.js model proposals reject <id> --note "<note>" --json` |
