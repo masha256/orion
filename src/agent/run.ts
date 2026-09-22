@@ -120,8 +120,18 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
     if (outcome === 'completed' && opts.dryRun !== true) {
       // Bands, bounds, the move guard, and the run's config hash all came from `loaded`. If the file moved under the run,
       // every check it passed was against a config that is no longer the one in force: commit nothing.
-      const current = deps.reload?.();
-      if (current && current.hash !== loaded.hash) {
+      // A reload that throws is the same situation with the file half-edited: a conflict, not a fault in the run.
+      let current: LoadedAsset | undefined;
+      let reloadError: string | null = null;
+      try {
+        current = deps.reload?.();
+      } catch (err) {
+        reloadError = err instanceof Error ? `${err.constructor.name}: ${err.message}` : String(err);
+      }
+      if (reloadError !== null) {
+        outcome = 'conflict';
+        error = `the asset config could not be reloaded at the end of the run (${reloadError}); nothing was committed`;
+      } else if (current && current.hash !== loaded.hash) {
         outcome = 'conflict';
         error = `the asset config changed during the run (${loaded.hash.slice(0, 12)} -> ${current.hash.slice(0, 12)}); nothing was committed`;
       } else {

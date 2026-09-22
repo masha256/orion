@@ -196,6 +196,18 @@ describe('runs that do not finish cleanly', () => {
     expect(count('journal')).toBe(0);
   });
 
+  it('ends as conflict, not error, when the config on disk cannot be reloaded: the file moved under the run, half-edited', async () => {
+    const halfEdited = () => {
+      throw new Error('assumptions: "rev_growth_y1" has min greater than max');
+    };
+    const result = await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')], {}, { reload: halfEdited });
+    expect(result.run.outcome).toBe('conflict');
+    expect(result.run.error).toBe('the asset config could not be reloaded at the end of the run (Error: assumptions: "rev_growth_y1" has min greater than max); nothing was committed');
+    expect(result.committed).toBeNull();
+    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1);
+    expect(count('journal')).toBe(0);
+  });
+
   it('keeps a commit that stood when something after it throws, and records the message as a valuation error', async () => {
     // deps.now is called for the run start, the commit, the valuation, and the finish. Blow up on the valuation's call.
     let calledNow = 0;
