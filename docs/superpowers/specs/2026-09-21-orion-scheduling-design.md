@@ -1,6 +1,6 @@
 # Orion sub-project 4: scheduling and delivery
 
-Date: 2026-09-21. Status: approved design, ready for planning.
+Date: 2026-09-21. Status: approved; plan generated and verified by extraction the same day (section 15).
 
 Extends `docs/superpowers/specs/2026-09-18-orion-valuation-framework-design.md` (sections 8 and 9) and `docs/superpowers/specs/2026-09-20-orion-agent-layer-design.md` (sections 4 and 11). Where this document and those differ, this one wins for the items it covers.
 
@@ -284,3 +284,19 @@ All under a temp `ORION_HOME`, with the scripted fake model and the fetch harnes
 - The lock's 2-hour TTL is a constant. A run that legitimately outlives it (none can within the budgets) would be taken over by the next tick.
 - Deviation is measured on the base scenario only; the bands already say how far the agent may move `rev_growth_y1`, and the trigger's job is to make it look.
 - A tick per asset means two assets tick sequentially from two jobs; the lock is per asset, so they do not interfere.
+
+## 15. Amendments made during planning (2026-09-21)
+
+The plan's code was built as a prototype, one commit per task, and the plan was generated from it (`docs/superpowers/plans/2026-09-21-orion-scheduling.md`). Where the prototype had to depart from the text above, this section is the record; the text above is left as approved.
+
+- **6.1, config hash.** The new keys (`agent.cadence.*`, the typed `review_triggers` fields) are optional with no zod default; readers apply the defaults. No existing config hash moves, VVV's included. The sentence in 6.1 expecting one move is superseded.
+- **6.3, `provisional`.** `observations` has no `agent_run_id` column. The instance is an active provisional row whose `source_detail` does not start with `research:` (the prefix the ledger writes on every research row). The rule is the same: user-entered rows fire, the agent's own do not.
+- **6.3, details.** `staleness` carries `{ staleness_days, newest_observed_at }` (not `freshness`); `driver_deviation` carries the deviation record plus `threshold_pct` and `anchor_from`.
+- **6.4, evaluation.** `evaluateTriggers(db, loaded, now, { record })` takes no signal: it computes the driver report itself (`computeDrivers` over `eligibleObservations` at `now`, the context pack's own call), which also yields the revenue driver the deviation check needs. It returns `{ fired, standing, cleared }`. Unrecorded firings (`record: false`) carry `id: 0`.
+- **4.4, report.** Field names as built: `ingest.anomalies_raised` (opened or seen again while open; acknowledged recurrences left out); `agent.committed = { assumption_set_version, observations, anomalies_resolved, journal }`; `agent.usage.input_tokens` is uncached plus cache reads plus cache writes; `agent.error` is `{ code: outcome, message }` for a non-`completed` outcome and the thrown error's code and message when `runAgent` threw. `tick_id` is `tick_<asset>_<YYYYMMDDTHHMMSSZ>`.
+- **4.2, files.** `tickAsset` writes no file. It calls `deps.onSignal(signal)` the moment each signal exists and `deps.onFetch(fetch)` after the fetch; the CLI appends to `signals.jsonl` and prints the summaries. The report line is written by the CLI after the lock is released.
+- **4.2, errors after the signal.** A throw from trigger evaluation or the cadence rule (a bug, not an expected condition) propagates out of tick as an ordinary error; only the ingest stage and the agent stage are caught into the report. `outcome: 'error'` is set whenever `error` is set.
+- **6.5, `RunAgentOptions.trigger`.** The type is `RunTriggerContext = { kind: 'schedule' | 'trigger'; firings: Firing[] }`. `trigger_detail_json.firings` carries `{ kind, key, detail }` per firing.
+- **8.2, takeover.** `withRunLock` takes `{ onTakeover?: (abandoned: number) => void }`; tick reports a takeover as a progress line. `abandonStaleRuns` is replaced by `abandonRunningRuns(db, assetId, nowIso)`, called only from the takeover.
+- **9, findings.** `runValuation` was already write-first (its first statement is `saveConfigVersion`'s `INSERT OR IGNORE`), so the deferred transaction was safe by accident; `.immediate()` makes it explicit and the new test pins the behaviour without discriminating. The flow ingest's per-day transaction was the deferred read-then-write shape, and its test fails without the change. `insertObservation`'s own transaction (`orion data set`) has the same shape and is out of scope: carried to the follow-ups.
+- **11, ops.** The Hermes prompt's one-line summaries use ` | ` as the separator (the middle dot is not ASCII, and the plan's directives must be).
