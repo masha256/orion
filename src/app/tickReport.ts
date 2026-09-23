@@ -2,6 +2,7 @@ import { appendFileSync } from 'node:fs';
 import { z } from 'zod';
 import { TRIGGER_KINDS } from '../db/triggerFirings.js';
 import { RUN_TYPES } from '../types.js';
+import { InboxSchema } from './inbox.js';
 
 const ErrorSchema = z.strictObject({ code: z.string(), message: z.string() });
 
@@ -63,6 +64,8 @@ export const TickReportSchema = z.strictObject({
     .nullable(),
   /** Set under `--no-agent` or `agent.cadence.enabled: false`: the run tick would have started. */
   agent_would_run: z.strictObject({ run_type: z.enum(RUN_TYPES), trigger_kind: z.enum(['schedule', 'trigger']) }).nullable(),
+  /** What awaits the user after this tick, computed last so rows the day's run recorded are in the day's message. */
+  inbox: InboxSchema,
   error: ErrorSchema.nullable(),
 });
 

@@ -120,8 +120,14 @@ describe('orion cli', () => {
     await orion('data', 'set', 'mini', 'revenue_run_rate_usd', '1200', '--at', '2026-06-20', '--provisional', '--citation', 'https://example.com/post', '--quote', 'crossed 1200');
     const shown = JSON.parse(await orion('data', 'show', 'mini', 'revenue_run_rate_usd', '--json'));
     expect(shown[0].status).toBe('provisional');
+    // The inbox is where the row waits, with its id, and without the quote.
+    const inbox = JSON.parse(await orion('inbox', 'mini', '--json'));
+    expect(inbox).toMatchObject({ asset: 'mini', observations: [{ id: shown[0].id, metric: 'revenue_run_rate_usd', value: 1200, citation_url: 'https://example.com/post', recorded_by: null }], proposals: [], anomalies: [] });
+    expect(JSON.stringify(inbox)).not.toContain('crossed 1200');
+    expect(await orion('inbox', 'mini')).toMatch(/^obs #\d+  revenue_run_rate_usd  1200 at 2026-06-20  no confirmed value  entered by hand  https:\/\/example.com\/post$/);
     const confirmed = JSON.parse(await orion('data', 'confirm', String(shown[0].id), '--json'));
     expect(confirmed.status).toBe('confirmed');
+    expect(await orion('inbox', 'mini')).toBe('nothing to decide');
     await expect(orion('data', 'set', 'mini', 'price_usd', '1', '--provisional')).rejects.toThrow(/citation/);
   });
 

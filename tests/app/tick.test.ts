@@ -15,9 +15,9 @@ import { acquireRunLock, getRunLock } from '../../src/db/runLocks.js';
 import { listFirings } from '../../src/db/triggerFirings.js';
 import type { Signal } from '../../src/signals/schema.js';
 import type { RunType } from '../../src/types.js';
-import { agentHome } from '../helpers/agentWorld.js';
+import { agentHome, PAGE_TEXT, PAGE_URL, QUOTE } from '../helpers/agentWorld.js';
 import { miniAssumptions } from '../helpers/assets.js';
-import { calls, journalCall, say, scriptedModel, toolUse, type ScriptStep, type ScriptedModel } from '../helpers/fakeModel.js';
+import { calls, journalCall, say, scriptedModel, toolUse, webFetch, type ScriptStep, type ScriptedModel } from '../helpers/fakeModel.js';
 import { harness, NOW, type Harness } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 
@@ -89,6 +89,20 @@ describe('tickAsset', () => {
     expect(signals[1].provenance.agent_run_id).toBe(report.agent!.run_id);
     expect(getLatestAssumptionSet(h.db, 'mini')!.version).toBe(2);
     expect(progress.some((l) => l.startsWith('agent deep run (schedule)'))).toBe(true);
+  });
+
+  it('puts what awaits the user in the report, including the row that the run of the day just recorded', async () => {
+    const record = toolUse('record_provisional_observation', { metric: 'revenue_run_rate_usd', value: 1100, observed_at: '2026-09-19', citation_url: PAGE_URL, quoted_text: QUOTE });
+    const { report } = await tick([{ content: [...webFetch(PAGE_URL, PAGE_TEXT), record], stop_reason: 'tool_use' }, calls(journalCall()), say('Done.')]);
+    expect(report.agent).toMatchObject({ run_type: 'deep', outcome: 'completed', committed: { observations: 1 } });
+    expect(report.inbox.observations).toHaveLength(1);
+    expect(report.inbox.observations[0]).toMatchObject({
+      metric: 'revenue_run_rate_usd', value: 1100, observed_at: '2026-09-19T00:00:00.000Z', citation_url: PAGE_URL, move_pct: 10, // against the confirmed 1000 of 2026-09-18
+      recorded_by: { persona: 'analyst', agent_run_id: report.agent!.run_id },
+    });
+    expect(report.inbox.proposals).toEqual([]);
+    expect(JSON.stringify(report)).not.toContain(QUOTE);
+    expect(TickReportSchema.parse(report)).toEqual(report);
   });
 
   it('launches triage on a firing when nothing is scheduled, hands the firings to the run, and records the run on them', async () => {

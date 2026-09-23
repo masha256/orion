@@ -10,6 +10,7 @@ import type { FetchDeps, FetchResult } from '../ingest/run.js';
 import type { Signal } from '../signals/schema.js';
 import { OrionError, type RunType } from '../types.js';
 import { dueRunType } from './cadence.js';
+import { buildInbox, emptyInbox } from './inbox.js';
 import { lockHolder, withRunLock } from './lock.js';
 import { tickId, type TickReport } from './tickReport.js';
 import { evaluateTriggers } from './triggers.js';
@@ -56,9 +57,11 @@ export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps, opt
   const started = deps.now();
   const report: TickReport = {
     schema_version: 1, tick_id: tickId(asset.id, started), asset: asset.id, started_at: started.toISOString(), ended_at: started.toISOString(),
-    outcome: 'completed', lock: null, ingest: null, signal: null, triggers_fired: [], triggers_recorded: false, triggers_standing: [], agent: null, agent_would_run: null, error: null,
+    outcome: 'completed', lock: null, ingest: null, signal: null, triggers_fired: [], triggers_recorded: false, triggers_standing: [], agent: null, agent_would_run: null, inbox: emptyInbox(), error: null,
   };
   const finish = (): TickResult => {
+    // After the agent stage and outside the lock: a plain read, so a tick that never got the lock still reports the queue.
+    report.inbox = buildInbox(db, asset);
     report.ended_at = deps.now().toISOString();
     if (report.error) report.outcome = 'error';
     const exitCode = report.signal === null ? (report.outcome === 'run_in_progress' ? 0 : 1) : report.signal.status === 'blocked' ? 2 : 0;
