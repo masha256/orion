@@ -1,6 +1,6 @@
 # Orion sub-project 5: research first
 
-Date: 2026-09-22. Status: design approved in brainstorming; not yet planned.
+Date: 2026-09-22. Status: implemented on branch feat/research-first (2026-09-22/23); section 15 records every amendment from execution and review.
 
 Extends `docs/superpowers/specs/2026-09-18-orion-valuation-framework-design.md` (Data principle, section 1), `docs/superpowers/specs/2026-09-19-orion-ingestion-design.md` (sources, section 4), `docs/superpowers/specs/2026-09-20-orion-agent-layer-design.md` (sections 4, 5.5, 9, 11), and `docs/superpowers/specs/2026-09-21-orion-scheduling-design.md` (sections 4.4, 5, 11). Where this document and those differ, this one wins for the items it covers.
 
@@ -239,3 +239,16 @@ Holder-flow windows, `burn_momentum`, staleness, the source-failure streak, prov
 - One-time decision tokens: strongest against a poisoned message, but a token table and a command family for a threat the id-in-latest-inbox rule covers, since only the user's reply carries a verb.
 - A generic HTTP series flow source: no consumer yet.
 - The bootstrap as a deep run in a special mode: skills, budgets, and cadence all key on run type, so a mode would need a parallel switch in each.
+
+## 15. Amendments made during execution and review (2026-09-22/23)
+
+The plan was generated from a per-task prototype and applied byte for byte; the task reviews then found design defects in four of five tasks, each ruled on by the controller with the spec's invariants as the authority. Where this section and an earlier one disagree, this section governs.
+
+1. **`move_pct` is measured at now (4.1).** The inbox measures a provisional row's move against the last CONFIRMED value in force at now, not at the row's `observed_at`: that is the baseline the tool's move guard uses, which is the stated purpose. `buildInbox(db, asset, nowIso)`; the tick passes its clock, the CLI its own, and reuses it for `as_of`.
+2. **The inbox never fails a tick (4.2).** `buildInbox` is guarded in the tick's finalizer: on a throw (a stored shape the schema does not expect) the report carries an empty inbox and stderr warns; `report.error` is not set.
+3. **Invariant 5 is enforced in code (7.3).** A bootstrap is never offered `apply_assumption_change`, set or no set (`get_assumptions` stays when a set exists); `ToolContext` carries the run type and `propose_change` refuses `kind: 'config'` on a bootstrap (`not_in_bootstrap`). 7.3's "behaves as a deep run for assumptions" is withdrawn.
+4. **Without an assumption set only bootstraps are due (7.2).** `dueRunType` returns `bootstrap` at once when none was attempted, else again `weekly_days` after the last bootstrap attempt, and never `weekly` or `deep`, which fail preflight without a set. Once a set exists the rules of 7.2 apply unchanged. A bootstrap that ran out of budget is therefore retried weekly at its full cost until the user imports a set or disables the cadence.
+5. **`manual_metrics` in the context pack (7.3, 7.4).** The pack's `asset` block lists the sorted keys of every metric with no `source`; the bootstrap skill works through that list, the ones with no value in force first.
+6. **The API-series writer (8.2).** The cursor key is the source id AND the metric (`<sourceId>><metric>`), so `--metric` narrowing cannot leave gaps; the primary is served from its batch rather than a flow group (`data sources` is unaffected). With `--adopt`, every overlapping manual row is retired up front inside the transaction, whether or not its day is rewritten; retirements are reported only after the commit. The days read are the revision window (the last three written days) plus each GAP day individually: a day inside the backfill window, at or after the series' first day, that no active row of the metric covers (manual rows included, period-aware). A gap is retried on every run until it appears; the days between a gap and the window are not re-read, so the three-day revision limit holds; a permanently absent day costs one skipped-day note per run. Section 13's "a revision older than that is not picked up" stands; "a late day is lost" is withdrawn.
+7. **Migration 5 runs with foreign keys off, checked after (9).** `MIGRATIONS[].rebuildsTables` makes `migrate()` switch the pragma off outside the transaction, run `foreign_key_check` inside it (a violation rolls the migration back), and restore it in `finally`. The AUTOINCREMENT counter is carried across the rebuild explicitly.
+8. **Event metrics (6).** Event metrics cannot carry a source today, so the exception of section 6 is reachable only for `schedule` metrics; the code covers both.
