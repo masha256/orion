@@ -44,6 +44,7 @@ describe('agent settings', () => {
     expect(maxStepFraction(asset)).toBe(0.25);
     expect(provisionalMovePct(asset)).toBe(25);
     expect(budgetsFor(asset, 'deep')).toEqual(DEFAULT_BUDGETS.deep);
+    expect(budgetsFor(asset, 'bootstrap')).toEqual({ requests: 60, inputTokens: 3_000_000, outputTokens: 100_000, webSearches: 30, webFetches: 30, proposals: 2 });
   });
 
   it('applies partial overrides per run type and per field', () => {

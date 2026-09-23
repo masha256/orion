@@ -62,8 +62,14 @@ describe('cadence config', () => {
 });
 
 describe('dueRunType', () => {
-  it('owes a deep run first on a fresh asset', () => {
-    expect(dueRunType(db, asset, T0)).toBe('deep');
+  it('owes a bootstrap first on a fresh asset, and a deep once one bootstrap or deep attempt exists', () => {
+    expect(dueRunType(db, asset, T0)).toBe('bootstrap');
+    attempt('weekly'); // a weekly alone does not make an asset bootstrapped
+    expect(dueRunType(db, asset, T0)).toBe('bootstrap');
+    attempt('bootstrap', { outcome: 'budget_exhausted' }); // every attempt counts
+    expect(dueRunType(db, asset, T0)).toBeNull();
+    expect(dueRunType(db, asset, daysLater(7))).toBe('weekly'); // the bootstrap was that week's weekly
+    expect(dueRunType(db, asset, daysLater(30))).toBe('deep'); // and that month's deep
   });
 
   it('a deep run satisfies the week; weekly is due at 7 days and not at 6; deep at 30', () => {
@@ -108,6 +114,6 @@ describe('dueRunType', () => {
 
   it('ignores other assets', () => {
     startAgentRun(db, { assetId: 'other', persona: 'p', runType: 'deep', trigger: 'schedule', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: T0.toISOString() });
-    expect(dueRunType(db, asset, T0)).toBe('deep');
+    expect(dueRunType(db, asset, T0)).toBe('bootstrap');
   });
 });

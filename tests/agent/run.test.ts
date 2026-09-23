@@ -104,6 +104,51 @@ describe('a triage run', () => {
   });
 });
 
+describe('a bootstrap run', () => {
+  const record = () => toolUse('record_provisional_observation', { metric: 'staked_supply', value: 55, observed_at: '2026-06-28', citation_url: PAGE_URL, quoted_text: QUOTE });
+
+  it('runs with no assumption set, offers no assumption tools, records research, commits with its journal, and values to a blocked signal', async () => {
+    w.db.prepare('DELETE FROM assumptions').run();
+    w.db.prepare('DELETE FROM assumption_sets').run();
+    const result = await run([{ content: [...webFetch(PAGE_URL, PAGE_TEXT), record()], stop_reason: 'tool_use' }, calls(journalCall()), say('Done.')], { runType: 'bootstrap' });
+    expect(result.run).toMatchObject({ outcome: 'completed', runType: 'bootstrap', error: null });
+    expect(result.committed).toMatchObject({ setVersion: null, resolvedAnomalyIds: [], proposalIds: [] });
+    expect(result.committed!.observationIds).toHaveLength(1);
+    expect(listActiveObservations(w.db, 'mini', 'staked_supply').filter((o) => o.status === 'provisional')).toMatchObject([{ value: 55, citationUrl: PAGE_URL }]);
+    expect(listJournal(w.db, 'mini')[0]).toMatchObject({ agentRunId: result.run.id });
+    expect(result.signal).toMatchObject({ status: 'blocked', status_reasons: expect.arrayContaining(['no_assumption_set']) });
+
+    const first = model.requests[0];
+    const names = first.tools.map((t) => ('name' in t ? t.name : ''));
+    expect(names).not.toContain('apply_assumption_change');
+    expect(names).not.toContain('get_assumptions');
+    expect(names).toEqual(expect.arrayContaining(['get_drivers', 'record_provisional_observation', 'propose_change', 'write_journal', 'web_search', 'web_fetch']));
+    expect(first.system).toContain('# Skill: bootstrap-research');
+    expect(first.system).toContain('# Skill: disclosure-research');
+    expect(first.system).not.toContain('assumption-review');
+    expect(first.system).toContain('This is a bootstrap run.');
+    const pack = first.messages[0].content as string;
+    expect(pack).toContain('"assumption_set_version": null');
+    expect(pack).toContain('"assumptions": "none yet"');
+  });
+
+  it('refuses an assumption tool call it was not offered, so a model cannot change what does not exist', async () => {
+    w.db.prepare('DELETE FROM assumptions').run();
+    w.db.prepare('DELETE FROM assumption_sets').run();
+    const result = await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')], { runType: 'bootstrap' });
+    expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'unknown_tool' } });
+    expect(result.run.outcome).toBe('completed');
+    expect(getLatestAssumptionSet(w.db, 'mini')).toBeNull();
+  });
+
+  it('with a set present is an ordinary run for the tools: the skill, not the code, keeps it off the assumptions', async () => {
+    const result = await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')], { runType: 'bootstrap' });
+    expect(result.run).toMatchObject({ outcome: 'completed', runType: 'bootstrap' });
+    expect(result.committed!.setVersion).toBe(2);
+    expect(model.requests[0].tools.map((t) => ('name' in t ? t.name : ''))).toContain('apply_assumption_change');
+  });
+});
+
 describe('guardrails inside a run', () => {
   it('files an out-of-band value as a proposal tied to the run, and moves no signal', async () => {
     const result = await run([calls(growthCall(1.2)), calls(journalCall()), say('Done.')]);
@@ -286,6 +331,8 @@ describe('preflight', () => {
     w.db.prepare('DELETE FROM assumptions').run();
     w.db.prepare('DELETE FROM assumption_sets').run();
     expect(await codeOf(run([]))).toBe('no_assumption_set');
+    expect(await codeOf(run([], { runType: 'deep' }))).toBe('no_assumption_set');
+    expect(await codeOf(run([calls(journalCall()), say('Done.')], { runType: 'bootstrap' }))).toBeUndefined(); // the one run type that needs no set
   });
 
   it('records a config hash that moves with the persona file', async () => {

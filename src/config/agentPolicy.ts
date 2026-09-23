@@ -41,6 +41,8 @@ export const DEFAULT_BUDGETS: Record<RunType, RunBudgets> = {
   weekly: { requests: 25, inputTokens: 600_000, outputTokens: 40_000, webSearches: 5, webFetches: 5, proposals: 10 },
   triage: { requests: 20, inputTokens: 500_000, outputTokens: 30_000, webSearches: 8, webFetches: 8, proposals: 10 },
   deep: { requests: 40, inputTokens: 2_000_000, outputTokens: 80_000, webSearches: 15, webFetches: 15, proposals: 10 },
+  /** Populates a new asset's manual metrics from research: more searches and fetches than a deep, almost no proposals. About $8 to $12 at list price. */
+  bootstrap: { requests: 60, inputTokens: 3_000_000, outputTokens: 100_000, webSearches: 30, webFetches: 30, proposals: 2 },
 };
 
 /** Null when the asset defines no bounds for the key. */

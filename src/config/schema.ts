@@ -67,7 +67,7 @@ const CadenceSchema = z.strictObject({
 const AgentConfigSchema = z.strictObject({
   max_step_fraction: z.number().gt(0).max(1).optional(),
   budgets: z
-    .strictObject({ weekly: BudgetOverrideSchema.optional(), triage: BudgetOverrideSchema.optional(), deep: BudgetOverrideSchema.optional() })
+    .strictObject({ weekly: BudgetOverrideSchema.optional(), triage: BudgetOverrideSchema.optional(), deep: BudgetOverrideSchema.optional(), bootstrap: BudgetOverrideSchema.optional() })
     .optional(),
   cadence: CadenceSchema.optional(),
 });

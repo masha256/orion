@@ -76,25 +76,25 @@ describe('tickAsset', () => {
     expect(TickReportSchema.parse(report)).toEqual(report);
   });
 
-  it('runs the first deep on a fresh asset, emits its signal too, and reports what it committed by count', async () => {
+  it('runs the bootstrap first on a fresh asset (with a set present it still takes assumption changes), emits its signal too, and reports what it committed by count', async () => {
     const { report, exitCode } = await tick([calls(growth()), calls(journalCall()), say('Done.')]);
     expect(exitCode).toBe(0);
     expect(report.agent).toMatchObject({
-      run_type: 'deep', trigger_kind: 'schedule', outcome: 'completed', error: null, proposals: [],
+      run_type: 'bootstrap', trigger_kind: 'schedule', outcome: 'completed', error: null, proposals: [],
       usage: { requests: 3 }, committed: { assumption_set_version: 2, observations: 0, anomalies_resolved: 0, journal: 1 },
     });
-    expect(getAgentRun(h.db, report.agent!.run_id!)).toMatchObject({ runType: 'deep', trigger: 'schedule', outcome: 'completed' });
+    expect(getAgentRun(h.db, report.agent!.run_id!)).toMatchObject({ runType: 'bootstrap', trigger: 'schedule', outcome: 'completed' });
     expect(signals).toHaveLength(2);
     expect(signals[1].signal_id).toBe(report.agent!.signal_id);
     expect(signals[1].provenance.agent_run_id).toBe(report.agent!.run_id);
     expect(getLatestAssumptionSet(h.db, 'mini')!.version).toBe(2);
-    expect(progress.some((l) => l.startsWith('agent deep run (schedule)'))).toBe(true);
+    expect(progress.some((l) => l.startsWith('agent bootstrap run (schedule)'))).toBe(true);
   });
 
   it('puts what awaits the user in the report, including the row that the run of the day just recorded', async () => {
     const record = toolUse('record_provisional_observation', { metric: 'revenue_run_rate_usd', value: 1100, observed_at: '2026-09-19', citation_url: PAGE_URL, quoted_text: QUOTE });
     const { report } = await tick([{ content: [...webFetch(PAGE_URL, PAGE_TEXT), record], stop_reason: 'tool_use' }, calls(journalCall()), say('Done.')]);
-    expect(report.agent).toMatchObject({ run_type: 'deep', outcome: 'completed', committed: { observations: 1 } });
+    expect(report.agent).toMatchObject({ run_type: 'bootstrap', outcome: 'completed', committed: { observations: 1 } });
     expect(report.inbox.observations).toHaveLength(1);
     expect(report.inbox.observations[0]).toMatchObject({
       metric: 'revenue_run_rate_usd', value: 1100, observed_at: '2026-09-19T00:00:00.000Z', citation_url: PAGE_URL, move_pct: 10, // against the confirmed 1000 of 2026-09-18
@@ -130,7 +130,7 @@ describe('tickAsset', () => {
     const { report } = await tick([calls(growth()), calls(journalCall()), say('Done.')]);
     expect(report.triggers_fired).toEqual([]);
     expect(report.triggers_standing).toEqual([{ kind: 'open_anomaly', key: String(a.id), agent_run_id: null }]); // still null: this snapshot is from before this tick's run
-    expect(report.agent).toMatchObject({ run_type: 'deep', outcome: 'completed' }); // a fresh asset owes deep
+    expect(report.agent).toMatchObject({ run_type: 'bootstrap', outcome: 'completed' }); // a fresh asset owes the bootstrap
     expect(getAgentRun(h.db, report.agent!.run_id!)!.triggerDetail.firings).toHaveLength(1);
     expect(listFirings(h.db, 'mini')[0].agentRunId).toBe(report.agent!.run_id);
   });
@@ -138,7 +138,7 @@ describe('tickAsset', () => {
   it('lets a due scheduled run absorb the firings instead of running triage', async () => {
     const a = raiseAnomaly(h.db, { assetId: 'mini', kind: 'source_failure_streak', metricKey: '', dedupeKey: 'cg', severity: 'advisory', detail: {}, seenAt: NOW.toISOString() });
     const { report } = await tick();
-    expect(report.agent).toMatchObject({ run_type: 'deep', trigger_kind: 'schedule' });
+    expect(report.agent).toMatchObject({ run_type: 'bootstrap', trigger_kind: 'schedule' });
     expect(report.triggers_fired.map((f) => f.key)).toEqual([String(a.id)]);
     expect(listFirings(h.db, 'mini')[0].agentRunId).toBe(report.agent!.run_id);
     expect(getAgentRun(h.db, report.agent!.run_id!)!.triggerDetail.firings).toHaveLength(1);
@@ -149,14 +149,14 @@ describe('tickAsset', () => {
     const { report, exitCode } = await tick();
     expect(exitCode).toBe(0);
     expect(report.outcome).toBe('completed');
-    expect(report.agent).toMatchObject({ run_type: 'deep', run_id: null, outcome: null, error: { code: 'no_persona_assigned' } });
+    expect(report.agent).toMatchObject({ run_type: 'bootstrap', run_id: null, outcome: null, error: { code: 'no_persona_assigned' } });
     expect(signals).toHaveLength(1);
     expect(listAgentRuns(h.db)).toHaveLength(0);
     expect(TickReportSchema.parse(report)).toEqual(report);
   });
 
   it('records a run that ends short of completed, with its outcome as the error code, and exits 0', async () => {
-    world({ loaded: parseAssetYaml(`${INGEST_ASSET_YAML}agent:\n  budgets:\n    deep: { requests: 1 }\n`) });
+    world({ loaded: parseAssetYaml(`${INGEST_ASSET_YAML}agent:\n  budgets:\n    bootstrap: { requests: 1 }\n`) });
     const { report, exitCode } = await tick([calls(growth()), calls(journalCall()), say('Done.')]);
     expect(exitCode).toBe(0);
     expect(report.agent).toMatchObject({ outcome: 'budget_exhausted', committed: null, signal_id: null, error: { code: 'budget_exhausted' } });
@@ -189,7 +189,7 @@ describe('tickAsset', () => {
     const { report, exitCode } = await tick([], { noAgent: true });
     expect(exitCode).toBe(0);
     expect(report.triggers_fired).toHaveLength(1);
-    expect(report).toMatchObject({ triggers_recorded: false, agent: null, agent_would_run: { run_type: 'deep', trigger_kind: 'schedule' } });
+    expect(report).toMatchObject({ triggers_recorded: false, agent: null, agent_would_run: { run_type: 'bootstrap', trigger_kind: 'schedule' } });
     expect(listFirings(h.db, 'mini')).toEqual([]);
     expect(listAgentRuns(h.db)).toHaveLength(0);
     expect(TickReportSchema.parse(report)).toEqual(report);
@@ -198,7 +198,7 @@ describe('tickAsset', () => {
   it('under agent.cadence.enabled: false does the same, durably', async () => {
     world({ loaded: parseAssetYaml(`${INGEST_ASSET_YAML}agent:\n  cadence: { enabled: false }\n`) });
     const { report } = await tick([]);
-    expect(report).toMatchObject({ triggers_recorded: false, agent: null, agent_would_run: { run_type: 'deep', trigger_kind: 'schedule' } });
+    expect(report).toMatchObject({ triggers_recorded: false, agent: null, agent_would_run: { run_type: 'bootstrap', trigger_kind: 'schedule' } });
     expect(listAgentRuns(h.db)).toHaveLength(0);
   });
 
@@ -207,7 +207,7 @@ describe('tickAsset', () => {
     const { report, exitCode } = await tick();
     expect(exitCode).toBe(2);
     expect(report.signal).toMatchObject({ status: 'blocked', expected_target_12m: null });
-    expect(report.agent).toMatchObject({ run_type: 'deep', outcome: 'completed' });
+    expect(report.agent).toMatchObject({ run_type: 'bootstrap', outcome: 'completed' });
   });
 
   it('exits 1 with outcome error and no signal when the ingest throws, and runs no agent', async () => {
@@ -240,7 +240,7 @@ describe('tickAsset', () => {
 
   it('holds the lock while it runs and releases it after', async () => {
     let heldDuringRun: string | null = null;
-    const { report } = await tick([calls(journalCall()), say('Done.')], {}, { onProgress: (l) => { if (l.startsWith('agent deep run')) heldDuringRun = getRunLock(h.db, 'mini')?.holder ?? null; } });
+    const { report } = await tick([calls(journalCall()), say('Done.')], {}, { onProgress: (l) => { if (l.startsWith('agent bootstrap run')) heldDuringRun = getRunLock(h.db, 'mini')?.holder ?? null; } });
     expect(report.agent!.outcome).toBe('completed');
     expect(heldDuringRun).toBe(`tick pid ${process.pid}`);
     expect(getRunLock(h.db, 'mini')).toBeNull();

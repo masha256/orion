@@ -60,7 +60,7 @@ export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, in
 
   return {
     asset: { id: asset.id, symbol: asset.symbol, name: asset.name },
-    run: { type: input.runType, now: nowIso, budgets: input.budgets, assumption_set_version: ledger.startSet.version },
+    run: { type: input.runType, now: nowIso, budgets: input.budgets, assumption_set_version: ledger.startSet?.version ?? null },
     trigger: {
       anomaly: target ? describeAnomaly(target) : null,
       // A lead to verify by research. It is not an observation, so it can never be cited as evidence.
@@ -75,7 +75,7 @@ export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, in
       open: anomalies.filter((a) => a.status === 'open').map((a) => describeAnomaly(a)),
       acknowledged_read_only: anomalies.filter((a) => a.status === 'acknowledged').map((a) => describeAnomaly(a)),
     },
-    assumptions: describeAssumptions(asset, ledger),
+    assumptions: ledger.startSet ? describeAssumptions(asset, ledger) : 'none yet',
     latest_signal: signals[0] ? describeSignal(signals[0]) : null,
     target_history: signals.map((s) => ({ generated_at: s.generated_at, expected_target_12m: s.horizons?.['12m'].expected_target ?? null, status: s.status })),
     proposals: {

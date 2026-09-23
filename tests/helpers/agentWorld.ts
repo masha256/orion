@@ -81,7 +81,7 @@ run_types: [${runTypes}]
 Instructions for ${name}.
 `;
 
-/** A temp ORION_HOME with one persona and three skills, and the persona assigned to the mini asset in `db`. */
+/** A temp ORION_HOME with one persona and four skills, and the persona assigned to the mini asset in `db`. */
 export function agentHome(db: Db): string {
   const home = mkdtempSync(join(tmpdir(), 'orion-agent-'));
   mkdirSync(join(home, 'personas'));
@@ -89,7 +89,8 @@ export function agentHome(db: Db): string {
   writeFileSync(join(home, 'personas', 'analyst.md'), PERSONA_MD);
   writeFileSync(join(home, 'skills', 'assumption-review.md'), skillMd('assumption-review', 'weekly, deep'));
   writeFileSync(join(home, 'skills', 'anomaly-triage.md'), skillMd('anomaly-triage', 'triage'));
-  writeFileSync(join(home, 'skills', 'disclosure-research.md'), skillMd('disclosure-research', 'weekly, triage, deep'));
+  writeFileSync(join(home, 'skills', 'disclosure-research.md'), skillMd('disclosure-research', 'weekly, triage, deep, bootstrap'));
+  writeFileSync(join(home, 'skills', 'bootstrap-research.md'), skillMd('bootstrap-research', 'bootstrap'));
   assignPersona(db, 'mini', 'analyst', AS_OF);
   return home;
 }

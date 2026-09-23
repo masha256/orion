@@ -1,7 +1,7 @@
 ---
 name: disclosure-research
 description: Find and record figures that no API publishes (revenue run rate, announced emission or policy changes) from sources you can quote.
-run_types: [weekly, triage, deep]
+run_types: [weekly, triage, deep, bootstrap]
 ---
 Some of the most important inputs are maintained by hand because the project publishes them only in prose: the revenue run rate above all, and announced changes to emissions, burn policy, or token terms. The context pack lists stale and provisional metrics; a manual metric that is stale, or a revenue figure that usage has moved away from, is the usual reason to research.
 

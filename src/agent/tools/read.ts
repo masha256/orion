@@ -73,10 +73,11 @@ const getAssumptions = defineTool({
     'allowed_this_run, the exact range apply_assumption_change will accept.',
   input: z.strictObject({}),
   run(ctx) {
+    if (ctx.ledger.startSet === null) refuse('no_assumption_set', `${ctx.loaded.config.id} has no assumption set yet; calibration comes after the data`);
     return {
-      assumption_set_version: ctx.ledger.startSet.version,
-      author: ctx.ledger.startSet.author,
-      rationale: ctx.ledger.startSet.rationale,
+      assumption_set_version: ctx.ledger.startSet!.version,
+      author: ctx.ledger.startSet!.author,
+      rationale: ctx.ledger.startSet!.rationale,
       assumptions: describeAssumptions(ctx.loaded.config, ctx.ledger),
     };
   },

@@ -1,4 +1,5 @@
-export const MIGRATIONS: { id: number; sql: string }[] = [
+/** `rebuildsTables`: the migration drops a table other tables reference, so it runs with foreign keys off and is checked after (see migrate). */
+export const MIGRATIONS: { id: number; sql: string; rebuildsTables?: boolean }[] = [
   {
     id: 1,
     sql: `
@@ -222,6 +223,44 @@ CREATE TABLE trigger_firings (
   detail_json TEXT NOT NULL
 );
 CREATE UNIQUE INDEX idx_trigger_firings_instance ON trigger_firings (asset_id, kind, key);
+`,
+  },
+  {
+    id: 5,
+    rebuildsTables: true,
+    // agent_runs.run_type gains 'bootstrap'. SQLite cannot alter a CHECK constraint, so the table is rebuilt: same columns
+    // in the same order, rows copied by position, the AUTOINCREMENT counter carried over (the copy alone would reset it to
+    // the surviving max id), then the index. sqlite_sequence follows the rename, so ids continue where they were.
+    sql: `
+CREATE TABLE agent_runs_new (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_id TEXT NOT NULL,
+  persona TEXT NOT NULL,
+  run_type TEXT NOT NULL CHECK (run_type IN ('weekly','triage','deep','bootstrap')),
+  trigger_kind TEXT NOT NULL,
+  trigger_detail_json TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('running','completed','budget_exhausted','refused','no_journal','conflict','error')),
+  dry_run INTEGER NOT NULL DEFAULT 0,
+  config_hash TEXT NOT NULL,
+  model TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  requests INTEGER NOT NULL DEFAULT 0,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  web_searches INTEGER NOT NULL DEFAULT 0,
+  web_fetches INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  summary_json TEXT
+);
+INSERT INTO agent_runs_new SELECT * FROM agent_runs;
+DELETE FROM sqlite_sequence WHERE name = 'agent_runs_new';
+INSERT INTO sqlite_sequence (name, seq) SELECT 'agent_runs_new', seq FROM sqlite_sequence WHERE name = 'agent_runs';
+DROP TABLE agent_runs;
+ALTER TABLE agent_runs_new RENAME TO agent_runs;
+CREATE INDEX idx_agent_runs_asset ON agent_runs (asset_id, id);
 `,
   },
 ];

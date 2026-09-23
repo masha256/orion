@@ -91,8 +91,8 @@ export class Ledger {
   constructor(
     readonly assetId: string,
     readonly persona: string,
-    /** The latest assumption set when the run began: the base every step is measured from. */
-    readonly startSet: AssumptionSet,
+    /** The latest assumption set when the run began: the base every step is measured from. Null only on a bootstrap run of an asset that has none yet. */
+    readonly startSet: AssumptionSet | null,
   ) {}
 
   markShown(ids: Iterable<number>): void {
@@ -102,7 +102,7 @@ export class Ledger {
   // ---- assumptions ----
 
   startValue(key: string, scenario: Scenario): number | undefined {
-    return this.startSet.values[scenario][key];
+    return this.startSet?.values[scenario][key];
   }
 
   /** A later change to the same key and scenario replaces the earlier one. Setting a value back to where it started unstages it. */
@@ -120,7 +120,8 @@ export class Ledger {
 
   /** The committed values with every staged change applied, plus `extra` on top (a change being checked but not yet staged). */
   mergedValues(extra: { key: string; scenario: Scenario; value: number }[] = []): AssumptionValues {
-    const values: AssumptionValues = { bear: { ...this.startSet.values.bear }, base: { ...this.startSet.values.base }, bull: { ...this.startSet.values.bull } };
+    const start = this.startSet?.values ?? { bear: {}, base: {}, bull: {} };
+    const values: AssumptionValues = { bear: { ...start.bear }, base: { ...start.base }, bull: { ...start.bull } };
     for (const c of [...this.changes.values(), ...extra]) values[c.scenario][c.key] = c.value;
     return values;
   }
@@ -221,6 +222,7 @@ export class Ledger {
     return db.transaction((): CommitSummary => {
       try {
         if (changes.length > 0) {
+          if (this.startSet === null) throw new AgentConflict('assumption changes were staged on an asset that has no assumption set');
           const latest = getLatestAssumptionSet(db, this.assetId);
           if (!latest || latest.version !== this.startSet.version) {
             throw new AgentConflict(`assumption set v${latest?.version ?? 'none'} was saved during the run (it began on v${this.startSet.version})`);

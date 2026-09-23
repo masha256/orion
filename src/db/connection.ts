@@ -10,10 +10,21 @@ export function migrate(db: Db): void {
   );
   for (const m of MIGRATIONS) {
     if (applied.has(m.id)) continue;
-    db.transaction(() => {
-      db.exec(m.sql);
-      db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(m.id, new Date().toISOString());
-    })();
+    // A table rebuild drops a table that other tables reference. Foreign keys go off around it (the pragma is a no-op
+    // inside a transaction, so it is set outside), and the rebuilt schema is checked before they come back on.
+    if (m.rebuildsTables) db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(m.sql);
+        if (m.rebuildsTables) {
+          const violations = db.pragma('foreign_key_check') as unknown[];
+          if (violations.length > 0) throw new Error(`migration ${m.id} left ${violations.length} foreign key violation(s); rolled back`);
+        }
+        db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(m.id, new Date().toISOString());
+      })();
+    } finally {
+      if (m.rebuildsTables) db.pragma('foreign_keys = ON');
+    }
   }
 }
 

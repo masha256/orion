@@ -76,7 +76,8 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   const persona = loadPersona(deps.home, coverage.persona);
   const skills = skillsFor(deps.home, opts.runType);
   const startSet = getLatestAssumptionSet(db, asset.id);
-  if (!startSet) throw new OrionError('no_assumption_set', `no assumption set for ${asset.id}; import one first`);
+  // A bootstrap populates an asset before it is calibrated: it is the one run that needs no set (and gets no assumption tools without one).
+  if (!startSet && opts.runType !== 'bootstrap') throw new OrionError('no_assumption_set', `no assumption set for ${asset.id}; import one first`);
   const note = opts.note?.trim() || undefined;
   const firings = opts.trigger?.firings ?? [];
   if (opts.runType === 'triage' && opts.anomalyId === undefined && note === undefined && firings.length === 0) {
@@ -106,7 +107,9 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   // ---- the run: everything from here is recorded, never thrown ----
   const ledger = new Ledger(asset.id, persona.name, startSet);
   const messages: ModelMessageParam[] = [];
-  const tools = [...toApiTools(AGENT_TOOLS), ...webTools(budgets)];
+  // With no assumption set there is nothing to read or change: the assumption tools are not offered at all.
+  const clientTools = startSet ? AGENT_TOOLS : AGENT_TOOLS.filter((t) => t.name !== 'get_assumptions' && t.name !== 'apply_assumption_change');
+  const tools = [...toApiTools(clientTools), ...webTools(budgets)];
   let outcome: Exclude<AgentOutcome, 'running'> = 'error';
   let error: string | null = null;
   let usage: AgentUsage = { ...ZERO_USAGE };
@@ -122,7 +125,7 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
 
     const loop = await runLoop({
       client, model: persona.model, effort: persona.effort, system, tools, messages, budgets,
-      runTool: (name, input) => runTool(AGENT_TOOLS, ctx, name, input),
+      runTool: (name, input) => runTool(clientTools, ctx, name, input),
       isFinished: () => ledger.journal() !== null,
       reminder: JOURNAL_REMINDER,
     });

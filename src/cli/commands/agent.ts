@@ -39,7 +39,7 @@ export function registerAgent(program: Command, ctx: CliContext): void {
   agent
     .command('run <asset>')
     .description('one agent run; exit 0 completed, 2 completed with a blocked signal, 1 anything else')
-    .requiredOption('--type <type>', 'weekly | triage | deep')
+    .requiredOption('--type <type>', 'weekly | triage | deep | bootstrap')
     .option('--anomaly <id>', 'triage: the anomaly to look into')
     .option('--note <text>', 'triage: a lead for the agent to verify (text or a URL); never evidence')
     .option('--dry-run', 'do everything except commit; spends tokens')

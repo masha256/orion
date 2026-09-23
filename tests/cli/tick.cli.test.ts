@@ -53,14 +53,14 @@ describe('orion tick', () => {
     const text = await orion('tick', 'mini');
     expect(text.split('\n')).toHaveLength(1);
     const report = JSON.parse(text) as TickReport;
-    expect(report).toMatchObject({ outcome: 'completed', asset: 'mini', signal: { status: 'ok' }, agent: { run_type: 'deep', trigger_kind: 'schedule', outcome: 'completed' } });
+    expect(report).toMatchObject({ outcome: 'completed', asset: 'mini', signal: { status: 'ok' }, agent: { run_type: 'bootstrap', trigger_kind: 'schedule', outcome: 'completed' } });
     expect(lines('ticks.jsonl')).toEqual([report]);
     expect((lines('signals.jsonl') as { signal_id: string }[]).map((s) => s.signal_id)).toEqual([report.signal!.signal_id]); // a journal-only run moves no signal
     expect(stderr).toContain('MINI fetch ok');
-    expect(stderr.some((l) => l.startsWith('agent deep run (schedule)'))).toBe(true);
+    expect(stderr.some((l) => l.startsWith('agent bootstrap run (schedule)'))).toBe(true);
     expect(stderr.some((l) => l.includes('12m'))).toBe(true); // the signal summary
     expect(exitCodes).toEqual([]);
-    expect(await orion('agent', 'runs', 'list')).toContain('mini  deep  analyst  completed');
+    expect(await orion('agent', 'runs', 'list')).toContain('mini  bootstrap  analyst  completed');
     expect(JSON.parse(await orion('tick', 'mini', '--json')).outcome).toBe('completed');
   });
 
@@ -75,14 +75,14 @@ describe('orion tick', () => {
     expect(stderr.some((l) => l.includes('usage is accelerating markedly'))).toBe(false);
     expect(stderr.some((l) => l.startsWith('change: assumptions by analyst'))).toBe(true);
     const second = JSON.parse(await orion('tick', 'mini')) as TickReport;
-    expect(second.agent).toBeNull(); // the deep run today satisfies the schedule
+    expect(second.agent).toBeNull(); // the bootstrap today satisfies the schedule
     expect(lines('ticks.jsonl')).toHaveLength(2);
     expect((lines('signals.jsonl') as typeof signals).map((s) => s.provenance.assumption_set_version)).toEqual([1, 2, 2]);
   });
 
   it('--no-agent reports what would have run, starts nothing, and records no firing', async () => {
     const report = JSON.parse(await orion('tick', 'mini', '--no-agent')) as TickReport;
-    expect(report).toMatchObject({ agent: null, agent_would_run: { run_type: 'deep', trigger_kind: 'schedule' }, triggers_recorded: false });
+    expect(report).toMatchObject({ agent: null, agent_would_run: { run_type: 'bootstrap', trigger_kind: 'schedule' }, triggers_recorded: false });
     expect(await orion('agent', 'runs', 'list')).toBe('no agent runs');
     expect(exitCodes).toEqual([]);
   });

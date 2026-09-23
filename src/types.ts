@@ -11,7 +11,7 @@ export const PROVENANCE_RANK: Record<Provenance, number> = { onchain: 0, api: 1,
 export type ObservationSource = 'onchain' | 'api' | 'manual';
 export type ObservationStatus = 'confirmed' | 'provisional' | 'rejected';
 
-export const RUN_TYPES = ['weekly', 'triage', 'deep'] as const;
+export const RUN_TYPES = ['weekly', 'triage', 'deep', 'bootstrap'] as const;
 export type RunType = (typeof RUN_TYPES)[number];
 
 export const MS_PER_DAY = 86_400_000;
