@@ -4,7 +4,7 @@ import { advanceCursor, getCursor } from '../db/fetchCursors.js';
 import type { FlowConflict, SourceOutcome } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
 import { MS_PER_DAY } from '../types.js';
-import { findFlowConflicts, overlapMs } from './flow.js';
+import { findFlowConflicts } from './flow.js';
 import { addDays, dayStartMs, utcDay } from './time.js';
 import type { DailyPoint, WrittenObservation } from './types.js';
 
@@ -60,8 +60,26 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
 
   // 1. Range: completed UTC days only, from the cursor (less the revision window) or the backfill start.
   const lastCompleteDay = addDays(utcDay(args.now.getTime()), -1);
+  const windowStart = utcDay(args.now.getTime() - args.backfillDays * MS_PER_DAY);
   const cursor = getCursor(db, asset.id, args.scanKey);
-  const startDay = cursor && !args.rescan ? addDays(cursor.lastDay, 1 - REVISION_DAYS) : utcDay(args.now.getTime() - args.backfillDays * MS_PER_DAY);
+  const byDay = new Map(args.points.map((p) => [p.day, p.value]));
+  const stored = storedApiDays(db, asset.id, metricKey);
+  let startDay = windowStart;
+  if (cursor && !args.rescan) {
+    // Revisions: the last REVISION_DAYS written days are read again. Gaps: a day inside the backfill window that the
+    // series had not aggregated when the cursor passed it is retried on every run until it appears (from the series'
+    // first day on, so a series that starts late is not treated as a gap).
+    startDay = addDays(cursor.lastDay, 1 - REVISION_DAYS);
+    const seriesFirst = [...byDay.keys()].sort()[0];
+    if (seriesFirst !== undefined) {
+      for (let day = seriesFirst > windowStart ? seriesFirst : windowStart; day < startDay; day = addDays(day, 1)) {
+        if (!stored.has(day)) {
+          startDay = day;
+          break;
+        }
+      }
+    }
+  }
   if (startDay > lastCompleteDay) {
     outcome.notes.push(`${metricKey}: no completed day to write: the last complete day is ${lastCompleteDay} and the series is already there`);
     return result;
@@ -88,14 +106,20 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
 
   // 3. The days, oldest first. A day the API has not aggregated yet is skipped, not written as zero; a day already stored
   //    at the same value is left alone; a changed value supersedes the day's row. One transaction: the series is in memory.
-  const byDay = new Map(args.points.map((p) => [p.day, p.value]));
-  const stored = storedApiDays(db, asset.id, metricKey);
   const skipped: string[] = [];
   const revised: string[] = [];
   let newest: string | null = cursor && !args.rescan ? cursor.lastDay : null;
-  const retired = new Set<number>();
+  const retired: number[] = [];
 
   const writeDays = () => {
+    // --adopt retires every overlapping manual row up front, whether or not the day it covers is rewritten: a row left
+    // beside API rows for the same day would be counted twice, and the next plain fetch would be refused again.
+    if (!dryRun) {
+      for (const c of conflicts) {
+        rejectObservation(db, c.observationId);
+        retired.push(c.observationId);
+      }
+    }
     for (let day = startDay; day <= lastCompleteDay; day = addDays(day, 1)) {
       const value = byDay.get(day);
       if (value === undefined) {
@@ -112,12 +136,6 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
       const observedAt = new Date(dayEndMs).toISOString();
       let observationId: number | null = null;
       if (!dryRun) {
-        for (const c of conflicts) {
-          if (retired.has(c.observationId) || overlapMs(c, dayEndMs - MS_PER_DAY, dayEndMs) <= 0) continue;
-          rejectObservation(db, c.observationId);
-          retired.add(c.observationId);
-          outcome.retiredObservationIds.push(c.observationId);
-        }
         observationId = insertObservation(db, {
           assetId: asset.id, metricKey, observedAt, periodDays: 1, value, source: 'api', sourceDetail: args.detail, fetchedAt: nowIso,
         }).id;
@@ -131,6 +149,7 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
   // IMMEDIATE: each insert reads for rows to supersede before it writes; see runValuation for why deferred fails.
   if (dryRun) writeDays();
   else db.transaction(writeDays).immediate();
+  outcome.retiredObservationIds.push(...retired); // after the commit: a rolled-back transaction retired nothing
 
   if (result.written.length > 0) outcome.metricsWritten.push(metricKey);
   else outcome.notes.push(`${metricKey}: no new or revised day in ${startDay} to ${lastCompleteDay}`);

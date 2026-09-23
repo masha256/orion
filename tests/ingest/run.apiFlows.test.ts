@@ -95,4 +95,38 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     expect(listActiveObservations(h.db, 'hype', METRIC)).toEqual([]);
     expect(getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)).toBeNull();
   });
+
+  it('--adopt retires a manual row that overlaps only unchanged days, so nothing is counted twice', async () => {
+    const h = world(SERIES);
+    await fetch(h);
+    const manual = insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-18T06:00:00Z', periodDays: 1, value: 777, source: 'manual', fetchedAt: '2026-09-18T06:00:00Z' });
+    const refused = await fetch(h);
+    expect(source(refused)).toMatchObject({ status: 'skipped', metricsWritten: [] });
+    const adopted = await fetch(h, { adopt: true });
+    expect(source(adopted)).toMatchObject({ status: 'ok', retiredObservationIds: [manual.id] });
+    expect(listActiveObservations(h.db, 'hype', METRIC).some((o) => o.source === 'manual')).toBe(false);
+    const plain = await fetch(h);
+    expect(source(plain)).toMatchObject({ status: 'ok' });
+  });
+
+  it('reports no retirement when the transaction rolled back', async () => {
+    const h = world({ ...SERIES, '2026-09-18': -5 });
+    const manual = insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-15', periodDays: 1, value: 5000, source: 'manual', fetchedAt: '2026-09-15T00:00:00Z' });
+    const r = await fetch(h, { adopt: true });
+    expect(source(r)).toMatchObject({ status: 'failed', retiredObservationIds: [] });
+    expect(listActiveObservations(h.db, 'hype', METRIC)).toHaveLength(1);
+  });
+
+  it('picks up a day that appeared later than the revision window', async () => {
+    const h = world({ '2026-09-14': 100, '2026-09-15': 110, '2026-09-17': 130, '2026-09-18': 140 });
+    await fetch(h);
+    const later = new Date('2026-09-22T12:00:00.000Z');
+    const r2 = await fetch(world({ '2026-09-14': 100, '2026-09-15': 110, '2026-09-17': 130, '2026-09-18': 140, '2026-09-19': 150, '2026-09-20': 160, '2026-09-21': 170 }, { db: h.db, now: later }));
+    expect(r2.written.map((w) => w.observedAt.slice(0, 10))).toEqual(['2026-09-20', '2026-09-21', '2026-09-22']);
+    expect(getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)!.lastDay).toBe('2026-09-21');
+    expect(source(r2).notes.join('\n')).toMatch(/skipped: 2026-09-16/);
+    const r3 = await fetch(world({ '2026-09-14': 100, '2026-09-15': 110, '2026-09-16': 120, '2026-09-17': 130, '2026-09-18': 140, '2026-09-19': 150, '2026-09-20': 160, '2026-09-21': 170 }, { db: h.db, now: later }));
+    expect(r3.written.map((w) => [w.observedAt.slice(0, 10), w.value])).toEqual([['2026-09-17', 120]]);
+    expect(byDay(h)['2026-09-17']).toBe(120);
+  });
 });

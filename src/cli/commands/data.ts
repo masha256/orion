@@ -103,7 +103,7 @@ export function registerData(program: Command, ctx: CliContext): void {
     .command('fetch [asset]')
     .description('fetch observations from the sources in the asset YAML; with no asset, every asset that has a source')
     .option('--metric <key>', 'fetch only this metric (repeatable)', collect, [])
-    .option('--backfill-days <n>', 're-scan transfer flows this many days back, ignoring the saved cursor')
+    .option('--backfill-days <n>', 're-scan flows (transfer scans and API series) this many days back, ignoring the saved cursor')
     .option('--adopt', 'reject manual flow rows that overlap the fetched days, in the same transaction')
     .option('--dry-run', 'read and cross-check, print what would be written, write nothing')
     .option('--json', 'JSON output')
