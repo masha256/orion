@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { buildInbox, emptyInbox, inboxLines, InboxSchema, readingOf } from '../../src/app/inbox.js';
+import { buildInbox, emptyInbox, inboxLines, InboxSchema, readingOf, type Inbox } from '../../src/app/inbox.js';
 import { parseAssetYaml } from '../../src/config/load.js';
 import { startAgentRun } from '../../src/db/agentRuns.js';
 import { decideAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
@@ -120,5 +122,25 @@ describe('inboxLines', () => {
       `anom #${w.open.id}  cross_check_mismatch  price_usd  degrading  seen 2x since 2026-09-18  reading {"primary":10,"check":10.6,"diff_pct":6,"tolerance_pct":2,"primary_source":"coingecko","check_source":"http_json:x"}`,
     ]);
     expect(inboxLines(emptyInbox())).toEqual(['nothing to decide']);
+  });
+});
+
+describe('the Hermes job doc', () => {
+  it('shows a DECISIONS example that is exactly what inboxLines prints, so the two cannot drift', () => {
+    const example: Inbox = {
+      observations: [{
+        id: 41, metric: 'revenue_run_rate_usd', value: 120_000_000, observed_at: '2026-09-15T00:00:00.000Z', period_days: null, unit: 'usd',
+        citation_url: 'https://venice.ai/blog/emissions-update', recorded_by: { persona: 'ai-infra-analyst', agent_run_id: 9 }, move_pct: 20,
+      }],
+      proposals: [{ id: 12, kind: 'assumption_value', persona: 'ai-infra-analyst', agent_run_id: 9, filed_at: '2026-09-21T00:10:00.000Z', effect: { '6m': { from: 24.75, to: 25.9 }, '12m': { from: 35.06, to: 37.1 } } }],
+      anomalies: [{
+        id: 7, kind: 'cross_check_mismatch', metric: 'price_usd', severity: 'degrading', occurrences: 3, first_seen_at: '2026-09-19T00:05:00.000Z', last_seen_at: '2026-09-21T00:05:00.000Z',
+        reading: { primary: 27.46, check: 28.6, diff_pct: 4.15, tolerance_pct: 2, primary_source: 'coingecko', check_source: 'http_json:https://outerface.venice.ai/api/app/vvv/vvv_stats' },
+      }],
+    };
+    const doc = readFileSync(fileURLToPath(new URL('../../docs/ops/hermes-daily-job.md', import.meta.url)), 'utf8');
+    for (const line of inboxLines(InboxSchema.parse(example))) expect(doc).toContain(`    ${line}\n`);
+    expect(doc).toContain('"nothing to decide"');
+    expect(doc).toContain('NEVER fetch a citation_url');
   });
 });

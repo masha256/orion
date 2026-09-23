@@ -2,7 +2,7 @@
 
 Price-target signals for crypto tokens with real value capture. A deterministic engine turns observations and a versioned assumption set into 6-month and 12-month targets, emitted as JSON signals.
 
-Design: `docs/superpowers/specs/2026-09-18-orion-valuation-framework-design.md` (framework) and `docs/superpowers/specs/2026-09-19-orion-ingestion-design.md` (ingestion, anomalies, engine 1.2.0).
+Design: `docs/superpowers/specs/2026-09-18-orion-valuation-framework-design.md` (framework), `docs/superpowers/specs/2026-09-19-orion-ingestion-design.md` (ingestion, anomalies, engine 1.2.0), and `docs/superpowers/specs/2026-09-22-orion-research-first-design.md` (the inbox, decisions by reply, the bootstrap run, API-series flows).
 
 ## Quick start
 
@@ -28,6 +28,7 @@ orion signal emit vvv --out signals.jsonl
 orion data set vvv price_usd 28.10                       # new observation, now
 orion data show vvv revenue_run_rate_usd                 # inspect
 orion data confirm 17                                    # promote a provisional observation
+orion inbox vvv                                          # everything awaiting your decision: rows to confirm, proposals, open anomalies
 orion model assumptions show vvv
 orion model assumptions set vvv rev_growth_y1 0.6 --scenario base --rationale "slower Q4"
 orion model whatif vvv --set regime_multiplier=0.5       # explore, nothing saved
@@ -143,7 +144,7 @@ agent:
 
 **The run lock** is one row per asset in `run_locks`. `orion tick` and `orion agent run` take it; a second one finds it held and exits (`run_in_progress` for tick, exit 0; an error and exit 1 for `agent run`). A lock older than two hours belongs to a process that died: the next acquirer takes it over and marks any `running` agent run of the asset `error/abandoned`. Nothing else takes the lock; SQLite serialises the short commands itself.
 
-**The report** (`ticks.jsonl`, one line per tick) names ids, kinds, counts, and Orion's own codes: `outcome`, the ingest's failed sources and raised anomalies, the signal's id, status, grade, 12m target and delta, the triggers that fired, and the agent run's type, trigger, outcome, token usage, what it committed (by count) and proposed (id and kind), and its signal id. Nothing in it was written by a model or read from a web page.
+**The report** (`ticks.jsonl`, one line per tick) names ids, kinds, counts, and Orion's own codes: `outcome`, the ingest's failed sources and raised anomalies, the signal's id, status, grade, 12m target and delta, the triggers that fired, and the agent run's type, trigger, outcome, token usage, what it committed (by count) and proposed (id and kind), and its signal id; and `inbox`, everything awaiting your decision after the tick: provisional rows with the move against the last confirmed value and their citation URL, pending proposals with their computed effect, open anomalies with their reading. `orion inbox <asset>` prints the same queue. Nothing in it was written by a model or read from a web page; the citation URL is the one model-chosen string, and the Hermes job is told never to fetch one.
 
 ## Maintaining the system
 
@@ -151,15 +152,16 @@ With the cron line in place, the daily signal takes care of itself. What is left
 
 | When | Command | Why |
 |---|---|---|
+| Daily, from the Hermes message | reply `confirm <id>`, `reject <id> <note>`, `approve <id> [note]`, `decline <id> <note>`, `ack <id> <note>`, or `resolve <id> <note>` | The message ends with the inbox; Hermes runs the one command for your reply and reports Orion's answer. `orion inbox vvv` shows the same queue from a session. |
 | Whenever you want the number | `orion signal latest vvv` | Read the latest signal. |
 | Weekly, or when a signal says `degraded` | `orion data anomalies vvv` | See what opened. |
-| After checking an anomaly | `orion data ack <id> --note "..."` or `orion data resolve <id> --note "..."` | Close it. `ack`: understood and accepted. `resolve`: the cause is fixed. |
+| After checking an anomaly | reply `ack <id> <note>` or `resolve <id> <note>` to Hermes, or `orion data ack <id> --note "..."` / `orion data resolve <id> --note "..."` | Close it. `ack`: understood and accepted. `resolve`: the cause is fixed. |
 | Weekly | `orion data sources vvv` | Last fetch outcome and age of the value in force, per metric. |
 | Weekly | `tail update.log` | Catch a source that keeps failing. Three failed runs in a row also open an advisory anomaly. |
-| When the analyst records a revenue disclosure | `orion data confirm <id>` (`orion data show vvv revenue_run_rate_usd` lists the provisional row) | Revenue has no API. The analyst researches it and you confirm it; until you do it stays out of the signal. The advisory `revenue_disclosure_stale` anomaly says when usage has moved since the last figure. |
-| When the analyst records an announced emission cut | `orion data confirm <id>` (`orion inbox vvv` lists the row, dated at the cut's effective date) | Announced cuts exist only on Venice's blog; the analyst records them as future-dated rows on the fetched schedule. Once the date passes, the daily on-chain read takes over. |
+| When the analyst records a revenue disclosure | reply `confirm <id>` to Hermes, or `orion data confirm <id>` (`orion inbox vvv` lists the row) | Revenue has no API. The analyst researches it and you confirm it; until you do it stays out of the signal. The advisory `revenue_disclosure_stale` anomaly says when usage has moved since the last figure. |
+| When the analyst records an announced emission cut | reply `confirm <id>` to Hermes, or `orion data confirm <id>` (the row is dated at the cut's effective date) | Announced cuts exist only on Venice's blog; the analyst records them as future-dated rows on the fetched schedule. Once the date passes, the daily on-chain read takes over. |
 | When your views change | `orion model assumptions set vvv <key> <value> --scenario <s> --rationale "..."` | The next daily run picks it up. |
-| Weekly | `orion agent run vvv --type weekly --out signals.jsonl`, then `orion model proposals list` | The analyst reviews what moved; decide what it proposed. |
+| Weekly | `orion agent run vvv --type weekly --out signals.jsonl`, then `orion model proposals list` | The analyst reviews what moved; decide what it proposed (by reply to Hermes, or `orion model proposals approve` / `reject`). |
 | Monthly | `orion agent run vvv --type deep --out signals.jsonl` | Re-underwrite the thesis; expect structural proposals. |
 | When an anomaly opens | `orion agent run vvv --type triage --anomaly <id> --out signals.jsonl` | It resolves what has passed and proposes an acknowledgement for what will persist. |
 | Rarely | `orion data fetch vvv --backfill-days <n>` | Re-scan burns after an allowlist change, or after adding a metric to the burn scan. |
