@@ -53,6 +53,17 @@ function storedApiDays(db: Db, assetId: string, metricKey: string): Map<string, 
   return days;
 }
 
+/** Every UTC day that an active row of the metric covers, whatever its source: a day here is not a gap. */
+function coveredDays(db: Db, assetId: string, metricKey: string): Set<string> {
+  const days = new Set<string>();
+  for (const o of listActiveObservations(db, assetId, metricKey)) {
+    const endMs = new Date(o.observedAt).getTime();
+    const startMs = endMs - (o.periodDays ?? 1) * MS_PER_DAY;
+    for (let ms = startMs; ms < endMs; ms += MS_PER_DAY) days.add(utcDay(ms));
+  }
+  return days;
+}
+
 export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
   const { db, asset, metricKey, outcome, dryRun } = args;
   const result: ApiFlowResult = { written: [], daily: [] };
@@ -64,23 +75,25 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
   const cursor = getCursor(db, asset.id, args.scanKey);
   const byDay = new Map(args.points.map((p) => [p.day, p.value]));
   const stored = storedApiDays(db, asset.id, metricKey);
-  let startDay = windowStart;
+  // The days to read: with a cursor, the last REVISION_DAYS written days (a revised value supersedes the day's row) plus
+  // any GAP day inside the backfill window, one by one: a day the series had not aggregated when the cursor passed it
+  // and that no active row covers yet. A gap is retried on every run until it appears; the days between a gap and the
+  // revision window are not read again, so an old gap never widens the revision limit. Without a cursor: the window.
+  const startDay = cursor && !args.rescan ? addDays(cursor.lastDay, 1 - REVISION_DAYS) : windowStart;
+  const gapDays: string[] = [];
   if (cursor && !args.rescan) {
-    // Revisions: the last REVISION_DAYS written days are read again. Gaps: a day inside the backfill window that the
-    // series had not aggregated when the cursor passed it is retried on every run until it appears (from the series'
-    // first day on, so a series that starts late is not treated as a gap).
-    startDay = addDays(cursor.lastDay, 1 - REVISION_DAYS);
+    const covered = coveredDays(db, asset.id, metricKey);
     const seriesFirst = [...byDay.keys()].sort()[0];
     if (seriesFirst !== undefined) {
       for (let day = seriesFirst > windowStart ? seriesFirst : windowStart; day < startDay; day = addDays(day, 1)) {
-        if (!stored.has(day)) {
-          startDay = day;
-          break;
-        }
+        if (!covered.has(day)) gapDays.push(day);
       }
     }
   }
-  if (startDay > lastCompleteDay) {
+  const revisionDays: string[] = [];
+  for (let day = startDay; day <= lastCompleteDay; day = addDays(day, 1)) revisionDays.push(day);
+  const days = [...gapDays, ...revisionDays];
+  if (days.length === 0) {
     outcome.notes.push(`${metricKey}: no completed day to write: the last complete day is ${lastCompleteDay} and the series is already there`);
     return result;
   }
@@ -120,7 +133,7 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
         retired.push(c.observationId);
       }
     }
-    for (let day = startDay; day <= lastCompleteDay; day = addDays(day, 1)) {
+    for (const day of days) {
       const value = byDay.get(day);
       if (value === undefined) {
         skipped.push(day);
@@ -152,7 +165,7 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
   outcome.retiredObservationIds.push(...retired); // after the commit: a rolled-back transaction retired nothing
 
   if (result.written.length > 0) outcome.metricsWritten.push(metricKey);
-  else outcome.notes.push(`${metricKey}: no new or revised day in ${startDay} to ${lastCompleteDay}`);
+  else outcome.notes.push(`${metricKey}: no new or revised day in ${startDay} to ${lastCompleteDay}${gapDays.length > 0 ? ` (and ${gapDays.length} gap day(s) still missing)` : ''}`);
   if (revised.length > 0) outcome.notes.push(`${metricKey}: revised by the source, superseded: ${revised.join(', ')}`);
   if (skipped.length > 0) {
     const which = skipped.length <= 5 ? skipped.join(', ') : `${skipped.length} days from ${skipped[0]} to ${skipped[skipped.length - 1]}`;

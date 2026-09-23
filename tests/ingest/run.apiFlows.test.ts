@@ -129,4 +129,32 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     expect(r3.written.map((w) => [w.observedAt.slice(0, 10), w.value])).toEqual([['2026-09-17', 120]]);
     expect(byDay(h)['2026-09-17']).toBe(120);
   });
+
+  it('an old gap does not widen the revision window: a revision behind it is not taken', async () => {
+    const A = { '2026-09-10': 10, '2026-09-11': 11, '2026-09-13': 13, '2026-09-14': 14, '2026-09-15': 15, '2026-09-16': 16, '2026-09-17': 17, '2026-09-18': 18 };
+    const h = world(A);
+    await fetch(h);
+    const r = await fetch(world({ ...A, '2026-09-13': 999 }, { db: h.db }));
+    expect(r.written).toEqual([]);
+    expect(byDay(h)['2026-09-14']).toBe(13);
+    expect(source(r).notes.join('\n')).toMatch(/skipped: 2026-09-12/);
+    expect(source(r).notes.join('\n')).toMatch(/1 gap day\(s\) still missing/);
+    const r2 = await fetch(world({ ...A, '2026-09-13': 999, '2026-09-17': 170 }, { db: h.db }));
+    expect(r2.written.map((w) => [w.observedAt.slice(0, 10), w.value])).toEqual([['2026-09-18', 170]]);
+    expect(byDay(h)['2026-09-14']).toBe(13);
+  });
+
+  it('a manual row filling a day the series never reports is neither a conflict nor a gap', async () => {
+    const A = { '2026-09-10': 10, '2026-09-11': 11, '2026-09-13': 13, '2026-09-14': 14, '2026-09-15': 15, '2026-09-16': 16, '2026-09-17': 17, '2026-09-18': 18 };
+    const h = world(A);
+    await fetch(h);
+    const fill = insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-13T00:00:00Z', periodDays: 1, value: 12, source: 'manual', fetchedAt: '2026-09-19T00:00:00Z' });
+    const r = await fetch(h);
+    expect(source(r)).toMatchObject({ status: 'ok', conflicts: [], retiredObservationIds: [] });
+    expect(source(r).notes.join('\n')).not.toMatch(/skipped/);
+    expect(listActiveObservations(h.db, 'hype', METRIC).find((o) => o.id === fill.id)).toBeDefined();
+    const adopted = await fetch(h, { adopt: true });
+    expect(source(adopted).retiredObservationIds).toEqual([]);
+    expect(listActiveObservations(h.db, 'hype', METRIC).find((o) => o.id === fill.id)).toBeDefined();
+  });
 });
