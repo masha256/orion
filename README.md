@@ -83,6 +83,7 @@ An AI analyst persona maintains the assumptions, looks into anomalies, and resea
 
 ```bash
 orion persona assign vvv ai-infra-analyst                            # once: who covers the asset
+orion persona assign aero onchain-dex-analyst                        # the second asset (assets/aero.yaml): every metric fetched, no manual entry
 orion agent run vvv --type weekly --out signals.jsonl                # review what moved; adjust within its bands
 orion agent run vvv --type triage --anomaly 7 --out signals.jsonl    # look into one anomaly
 orion agent run vvv --type triage --note "https://..." --out signals.jsonl   # a lead to verify; never evidence by itself
