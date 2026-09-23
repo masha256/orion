@@ -1,6 +1,6 @@
 import type { ContractCall } from '../transport/rpc.js';
-import type { SourceContext, SourceValue } from '../types.js';
 import { toFiniteNumber, unitsToNumber } from '../units.js';
+import { number, onchain, readAll, text, view } from './chain.js';
 import type { AdapterDef } from './registry.js';
 
 // Verified live on 2026-09-19: both emission percentages are FRACTIONS scaled by 1e18 (20 percent
@@ -8,36 +8,10 @@ import type { AdapterDef } from './registry.js';
 const FRACTION_DECIMALS = 18;
 const TOKEN_DECIMALS = 18;
 
-const view = (name: string, input = ''): string => `function ${name}(${input}) view returns (uint256)`;
-
-function chain(ctx: SourceContext) {
-  if (!ctx.rpc || !ctx.block) throw new Error('this adapter needs an RPC connection and a block');
-  return { rpc: ctx.rpc, block: ctx.block };
-}
-
-const text = (params: Record<string, unknown>, key: string, fallback: string): string =>
-  typeof params[key] === 'string' ? (params[key] as string) : fallback;
-const number = (params: Record<string, unknown>, key: string, fallback: number): number =>
-  typeof params[key] === 'number' ? (params[key] as number) : fallback;
-
 function requiredUrl(params: Record<string, unknown>): string {
   if (typeof params.url !== 'string' || params.url === '') throw new Error('the "url" param is required');
   return params.url;
 }
-
-async function readAll(ctx: SourceContext, calls: ContractCall[]): Promise<bigint[]> {
-  const { rpc, block } = chain(ctx);
-  const results = await rpc.multicall(calls, block.number);
-  return results.map((r, i) => {
-    if (!r.ok) throw new Error(`${calls[i].functionName}(${(calls[i].args ?? []).join(',')}): ${r.error}`);
-    return r.value;
-  });
-}
-
-const onchain = (ctx: SourceContext, value: number): SourceValue => {
-  const { block } = chain(ctx);
-  return { kind: 'level', value, observedAt: new Date(block.timestamp * 1000).toISOString(), source: 'onchain', detail: `block ${block.number}` };
-};
 
 /** Share of gross emissions paid to stakers: 1 - [p_unlocked * (staked - locked) + p_locked * locked] / staked. */
 const stakerEmissionShare: AdapterDef = {
