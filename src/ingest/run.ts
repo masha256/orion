@@ -11,7 +11,7 @@ import { getAdapter } from './adapters/registry.js';
 import { checkRevenueStale, type IndexPoint } from './alerts.js';
 import { DEFAULT_API_FLOW_BACKFILL_DAYS, writeApiFlow } from './apiFlow.js';
 import { compareLevel, compareMonthly } from './crosscheck.js';
-import { burnMomentum } from './derived.js';
+import { derivedFunction, type DerivedName } from './derived.js';
 import { scanFlowGroup } from './flow.js';
 import { buildPlan, hasSources, type FlowGroup, type SourceBatch } from './plan.js';
 import { sourceId } from './sourceId.js';
@@ -330,14 +330,17 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   for (const r of plan.derived) {
     if (r.source.type !== 'derived') continue;
     const outcome = outcomeOf(sourceId(r.source));
+    const name = r.source.name as DerivedName; // buildPlan refused any other name
     const flowMetric = r.source.params.metric;
     const windowDays = r.source.params.days ?? 30;
     if (typeof flowMetric !== 'string' || asset.metrics[flowMetric]?.type !== 'flow') {
-      throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: burn_momentum needs "metric" to name a flow metric`);
+      throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: ${name} needs "metric" to name a flow metric`);
     }
     if (typeof windowDays !== 'number' || !Number.isInteger(windowDays) || windowDays < 1) {
-      throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: burn_momentum "days" must be a positive integer`);
+      throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: ${name} "days" must be a positive integer`);
     }
+    // A derivation carries the provenance of its input: an API series' flow gives an api level, a transfer scan's an onchain one.
+    const provenance: 'onchain' | 'api' = asset.metrics[flowMetric].source?.type === 'defillama' ? 'api' : 'onchain';
     const days = storedDailyFlow(db, asset.id, flowMetric);
     for (const p of scannedDaily.get(flowMetric) ?? []) days.set(p.day, p.value);
     // Keyed by observedAt: a re-scan (--backfill-days) can change a stored day's value, which changes
@@ -345,16 +348,16 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     // changed value must be rewritten (insertObservation supersedes the row at the same observedAt).
     const have = new Map(listActiveObservations(db, asset.id, r.metricKey).map((o) => [o.observedAt, o.value]));
     let wrote = 0;
-    for (const point of burnMomentum(days, windowDays)) {
+    for (const point of derivedFunction(name)(days, windowDays)) {
       const observedAt = new Date(new Date(`${point.day}T00:00:00.000Z`).getTime() + MS_PER_DAY).toISOString(); // the day's period end
       if (have.get(observedAt) === point.value) continue;
       const observationId = dryRun
         ? null
         : insertObservation(db, {
-            assetId: asset.id, metricKey: r.metricKey, observedAt, value: point.value, source: 'onchain',
-            sourceDetail: `derived burn_momentum(${flowMetric}, ${windowDays}d)`, fetchedAt: startedAt,
+            assetId: asset.id, metricKey: r.metricKey, observedAt, value: point.value, source: provenance,
+            sourceDetail: `derived ${name}(${flowMetric}, ${windowDays}d)`, fetchedAt: startedAt,
           }).id;
-      written.push({ metricKey: r.metricKey, value: point.value, observedAt, periodDays: null, source: 'onchain', observationId });
+      written.push({ metricKey: r.metricKey, value: point.value, observedAt, periodDays: null, source: provenance, observationId });
       if (r.metricKey === STD_METRICS.usageIndex) derivedIndex.push({ observedAt, value: point.value });
       wrote++;
     }

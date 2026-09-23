@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { parseAssetYaml } from '../../src/config/load.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { checkRevenueStale } from '../../src/ingest/alerts.js';
-import { burnMomentum } from '../../src/ingest/derived.js';
+import { burnMomentum, DERIVED_NAMES, flowAnnualized } from '../../src/ingest/derived.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset } from '../../src/ingest/run.js';
 import { addDays } from '../../src/ingest/time.js';
 import type { OrionError } from '../../src/types.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { harness, NOW } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 
@@ -25,6 +27,44 @@ describe('burnMomentum', () => {
   });
   it('counts a zero-burn day as a real reading', () => {
     expect(burnMomentum(days('2026-09-01', [0, 0, 30]), 3)).toEqual([{ day: '2026-09-03', value: 10 }]);
+  });
+});
+
+describe('flowAnnualized', () => {
+  it('is the window sum scaled to a year, for every day that has a complete window', () => {
+    // 10 + 20 + 30 = 60 over 3 days: 60 * 365 / 3 = 7300 per year.
+    expect(flowAnnualized(days('2026-09-01', [10, 20, 30, 40]), 3)).toEqual([{ day: '2026-09-03', value: 7300 }, { day: '2026-09-04', value: 10950 }]);
+  });
+  it('writes nothing until the window is complete, and nothing across a gap', () => {
+    expect(flowAnnualized(days('2026-09-01', [10, 20]), 3)).toEqual([]);
+    const gapped = days('2026-09-01', [10, 20, 30, 40, 50]);
+    gapped.delete('2026-09-03');
+    expect(flowAnnualized(gapped, 2)).toEqual([{ day: '2026-09-02', value: 5475 }, { day: '2026-09-05', value: 16425 }]);
+  });
+  it('is a registered derived name', () => {
+    expect(DERIVED_NAMES).toEqual(['burn_momentum', 'flow_annualized']);
+  });
+});
+
+describe('fetchAsset: a revenue run rate derived from an API-series flow', () => {
+  const LLAMA_HYPE = 'https://api.llama.fi/summary/fees/hyperliquid';
+  const unix = (day: string) => Date.parse(`${day}T00:00:00Z`) / 1000;
+  const chart = (points: Record<string, number>) => ({ totalDataChart: Object.entries(points).map(([d, v]) => [unix(d), v]) });
+  /** The HYPE fixture with its revenue derived from the buyback flow over 3 days, instead of entered by hand. */
+  const yaml = readFileSync(fileURLToPath(new URL('../fixtures/hype.yaml', import.meta.url)), 'utf8').replace(
+    'revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 7, critical: true }',
+    'revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 7, critical: true, source: { type: derived, name: flow_annualized, params: { metric: flow_usd.buyback, days: 3 } } }',
+  );
+
+  it('writes the run rate at each day with a full window, with the api provenance of its input', async () => {
+    const h = harness({ loaded: parseAssetYaml(yaml), routes: { [LLAMA_HYPE]: chart({ '2026-09-14': 100, '2026-09-15': 110, '2026-09-16': 120, '2026-09-17': 130, '2026-09-18': 140 }) } });
+    const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
+    const rows = listActiveObservations(h.db, 'hype', 'revenue_run_rate_usd');
+    expect(rows.map((o) => [o.observedAt.slice(0, 10), o.value])).toEqual([['2026-09-17', (330 * 365) / 3], ['2026-09-18', (360 * 365) / 3], ['2026-09-19', (390 * 365) / 3]]);
+    expect(rows[0]).toMatchObject({ source: 'api', periodDays: null, sourceDetail: 'derived flow_annualized(flow_usd.buyback, 3d)' });
+    expect(r.sources.find((s) => s.sourceId === 'derived:flow_annualized')).toMatchObject({ status: 'ok', metricsWritten: ['revenue_run_rate_usd'] });
+    const again = await fetchAsset(h.db, h.loaded, NOW, h.deps);
+    expect(again.sources.find((s) => s.sourceId === 'derived:flow_annualized')!.notes).toEqual(['revenue_run_rate_usd: no new day with 3 complete days behind it']);
   });
 });
 
