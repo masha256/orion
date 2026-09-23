@@ -164,11 +164,27 @@ describe('tickAsset', () => {
     expect(signals).toHaveLength(1);
   });
 
-  it('bootstrap checks for manual_metrics in the pack', async () => {
-    // Just verify bootstrap runs and has manual_metrics in its pack
-    const { report, exitCode } = await tick([calls(journalCall()), say('Done.')]);
+  it('reports a revaluation failure after a live commit, without discarding it', async () => {
+    // Seed a deep attempt 8 days ago so a weekly is due (not a bootstrap)
+    const earlier = new Date(NOW.getTime() - 8 * 86_400_000).toISOString();
+    const deepId = startAgentRun(h.db, { assetId: 'mini', persona: 'analyst', runType: 'deep', trigger: 'schedule', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: earlier });
+    finishAgentRun(h.db, deepId, { outcome: 'completed', endedAt: earlier, usage: ZERO_USAGE, error: null, summary: null, transcript: [] });
+    // deps.now is called during tick and runAgent: tick's started, dueRunType, runAgent's started, commit, valuation (throw here),
+    // and finish. With a seeded deep attempt, dueRunType makes one extra DB call. The valuation call is the 6th overall.
+    let calledNow = 0;
+    const now = () => {
+      calledNow += 1;
+      if (calledNow === 6) throw new Error('the clock stopped');
+      return h.deps.now();
+    };
+    const { report, exitCode } = await tick([calls(growth()), calls(journalCall()), say('Done.')], {}, { now });
     expect(exitCode).toBe(0);
-    expect(report.agent).toMatchObject({ run_type: 'bootstrap', outcome: 'completed' });
+    expect(report.agent).toMatchObject({
+      run_type: 'weekly', outcome: 'completed', committed: { assumption_set_version: 2 }, signal_id: null, error: { code: 'valuation_error' },
+    });
+    expect(report.agent!.error!.message).toContain('the clock stopped');
+    expect(getLatestAssumptionSet(h.db, 'mini')!.version).toBe(2);
+    expect(progress.some((l) => l.includes('committed but the revaluation failed: Error: the clock stopped'))).toBe(true);
   });
 
   it('under --no-agent evaluates without recording and says what would have run', async () => {

@@ -128,12 +128,13 @@ describe('dueRunType', () => {
     expect(dueRunType(db, asset, daysLater(6))).toBeNull();
     expect(dueRunType(db, asset, daysLater(7))).toBe('bootstrap');
     attempt('bootstrap', { at: daysLater(7) });
-    expect(dueRunType(db, asset, daysLater(8))).toBeNull();
-    expect(dueRunType(db, asset, daysLater(14))).toBe('bootstrap');
+    expect(dueRunType(db, asset, daysLater(14))).toBe('bootstrap'); // retries every 7 days without a set
     attempt('bootstrap', { at: daysLater(14) });
-    // Now create a set and verify the normal schedule takes over
-    createAssumptionSet(db, { assetId: 'mini', author: 'user', rationale: 'initial', values: miniAssumptions(), createdAt: daysLater(14).toISOString() });
-    expect(dueRunType(db, asset, daysLater(21))).toBe('weekly');
-    expect(dueRunType(db, asset, daysLater(44))).toBe('deep');
+    expect(dueRunType(db, asset, daysLater(21))).toBe('bootstrap');
+    attempt('bootstrap', { at: daysLater(21) });
+    // Create a set and verify normal schedule takes over
+    createAssumptionSet(db, { assetId: 'mini', author: 'user', rationale: 'initial', values: miniAssumptions(), createdAt: daysLater(21).toISOString() });
+    expect(dueRunType(db, asset, daysLater(28))).toBe('weekly'); // 7 days after day 21
+    expect(dueRunType(db, asset, daysLater(51))).toBe('deep'); // 30 days after day 21
   });
 });

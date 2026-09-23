@@ -26,8 +26,7 @@ const pack = (trigger = {}, yaml?: string, now = AS_OF): Record<string, any> => 
 describe('the context pack', () => {
   it('shows the drivers, the observations behind them, and marks those observations as shown', () => {
     const p = pack();
-    expect(p.asset).toMatchObject({ id: 'mini', symbol: 'MINI', name: 'Mini Test Asset' });
-    expect(p.asset.manual_metrics).toEqual(['effective_supply', 'emission_rate_annual', 'flow_usd.fees', 'revenue_run_rate_usd', 'staked_supply', 'staker_emission_share']);
+    expect(p.asset).toEqual({ id: 'mini', symbol: 'MINI', name: 'Mini Test Asset', manual_metrics: ['effective_supply', 'emission_rate_annual', 'flow_usd.fees', 'revenue_run_rate_usd', 'staked_supply', 'staker_emission_share'] });
     expect(p.run).toMatchObject({ type: 'weekly', now: AS_OF, assumption_set_version: 1, budgets: DEFAULT_BUDGETS.weekly });
     expect(p.drivers_now.drivers.price).toMatchObject({ value: 10, provenance: 'onchain', age_days: 1 });
     expect(p.observations_in_force.map((o: { id: number }) => o.id).sort()).toEqual(Object.values(w.ids).sort());
