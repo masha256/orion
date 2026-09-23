@@ -2,6 +2,7 @@ import type { ModelClient } from '../agent/model.js';
 import { runAgent, type RunTriggerContext } from '../agent/run.js';
 import { cadenceFor } from '../config/agentPolicy.js';
 import type { LoadedAsset } from '../config/load.js';
+import { getLatestAssumptionSet } from '../db/assumptions.js';
 import type { Db } from '../db/connection.js';
 import { getProposal } from '../db/proposals.js';
 import { getRunLock } from '../db/runLocks.js';
@@ -116,9 +117,11 @@ export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps, opt
       const unhandled = evaluation.standing.filter((f) => f.agentRunId === null);
       const firings = [...evaluation.fired, ...unhandled];
       const due = dueRunType(db, asset, deps.now());
+      // Without a set only a bootstrap can run (cadence), and a triage would die at preflight: the firings wait for the next bootstrap.
+      const triageAllowed = getLatestAssumptionSet(db, asset.id) !== null;
       const choice: { runType: RunType; trigger: RunTriggerContext } | null = due
         ? { runType: due, trigger: { kind: 'schedule', firings } }
-        : firings.length > 0
+        : firings.length > 0 && triageAllowed
           ? { runType: 'triage', trigger: { kind: 'trigger', firings } }
           : null;
       if (!choice) return;

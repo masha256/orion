@@ -59,7 +59,8 @@ function coveredDays(db: Db, assetId: string, metricKey: string): Set<string> {
   for (const o of listActiveObservations(db, assetId, metricKey)) {
     const endMs = new Date(o.observedAt).getTime();
     const startMs = endMs - (o.periodDays ?? 1) * MS_PER_DAY;
-    for (let ms = startMs; ms < endMs; ms += MS_PER_DAY) days.add(utcDay(ms));
+    // From the start of the first day: a row not at midnight covers the day it ends in as well.
+    for (let ms = dayStartMs(utcDay(startMs)); ms < endMs; ms += MS_PER_DAY) days.add(utcDay(ms));
   }
   return days;
 }
@@ -68,6 +69,8 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
   const { db, asset, metricKey, outcome, dryRun } = args;
   const result: ApiFlowResult = { written: [], daily: [] };
   const nowIso = args.now.toISOString();
+  // An empty series fails the source, so the failure streak can trip; an empty day list is only a note.
+  if (args.points.length === 0) throw new Error('the series has no days');
 
   // 1. Range: completed UTC days only, from the cursor (less the revision window) or the backfill start.
   const lastCompleteDay = addDays(utcDay(args.now.getTime()), -1);
@@ -93,6 +96,7 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
   const revisionDays: string[] = [];
   for (let day = startDay; day <= lastCompleteDay; day = addDays(day, 1)) revisionDays.push(day);
   const days = [...gapDays, ...revisionDays];
+  const gapDaySet = new Set(gapDays);
   if (days.length === 0) {
     outcome.notes.push(`${metricKey}: no completed day to write: the last complete day is ${lastCompleteDay} and the series is already there`);
     return result;
@@ -121,6 +125,8 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
   //    at the same value is left alone; a changed value supersedes the day's row. One transaction: the series is in memory.
   const skipped: string[] = [];
   const revised: string[] = [];
+  // A gap day whose value the metric cannot store is skipped and stays a gap; inside the revision range it fails the batch.
+  const unstorable: string[] = [];
   let newest: string | null = cursor && !args.rescan ? cursor.lastDay : null;
   const retired: number[] = [];
 
@@ -140,7 +146,13 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
         continue;
       }
       const refusal = args.validate(value);
-      if (refusal !== null) throw new Error(`${day}: ${refusal}`);
+      if (refusal !== null) {
+        if (gapDaySet.has(day)) {
+          unstorable.push(`${day}: ${refusal}`);
+          continue;
+        }
+        throw new Error(`${day}: ${refusal}`);
+      }
       result.daily.push({ day, value });
       const have = stored.get(day);
       if (have === value) continue;
@@ -171,6 +183,7 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
     const which = skipped.length <= 5 ? skipped.join(', ') : `${skipped.length} days from ${skipped[0]} to ${skipped[skipped.length - 1]}`;
     outcome.notes.push(`${metricKey}: not in the series, skipped: ${which}`);
   }
+  if (unstorable.length > 0) outcome.notes.push(`${metricKey}: not storable, skipped (still a gap): ${unstorable.join('; ')}`);
   if (dryRun && conflicts.length > 0) outcome.notes.push(`--adopt would reject ${conflicts.map((c) => `#${c.observationId}`).join(', ')}`);
   return result;
 }

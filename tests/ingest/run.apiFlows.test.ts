@@ -157,4 +157,41 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     expect(source(adopted).retiredObservationIds).toEqual([]);
     expect(listActiveObservations(h.db, 'hype', METRIC).find((o) => o.id === fill.id)).toBeDefined();
   });
+
+  it('skips an unstorable value on a gap day instead of failing every run', async () => {
+    const S = { '2026-09-14': -5, '2026-09-15': 110, '2026-09-17': 130, '2026-09-18': 140, '2026-09-19': 999 };
+    const h = world(S);
+    const first = await fetch(h, { backfillDays: 3 }); // reads 09-16..09-18: 09-16 is absent, so 09-17 and 09-18 are written
+    expect(source(first)).toMatchObject({ status: 'ok' });
+    const afterFirst = byDay(h);
+    expect(afterFirst).toEqual({ '2026-09-18': 130, '2026-09-19': 140 });
+    expect(getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)!.lastDay).toBe('2026-09-18');
+    // The 90-day window makes 09-14 and 09-15 gap days: 09-14 cannot be stored and stays a gap, 09-15 is taken.
+    for (let run = 0; run < 2; run++) {
+      const r = await fetch(world(S, { db: h.db }));
+      expect(source(r).status).toBe('ok');
+      expect(source(r).notes.join('\n')).toMatch(/not storable, skipped \(still a gap\): 2026-09-14: -5 is negative/);
+      expect(byDay(h)).toEqual({ ...afterFirst, '2026-09-16': 110 });
+    }
+  });
+
+  it('a manual row not at midnight covers both days it touches', async () => {
+    const A = { '2026-09-10': 10, '2026-09-11': 11, '2026-09-13': 13, '2026-09-14': 14, '2026-09-15': 15, '2026-09-16': 16, '2026-09-17': 17, '2026-09-18': 18 };
+    const h = world(A);
+    await fetch(h);
+    // Covers 09-11T12:00 to 09-12T12:00: half of 09-11 and half of 09-12, both before the revision range 09-16..09-18.
+    const manual = insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-12T12:00:00Z', periodDays: 1, value: 777, source: 'manual', fetchedAt: '2026-09-19T00:00:00Z' });
+    const r = await fetch(world({ ...A, '2026-09-12': 12 }, { db: h.db }));
+    expect(source(r)).toMatchObject({ status: 'ok', conflicts: [], retiredObservationIds: [] });
+    expect(r.written).toEqual([]);
+    expect(byDay(h)['2026-09-13']).toBeUndefined(); // the day 09-12 is not written beside the manual row
+    expect(listActiveObservations(h.db, 'hype', METRIC).find((o) => o.id === manual.id)).toBeDefined();
+  });
+
+  it('fails the source on an empty series', async () => {
+    const h = world({});
+    const r = await fetch(h);
+    expect(source(r).status).toBe('failed');
+    expect(source(r).error).toMatch(/no days/);
+  });
 });

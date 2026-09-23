@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildProgram } from '../../src/cli/program.js';
+import { openDb } from '../../src/db/connection.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
 import { AS_OF } from '../helpers/obs.js';
 
@@ -129,6 +130,18 @@ describe('orion cli', () => {
     expect(confirmed.status).toBe('confirmed');
     expect(await orion('inbox', 'mini')).toBe('nothing to decide');
     await expect(orion('data', 'set', 'mini', 'price_usd', '1', '--provisional')).rejects.toThrow(/citation/);
+  });
+
+  it('guards the inbox when a stored proposal has a shape the schema does not expect', async () => {
+    await orion('inbox', 'mini'); // creates the database
+    const db = openDb(join(home, 'orion.db'));
+    db.prepare("INSERT INTO proposals (asset_id, persona, agent_run_id, kind, change_json, filed_against_json, rationale, evidence_json, effect_json, status, created_at) VALUES ('mini', 'analyst', NULL, 'config', '{}', '{}', 'r', '[]', '{\"weird\": 1}', 'pending', ?)").run(AS_OF);
+    db.close();
+    const lines: string[] = [];
+    const errors: string[] = [];
+    await buildProgram({ home, stdout: (l) => lines.push(l), stderr: (l) => errors.push(l), now: () => new Date(AS_OF) }).parseAsync(['inbox', 'mini'], { from: 'user' });
+    expect(lines.join('\n')).toBe('nothing to decide');
+    expect(errors.some((l) => /^warning: the inbox could not be built \(.+\); nothing is listed$/s.test(l))).toBe(true);
   });
 
   it('accepts --json on signal emit, same as every other command', async () => {

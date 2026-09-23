@@ -285,4 +285,20 @@ describe('tickAsset', () => {
     expect(report.inbox).toEqual({ observations: [], proposals: [], anomalies: [] });
     expect(progress.some((l) => l.startsWith('warning: the inbox could not be built'))).toBe(true);
   });
+
+  it('launches no triage without an assumption set: the firings wait for the next bootstrap', async () => {
+    h.db.prepare('DELETE FROM assumptions').run();
+    h.db.prepare('DELETE FROM assumption_sets').run();
+    attempted('bootstrap');
+    const a = raiseAnomaly(h.db, { assetId: 'mini', kind: 'source_failure_streak', metricKey: '', dedupeKey: 'cg', severity: 'degrading', detail: {}, seenAt: NOW.toISOString() });
+    const { report } = await tick();
+    expect(report.agent).toBeNull();
+    expect(report.error).toBeNull();
+    expect(report.triggers_fired).toMatchObject([{ kind: 'open_anomaly', key: String(a.id) }]);
+    expect(listFirings(h.db, 'mini')).toMatchObject([{ kind: 'open_anomaly', key: String(a.id), agentRunId: null }]);
+    const next = await tick();
+    expect(next.report.agent).toBeNull();
+    expect(next.report.triggers_standing).toEqual([{ kind: 'open_anomaly', key: String(a.id), agent_run_id: null }]);
+    expect(model.requests).toHaveLength(0);
+  });
 });

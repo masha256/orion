@@ -3,7 +3,7 @@ import { narrow, type DailyPoint, type ReadingResult, type SourceHandler } from 
 
 export const DEFILLAMA_API = 'https://api.llama.fi';
 
-/** A daily USD series from DefiLlama's fees summary. Cross-check use only: it is never an observation. */
+/** A daily USD series from DefiLlama's fees summary. As a cross-check it is compared monthly; as a flow primary its days are written by src/ingest/apiFlow.ts. */
 export const defillamaSource: SourceHandler = {
   id: 'defillama',
   async fetch(requests, ctx) {
