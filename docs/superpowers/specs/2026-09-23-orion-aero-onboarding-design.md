@@ -1,6 +1,6 @@
 # Orion sub-project 6: AERO onboarding
 
-Date: 2026-09-23. Status: design approved in brainstorming; not yet planned.
+Date: 2026-09-23. Status: planned (`docs/superpowers/plans/2026-09-23-orion-aero-onboarding.md`, generated from a per-task prototype and verified by extraction); section 11 records the planning amendments.
 
 Extends `docs/superpowers/specs/2026-09-18-orion-valuation-framework-design.md` (section 3.7, the AERO contrast case), `docs/superpowers/specs/2026-09-19-orion-ingestion-design.md` (sources, adapters, derived metrics), and `docs/superpowers/specs/2026-09-22-orion-research-first-design.md` (the DefiLlama flow primary, the bootstrap, the inbox). Where this document and those differ, this one wins for the items it covers.
 
@@ -135,3 +135,10 @@ The four shipped skills load unchanged. `orion persona assign aero onchain-dex-a
 - **Incentives to lockers** (bribes) are a second income stream with no usable series; the holder flow is fees only and understates lockers' income. Revisit if a source appears.
 - **CoinGecko's circulating supply** is its own definition (about 0.99B against 0.93B unlocked on chain); it is informational under `effective_total`.
 - **The revenue run rate is a 30-day trailing figure**, so the deviation trigger compares a trailing average against the assumption-implied path; a sharp volume move shows up with a lag of weeks.
+
+## 11. Amendments made during planning (2026-09-23)
+
+1. **The annual emission rate uses the engine's 365-day year (5).** The adapter multiplies the gross weekly mint by `DAYS_PER_YEAR / 7` (52.14), not 365.25/7, because the annual rate is what the engine spreads over its own year. About 246.8M AERO a year against 246.9M.
+2. **`Minter.sol` confirmed (2.1):** the tail emission multiplies `aero.totalSupply()`, the regime test is `weekly < TAIL_START`, and `weekly` is not updated in the tail. The adapters follow the contract.
+3. **The shared chain helpers** used by the VVV and AERO adapters live in `src/ingest/adapters/chain.ts` (5).
+4. **Live dry run during planning (7, step 3):** every source ok on 2026-09-23T21:38Z; price 0.669045 against 0.6686 on DefiLlama; 90 fee days, the newest 244,825 USD; the run rate 172.9M USD a year; the rebase share 0.0972. The user's checkpoint repeats it on the live home.
