@@ -111,10 +111,10 @@ An empty inbox prints `nothing to decide`. A non-empty inbox is not by itself an
 |---|---|
 | `confirm <id>` | `node dist/cli/index.js data confirm <id> --json` (confirm takes no note; words after the id are ignored and Hermes says so) |
 | `reject <id>` | `node dist/cli/index.js data reject <id> --json` (reject takes no note either: observations carry no note column; amendment 9) |
-| `approve <id> [note]` | `node dist/cli/index.js model proposals approve <id> [--note "<note>"] --json` |
-| `decline <id> <note>` | `node dist/cli/index.js model proposals reject <id> --note "<note>" --json` |
-| `ack <id> <note>` | `node dist/cli/index.js data ack <id> --note "<note>" --json` |
-| `resolve <id> <note>` | `node dist/cli/index.js data resolve <id> --note "<note>" --json` |
+| `approve <id> [note]` | `node dist/cli/index.js model proposals approve <id> [--note '<note>'] --json` |
+| `decline <id> <note>` | `node dist/cli/index.js model proposals reject <id> --note '<note>' --json` |
+| `ack <id> <note>` | `node dist/cli/index.js data ack <id> --note '<note>' --json` |
+| `resolve <id> <note>` | `node dist/cli/index.js data resolve <id> --note '<note>' --json` |
 
 `decline` rather than `reject` for a proposal so one word never names two queues. The note is the user's words after the id, verbatim, passed to the command as one argument with no shell interpretation (amendment 12); a verb that requires a note and gets none is answered with a request for one, not a default. Hermes runs the command exactly once, prints Orion's JSON result and exit code verbatim, and stops. Several decisions in one reply are run in the order written, each once, stopping at the first failure.
 

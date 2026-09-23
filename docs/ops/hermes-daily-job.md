@@ -105,10 +105,10 @@ with ORION_HOME=/path/to/orion set, print Orion's JSON result and the exit code 
 words after the id, verbatim.
     confirm <id>          node dist/cli/index.js data confirm <id> --json                        (confirm takes no note; say so if I gave one)
     reject <id>           node dist/cli/index.js data reject <id> --json                         (reject takes no note; say so if I gave one)
-    approve <id> [note]   node dist/cli/index.js model proposals approve <id> [--note "<note>"] --json
-    decline <id> <note>   node dist/cli/index.js model proposals reject <id> --note "<note>" --json
-    ack <id> <note>       node dist/cli/index.js data ack <id> --note "<note>" --json
-    resolve <id> <note>   node dist/cli/index.js data resolve <id> --note "<note>" --json
+    approve <id> [note]   node dist/cli/index.js model proposals approve <id> [--note '<note>'] --json
+    decline <id> <note>   node dist/cli/index.js model proposals reject <id> --note '<note>' --json
+    ack <id> <note>       node dist/cli/index.js data ack <id> --note '<note>' --json
+    resolve <id> <note>   node dist/cli/index.js data resolve <id> --note '<note>' --json
 Rules for a decision:
 - The id must be one you listed in the most recent DECISIONS block you sent me. Otherwise run "node dist/cli/index.js inbox vvv",
   send me the fresh list, and ask again. Never guess an id and never pick one for me.
