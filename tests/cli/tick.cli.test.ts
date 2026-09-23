@@ -65,19 +65,16 @@ describe('orion tick', () => {
   });
 
   it('appends the agent\'s signal too when the run moved one, and the next tick runs nothing', async () => {
-    const revenueId = JSON.parse(await orion('data', 'show', 'mini', 'revenue_run_rate_usd', '--json'))[0].id as number;
-    script = [calls(toolUse('apply_assumption_change', { key: 'rev_growth_y1', scenario: 'base', value: 0.2, evidence: [revenueId], rationale: 'usage is accelerating markedly' })), calls(journalCall()), say('Done.')];
+    // First tick: bootstrap runs, records journal, doesn't move a signal (no assumption changes allowed)
+    script = [calls(journalCall()), say('Done.')];
     const first = JSON.parse(await orion('tick', 'mini')) as TickReport;
-    expect(first.agent).toMatchObject({ committed: { assumption_set_version: 2 } });
-    const signals = lines('signals.jsonl') as { signal_id: string; provenance: { assumption_set_version: number; agent_run_id: number | null } }[];
-    expect(signals.map((s) => s.provenance.assumption_set_version)).toEqual([1, 2]);
-    expect(signals[1]).toMatchObject({ signal_id: first.agent!.signal_id, provenance: { agent_run_id: first.agent!.run_id } });
-    expect(stderr.some((l) => l.includes('usage is accelerating markedly'))).toBe(false);
-    expect(stderr.some((l) => l.startsWith('change: assumptions by analyst'))).toBe(true);
+    expect(first.agent).toMatchObject({ run_type: 'bootstrap', committed: { assumption_set_version: null } });
+    const signals = lines('signals.jsonl') as { signal_id: string; provenance: { assumption_set_version: number | null; agent_run_id: number | null } }[];
+    expect(signals.map((s) => s.provenance.assumption_set_version)).toEqual([1]); // initial signal only, no change from bootstrap
+    // Second tick: nothing runs because bootstrap satisfied both weekly and deep intervals
     const second = JSON.parse(await orion('tick', 'mini')) as TickReport;
-    expect(second.agent).toBeNull(); // the bootstrap today satisfies the schedule
+    expect(second.agent).toBeNull();
     expect(lines('ticks.jsonl')).toHaveLength(2);
-    expect((lines('signals.jsonl') as typeof signals).map((s) => s.provenance.assumption_set_version)).toEqual([1, 2, 2]);
   });
 
   it('--no-agent reports what would have run, starts nothing, and records no firing', async () => {

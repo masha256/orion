@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { AGENT_TOOLS, toApiTools } from '../../src/agent/tools/index.js';
+import { AGENT_TOOLS, runTool, toApiTools } from '../../src/agent/tools/index.js';
 import { decideAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
 import { valueInForce } from '../../src/app/eligibility.js';
 import { confirmObservation, insertObservation } from '../../src/db/observations.js';
@@ -370,6 +370,23 @@ describe('propose_change', () => {
     // A different anomaly is a different proposal, however similar the words.
     const third = anomaly('advisory', 'c');
     expect(propose({ kind: 'acknowledge_anomaly', anomaly_id: third.id, rationale: 'first wording' }).isError).toBe(false);
+  });
+
+  it('is closed to config edits on a bootstrap run', () => {
+    const outcome = runTool(AGENT_TOOLS, { ...w.ctx, runType: 'bootstrap' }, 'propose_change', {
+      kind: 'config',
+      edits: [{ path: ['scenario_probabilities'], value: { bear: 0.15, base: 0.6, bull: 0.25 } }],
+      rationale: 'because',
+    });
+    expect(outcome.isError).toBe(true);
+    expect(JSON.parse(outcome.content).refused).toBe('not_in_bootstrap');
+    // The same call with w.ctx (weekly) must not be refused for that reason
+    const outcome2 = runTool(AGENT_TOOLS, w.ctx, 'propose_change', {
+      kind: 'config',
+      edits: [{ path: ['scenario_probabilities'], value: { bear: 0.15, base: 0.6, bull: 0.25 } }],
+      rationale: 'because',
+    });
+    expect(outcome2.isError).toBe(false);
   });
 });
 

@@ -5,10 +5,11 @@ import { dueRunType } from '../../src/app/cadence.js';
 import { cadenceFor, DEFAULT_CADENCE } from '../../src/config/agentPolicy.js';
 import { parseAssetYaml } from '../../src/config/load.js';
 import type { AssetConfig } from '../../src/config/schema.js';
+import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { finishAgentRun, startAgentRun, ZERO_USAGE, type AgentOutcome } from '../../src/db/agentRuns.js';
 import { openDb, type Db } from '../../src/db/connection.js';
 import type { RunType } from '../../src/types.js';
-import { MINI_ASSET_YAML } from '../helpers/assets.js';
+import { MINI_ASSET_YAML, miniAssumptions } from '../helpers/assets.js';
 
 const T0 = new Date('2026-09-21T00:00:00.000Z');
 const daysLater = (d: number) => new Date(T0.getTime() + d * 86_400_000);
@@ -18,6 +19,7 @@ let asset: AssetConfig;
 beforeEach(() => {
   db = openDb(':memory:');
   asset = parseAssetYaml(MINI_ASSET_YAML).config;
+  createAssumptionSet(db, { assetId: 'mini', author: 'user', rationale: 'initial', values: miniAssumptions(), createdAt: T0.toISOString() });
 });
 
 function attempt(runType: RunType, opts: { at?: Date; outcome?: Exclude<AgentOutcome, 'running'>; dryRun?: boolean; trigger?: string } = {}): number {
@@ -115,5 +117,23 @@ describe('dueRunType', () => {
   it('ignores other assets', () => {
     startAgentRun(db, { assetId: 'other', persona: 'p', runType: 'deep', trigger: 'schedule', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: T0.toISOString() });
     expect(dueRunType(db, asset, T0)).toBe('bootstrap');
+  });
+
+  it('with no assumption set owes only bootstraps: at once, then a week after a failed one, never weekly or deep', () => {
+    db.prepare('DELETE FROM assumptions').run();
+    db.prepare('DELETE FROM assumption_sets').run();
+    expect(dueRunType(db, asset, T0)).toBe('bootstrap');
+    attempt('bootstrap', { outcome: 'budget_exhausted' });
+    expect(dueRunType(db, asset, daysLater(1))).toBeNull();
+    expect(dueRunType(db, asset, daysLater(6))).toBeNull();
+    expect(dueRunType(db, asset, daysLater(7))).toBe('bootstrap');
+    attempt('bootstrap', { at: daysLater(7) });
+    expect(dueRunType(db, asset, daysLater(8))).toBeNull();
+    expect(dueRunType(db, asset, daysLater(14))).toBe('bootstrap');
+    attempt('bootstrap', { at: daysLater(14) });
+    // Now create a set and verify the normal schedule takes over
+    createAssumptionSet(db, { assetId: 'mini', author: 'user', rationale: 'initial', values: miniAssumptions(), createdAt: daysLater(14).toISOString() });
+    expect(dueRunType(db, asset, daysLater(21))).toBe('weekly');
+    expect(dueRunType(db, asset, daysLater(44))).toBe('deep');
   });
 });

@@ -107,8 +107,13 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   // ---- the run: everything from here is recorded, never thrown ----
   const ledger = new Ledger(asset.id, persona.name, startSet);
   const messages: ModelMessageParam[] = [];
-  // With no assumption set there is nothing to read or change: the assumption tools are not offered at all.
-  const clientTools = startSet ? AGENT_TOOLS : AGENT_TOOLS.filter((t) => t.name !== 'get_assumptions' && t.name !== 'apply_assumption_change');
+  // With no assumption set there is nothing to read or change, and a bootstrap never changes an assumption (spec invariant 5),
+  // set or no set: apply_assumption_change is not offered to it. get_assumptions stays whenever a set exists.
+  const clientTools = AGENT_TOOLS.filter((t) => {
+    if (t.name === 'apply_assumption_change') return startSet !== null && opts.runType !== 'bootstrap';
+    if (t.name === 'get_assumptions') return startSet !== null;
+    return true;
+  });
   const tools = [...toApiTools(clientTools), ...webTools(budgets)];
   let outcome: Exclude<AgentOutcome, 'running'> = 'error';
   let error: string | null = null;
@@ -121,7 +126,7 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   try {
     const pack = buildContextPack(db, loaded, ledger, { runType: opts.runType, budgets, now: started, trigger: { anomalyId: opts.anomalyId, note, firings } });
     messages.push({ role: 'user', content: renderContextPack(pack) });
-    const ctx: ToolContext = { db, loaded, ledger, now: deps.now, budgets, fetchedPages: () => fetchedPagesFrom(messages) };
+    const ctx: ToolContext = { db, loaded, ledger, now: deps.now, budgets, runType: opts.runType, fetchedPages: () => fetchedPagesFrom(messages) };
 
     const loop = await runLoop({
       client, model: persona.model, effort: persona.effort, system, tools, messages, budgets,

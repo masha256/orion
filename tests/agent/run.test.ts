@@ -130,6 +130,8 @@ describe('a bootstrap run', () => {
     const pack = first.messages[0].content as string;
     expect(pack).toContain('"assumption_set_version": null');
     expect(pack).toContain('"assumptions": "none yet"');
+    const parsed = JSON.parse(pack.slice(pack.indexOf('{')));
+    expect(parsed.asset.manual_metrics).toEqual(['effective_supply', 'emission_rate_annual', 'flow_usd.fees', 'revenue_run_rate_usd', 'staked_supply', 'staker_emission_share']);
   });
 
   it('refuses an assumption tool call it was not offered, so a model cannot change what does not exist', async () => {
@@ -141,11 +143,14 @@ describe('a bootstrap run', () => {
     expect(getLatestAssumptionSet(w.db, 'mini')).toBeNull();
   });
 
-  it('with a set present is an ordinary run for the tools: the skill, not the code, keeps it off the assumptions', async () => {
+  it('with a set present is still offered no assumption change, and refuses a config proposal: the code keeps it off both', async () => {
     const result = await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')], { runType: 'bootstrap' });
+    expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'unknown_tool' } });
     expect(result.run).toMatchObject({ outcome: 'completed', runType: 'bootstrap' });
-    expect(result.committed!.setVersion).toBe(2);
-    expect(model.requests[0].tools.map((t) => ('name' in t ? t.name : ''))).toContain('apply_assumption_change');
+    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1); // unchanged: the call was refused
+    const names = model.requests[0].tools.map((t) => ('name' in t ? t.name : ''));
+    expect(names).toContain('get_assumptions');
+    expect(names).not.toContain('apply_assumption_change');
   });
 });
 

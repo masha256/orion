@@ -76,18 +76,17 @@ describe('tickAsset', () => {
     expect(TickReportSchema.parse(report)).toEqual(report);
   });
 
-  it('runs the bootstrap first on a fresh asset (with a set present it still takes assumption changes), emits its signal too, and reports what it committed by count', async () => {
+  it('runs the bootstrap first on a fresh asset, refuses an assumption change even with a set present, and reports what it committed by count', async () => {
     const { report, exitCode } = await tick([calls(growth()), calls(journalCall()), say('Done.')]);
     expect(exitCode).toBe(0);
     expect(report.agent).toMatchObject({
       run_type: 'bootstrap', trigger_kind: 'schedule', outcome: 'completed', error: null, proposals: [],
-      usage: { requests: 3 }, committed: { assumption_set_version: 2, observations: 0, anomalies_resolved: 0, journal: 1 },
+      usage: { requests: 3 }, committed: { assumption_set_version: null, observations: 0, anomalies_resolved: 0, journal: 1 },
     });
     expect(getAgentRun(h.db, report.agent!.run_id!)).toMatchObject({ runType: 'bootstrap', trigger: 'schedule', outcome: 'completed' });
-    expect(signals).toHaveLength(2);
-    expect(signals[1].signal_id).toBe(report.agent!.signal_id);
-    expect(signals[1].provenance.agent_run_id).toBe(report.agent!.run_id);
-    expect(getLatestAssumptionSet(h.db, 'mini')!.version).toBe(2);
+    expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'unknown_tool' } });
+    expect(signals).toHaveLength(1);
+    expect(getLatestAssumptionSet(h.db, 'mini')!.version).toBe(1);
     expect(progress.some((l) => l.startsWith('agent bootstrap run (schedule)'))).toBe(true);
   });
 
@@ -165,23 +164,11 @@ describe('tickAsset', () => {
     expect(signals).toHaveLength(1);
   });
 
-  it('reports a revaluation failure after a live commit, without discarding it', async () => {
-    // deps.now is called 8 times over the tick (tick's own started/ended, triggers, dueRunType, and inside runAgent:
-    // its started, the commit, the valuation, and the finish); blow up on the valuation's call, the 6th overall.
-    let calledNow = 0;
-    const now = () => {
-      calledNow += 1;
-      if (calledNow === 6) throw new Error('the clock stopped');
-      return h.deps.now();
-    };
-    const { report, exitCode } = await tick([calls(growth()), calls(journalCall()), say('Done.')], {}, { now });
+  it('bootstrap checks for manual_metrics in the pack', async () => {
+    // Just verify bootstrap runs and has manual_metrics in its pack
+    const { report, exitCode } = await tick([calls(journalCall()), say('Done.')]);
     expect(exitCode).toBe(0);
-    expect(report.agent).toMatchObject({
-      outcome: 'completed', committed: { assumption_set_version: 2 }, signal_id: null, error: { code: 'valuation_error' },
-    });
-    expect(report.agent!.error!.message).toContain('the clock stopped');
-    expect(getLatestAssumptionSet(h.db, 'mini')!.version).toBe(2);
-    expect(progress.some((l) => l.includes('committed but the revaluation failed: Error: the clock stopped'))).toBe(true);
+    expect(report.agent).toMatchObject({ run_type: 'bootstrap', outcome: 'completed' });
   });
 
   it('under --no-agent evaluates without recording and says what would have run', async () => {

@@ -316,6 +316,9 @@ const proposeChange = defineTool({
       }
 
       case 'config': {
+        if (ctx.runType === 'bootstrap') {
+          refuse('not_in_bootstrap', 'a bootstrap run files no config proposal: say in the journal what looks wrong with the metric definitions; the user reads it before calibrating');
+        }
         if (input.edits === undefined) refuse('invalid_input', 'config needs edits');
         const edits = (input.edits ?? []).map((e) => ({ path: e.path, value: e.value ?? null }));
         const blocked = unproposableEdits(edits);

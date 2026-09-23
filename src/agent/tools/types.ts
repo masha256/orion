@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { RunBudgets } from '../../config/agentPolicy.js';
 import type { LoadedAsset } from '../../config/load.js';
 import type { Db } from '../../db/connection.js';
-import { OrionError } from '../../types.js';
+import { OrionError, type RunType } from '../../types.js';
 import type { FetchedPage, Refusal } from '../guardrails.js';
 import type { Ledger } from '../ledger.js';
 
@@ -16,6 +16,8 @@ export interface ToolContext {
   budgets: RunBudgets;
   /** Pages fetched by web_fetch so far in this run, read from the transcript by the runner. */
   fetchedPages: () => FetchedPage[];
+  /** Which run this is: some writes are closed to a bootstrap. */
+  runType: RunType;
 }
 
 export interface AgentTool<I = unknown> {

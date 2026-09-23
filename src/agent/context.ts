@@ -59,7 +59,11 @@ export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, in
   const calendar = calendarEvents(asset);
 
   return {
-    asset: { id: asset.id, symbol: asset.symbol, name: asset.name },
+    asset: {
+      id: asset.id, symbol: asset.symbol, name: asset.name,
+      // What research may write: every metric with no source. A bootstrap works through this list.
+      manual_metrics: Object.entries(asset.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key).sort(),
+    },
     run: { type: input.runType, now: nowIso, budgets: input.budgets, assumption_set_version: ledger.startSet?.version ?? null },
     trigger: {
       anomaly: target ? describeAnomaly(target) : null,

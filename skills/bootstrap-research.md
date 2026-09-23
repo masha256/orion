@@ -7,7 +7,7 @@ This asset is new. Orion has fetched what its sources publish; everything else i
 
 Work through them in order:
 
-1. List the asset's manual metrics: every metric in your context pack's drivers that has no source and no value in force. Take the required ones first (the engine cannot run without them), then the critical ones, then the rest.
+1. Work through `asset.manual_metrics` in your context pack: every metric with no source, which is everything research may write. Take the ones with no value in force first, then the required ones (the engine cannot run without them), then the critical ones, then the rest.
 2. For each, find one citable primary-source figure and record it with record_provisional_observation, following the disclosure-research rules for dates and units exactly: observed_at is when the figure was true; the metric's definition decides what counts. A schedule metric takes the step in force with its effective date; an event takes each dated instance you can cite.
 3. Record nothing you cannot cite from a page you fetched in this run. A figure from memory, a forum, or arithmetic over unstated inputs is not a figure.
 

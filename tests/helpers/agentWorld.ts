@@ -57,7 +57,7 @@ export function agentWorld(yaml: string = AGENT_ASSET_YAML, assumptionsOver: Par
   const set = createAssumptionSet(db, { assetId: 'mini', author: 'user', rationale: 'initial', values: miniAssumptions(assumptionsOver), createdAt: AS_OF });
   const ledger = new Ledger('mini', 'analyst', set);
   const pages: FetchedPage[] = [{ url: PAGE_URL, text: PAGE_TEXT }];
-  const ctx: ToolContext = { db, loaded, ledger, now: () => new Date(AS_OF), budgets: budgetsFor(loaded.config, 'weekly'), fetchedPages: () => pages };
+  const ctx: ToolContext = { db, loaded, ledger, now: () => new Date(AS_OF), budgets: budgetsFor(loaded.config, 'weekly'), runType: 'weekly', fetchedPages: () => pages };
   const call = (name: string, input: unknown) => {
     const outcome = runTool(AGENT_TOOLS, ctx, name, input);
     return { isError: outcome.isError, result: JSON.parse(outcome.content) as Record<string, unknown> };
