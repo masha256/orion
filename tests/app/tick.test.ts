@@ -272,4 +272,14 @@ describe('tickAsset', () => {
     expect(report.agent!.outcome).toBe('completed');
     expect(progress.filter((l) => l.startsWith('warning: the signal could not be delivered (simulated') || l.startsWith("warning: the agent's signal could not be delivered (simulated")).length).toBe(1);
   });
+
+  it('guards the inbox when its schema validation fails, and completes the tick', async () => {
+    attempted('deep');
+    h.db.prepare("INSERT INTO proposals (asset_id, persona, agent_run_id, kind, change_json, filed_against_json, rationale, evidence_json, effect_json, status, created_at) VALUES ('mini', 'analyst', NULL, 'config', '{}', '{}', 'r', '[]', '{\"weird\": 1}', 'pending', ?)").run(NOW.toISOString());
+    const { report, exitCode } = await tick([calls(journalCall()), say('Done.')]);
+    expect(report.outcome).toBe('completed');
+    expect(exitCode).toBe(0);
+    expect(report.inbox).toEqual({ observations: [], proposals: [], anomalies: [] });
+    expect(progress.some((l) => l.startsWith('warning: the inbox could not be built'))).toBe(true);
+  });
 });

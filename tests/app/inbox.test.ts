@@ -51,7 +51,7 @@ function world() {
 describe('buildInbox', () => {
   it('lists provisional rows, pending proposals, and open anomalies, with ids and numbers only', () => {
     const w = world();
-    const inbox = buildInbox(w.db, w.asset);
+    const inbox = buildInbox(w.db, w.asset, T);
     expect(InboxSchema.parse(inbox)).toEqual(inbox);
 
     expect(inbox.observations.map((o) => o.id)).toEqual([w.typed.id, w.researched.id]); // newest first
@@ -80,20 +80,20 @@ describe('buildInbox', () => {
     }
   });
 
-  it('measures the move from the last confirmed value at the row date, never from another provisional row', () => {
+  it('measures the move from the last confirmed value at now, the move guard\'s own baseline, never from another provisional row', () => {
     const w = world();
     insertObservation(w.db, {
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-10', value: 5000, source: 'manual', status: 'provisional',
       sourceDetail: `research:analyst:run ${w.runId}`, citationUrl: 'https://example.com/earlier', fetchedAt: T,
     });
-    const inbox = buildInbox(w.db, w.asset);
+    const inbox = buildInbox(w.db, w.asset, T);
     expect(inbox.observations.find((o) => o.id === w.researched.id)!.move_pct).toBe(20);
     expect(inbox.observations.find((o) => o.value === 5000)!.move_pct).toBe(400);
   });
 
   it('is empty for an asset with nothing to decide', () => {
     const w = world();
-    expect(buildInbox(w.db, { ...w.asset, id: 'other' })).toEqual(emptyInbox());
+    expect(buildInbox(w.db, { ...w.asset, id: 'other' }, T)).toEqual(emptyInbox());
   });
 });
 
@@ -112,7 +112,7 @@ describe('readingOf', () => {
 describe('inboxLines', () => {
   it('prints one line per item in the fixed forms, and one line for an empty inbox', () => {
     const w = world();
-    expect(inboxLines(buildInbox(w.db, w.asset))).toEqual([
+    expect(inboxLines(buildInbox(w.db, w.asset, T))).toEqual([
       `obs #${w.typed.id}  flow_usd.fees  90 31d to 2026-09-01  no confirmed value  entered by hand  https://example.com/aug`,
       `obs #${w.researched.id}  revenue_run_rate_usd  1200 at 2026-09-15  +20.0% vs confirmed  by analyst run #${w.runId}  https://example.com/q3`,
       `prop #${w.noEffect.id}  reject_observation  filed 2026-09-20 by analyst  no target effect`,

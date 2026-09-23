@@ -10,7 +10,8 @@ export function registerInbox(program: Command, ctx: CliContext): void {
     .option('--json', 'JSON output')
     .action((assetId: string, opts: { json?: boolean }) => {
       const asset = loadAsset(ctx.home, assetId).config;
-      const inbox = withDb(ctx, (db) => buildInbox(db, asset));
-      output(ctx, opts.json, { asset: asset.id, as_of: ctx.now().toISOString(), ...inbox }, () => inboxLines(inbox));
+      const nowIso = ctx.now().toISOString();
+      const inbox = withDb(ctx, (db) => buildInbox(db, asset, nowIso));
+      output(ctx, opts.json, { asset: asset.id, as_of: nowIso, ...inbox }, () => inboxLines(inbox));
     });
 }

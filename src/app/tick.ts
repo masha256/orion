@@ -61,7 +61,11 @@ export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps, opt
   };
   const finish = (): TickResult => {
     // After the agent stage and outside the lock: a plain read, so a tick that never got the lock still reports the queue.
-    report.inbox = buildInbox(db, asset);
+    try {
+      report.inbox = buildInbox(db, asset, deps.now().toISOString());
+    } catch (err) {
+      deps.onProgress?.(`warning: the inbox could not be built (${message(err)}); the report lists nothing to decide`);
+    }
     report.ended_at = deps.now().toISOString();
     if (report.error) report.outcome = 'error';
     const exitCode = report.signal === null ? (report.outcome === 'run_in_progress' ? 0 : 1) : report.signal.status === 'blocked' ? 2 : 0;
