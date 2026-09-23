@@ -40,6 +40,7 @@ describe('the shipped persona and skills', () => {
     const research = loadSkills(ROOT).find((s) => s.name === 'disclosure-research')!.body;
     expect(research).toContain('one paragraph, table cell, or list item');
     expect(research).toContain('already exists at the same metric and time');
+    expect(research).toContain('EFFECTIVE date');
   });
 });
 

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AGENT_TOOLS, toApiTools } from '../../src/agent/tools/index.js';
 import { decideAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
-import { insertObservation } from '../../src/db/observations.js';
+import { valueInForce } from '../../src/app/eligibility.js';
+import { confirmObservation, insertObservation } from '../../src/db/observations.js';
 import { insertProposal } from '../../src/db/proposals.js';
 import { AGENT_ASSET_YAML, agentWorld, PAGE_URL, QUOTE, type AgentWorld } from '../helpers/agentWorld.js';
 import { AS_OF } from '../helpers/obs.js';
@@ -242,13 +243,45 @@ describe('record_provisional_observation', () => {
     expect(w.ledger.observations()).toEqual([]);
   });
 
-  it('never writes onto a fetched metric, dates only schedules and events in the future, and needs a period for a flow', () => {
+  it('never writes onto a fetched level, dates only schedules and events in the future, and needs a period for a flow', () => {
     expect(research({ metric: 'price_usd', value: 11 }).result.refused).toBe('fetched_metric');
+    expect(research({ metric: 'price_usd', value: 11, observed_at: '2026-08-01' }).result.refused).toBe('fetched_metric'); // a future date opens nothing on a level
     expect(research({ metric: 'nope' }).result.refused).toBe('unknown_metric');
     expect(research({ observed_at: '2026-08-01' }).result.refused).toBe('future_observation');
     expect(research({ observed_at: 'soon' }).result.refused).toBe('invalid_timestamp');
     expect(research({ metric: 'flow_usd.fees', value: 30 }).result.refused).toBe('period_required');
     expect(research({ metric: 'emission_rate_annual', value: 5, observed_at: '2026-10-01' })).toMatchObject({ isError: false, result: { recorded: true, in_signal: false } });
+  });
+
+  it('takes an announced change on a FETCHED schedule only when it is dated after now, and the confirmed row governs from its date until the chain catches up', () => {
+    // The fetch owns the present: emission_rate_annual is read from the chain here, as VVV's is.
+    const fw = agentWorld(
+      AGENT_ASSET_YAML.replace(
+        'emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400 }',
+        'emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400, source: { type: adapter, name: test.emission } }',
+      ),
+    );
+    const announce = (over: Record<string, unknown>) =>
+      fw.call('record_provisional_observation', { metric: 'emission_rate_annual', value: 5, observed_at: '2026-10-01', citation_url: PAGE_URL, quoted_text: QUOTE, ...over });
+    expect(announce({ observed_at: AS_OF }).result.refused).toBe('fetched_metric'); // at now: a reading, not an announcement
+    expect(announce({ observed_at: '2026-06-01' }).result.refused).toBe('fetched_metric');
+    expect(announce({})).toMatchObject({ isError: false, result: { recorded: true, in_signal: false } });
+    expect(fw.ledger.observations()[0]).toMatchObject({ metricKey: 'emission_rate_annual', value: 5, observedAt: '2026-10-01T00:00:00.000Z', live: false });
+
+    // What the row does once the user confirms it, with the daily on-chain reads landing beneath it.
+    const asset = fw.loaded.config;
+    const onchain = (observedAt: string, value: number) =>
+      insertObservation(fw.db, { assetId: 'mini', metricKey: 'emission_rate_annual', observedAt, value, source: 'onchain', fetchedAt: observedAt });
+    onchain('2026-06-29T00:00:00Z', 10); // the seeded step is 0 at 2026-01-01; this is the chain's rate in force
+    const row = insertObservation(fw.db, {
+      assetId: 'mini', metricKey: 'emission_rate_annual', observedAt: '2026-10-01', value: 5, source: 'manual', status: 'provisional', citationUrl: PAGE_URL, fetchedAt: AS_OF,
+    });
+    expect(valueInForce(fw.db, asset, 'emission_rate_annual', '2026-10-01T00:00:00Z')).toBe(10); // provisional: inert
+    confirmObservation(fw.db, row.id, AS_OF);
+    expect(valueInForce(fw.db, asset, 'emission_rate_annual', '2026-09-30T23:59:59Z')).toBe(10);
+    expect(valueInForce(fw.db, asset, 'emission_rate_annual', '2026-10-01T00:00:00Z')).toBe(5); // the announced step, from its effective date
+    onchain('2026-10-01T00:05:00Z', 5.5); // the chain's first read after the date is newer and governs
+    expect(valueInForce(fw.db, asset, 'emission_rate_annual', '2026-10-02T00:00:00Z')).toBe(5.5);
   });
 });
 

@@ -173,7 +173,9 @@ const recordProvisionalObservation = defineTool({
     'this run, and quoted_text must be the page\'s own words (20 characters or more, verbatim, from within one paragraph, table cell, or list item) ' +
     'stating the figure. The row is stored as ' +
     'provisional. On a critical metric, a large move from the last confirmed value becomes a proposal for the user instead of going live. ' +
-    'Future dates are for announced schedule changes and events only. You cannot write where an observation already exists at the same metric and time; propose reject_observation for one that is wrong.',
+    'Future dates are for announced schedule changes and events only. A fetched metric takes a researched row only when it is a schedule or event ' +
+    'metric and the date is in the future: an announced change with its effective date. Fetched levels and flows never take one. ' +
+    'You cannot write where an observation already exists at the same metric and time; propose reject_observation for one that is wrong.',
   input: z.strictObject({
     metric: z.string(),
     value: z.number(),
@@ -192,13 +194,23 @@ const recordProvisionalObservation = defineTool({
     const note = input.note === undefined ? '' : cleanText(input.note);
     const def = asset.metrics[input.metric];
     if (!def) refuse('unknown_metric', `${input.metric} is not a metric of ${asset.id}`);
-    if (def.source !== undefined) refuse('fetched_metric', `${input.metric} is fetched from a configured source; research never writes onto a fetched metric`);
 
     const at = new Date(input.observed_at);
     if (Number.isNaN(at.getTime())) refuse('invalid_timestamp', `invalid observed_at: ${input.observed_at}`);
     const observedAt = at.toISOString();
     const now = ctx.now();
-    if (at.getTime() > now.getTime() && def.type !== 'schedule' && def.type !== 'event') {
+    // An announcement: a schedule step or an event dated after now. The only row research may add to a FETCHED metric,
+    // because the fetch owns the present: a reading dated at or before now is what the chain or the API says, not a claim.
+    const announcement = at.getTime() > now.getTime() && (def.type === 'schedule' || def.type === 'event');
+    if (def.source !== undefined && !announcement) {
+      refuse(
+        'fetched_metric',
+        def.type === 'schedule' || def.type === 'event'
+          ? `${input.metric} is fetched from a configured source: the fetch owns the present, so research may only record an announced change dated after now`
+          : `${input.metric} is fetched from a configured source; research never writes onto a fetched ${def.type} metric (only a schedule or event metric takes an announced, future-dated row)`,
+      );
+    }
+    if (at.getTime() > now.getTime() && !announcement) {
       refuse('future_observation', `${input.metric} is a ${def.type} metric; only schedule and event metrics may be dated in the future`);
     }
     if (def.type === 'flow' && input.period_days === undefined) refuse('period_required', `${input.metric} is a flow metric; give period_days`);
