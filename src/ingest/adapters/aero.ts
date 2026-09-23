@@ -7,7 +7,7 @@ import type { AdapterDef } from './registry.js';
 /**
  * Aerodrome's Minter in its tail regime (verified live on 2026-09-23: weekly() sits at TAIL_START, tailEmissionRate 21,
  * teamRate 228). Each epoch it mints base = totalSupply * tailEmissionRate / 10_000 to the gauges, a rebase
- * growth = base * ((total - locked) / total)^2 / 2 to veAERO lockers, and team = teamRate * (growth + base) / (10_000 - teamRate).
+ * growth = base * ((total - veTotal) / total)^2 / 2 (with veTotal the voting power at the epoch's start) to veAERO lockers, and team = teamRate * (growth + base) / (10_000 - teamRate).
  * Outside the tail the Minter decays `weekly` by 1 percent per epoch instead, which these adapters do not model: they refuse.
  */
 
@@ -31,12 +31,13 @@ async function tailEmissions(ctx: SourceContext, params: Record<string, unknown>
   const token = ctx.contract(text(params, 'token', 'token'));
   const ve = ctx.contract(text(params, 've', 've'));
   const minter = ctx.contract(text(params, 'minter', 'minter'));
-  const [totalRaw, lockedRaw, weeklyRaw, tailRateRaw, teamRateRaw] = await readAll(ctx, [
+  const [totalRaw, lockedRaw, weeklyRaw, tailRateRaw, teamRateRaw, activePeriodRaw] = await readAll(ctx, [
     { address: token, signature: view('totalSupply'), functionName: 'totalSupply' },
     { address: ve, signature: view('supply'), functionName: 'supply' },
     { address: minter, signature: view('weekly'), functionName: 'weekly' },
     { address: minter, signature: view('tailEmissionRate'), functionName: 'tailEmissionRate' },
     { address: minter, signature: view('teamRate'), functionName: 'teamRate' },
+    { address: minter, signature: view('activePeriod'), functionName: 'activePeriod' },
   ]);
   const total = unitsToNumber(totalRaw, TOKEN_DECIMALS);
   const locked = unitsToNumber(lockedRaw, TOKEN_DECIMALS);
@@ -49,9 +50,16 @@ async function tailEmissions(ctx: SourceContext, params: Record<string, unknown>
   if (locked > total) throw new Error(`locked AERO (${locked}) exceeds the total supply (${total})`);
   const tailRate = Number(tailRateRaw);
   const teamRate = Number(teamRateRaw);
-  if (teamRate >= BPS) throw new Error(`teamRate ${teamRate} is not below ${BPS} basis points`);
+  if (!(tailRate > 0 && tailRate <= 100)) throw new Error(`tailEmissionRate ${tailRate} is outside the Minter's 1 to 100 basis points`);
+  if (!(teamRate >= 0 && teamRate < BPS)) throw new Error(`teamRate ${teamRate} is not a rate in basis points below ${BPS}`);
+  const [veTotalRaw] = await readAll(ctx, [
+    { address: ve, signature: view('totalSupplyAt', 'uint256'), functionName: 'totalSupplyAt', args: [activePeriodRaw - 1n] },
+  ]);
+  const veTotal = unitsToNumber(veTotalRaw, TOKEN_DECIMALS);
+  if (veTotal > total) throw new Error(`voting power at the epoch's start (${veTotal}) exceeds the total supply (${total})`);
   const base = (total * tailRate) / BPS;
-  const unlockedShare = (total - locked) / total;
+  // The contract's calculateGrowth uses voting power at the epoch's start (ve.totalSupplyAt(activePeriod - 1)), not the AERO locked: a decayed lock counts for less.
+  const unlockedShare = (total - veTotal) / total;
   const growth = (base * unlockedShare * unlockedShare) / 2;
   const team = (teamRate * (growth + base)) / (BPS - teamRate);
   return { base, growth, team, gross: base + growth + team, tailRate, teamRate };

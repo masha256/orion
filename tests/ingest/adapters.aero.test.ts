@@ -10,7 +10,9 @@ const MINTER = '0xeb018363f0a9af8f91f06fee6613a751b2a33fe5';
 const TOTAL = 1983240735576791446735550579n;
 const LOCKED = 1051061695973990144830875038n;
 const WEEKLY = 8969149540107574558747588n; // equal to TAIL_START less a rounding: the tail regime is on
-const LIVE = { [callKey(TOKEN, 'totalSupply')]: TOTAL, [callKey(VE, 'supply')]: LOCKED, [callKey(MINTER, 'weekly')]: WEEKLY, [callKey(MINTER, 'tailEmissionRate')]: 21n, [callKey(MINTER, 'teamRate')]: 228n };
+const ACTIVE_PERIOD = 1789603200n; // 2026-09-17T00:00Z, read live
+const VE_TOTAL_AT = 1027321406167859438293364475n; // ve.totalSupplyAt(activePeriod - 1): voting power, read live as totalSupply()
+const LIVE = { [callKey(TOKEN, 'totalSupply')]: TOTAL, [callKey(VE, 'supply')]: LOCKED, [callKey(MINTER, 'weekly')]: WEEKLY, [callKey(MINTER, 'tailEmissionRate')]: 21n, [callKey(MINTER, 'teamRate')]: 228n, [callKey(MINTER, 'activePeriod')]: ACTIVE_PERIOD, [callKey(VE, 'totalSupplyAt', [ACTIVE_PERIOD - 1n])]: VE_TOTAL_AT };
 const contract = (name: string) => ({ token: TOKEN, ve: VE, minter: MINTER })[name] ?? (() => { throw new Error(`no contract ${name}`); })();
 
 async function chainCtx(calls: Record<string, bigint | Error>) {
@@ -21,9 +23,9 @@ async function chainCtx(calls: Record<string, bigint | Error>) {
 /** The Minter's own arithmetic on the live reads, in plain numbers. */
 function expected() {
   const total = Number(TOTAL) / 1e18;
-  const locked = Number(LOCKED) / 1e18;
+  const veTotal = Number(VE_TOTAL_AT) / 1e18;
   const base = (total * 21) / 10_000;
-  const growth = (base * ((total - locked) / total) ** 2) / 2;
+  const growth = (base * ((total - veTotal) / total) ** 2) / 2;
   const team = (228 * (growth + base)) / (10_000 - 228);
   return { base, growth, team, gross: base + growth + team };
 }
@@ -35,7 +37,7 @@ describe('AERO adapters', () => {
     expect(getAdapter('aero.staker_emission_share').needsRpc).toBe(true);
   });
 
-  it('computes gross annual emissions in the tail regime from one multicall: about 247M AERO a year today', async () => {
+  it('computes gross annual emissions in the tail regime from two multicalls: about 248M AERO a year today', async () => {
     const { ctx, rpc } = await chainCtx(LIVE);
     const v = await getAdapter('aero.emission_rate_annual').run(ctx, {});
     const e = expected();
@@ -43,8 +45,8 @@ describe('AERO adapters', () => {
     expect(v.kind === 'level' && v.value).toBeCloseTo((e.gross * 365) / 7, 3);
     expect(v.kind === 'level' && v.value).toBeGreaterThan(240e6);
     expect(v.kind === 'level' && v.value).toBeLessThan(255e6);
-    expect(v.detail).toMatch(/^block 500: tail 21 bps, team 228 bps; per week base 41648\d\d, rebase 4600\d\d, team 1079\d\d AERO$/);
-    expect(rpc.stats.multicall).toBe(1);
+    expect(v.detail).toMatch(/^block 500: tail 21 bps, team 228 bps; per week base 41648\d\d, rebase 48378\d, team 10846\d AERO$/);
+    expect(rpc.stats.multicall).toBe(2);
   });
 
   it('gives the rebase share of the gross mint: about a tenth today', async () => {
@@ -52,12 +54,12 @@ describe('AERO adapters', () => {
     const v = await getAdapter('aero.staker_emission_share').run(ctx, {});
     const e = expected();
     expect(v.kind === 'level' && v.value).toBeCloseTo(e.growth / e.gross, 12);
-    expect(v.kind === 'level' && v.value).toBeGreaterThan(0.09);
+    expect(v.kind === 'level' && v.value).toBeGreaterThan(0.095);
     expect(v.kind === 'level' && v.value).toBeLessThan(0.11);
   });
 
-  it('follows the governed tail rate and the locked share: more locked, smaller rebase', async () => {
-    const { ctx } = await chainCtx({ ...LIVE, [callKey(MINTER, 'tailEmissionRate')]: 22n, [callKey(VE, 'supply')]: (TOTAL * 3n) / 4n });
+  it('follows the governed tail rate and the voting power: more locked, smaller rebase', async () => {
+    const { ctx } = await chainCtx({ ...LIVE, [callKey(MINTER, 'tailEmissionRate')]: 22n, [callKey(VE, 'totalSupplyAt', [ACTIVE_PERIOD - 1n])]: (TOTAL * 3n) / 4n });
     const rate = await getAdapter('aero.emission_rate_annual').run(ctx, {});
     const share = await getAdapter('aero.staker_emission_share').run(ctx, {});
     const total = Number(TOTAL) / 1e18;
@@ -73,6 +75,18 @@ describe('AERO adapters', () => {
     await expect(getAdapter('aero.staker_emission_share').run((await chainCtx({ ...LIVE, [callKey(MINTER, 'teamRate')]: new Error('boom') })).ctx, {})).rejects.toThrow(/teamRate\(\): boom/);
     await expect(getAdapter('aero.emission_rate_annual').run(sourceCtx({ contract }), {})).rejects.toThrow(/RPC/);
     await expect(getAdapter('aero.emission_rate_annual').run((await chainCtx({ ...LIVE, [callKey(VE, 'supply')]: TOTAL * 2n })).ctx, {})).rejects.toThrow(/exceeds the total supply/);
+    await expect(getAdapter('aero.emission_rate_annual').run((await chainCtx({ ...LIVE, [callKey(VE, 'totalSupplyAt', [ACTIVE_PERIOD - 1n])]: TOTAL * 2n })).ctx, {})).rejects.toThrow(/voting power/);
+    await expect(getAdapter('aero.emission_rate_annual').run((await chainCtx({ ...LIVE, [callKey(MINTER, 'tailEmissionRate')]: 0n })).ctx, {})).rejects.toThrow(/outside the Minter's 1 to 100/);
+  });
+
+  it('refuses at weekly exactly equal to TAIL_START: the contract\'s rule is strict', async () => {
+    await expect(getAdapter('aero.emission_rate_annual').run((await chainCtx({ ...LIVE, [callKey(MINTER, 'weekly')]: 8_969_150n * 10n ** 18n })).ctx, {})).rejects.toThrow(/not in its tail regime/);
+  });
+
+  it('allows weekly one wei below TAIL_START', async () => {
+    const { ctx } = await chainCtx({ ...LIVE, [callKey(MINTER, 'weekly')]: 8_969_149n * 10n ** 18n + 5n * 10n ** 17n });
+    const v = await getAdapter('aero.emission_rate_annual').run(ctx, {});
+    expect(v.kind === 'level' && v.value).toBeGreaterThan(0);
   });
 
   it('takes contract names and the tail threshold from params', async () => {
