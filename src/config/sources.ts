@@ -14,7 +14,15 @@ export const SourceSchema = z.discriminatedUnion('type', [
     scale: z.number().default(1),
     decimals: z.number().int().min(0).max(36).default(0),
   }),
-  z.strictObject({ type: z.literal('defillama'), slug: name, data_type: name, compare: z.literal('monthly_sum') }),
+  z.strictObject({
+    type: z.literal('defillama'),
+    slug: name,
+    data_type: name,
+    /** Required in the cross-check role, forbidden in the primary role (sourceIssues). */
+    compare: z.literal('monthly_sum').optional(),
+    /** Primary role only: how far back the first fetch writes. Optional with no default; the writer applies 90. */
+    backfill_days: z.number().int().positive().optional(),
+  }),
   z.strictObject({ type: z.literal('erc20_supply'), token: name, subtract_balances: z.array(name).default([]) }),
   z.strictObject({
     type: z.literal('contract_read'),
@@ -71,6 +79,7 @@ export function contractNames(s: SourceConfig): string[] {
 
 const LEVEL_PRIMARY: ReadonlySet<string> = new Set(['coingecko', 'http_json', 'erc20_supply', 'contract_read', 'adapter', 'derived']);
 const LEVEL_CHECK: ReadonlySet<string> = new Set(['coingecko', 'http_json', 'erc20_supply', 'contract_read', 'adapter']);
+const FLOW_PRIMARY: ReadonlySet<string> = new Set(['transfer_flow', 'defillama']);
 const FLOW_CHECK: ReadonlySet<string> = new Set(['defillama', 'adapter']);
 
 export interface SourceBearingAsset {
@@ -78,7 +87,7 @@ export interface SourceBearingAsset {
   ingest?: unknown;
   metrics: Record<
     string,
-    { type: 'level' | 'flow' | 'schedule' | 'event'; source?: SourceConfig; cross_checks?: { source: SourceConfig; tolerance_pct?: number }[] }
+    { type: 'level' | 'flow' | 'schedule' | 'event'; unit: string; source?: SourceConfig; cross_checks?: { source: SourceConfig; tolerance_pct?: number }[] }
   >;
 }
 
@@ -104,8 +113,12 @@ export function sourceIssues(asset: SourceBearingAsset, requiredMetrics: string[
       continue;
     }
     const s = def.source;
-    const fits = def.type === 'flow' ? s.type === 'transfer_flow' : def.type === 'event' ? false : LEVEL_PRIMARY.has(s.type);
+    const fits = def.type === 'flow' ? FLOW_PRIMARY.has(s.type) : def.type === 'event' ? false : LEVEL_PRIMARY.has(s.type);
     if (!fits) issues.push(`${where}: ${s.type} cannot be the source of a ${def.type} metric`);
+    if (s.type === 'defillama' && def.type === 'flow') {
+      if (s.compare !== undefined) issues.push(`${where}: compare is for the cross-check role; a defillama primary has none`);
+      if (def.unit !== 'usd') issues.push(`${where}: a defillama primary needs unit usd; the series is in dollars`);
+    }
     if (s.type === 'http_json' && requiredMetrics.includes(key)) {
       issues.push(`${where}: http_json cannot be the primary source of a required metric (use it as a cross-check)`);
     }
@@ -114,6 +127,11 @@ export function sourceIssues(asset: SourceBearingAsset, requiredMetrics: string[
     checks.forEach((c, i) => {
       const allowed = def.type === 'flow' ? FLOW_CHECK : LEVEL_CHECK;
       if (!allowed.has(c.source.type)) issues.push(`${where}.cross_checks.${i}: ${c.source.type} cannot be a cross-check of a ${def.type} metric`);
+      if (c.source.type === 'defillama') {
+        if (c.source.compare === undefined) issues.push(`${where}.cross_checks.${i}: a defillama cross-check needs compare: monthly_sum`);
+        if (c.source.backfill_days !== undefined) issues.push(`${where}.cross_checks.${i}: backfill_days is for the primary role`);
+        if (s.type === 'defillama') issues.push(`${where}.cross_checks.${i}: a defillama primary cannot be cross-checked against defillama`);
+      }
       checkShape(`${where}.cross_checks.${i}`, c.source);
     });
   }

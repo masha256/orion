@@ -9,7 +9,7 @@ metrics:
   locked_supply: { type: level, unit: tokens, staleness_days: 7 }
   staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }
   emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400 }
-  flow_usd.fees: { type: flow, unit: usd, staleness_days: 7, critical: true }
+  flow_usd.fees: { type: flow, unit: usd, staleness_days: 7, critical: true, source: { type: defillama, slug: aerodrome, data_type: dailyHoldersRevenue, backfill_days: 30 } }
 holder_flows:
   - { id: fees, kind: fee_share, capture_rule: contractual, recipient_base: locked, metric: flow_usd.fees }
 modules:

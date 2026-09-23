@@ -74,6 +74,21 @@ describe('declarative sources in the asset config', () => {
       .toMatch(/price_usd.*derived cannot be a cross-check/);
   });
 
+  it('allows defillama as the primary of a usd flow, and keeps the two roles apart', () => {
+    const asPrimary = (source: string) =>
+      INGEST_ASSET_YAML.replace('source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], count_from: [pool], unit: usd, price_coingecko_id: mini-token }', source);
+    expect(bad(asPrimary('source: { type: defillama, slug: mini, data_type: dailyHoldersRevenue }'))).toBe('');
+    expect(bad(asPrimary('source: { type: defillama, slug: mini, data_type: dailyHoldersRevenue, backfill_days: 30 }'))).toBe('');
+    expect(bad(asPrimary('source: { type: defillama, slug: mini, data_type: dailyHoldersRevenue, compare: monthly_sum }')))
+      .toMatch(/fees_programmatic.*compare is for the cross-check role/);
+    expect(bad(INGEST_ASSET_YAML.replace('source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], unit: tokens }', 'source: { type: defillama, slug: mini, data_type: x }')))
+      .toMatch(/flow_tokens\.fees.*needs unit usd/);
+    expect(bad(INGEST_ASSET_YAML.replace('compare: monthly_sum }', '}'))).toMatch(/flow_usd\.fees\.cross_checks\.0.*needs compare: monthly_sum/);
+    expect(bad(INGEST_ASSET_YAML.replace('compare: monthly_sum }', 'compare: monthly_sum, backfill_days: 5 }'))).toMatch(/cross_checks\.0.*backfill_days is for the primary role/);
+    expect(bad(INGEST_ASSET_YAML.replace('source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], unit: usd, price_coingecko_id: mini-token }', 'source: { type: defillama, slug: mini, data_type: dailyHoldersRevenue }')))
+      .toMatch(/flow_usd\.fees\.cross_checks\.0.*cannot be cross-checked against defillama/);
+  });
+
   it('rejects cross_checks on a metric that has no source', () => {
     expect(bad(INGEST_ASSET_YAML.replace('revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 60, critical: true }',
       'revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 60, critical: true, cross_checks: [ { source: { type: coingecko, id: x, field: price } } ] }')))

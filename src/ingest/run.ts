@@ -9,6 +9,7 @@ import { latestLevel } from '../drivers/select.js';
 import { MS_PER_DAY, OrionError, STD_METRICS } from '../types.js';
 import { getAdapter } from './adapters/registry.js';
 import { checkRevenueStale, type IndexPoint } from './alerts.js';
+import { DEFAULT_API_FLOW_BACKFILL_DAYS, writeApiFlow } from './apiFlow.js';
 import { compareLevel, compareMonthly } from './crosscheck.js';
 import { burnMomentum } from './derived.js';
 import { scanFlowGroup } from './flow.js';
@@ -80,11 +81,11 @@ function unlistedAnomalyMetrics(loaded: LoadedAsset, group: FlowGroup): string[]
   return critical.length > 0 ? critical : [group.members[0].metricKey];
 }
 
-/** The metric's stored daily on-chain rows, keyed by the UTC day each one covers. */
+/** The metric's stored daily fetched rows (a transfer scan's or an API series'), keyed by the UTC day each one covers. */
 function storedDailyFlow(db: Db, assetId: string, metricKey: string): Map<string, number> {
   const days = new Map<string, number>();
   for (const o of listActiveObservations(db, assetId, metricKey)) {
-    if (o.source === 'onchain' && o.periodDays === 1) days.set(utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY), o.value);
+    if ((o.source === 'onchain' || o.source === 'api') && o.periodDays === 1) days.set(utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY), o.value);
   }
   return days;
 }
@@ -159,8 +160,10 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     batch.requests.forEach((r, i) => readings.set(r, results[i] ?? failed('the source returned no result for this request')));
   }
 
-  // 2. Primaries: validate, then write through insertObservation with the source's own timestamp.
+  // 2. Primaries: validate, then write through insertObservation with the source's own timestamp. A flow whose primary
+  //    is an API's daily series (defillama) is written as daily rows under a cursor, like a transfer scan.
   const primaryValue = new Map<string, number>();
+  const scannedDaily = new Map<string, DailyPoint[]>();
   for (const batch of plan.batches) {
     for (const r of batch.requests) {
       if (r.role !== 'primary') continue;
@@ -168,6 +171,22 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       const result = readings.get(r)!;
       if (!result.ok) {
         markFailed(outcome, `${r.metricKey}: ${result.error}`);
+        continue;
+      }
+      if (result.value.kind === 'daily_series' && r.source.type === 'defillama' && asset.metrics[r.metricKey].type === 'flow') {
+        const def = asset.metrics[r.metricKey];
+        try {
+          const flow = writeApiFlow({
+            db, asset, metricKey: r.metricKey, scanKey: `${batch.sourceId}>${r.metricKey}`, points: result.value.points, detail: result.value.detail, now,
+            backfillDays: opts.backfillDays ?? r.source.backfill_days ?? DEFAULT_API_FLOW_BACKFILL_DAYS, rescan: opts.backfillDays !== undefined,
+            adopt: opts.adopt ?? false, dryRun, outcome, validate: (value) => validateReading(def, value),
+          });
+          written.push(...flow.written);
+          scannedDaily.set(r.metricKey, flow.daily);
+        } catch (err) {
+          if (err instanceof OrionError) throw err;
+          markFailed(outcome, `${r.metricKey}: ${message(err)}`);
+        }
         continue;
       }
       if (result.value.kind !== 'level') {
@@ -235,7 +254,6 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   }
 
   // 4. Transfer scans: one per flow group, at the same latest block as the level reads.
-  const scannedDaily = new Map<string, DailyPoint[]>();
   for (const group of plan.flowGroups) {
     if (rpc === null || block === null) {
       markFailed(outcomeOf(group.sourceId), chainError ?? 'no RPC connection');

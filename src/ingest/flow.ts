@@ -74,17 +74,17 @@ async function loadPrices(http: HttpTransport, env: Record<string, string | unde
 }
 
 /** Milliseconds for which an observation's period [observedAt - periodDays, observedAt] overlaps [startMs, endMs). Periods that only touch overlap by 0. */
-function overlapMs(o: { observedAt: string; periodDays: number | null }, startMs: number, endMs: number): number {
+export function overlapMs(o: { observedAt: string; periodDays: number | null }, startMs: number, endMs: number): number {
   const end = new Date(o.observedAt).getTime();
   const start = end - (o.periodDays ?? 1) * MS_PER_DAY;
   return Math.min(end, endMs) - Math.max(start, startMs);
 }
 
-/** Active rows from another source whose period overlaps (startMs, endMs). Periods that only touch do not overlap. */
-export function findFlowConflicts(db: Db, assetId: string, metricKey: string, startMs: number, endMs: number): FlowConflict[] {
+/** Active rows from a source other than the writer's own (`own`) whose period overlaps (startMs, endMs). Periods that only touch do not overlap. */
+export function findFlowConflicts(db: Db, assetId: string, metricKey: string, startMs: number, endMs: number, own: 'onchain' | 'api' = 'onchain'): FlowConflict[] {
   return listActiveObservations(db, assetId, metricKey)
     .filter((o) => {
-      if (o.source === 'onchain') return false;
+      if (o.source === own) return false;
       return overlapMs(o, startMs, endMs) > 0;
     })
     .map((o) => ({

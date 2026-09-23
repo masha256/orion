@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parseAssetYaml } from '../../src/config/load.js';
 import { registerAdapter } from '../../src/ingest/adapters/registry.js';
@@ -96,6 +98,14 @@ describe('buildPlan', () => {
     const asset = miniAsset();
     asset.metrics.staker_emission_share.source = { type: 'adapter', name: 'test.chain', params: {} };
     expect(codeOf(() => buildPlan(asset))).toBe('invalid_source_config');
+  });
+
+  it('serves a defillama flow primary from its batch, needing no chain and no ingest block', () => {
+    const hype = parseAssetYaml(readFileSync(fileURLToPath(new URL('../fixtures/hype.yaml', import.meta.url)), 'utf8')).config;
+    expect(hype.ingest).toBeUndefined();
+    const p = buildPlan(hype);
+    expect(p.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([['defillama:hyperliquid:dailyHoldersRevenue', ['primary:flow_usd.buyback']]]);
+    expect(p).toMatchObject({ flowGroups: [], derived: [], needsRpc: false });
   });
 
   it('knows whether an asset has anything to fetch', () => {

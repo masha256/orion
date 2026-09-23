@@ -11,7 +11,7 @@ metrics:
   staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }
   emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400 }
   scheduled_unlock_tokens: { type: event, unit: tokens, staleness_days: 400 }
-  flow_usd.buyback: { type: flow, unit: usd, staleness_days: 7, critical: true }
+  flow_usd.buyback: { type: flow, unit: usd, staleness_days: 7, critical: true, source: { type: defillama, slug: hyperliquid, data_type: dailyHoldersRevenue } }
 holder_flows:
   - { id: buyback, kind: buy_and_hold, capture_rule: programmatic, recipient_base: all, metric: flow_usd.buyback }
 modules:
