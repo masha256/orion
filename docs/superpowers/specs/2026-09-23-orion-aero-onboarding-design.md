@@ -59,7 +59,7 @@ Gathered by a research pass on 2026-09-23. Confidence: **A** read from the chain
 | Metric | Type, unit | Source | Cross-check | Notes |
 |---|---|---|---|---|
 | `price_usd` | level, usd, critical, staleness 3 | coingecko `aerodrome-finance` price | http_json `coins.llama.fi/prices/current/base:0x9401...8631`, path `coins.base:0x9401...8631.price`, 2 percent | |
-| `effective_supply` | level, tokens, critical, staleness 7 | erc20_supply token, subtract nothing | http_json on the same DefiLlama coins endpoint has no supply; none | no burn sink |
+| `effective_supply` | level, tokens, critical, staleness 7 | erc20_supply token, subtract nothing | none (DefiLlama's coins endpoint carries no supply) | no burn sink |
 | `circulating_supply` | level, tokens, staleness 14 | coingecko circulating_supply | none | CoinGecko's definition; informational under effective_total |
 | `staked_supply` | level, tokens, staleness 7 | contract_read ve `supply`, decimals 18 | none | AERO locked in veAERO |
 | `locked_supply` | level, tokens, staleness 7 | contract_read ve `supply`, decimals 18 | none | the same read: staking is locking |
@@ -107,7 +107,7 @@ The four shipped skills load unchanged. `orion persona assign aero onchain-dex-a
 
 1. The code additions (sections 4 and 5) with their tests, on a feature branch.
 2. `assets/aero.yaml` and the persona; `orion asset validate`; `orion persona assign`.
-3. A dry fetch from a throwaway home with a copy of nothing (a fresh database): `orion data fetch aero --dry-run`. Expected: the 90-day backfill of the fee flow (about 90 rows), the two adapters' readings within a few percent of section 2.1, the price cross-check inside 2 percent.
+3. A dry fetch from a throwaway home with a fresh database: `orion data fetch aero --dry-run`. Expected: the 90-day backfill of the fee flow (about 90 rows), the two adapters' readings within a few percent of section 2.1, the price cross-check inside 2 percent.
 4. The first real tick on this machine (`./run-daily.sh aero`). The fetch writes every metric; the valuation is `blocked` (no assumption set); the cadence starts a bootstrap (no deep or bootstrap attempt); its `manual_metrics` list is empty, so it writes a journal and stops. The inbox stays empty.
 5. Calibration as for VVV: a sensitivity sweep over the fetched data, priced packages, the user chooses; import the set; derive bands by the mirror rule and write them into the asset file; commit.
 6. The next tick produces the first signal. The Hermes job gets a second scheduled line for `aero`, a few minutes after VVV's.
