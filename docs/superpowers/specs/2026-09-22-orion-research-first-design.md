@@ -57,7 +57,7 @@ Out of scope: the AERO and HYPE asset files, personas, and calibrations; a gener
 1. The tick report and the inbox carry no text a model wrote or a page said. A citation URL is the only model-chosen string, and it is never fetched by the scheduled agent.
 2. A researched row is provisional and reaches no signal until the user confirms it, on every metric. `allow_provisional: true` remains legal config and is a deliberate exception the asset file must comment.
 3. Research never writes onto a fetched metric at or before now. The fetch owns the present.
-4. Hermes runs one decision command per user reply, for an id in the latest inbox it sent, and nothing else that writes.
+4. Hermes runs one decision command per decision the user replies with (several in one reply run in order, stopping at the first failure), for an id in the latest inbox it sent, and nothing else that writes.
 5. A `bootstrap` run changes no assumption and files no config proposal.
 
 ## 4. The inbox
@@ -110,13 +110,13 @@ An empty inbox prints `nothing to decide`. A non-empty inbox is not by itself an
 | Reply | Command Hermes runs |
 |---|---|
 | `confirm <id>` | `node dist/cli/index.js data confirm <id> --json` (confirm takes no note; words after the id are ignored and Hermes says so) |
-| `reject <id> [note]` | `node dist/cli/index.js data reject <id> --note "<note>" --json` |
-| `approve <id> [note]` | `node dist/cli/index.js model proposals approve <id> --note "<note>" --json` |
-| `decline <id> [note]` | `node dist/cli/index.js model proposals reject <id> --note "<note>" --json` |
-| `ack <id> [note]` | `node dist/cli/index.js data ack <id> --note "<note>" --json` |
-| `resolve <id> [note]` | `node dist/cli/index.js data resolve <id> --note "<note>" --json` |
+| `reject <id>` | `node dist/cli/index.js data reject <id> --json` (reject takes no note either: observations carry no note column; amendment 9) |
+| `approve <id> [note]` | `node dist/cli/index.js model proposals approve <id> [--note "<note>"] --json` |
+| `decline <id> <note>` | `node dist/cli/index.js model proposals reject <id> --note "<note>" --json` |
+| `ack <id> <note>` | `node dist/cli/index.js data ack <id> --note "<note>" --json` |
+| `resolve <id> <note>` | `node dist/cli/index.js data resolve <id> --note "<note>" --json` |
 
-`decline` rather than `reject` for a proposal so one word never names two queues. The note is the user's words after the id, verbatim; a verb that requires a note and gets none is answered with a request for one, not a default. Hermes runs the command exactly once, prints Orion's JSON result and exit code verbatim, and stops. Several decisions in one reply are run in the order written, each once, stopping at the first failure.
+`decline` rather than `reject` for a proposal so one word never names two queues. The note is the user's words after the id, verbatim, passed to the command as one argument with no shell interpretation (amendment 12); a verb that requires a note and gets none is answered with a request for one, not a default. Hermes runs the command exactly once, prints Orion's JSON result and exit code verbatim, and stops. Several decisions in one reply are run in the order written, each once, stopping at the first failure.
 
 ### 5.4 Guards
 
@@ -229,9 +229,9 @@ Holder-flow windows, `burn_momentum`, staleness, the source-failure streak, prov
 ## 13. Known limitations
 
 - The inbox lists a proposal's effect as stored at filing time; it is not refreshed as data moves (agent-layer spec 16).
-- The revision window for DefiLlama is three days; a revision older than that is not picked up.
+- The revision window for DefiLlama is three days; a revision older than that is not picked up (a day missing for longer is: amendment 6). A day the metric cannot store (a negative value) inside the revision window fails the source; on a gap day it is skipped and noted (amendment 11).
 - Hermes's guards are prompt rules. A model that ignores its prompt could run a decision command on its own; the blast radius is one reversible decision on an id the user has already seen, and Orion's transactions refuse anything stale.
-- A bootstrap run on an asset with nothing citable produces only a journal; the asset stays `blocked` and the next scheduled run is a weekly a week later, which will research again under the smaller budget. Launch another bootstrap by hand if the first found little.
+- A bootstrap run on an asset with nothing citable produces only a journal; the asset stays `blocked`, and while it has no assumption set the only run ever due is another bootstrap a week later at its full budget (amendment 4); no triage runs either (amendment 10). Launch another bootstrap by hand if the first found little, or disable the cadence.
 
 ## 14. Alternatives not taken
 
@@ -253,3 +253,7 @@ The plan was generated from a per-task prototype and applied byte for byte; the 
 7. **Migration 5 runs with foreign keys off, checked after (9).** `MIGRATIONS[].rebuildsTables` makes `migrate()` switch the pragma off outside the transaction, run `foreign_key_check` inside it (a violation rolls the migration back), and restore it in `finally`. The AUTOINCREMENT counter is carried across the rebuild explicitly.
 8. **Event metrics (6).** Event metrics cannot carry a source today, so the exception of section 6 is reachable only for `schedule` metrics; the code covers both.
 9. **`reject <id>` takes no note (5.3), and the reply line always closes the message (5.2).** Observations carry no note column and `orion data reject` has no `--note`, so the reply is `reject <id>`, like `confirm`; words after the id are ignored and Hermes says so. An empty inbox prints `nothing to decide` and then the reply line.
+10. **No triage without an assumption set (7.2, scheduling spec 4.2).** The trigger path of `orion tick` chooses `triage` only when the asset has an assumption set; without one the firings stay standing and the next bootstrap absorbs them. Found by the final review: amendment 4 had covered the schedule path only.
+11. **An unstorable value on a gap day is skipped (8.2).** A value the metric cannot store (negative, non-finite) inside the revision window, or on a first run, fails the source, as before; on a gap day it is skipped with a note and stays a gap, so a bad historical day cannot fail the metric on every run for the length of the backfill window.
+12. **The note is one argument (5.3).** Hermes passes the user's note to the command as a single argument with no shell interpretation (single quotes, inner quotes escaped, or an argv-style call), so a quote, a dollar sign, or a backtick in the user's words neither breaks the command nor changes what Orion stores.
+13. **`coveredDays` marks every day a row touches (8.2).** A row not at midnight covers both days it overlaps, so a gap day is never written beside half of an active manual row. An empty series fails the source, so the failure streak can trip. `orion inbox` is guarded like the tick's finalizer.
