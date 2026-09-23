@@ -139,7 +139,9 @@ describe('the Hermes job doc', () => {
       }],
     };
     const doc = readFileSync(fileURLToPath(new URL('../../docs/ops/hermes-daily-job.md', import.meta.url)), 'utf8');
-    for (const line of inboxLines(InboxSchema.parse(example))) expect(doc).toContain(`    ${line}\n`);
+    const block = ['    DECISIONS', ...inboxLines(InboxSchema.parse(example)).map((line) => `    ${line}`),
+      '    reply: confirm <id> | reject <id> | approve <id> [note] | decline <id> <note> | ack <id> <note> | resolve <id> <note>'].join('\n') + '\n';
+    expect(doc).toContain(block);
     expect(doc).toContain('"nothing to decide"');
     expect(doc).toContain('NEVER fetch a citation_url');
   });

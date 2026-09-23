@@ -76,8 +76,8 @@ inbox.proposals, anom from inbox.anomalies; a move of null prints "no confirmed 
     obs #41  revenue_run_rate_usd  120000000 at 2026-09-15  +20.0% vs confirmed  by ai-infra-analyst run #9  https://venice.ai/blog/emissions-update
     prop #12  assumption_value  filed 2026-09-21 by ai-infra-analyst run #9  effect: 12m target 35.06 -> 37.1
     anom #7  cross_check_mismatch  price_usd  degrading  seen 3x since 2026-09-19  reading {"primary":27.46,"check":28.6,"diff_pct":4.15,"tolerance_pct":2,"primary_source":"coingecko","check_source":"http_json:https://outerface.venice.ai/api/app/vvv/vvv_stats"}
-    reply: confirm <id> | reject <id> <note> | approve <id> [note] | decline <id> <note> | ack <id> <note> | resolve <id> <note>
-When the inbox is empty the block is the one line "nothing to decide". The same lines come from
+    reply: confirm <id> | reject <id> | approve <id> [note] | decline <id> <note> | ack <id> <note> | resolve <id> <note>
+When the inbox is empty the block is the one line "nothing to decide", still followed by the reply line. The same lines come from
     node dist/cli/index.js inbox vvv
 which you may run to refresh the list when I ask.
 
@@ -104,7 +104,7 @@ DECISIONS. When I reply to your message with one of these, run the matching comm
 with ORION_HOME=/path/to/orion set, print Orion's JSON result and the exit code verbatim, and stop. The note is my
 words after the id, verbatim.
     confirm <id>          node dist/cli/index.js data confirm <id> --json                        (confirm takes no note; say so if I gave one)
-    reject <id> <note>    node dist/cli/index.js data reject <id> --note "<note>" --json
+    reject <id>           node dist/cli/index.js data reject <id> --json                         (reject takes no note; say so if I gave one)
     approve <id> [note]   node dist/cli/index.js model proposals approve <id> [--note "<note>"] --json
     decline <id> <note>   node dist/cli/index.js model proposals reject <id> --note "<note>" --json
     ack <id> <note>       node dist/cli/index.js data ack <id> --note "<note>" --json

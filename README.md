@@ -152,7 +152,7 @@ With the cron line in place, the daily signal takes care of itself. What is left
 
 | When | Command | Why |
 |---|---|---|
-| Daily, from the Hermes message | reply `confirm <id>`, `reject <id> <note>`, `approve <id> [note]`, `decline <id> <note>`, `ack <id> <note>`, or `resolve <id> <note>` | The message ends with the inbox; Hermes runs the one command for your reply and reports Orion's answer. `orion inbox vvv` shows the same queue from a session. |
+| Daily, from the Hermes message | reply `confirm <id>`, `reject <id>`, `approve <id> [note]`, `decline <id> <note>`, `ack <id> <note>`, or `resolve <id> <note>` | The message ends with the inbox; Hermes runs the one command for your reply and reports Orion's answer. `orion inbox vvv` shows the same queue from a session. |
 | Whenever you want the number | `orion signal latest vvv` | Read the latest signal. |
 | Weekly, or when a signal says `degraded` | `orion data anomalies vvv` | See what opened. |
 | After checking an anomaly | reply `ack <id> <note>` or `resolve <id> <note>` to Hermes, or `orion data ack <id> --note "..."` / `orion data resolve <id> --note "..."` | Close it. `ack`: understood and accepted. `resolve`: the cause is fixed. |
