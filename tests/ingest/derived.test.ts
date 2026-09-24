@@ -66,6 +66,23 @@ describe('fetchAsset: a revenue run rate derived from an API-series flow', () =>
     const again = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     expect(again.sources.find((s) => s.sourceId === 'derived:flow_annualized')!.notes).toEqual(['revenue_run_rate_usd: no new day with 3 complete days behind it']);
   });
+
+  it('reads a manual daily row that replaced a fetched day outside the revision window, so the window stays complete and the run rate moves', async () => {
+    const h = harness({ loaded: parseAssetYaml(yaml), routes: { [LLAMA_HYPE]: chart({ '2026-09-11': 100, '2026-09-12': 110, '2026-09-13': 9000, '2026-09-14': 130, '2026-09-15': 140, '2026-09-16': 150, '2026-09-17': 160, '2026-09-18': 170 }) } });
+    await fetchAsset(h.db, h.loaded, NOW, h.deps);
+    const at = (rows: ReturnType<typeof listActiveObservations>, day: string) => rows.find((o) => o.observedAt.startsWith(day))!.value;
+    expect(at(listActiveObservations(h.db, 'hype', 'revenue_run_rate_usd'), '2026-09-14')).toBe((9210 * 365) / 3);
+    // The user replaces the 2026-09-13 artifact: a manual row at the day's end supersedes the API row.
+    insertObservation(h.db, { assetId: 'hype', metricKey: 'flow_usd.buyback', observedAt: '2026-09-14T00:00:00Z', periodDays: 1, value: 120, source: 'manual', fetchedAt: NOW.toISOString() });
+    const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
+    // The day is behind the revision window and covered, so the flow source neither refills it nor refuses it as a conflict.
+    expect(r.sources.filter((s) => s.sourceId.startsWith('defillama:'))).toMatchObject([{ status: 'ok', metricsWritten: [], conflicts: [] }]);
+    expect(r.sources.find((s) => s.sourceId === 'derived:flow_annualized')).toMatchObject({ status: 'ok', metricsWritten: ['revenue_run_rate_usd'] });
+    const rows = listActiveObservations(h.db, 'hype', 'revenue_run_rate_usd');
+    expect(at(rows, '2026-09-14')).toBe((330 * 365) / 3); // the windows that cover the replaced day are rewritten
+    expect(at(rows, '2026-09-17')).toBe((420 * 365) / 3); // the others are untouched
+    expect(rows).toHaveLength(6);
+  });
 });
 
 describe('checkRevenueStale', () => {

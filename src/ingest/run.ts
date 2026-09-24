@@ -81,11 +81,15 @@ function unlistedAnomalyMetrics(loaded: LoadedAsset, group: FlowGroup): string[]
   return critical.length > 0 ? critical : [group.members[0].metricKey];
 }
 
-/** The metric's stored daily fetched rows (a transfer scan's or an API series'), keyed by the UTC day each one covers. */
+/**
+ * The metric's stored daily rows (a transfer scan's, an API series', or a manual correction of one day), keyed by the UTC
+ * day each one covers. A manual daily row is the user's replacement of a fetched day (a source artifact, say): it
+ * supersedes the fetched row, so the derivation reads it in that row's place instead of seeing a gap.
+ */
 function storedDailyFlow(db: Db, assetId: string, metricKey: string): Map<string, number> {
   const days = new Map<string, number>();
   for (const o of listActiveObservations(db, assetId, metricKey)) {
-    if ((o.source === 'onchain' || o.source === 'api') && o.periodDays === 1) days.set(utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY), o.value);
+    if (o.periodDays === 1) days.set(utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY), o.value);
   }
   return days;
 }
