@@ -1,0 +1,37 @@
+# AERO calibrated assumptions: the "central" package the user chose on 2026-09-24 after a sensitivity sweep and three priced
+# packages (conservative / central / constructive), with the 2026-09-10 DefiLlama fee artifact replaced (see the follow-ups
+# note). Anchors at the time: price $0.672, 90-day fee run rate to lockers $61.9M, emissions 254M AERO a year (about $171M),
+# locked 1.05B of 1.99B effective supply. Base growth of 25 percent follows the bootstrap's reading that daily fees moved
+# from $100-150K in July to $200-300K since late August. The market at $0.672 prices roughly the constructive package's base
+# case; this set's 12m expected target was $0.38, with the bull scenario carrying most of it (dispersion 0.85).
+# Import: orion model assumptions import aero calibration/aero-assumptions.yaml --rationale "..."
+bear:
+  rev_growth_y1: -0.3
+  growth_fade_years: 3
+  terminal_growth: 0.0
+  capture_rate_terminal.fees: 0.9
+  capture_ramp_years.fees: 0
+  discount_rate_base: 0.28
+  multiple.fm_holder_flow: 6
+  regime_multiplier: 0.7
+  staked_ratio_horizon: 0.45
+base:
+  rev_growth_y1: 0.25
+  growth_fade_years: 4
+  terminal_growth: 0.02
+  capture_rate_terminal.fees: 1.0
+  capture_ramp_years.fees: 0
+  discount_rate_base: 0.20
+  multiple.fm_holder_flow: 10
+  regime_multiplier: 1.0
+  staked_ratio_horizon: 0.53
+bull:
+  rev_growth_y1: 0.8
+  growth_fade_years: 5
+  terminal_growth: 0.03
+  capture_rate_terminal.fees: 1.0
+  capture_ramp_years.fees: 0
+  discount_rate_base: 0.15
+  multiple.fm_holder_flow: 18
+  regime_multiplier: 1.3
+  staked_ratio_horizon: 0.6

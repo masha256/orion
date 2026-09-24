@@ -9,7 +9,7 @@ The plan's code was generated from a per-task prototype and verified by extracti
 ## Open after the merge (first things to do)
 
 - Task 4 checkpoints, in order: `orion persona assign aero onchain-dex-analyst`; `orion data fetch aero --dry-run`; the first tick (`./run-daily.sh aero`: a blocked signal and a journal-only bootstrap, exit 2); the calibration sweep with priced packages; the bands by the mirror rule into `assets/aero.yaml` (the hash pin in `tests/assets/aero.ingest.test.ts` moves on purpose); the first signal; a second Hermes job line for `aero`.
-- At calibration, settle whether the 2026-09-09 fee day (7.9M USD, 53 times the median) is real fee flow or a DefiLlama catch-up; it sits in the 90-day windows until 2026-12-08, which is also the first date the `driver_deviation` trigger can fire on AERO from its roll-off.
+- SETTLED 2026-09-24: the 2026-09-09 fee day (7.9M USD, 53 times the median) is a DefiLlama artifact, not fee flow: Slipstream volume was up 19 percent that day while its fees were up 24 times (an implied fee rate of 1.4 percent of volume against 0.07 percent on every neighbouring day), and the v1 series shows nothing. The user confirmed; the day is a manual row of 261,631 USD (the mean of the days either side; observation #515 supersedes the API row #499). A manual row covers the day, so the fetch neither refills it as a gap nor refuses it as a conflict (the revision window is 3 days); `--rescan` would refuse it and needs `--adopt`. The 90-day run rate falls from 92.8M to 61.9M USD at the next fetch.
 - Checkpoint 1 gains one read: `AERO.balanceOf(VotingEscrow)` (990.6M in the research note) against `ve.supply()` (1,051M); the asset file uses `supply()` as the spec says; either gives 50 to 53 percent locked.
 
 ## Rulings the controller made on the user's behalf
@@ -40,13 +40,19 @@ Each line: what was decided, why, and what it costs if wrong. Review these and r
 
 ## Task 4: the user's checkpoints
 
-From the plan's Task 4, unchanged in substance: (1) assign the persona and dry-fetch on the live home; (2) the first tick, expecting a blocked signal, a journal-only bootstrap, exit 2 (a hand-launched deep after calibration skips it); (3) calibration by sweep, import, bands, commit; (4) the first signal, recorded here with the spot, the 12m target, and the dispersion; (5) the second Hermes line; (6) this note and the spec's status line, which are done.
+Checkpoints 1 to 3 are done (2026-09-24). From the plan's Task 4, unchanged in substance: (1) assign the persona and dry-fetch on the live home; (2) the first tick, expecting a blocked signal, a journal-only bootstrap, exit 2 (a hand-launched deep after calibration skips it); (3) calibration by sweep, import, bands, commit; (4) the first signal, recorded here with the spot, the 12m target, and the dispersion; (5) the second Hermes line; (6) this note and the spec's status line, which are done.
+
+## Calibration (checkpoint 3, 2026-09-24)
+
+Method as for VVV: a starter set (v1) for a one-key sweep, then three priced packages, then the mirror rule for the bands. Anchors: spot 0.672 USD, effective supply 1.988B, locked 1.051B, emissions 254.6M AERO a year (about 171M USD at spot) against 61.9M USD a year of fees to lockers with the spike replaced (92.8M with it), so the holder-cashflow module is bearish in every package and the market prices roughly the constructive package's base case. The sweep (starter set, spike replaced, 12m expected 0.215): `rev_growth_y1` 0 to 1.0 moved it 0.170 to 0.600 and `multiple.fm_holder_flow` 5 to 30 moved it 0.148 to 0.483; discount rate and regime are second order; staked ratio, ramp, fade and terminal growth barely move it. Packages at 25/50/25, 12m expected with the spike replaced (with it): conservative 0.191 (0.287), central 0.383 (0.574), constructive 0.864 (1.295). The user chose CENTRAL (base growth 25 percent from the bootstrap's reading of daily fees rising from 100-150K to 200-300K USD; multiple 10; discount 20 percent), imported as v2 from `calibration/aero-assumptions.yaml`; scenarios bear 0.047 / base 0.248 / bull 0.989, dispersion 0.85, so the expected value leans on the bull tail, as for VVV. The user was told the base case sits well under spot; do not re-litigate it.
+
+Bands by the mirror rule, priced in a scratch copy: the largest single step was bull `rev_growth_y1` (0.313 to 0.472 for the full mirror band), so that band is halved to [0.6625, 0.9375] as for VVV; capture is tied at the 1.0 ceiling in base and bull, so those bands run from the bear band's mirror edge (0.95) to the ceiling; all keys at the edge moved the 12m expected value about -17 (base down) / +33 (base up) / +49 (bull up) percent before the halving.
 
 ## The figures as fixed (2026-09-23 reads)
 
 - Weekly gross mint in the tail regime: base 4,164,806 (21 basis points of 1,983,240,736), rebase 483,789 (on voting power 1,027,321,406 at the epoch's start), team 220,610 (228 basis points on the rebase plus the frozen `weekly` of 8,969,149.54, grossed up): about 253.9M AERO a year, 12.8 percent of supply; the lockers' rebase share about 0.099.
 - The 2026-09-17 mint (tx `0xd75b...288f`) reproduced to the coin: 4,154,746 / 481,314 / 220,498.
-- Revenue run rate over 90 days; the asset file's hash pin is `eb39a2307aeff731889630f74152055941db8e49aa2cc88bc5a159e1d2c37f78` until the bands are written.
+- Revenue run rate over 90 days; the asset file's hash pin moved to `67377d966848eb4de629c354e38a1f8ecb5d8b523d68f9255680a3df4a5e3269` when the bands were written on 2026-09-24.
 
 ## Residual minors from the fix wave's re-review (recorded, not fixed)
 
