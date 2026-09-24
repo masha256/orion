@@ -87,7 +87,7 @@ In `src/ingest/derived.ts`, beside `burn_momentum`: `flowAnnualized(days: Map<st
 `src/ingest/adapters/aero.ts`, registered in the adapter registry beside VVV's. Both need the RPC and read, in one multicall at the run's block: `AERO.totalSupply()`, `ve.supply()`, `Minter.weekly()`, `Minter.tailEmissionRate()`, `Minter.teamRate()`. Contract names come from params with defaults `token`, `ve`, `minter`.
 
 - `aero.emission_rate_annual`: refuses (throws, so the source fails) when `weekly() > TAIL_START` (8,969,150 AERO, a param with that default), because the formula below applies only to the tail regime. Otherwise `base = total * tailRate / 10_000`, `growth = base * ((total - veTotal) / total)^2 / 2` with `veTotal` the voting power at the epoch's start (a second multicall reads `ve.totalSupplyAt(activePeriod - 1)` after the first read `activePeriod`), `team = teamRate * (growth + weekly) / (10_000 - teamRate)` (with `weekly` the read, frozen at `TAIL_START`), `annual = (base + growth + team) * 365 / 7`. Returns a level in tokens per year at the block time, `source: onchain`, detail naming the three reads; stored on the `schedule` metric as the step in force.
-- `aero.staker_emission_share`: the same reads; returns `growth / (base + growth + team)`, a ratio (about 0.102 today).
+- `aero.staker_emission_share`: the same reads; returns `growth / (base + growth + team)`, a ratio (about 0.099 today).
 
 Cross-checks: none exist. The tail rate moves by governance one basis point per epoch; the daily read follows it, and a move of more than `driver_deviation_pct` in the revenue driver is what the trigger watches, not emissions.
 
