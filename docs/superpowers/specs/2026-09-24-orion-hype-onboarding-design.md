@@ -1,6 +1,6 @@
 # Orion sub-project 7: HYPE onboarding
 
-Date: 2026-09-24. Status: designed, approved section by section; not yet planned.
+Date: 2026-09-24. Status: planned (`docs/superpowers/plans/2026-09-24-orion-hype-onboarding.md`, generated from a per-task prototype and verified by extraction); section 11 records the planning amendments.
 
 Extends `docs/superpowers/specs/2026-09-18-orion-valuation-framework-design.md` (section 3.7, the HYPE contrast case), `docs/superpowers/specs/2026-09-19-orion-ingestion-design.md` (sources, adapters, the HTTP transport), `docs/superpowers/specs/2026-09-22-orion-research-first-design.md` (the DefiLlama flow primary, the bootstrap, the inbox), and `docs/superpowers/specs/2026-09-23-orion-aero-onboarding-design.md` (the `flow_annualized` derived source, the onboarding sequence, the calibration method). Where this document and those differ, this one wins for the items it covers.
 
@@ -141,3 +141,11 @@ The four shipped skills load unchanged. `orion persona assign hype perp-exchange
 - **Circulating supply is definitional.** CoinGecko's 222M against the API's 299M; informational under `effective_total`, single-sourced.
 - **Contributor vesting sizes are unconfirmed.** Under the effective-total basis they do not change the per-token value; they are float and flow pressure the persona notes.
 - **The run rate is a 90-day trailing figure**, so a sharp volume move shows with a lag of a quarter, as for AERO. Monthly holders revenue has already fallen by half from its 2025 peak; the calibration starts from the 90-day figure, and the packages should show the 30-day and 1-year alternatives.
+
+## 11. Amendments made during planning (2026-09-24)
+
+1. **The recorded fixtures are the tests' numbers (2.1, 8).** The info API replies recorded at 2026-09-24T23:40Z read total supply 998,909,900.86, fund 47,478,177.05, stake summed 440,716,882.75; section 2.1's figures came a few hours earlier and differ in the fifth digit. The tests pin the fixtures' arithmetic with wide sanity bounds; the effective supply nets 47,479,853.5 (the fund, the zero address, `0x...dead`).
+2. **Grade B by design (8).** A manual row in force caps the data-quality grade at B, as VVV's manual revenue does, so HYPE's signal is `ok` at grade B once the staker share is confirmed, and `blocked` naming that metric before. Section 8's "the valuation is `ok`" stands; grade A is not reachable.
+3. **One request serves two adapters (5).** The stake and the emission adapters post the same `validatorSummaries` body; the run cache, keyed by URL and body for a POST, answers the second from the first, so a tick posts two requests to the info API, not three.
+4. **The token-details fixture drops the genesis block (8).** The API's reply carries 94,023 genesis balances (5 MB) that no adapter reads; the fixture keeps every other field.
+5. **The fake transport routes a POST by body (4).** A function route receives the body, so one URL answers several request types in tests; the fake's call log records the method and the body.
