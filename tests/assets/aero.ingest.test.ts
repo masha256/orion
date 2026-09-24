@@ -18,16 +18,15 @@ import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-09-23T21:30:00.000Z');
 const GENESIS_TS = NOW.getTime() / 1000 - 100 * 86_400 + 1;
-const E18 = 10n ** 18n;
 const LLAMA = 'https://coins.llama.fi/prices/current/base:0x940181a94a35a4569e4529a3cdfb74e38fd98631';
 
 const { config } = loadAsset(ROOT, 'aero');
 const C = config.contracts;
 
-/** 40 days of holders revenue ending on the last complete day, about 470k USD a day (the 30-day total was 14.2M on 2026-09-23). */
+/** 100 days of holders revenue ending on the last complete day, about 470k USD a day (the 30-day total was 14.2M on 2026-09-23). */
 function chart(): { totalDataChart: [number, number][] } {
   const points: [number, number][] = [];
-  for (let i = 40; i >= 1; i--) {
+  for (let i = 100; i >= 1; i--) {
     const day = addDays('2026-09-22', 1 - i);
     points.push([Date.parse(`${day}T00:00:00Z`) / 1000, 450_000 + (i % 5) * 10_000]);
   }
@@ -79,7 +78,7 @@ describe('assets/aero.yaml', () => {
     // Every metric has a source: a bootstrap run has nothing to research on this asset.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // Pinned on 2026-09-23. A deliberate edit of assets/aero.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/aero.yaml`, 'utf8')).hash).toBe('e07c533deb39a29e647e106e61c8c5eb352cd63c37da8e424e7b1e77cbbeb6cf');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/aero.yaml`, 'utf8')).hash).toBe('eb39a2307aeff731889630f74152055941db8e49aa2cc88bc5a159e1d2c37f78');
   });
 
   it('plans the source map of the spec: no transfer scan, one API-series flow, one derived level, two adapters', () => {
@@ -111,15 +110,16 @@ describe('assets/aero.yaml', () => {
     expect(value('locked_supply')).toBeCloseTo(1051061695.97399, 3);
     expect(value('staker_emission_share')).toBeGreaterThan(0.09);
     expect(value('staker_emission_share')).toBeLessThan(0.11);
-    expect(value('emission_rate_annual')).toBeGreaterThan(240e6);
-    expect(value('emission_rate_annual')).toBeLessThan(255e6);
-    expect(listActiveObservations(w.db, 'aero', 'flow_usd.fees')).toHaveLength(40);
-    // The run rate: the last 30 complete days summed and scaled to a year, written for every day with a full window (11 days).
+    expect(value('emission_rate_annual')).toBeGreaterThan(245e6);
+    expect(value('emission_rate_annual')).toBeLessThan(262e6);
+    // The writer keeps only the backfill window (backfill_days 90 on a first run, no cursor): 2026-06-25 to 2026-09-22, 90 of the 100 days.
+    expect(listActiveObservations(w.db, 'aero', 'flow_usd.fees')).toHaveLength(90);
+    // The run rate: the last 90 complete days summed and scaled to a year, written for every day with a full window: only 2026-09-22.
     const revenue = listActiveObservations(w.db, 'aero', 'revenue_run_rate_usd');
-    expect(revenue).toHaveLength(11);
+    expect(revenue).toHaveLength(1);
     expect(revenue.at(-1)!.value).toBeGreaterThan(160e6);
     expect(revenue.at(-1)!.value).toBeLessThan(180e6);
-    expect(revenue.at(-1)).toMatchObject({ source: 'api', sourceDetail: 'derived flow_annualized(flow_usd.fees, 30d)' });
+    expect(revenue.at(-1)).toMatchObject({ source: 'api', sourceDetail: 'derived flow_annualized(flow_usd.fees, 90d)' });
     const checked = r.sources.flatMap((s) => s.crossChecks);
     expect(checked).toHaveLength(1);
     expect(checked[0]).toMatchObject({ metricKey: 'price_usd', ok: true });

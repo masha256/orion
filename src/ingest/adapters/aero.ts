@@ -7,7 +7,7 @@ import type { AdapterDef } from './registry.js';
 /**
  * Aerodrome's Minter in its tail regime (verified live on 2026-09-23: weekly() sits at TAIL_START, tailEmissionRate 21,
  * teamRate 228). Each epoch it mints base = totalSupply * tailEmissionRate / 10_000 to the gauges, a rebase
- * growth = base * ((total - veTotal) / total)^2 / 2 (with veTotal the voting power at the epoch's start) to veAERO lockers, and team = teamRate * (growth + base) / (10_000 - teamRate).
+ * growth = base * ((total - veTotal) / total)^2 / 2 (with veTotal the voting power at the epoch's start) to veAERO lockers, and team = teamRate * (growth + weekly) / (10_000 - teamRate), with weekly the Minter's state variable (frozen at TAIL_START in the tail).
  * Outside the tail the Minter decays `weekly` by 1 percent per epoch instead, which these adapters do not model: they refuse.
  */
 
@@ -43,7 +43,9 @@ async function tailEmissions(ctx: SourceContext, params: Record<string, unknown>
   const locked = unitsToNumber(lockedRaw, TOKEN_DECIMALS);
   const weekly = unitsToNumber(weeklyRaw, TOKEN_DECIMALS);
   const tailStart = number(params, 'tail_start', TAIL_START_AERO);
-  if (!(weekly < tailStart)) {
+  const tailStartRaw = BigInt(Math.round(tailStart)) * 10n ** BigInt(TOKEN_DECIMALS);
+  // Unreachable on today's Minter: weekly is frozen at TAIL_START in the tail. It guards against a replaced Minter.
+  if (!(weeklyRaw < tailStartRaw)) {
     throw new Error(`the Minter is not in its tail regime (weekly ${weekly} is not below ${tailStart}); these adapters model tail emissions only`);
   }
   if (!(total > 0)) throw new Error('AERO total supply is not positive');
@@ -52,6 +54,7 @@ async function tailEmissions(ctx: SourceContext, params: Record<string, unknown>
   const teamRate = Number(teamRateRaw);
   if (!(tailRate > 0 && tailRate <= 100)) throw new Error(`tailEmissionRate ${tailRate} is outside the Minter's 1 to 100 basis points`);
   if (!(teamRate >= 0 && teamRate < BPS)) throw new Error(`teamRate ${teamRate} is not a rate in basis points below ${BPS}`);
+  if (activePeriodRaw < 1n) throw new Error(`activePeriod ${activePeriodRaw} is not an epoch start; the Minter has never flipped an epoch`);
   const [veTotalRaw] = await readAll(ctx, [
     { address: ve, signature: view('totalSupplyAt', 'uint256'), functionName: 'totalSupplyAt', args: [activePeriodRaw - 1n] },
   ]);
@@ -61,7 +64,8 @@ async function tailEmissions(ctx: SourceContext, params: Record<string, unknown>
   // The contract's calculateGrowth uses voting power at the epoch's start (ve.totalSupplyAt(activePeriod - 1)), not the AERO locked: a decayed lock counts for less.
   const unlockedShare = (total - veTotal) / total;
   const growth = (base * unlockedShare * unlockedShare) / 2;
-  const team = (teamRate * (growth + base)) / (BPS - teamRate);
+  // The contract applies the team rate to growth + weekly (the state variable, frozen at TAIL_START in the tail), not to the tail emission: reconciled to the coin against the 2026-09-17 mint (tx 0xd75b...288f: 220,498 AERO to the team).
+  const team = (teamRate * (growth + weekly)) / (BPS - teamRate);
   return { base, growth, team, gross: base + growth + team, tailRate, teamRate };
 }
 

@@ -82,13 +82,13 @@ metrics:
     critical: true
     source: { type: defillama, slug: aerodrome, data_type: dailyHoldersRevenue, backfill_days: 90 }
 
-  # The last 30 days of fees to lockers, scaled to a year: AERO's revenue IS its holder flow.
+  # The last 90 days of fees to lockers, scaled to a year: AERO's revenue IS its holder flow, so the window matches the holder flow's (window_days 90) and the measured capture is 1 by construction. A 30-day window let one 7.9M USD day (2026-09-09) double the run rate.
   revenue_run_rate_usd:
     type: level
     unit: usd
     staleness_days: 5
     critical: true
-    source: { type: derived, name: flow_annualized, params: { metric: flow_usd.fees, days: 30 } }
+    source: { type: derived, name: flow_annualized, params: { metric: flow_usd.fees, days: 90 } }
 
 holder_flows:
   - { id: fees, kind: fee_share, capture_rule: contractual, recipient_base: locked, metric: flow_usd.fees, window_days: 90 }
