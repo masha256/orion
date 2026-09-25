@@ -1,0 +1,1332 @@
+[
+ {
+  "validator": "0x000000000056f99d36b6f2e0c51fd41496bbacb8",
+  "signer": "0x0000000008b0b558419582041f85740344ae8fde",
+  "name": "ValiDAO",
+  "description": "The People\u2019s Validator. Zero seed oils. Yours truly. https://validao.xyz",
+  "nRecentBlocks": 2,
+  "stake": 645396542998756,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.04",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0214460982",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0214460982",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9990277778",
+     "predictedApr": "0.0214252479",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x15458aed3c7a49b215fbfa863c6ff550c31e1a31",
+  "signer": "0x21d50a1c2e70b2b4b25516c744da7f1de760b2ec",
+  "name": "B-Harvest",
+  "description": "Provides secure validation services for dPoS networks(https://bharvest.io)",
+  "nRecentBlocks": 2,
+  "stake": 510578079850612,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.05",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0212227014",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0212227014",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9990509259",
+     "predictedApr": "0.0212025595",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x30c66ebc7f5ef4f340b424a26e4d944f60129815",
+  "signer": "0xc304bcea88f450f3367bf5df3eea30eef4f0e9e9",
+  "name": "Bitwise",
+  "description": "Trusted infrastructure for institutions. Bitwise offers institutional-grade staking, ensuring optimal performance and security. By delegating, you agree to the terms of service at https://chorus.one/tos",
+  "nRecentBlocks": 1,
+  "stake": 412650720599570,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.03",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9986111111",
+     "predictedApr": "0.0216393986",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x3e5b2598a32ebf003ad5a7254faa3d04ff41d9fe",
+  "signer": "0xc334c02fdbff90180331dd539db4f528ea29a603",
+  "name": "Alphaticks",
+  "description": "Alphaticks",
+  "nRecentBlocks": 1,
+  "stake": 472465374651856,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.01",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0221162888",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "0.993452381",
+     "predictedApr": "0.0219714798",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9984722222",
+     "predictedApr": "0.0220825",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x420a4ed7b6bb361da586868adec2f2bb9ab75e66",
+  "signer": "0x9dd85fb6cf95a9d755af0853b36fb05e972c71e1",
+  "name": "Anchorage By Figment",
+  "description": "Anchorage and Figment have partnered to run institutional-grade validator infrastructure on Hyperliquid. Anchorage is the only federally chartered crypto bank in the U.S., offering a fully integrated suite of crypto custody, trading, and staking services. Figment is the world's largest staking infrastructure provider, serving over 1000 institutional clients.",
+  "nRecentBlocks": 7,
+  "stake": 2728965136789154,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.1",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0201057171",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0201057171",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9998611111",
+     "predictedApr": "0.0201029246",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x48f1da3e3ec2814fbb3dcf57125001089b067402",
+  "signer": "0x8ad18589986bdd4cee7387ca2dca2d5cc1615d1a",
+  "name": "USDT0 x Luganodes",
+  "description": "USDT0 has partnered with Luganodes to bring reliable, institutional-grade validation to emerging ecosystems. USDT0 is the unified liquidity protocol for USDT, enabling seamless movement and deployment of the world\u2019s largest stablecoin across diverse chains. Note: Delegation involves slashing risk.",
+  "nRecentBlocks": 2,
+  "stake": 844809627800622,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.03",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "0.9791666667",
+     "predictedApr": "0.0212180473",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "0.9994047619",
+     "predictedApr": "0.0216565966",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.999537037",
+     "predictedApr": "0.0216594629",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x497beec89958848126c2ea65934ce430e1410ad2",
+  "signer": "0x497beec89958848126c2ea65934ce430e1410ad2",
+  "name": "Hyperbeat x P2P x Hypio",
+  "description": "Hyperbeat x P2P.org x Hypio is a collaboration between Hyperbeat, a native liquidity protocol that exists to scale HyperliquidX, HyperEVM (the people\u2019s L1) and the broader Hyperliquid Ecosystem; P2P.org, one of the largest node infrastruture protocols in the world and Wealthy Hypio Babies, the whiteblood cells of the Hyperliquid ecosystem. Learn more docs.hyperbeat.org, P2P.org and hypio.baby. Disclaimer: Delegation comes with slashing risks",
+  "nRecentBlocks": 0,
+  "stake": 403511560391338,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.02",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.021892892",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.021892892",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9989583333",
+     "predictedApr": "0.0218700869",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x4e256d24da830290d10f425b44f3e9439394385a",
+  "signer": "0x2ac34ef759933b5f695f6d4faba17045f8837a74",
+  "name": "CMI",
+  "description": "Your APR Maximizer HyperMaker.\nThanks to and for the Hypercommunity & HyperBusinesses.\nThe strongest technical & infra from an institutional Hypermaker open to you and B2B with competitive commissions (<= 1%).\nDisclaimer: delegating to any validator carries risks (e.g., slashing). DYOR.",
+  "nRecentBlocks": 1,
+  "stake": 912082943138067,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.0",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0223396857",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0223396857",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9984490741",
+     "predictedApr": "0.0223050385",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x5ac99df645f3414876c816caa18b2d234024b487",
+  "signer": "0x5ac99df645f3414876c816caa18b2d234024b487",
+  "name": "Hyper Foundation 1",
+  "description": "Hyper Foundation 1",
+  "nRecentBlocks": 11,
+  "stake": 5230437381152490,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.03",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x65baa675fa9e5f6c7ae4541ebdb16c526de06f1f",
+  "signer": "0x22d89f8b6fdd53156bf5f096a2f23a798c8d27f9",
+  "name": "HypurrCorea - Spacebar x DeSpread",
+  "description": "Bringing the most experimental Hyperliquid-native staking experience. A collaboration by SKYGG and Despread, OG community and product builders dedicated to the Hyperliquid ecosystem.",
+  "nRecentBlocks": 2,
+  "stake": 820067613292787,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.03",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9962037037",
+     "predictedApr": "0.0215872313",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x66be52ec79f829cc88e5778a255e2cb9492798fd",
+  "signer": "0x5795ab6e71ecbefa255fc4728cc34893ba992d44",
+  "name": "Hyper Foundation 5",
+  "description": "Hyper Foundation 5",
+  "nRecentBlocks": 9,
+  "stake": 1523748715591531,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.03",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x68e6b8995d0ea3ebe829bd66e9437eaf536aff9c",
+  "signer": "0x68e6b8995d0ea3ebe829bd66e9437eaf536aff9c",
+  "name": "HyperCN X hlscan",
+  "description": "CN community Explorer & RPC",
+  "nRecentBlocks": 0,
+  "stake": 10300000000,
+  "isJailed": true,
+  "unjailableAfter": 0,
+  "isActive": false,
+  "commission": "0.01",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x80f0cd23da5bf3a0101110cfd0f89c8a69a1384d",
+  "signer": "0x80f0cd23da5bf3a0101110cfd0f89c8a69a1384d",
+  "name": "Hyper Foundation 3",
+  "description": "Hyper Foundation 3",
+  "nRecentBlocks": 9,
+  "stake": 5548000021222977,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.03",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x8a5dbdf69b282bf2e8fb9f29fd34891f79c5dfd4",
+  "signer": "0x8a5dbdf69b282bf2e8fb9f29fd34891f79c5dfd4",
+  "name": "Hyperdash",
+  "description": "Hyperdash is a global brokerage and data infrastructure business.",
+  "nRecentBlocks": 2,
+  "stake": 953421904119487,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.03",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9984259259",
+     "predictedApr": "0.0216353857",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x8b8c3966870321866e7b7091c382308a6a97e9b1",
+  "signer": "0x9c1d5d05b38ad27fb143697bad0fbd310380209c",
+  "name": "HyperStake",
+  "description": "Secure Hyperliquid with the most performant, highest skin in the game, community run validator",
+  "nRecentBlocks": 2,
+  "stake": 867943876062909,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.0",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0223396857",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0223396857",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9990277778",
+     "predictedApr": "0.0223179665",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x8f02ade62c1c1cf34daa855ccf1245aaf90d3056",
+  "signer": "0xeeabeda825763993115fd3687edabefa0e17c619",
+  "name": "Flowdex",
+  "description": "Flowdesk is a leading global liquidity provider and OTC trading firm. We combine financial and crypto expertise with algorithmic trading and proprietary technology.",
+  "nRecentBlocks": 1,
+  "stake": 382345921163472,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.0",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0223396857",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0223396857",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9988194444",
+     "predictedApr": "0.0223133124",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x914d7f841b5ee14d1cd3852c7b2601b6ff6a8c52",
+  "signer": "0xdc7bb571da41200cc708e52a9052e28785dfabb0",
+  "name": "Enigma - Hypedexer.com X Meria",
+  "description": "Hypedexer.com: Real-time Hypercore data, build and operated by Enigma, professional staking infrastructure provider across 40+ chains with institutional-grade security. Partnered with Meria Finance, regulated staking service.",
+  "nRecentBlocks": 0,
+  "stake": 351490988142059,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.03",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9997222222",
+     "predictedApr": "0.0216634758",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0x950f8dd5e5030e1fa6ad2cdc4295809d185925d0",
+  "signer": "0xfd500a196d432e1b2231a01001b982bfa31cafb1",
+  "name": "Meria",
+  "description": "Meria is an institutional-grade staking service provider running blockchain infrastructure on more than +35 networks.",
+  "nRecentBlocks": 0,
+  "stake": 133802816726,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": false,
+  "commission": "0.029",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xa23b4556090260828ff3f939d2dbdd4f318b5f1f",
+  "signer": "0xe02dc4639abce8f93adb7f36244a309f5aacada5",
+  "name": "infinitefield.xyz",
+  "description": "HFT market making infrastructure",
+  "nRecentBlocks": 4,
+  "stake": 1747977300845802,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.0",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0223396857",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0223396857",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9993055556",
+     "predictedApr": "0.022324172",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xa82fe73bbd768bc15d1ef2f6142a21ff8bd762ad",
+  "signer": "0xa82fe73bbd768bc15d1ef2f6142a21ff8bd762ad",
+  "name": "Hyper Foundation 2",
+  "description": "Hyper Foundation 2",
+  "nRecentBlocks": 10,
+  "stake": 5410527995844995,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.03",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xabcdeff4b3727b83a23697500eef089020df2cd2",
+  "signer": "0xb796a00b6e50c3dd46e43346c921fe8e146f4e06",
+  "name": "Hypurrscanning",
+  "description": "L1 Explorer",
+  "nRecentBlocks": 5,
+  "stake": 2318841858495069,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.01",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0221162888",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0221162888",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9985185185",
+     "predictedApr": "0.0220835239",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xb00c116f72eb55f52ca80196b63014a42cc72de1",
+  "signer": "0xee783c36ef385640041e9f6ff91666ed42c0d831",
+  "name": "Liquid Spirit x Hydromancer x Rekt Gang",
+  "description": "Culture meets infrastructure in this collaboration between Liquid Spirit \u00d7 Hydromancer x Rekt Gang. Rekt Gang is an OG NFT community focused on helping degens get less Rekt. Hydromancer provides best-in-class developer tooling and data services to builders and HIP-3 deployers, enabling teams to ship faster and scale confidently. (More at https://hydromancer.xyz)",
+  "nRecentBlocks": 1,
+  "stake": 447165137075916,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.03",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9997453704",
+     "predictedApr": "0.0216639774",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xb01934de2e25e57a6a91b3411a7544be2e06f392",
+  "signer": "0x4dc52974cd8679759ad77436bff4e01014d06f9e",
+  "name": "Red Pond",
+  "description": "a validator",
+  "nRecentBlocks": 0,
+  "stake": 8800006109,
+  "isJailed": true,
+  "unjailableAfter": 0,
+  "isActive": false,
+  "commission": "0.01",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xb8f45222a3246a2b0104696a1df26842007c5bc5",
+  "signer": "0x4a900e9266b00e3d5310e09bb49520b80f2bd417",
+  "name": "Nansen x HypurrCollective",
+  "description": "HypurrCollective x Nansen is the collaboration between HypurrCollective, the go-to ecosystem collective, supporting Hyperliquid and its builders; and Nansen, the leading on-chain analytics purrvider, serving individual traders to large institutions. Learn more at hypurr.co and nansen.ai. Disclaimer: delegating comes with slashing risks",
+  "nRecentBlocks": 6,
+  "stake": 2209230050864383,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.02",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.021892892",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.021892892",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.999837963",
+     "predictedApr": "0.0218893445",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xc56d0c8ae0c387b439226387c54dbedb0aededfb",
+  "signer": "0x5ce0baf41936d5045f8384048cd957526560517c",
+  "name": "cp0x by STAKR.space",
+  "description": "cp0x validator - cypherpunk values and decentralization!",
+  "nRecentBlocks": 0,
+  "stake": 6892301120,
+  "isJailed": true,
+  "unjailableAfter": 0,
+  "isActive": false,
+  "commission": "0.0",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xc75a3fc98b0e1af7a95b6a720adf2e23806d2c7b",
+  "signer": "0x45c0b5c7150d7b9fa68341ad31e55294f958545e",
+  "name": "GalaxyDigital",
+  "description": "Galaxy is a digital asset and blockchain leader helping institutions, startups, and qualified individuals shape a changing economy. We provide platform solutions custom-made for a digitally native ecosystem.",
+  "nRecentBlocks": 0,
+  "stake": 2707818242607,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": false,
+  "commission": "0.03",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xd6a72f04b9868d5d6050376d5d7b729f47305cec",
+  "signer": "0x0d890fd0979540e0f241664c5e82ab93e0341b1a",
+  "name": "Hyperliquid Strategies x Unit",
+  "description": "The Hyperliquid Strategies x Unit validator is a partnership between Hyperliquid Strategies Inc (NASDAQ: PURR), the largest publicly listed HYPE treasury company, and Unit Labs, the parent company of Unit, which provides spot asset infrastructure on Hyperliquid, and TradeXYZ, the leading deployer of perpetual derivatives for real-world assets.",
+  "nRecentBlocks": 7,
+  "stake": 3303253277822812,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.02",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.021892892",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "0.9987103175",
+     "predictedApr": "0.0218646571",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9996990741",
+     "predictedApr": "0.0218863038",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xddc5a378be9276069f7a3fa7d84fbe55fb74874b",
+  "signer": "0x1b48cfbc59de2919ed78d4ff9790a00e8d8d7e72",
+  "name": "Kraken",
+  "description": "Kraken Exchange Validator",
+  "nRecentBlocks": 0,
+  "stake": 1000001500000,
+  "isJailed": true,
+  "unjailableAfter": 0,
+  "isActive": false,
+  "commission": "0.05",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 20952
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xdf35aee8ef5658686142acd1e5ab5dbcdf8c51e8",
+  "signer": "0xdf35aee8ef5658686142acd1e5ab5dbcdf8c51e8",
+  "name": "Hyper Foundation 4",
+  "description": "Hyper Foundation 4",
+  "nRecentBlocks": 9,
+  "stake": 3452773834013806,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.03",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0216694951",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xe3dde57073a6d04373ff6d30784f6c84b92e626b",
+  "signer": "0x2aeb3135e70ee8b5f7e5743b68a7269c2eb077a6",
+  "name": "Falcon Capital",
+  "description": "Falcon Capital Validator",
+  "nRecentBlocks": 0,
+  "stake": 1000000000000,
+  "isJailed": true,
+  "unjailableAfter": 0,
+  "isActive": false,
+  "commission": "1.0",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xe45c96a6a32318e5df7347477963bf0de38ff7ff",
+  "signer": "0xe76c2879bd01de4c621b8518922eb5d8ede9fbb5",
+  "name": "ASXN",
+  "description": "Boutique Digital Assets Research and Infrastructure. Supporting Hyperliquid through our research, capital, and development.",
+  "nRecentBlocks": 2,
+  "stake": 856835278083136,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.049",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0212450411",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0212450411",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.999212963",
+     "predictedApr": "0.0212283204",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xeb544ceea5f9d387742d4ccec40131f82258985b",
+  "signer": "0x0bafbdb4f1562d84e4a02cdfb02c390aa16df72a",
+  "name": "Asymmetric Research",
+  "description": "High integrity validation and infrastructure services for web3 ecosystems",
+  "nRecentBlocks": 1,
+  "stake": 382229500634079,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.015",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0220045904",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0220045904",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9983333333",
+     "predictedApr": "0.0219679161",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xec0a9793176e4a446de50a6cf9c334d6190f1c9c",
+  "signer": "0xd54e700ea1a0ee4dcf1fb04c30625cf1da421f96",
+  "name": "Figment",
+  "description": "Figment is the leading institutional staking provider serving more than 700 institutional clients with enterprise-grade validators on 25+ Proof of Stake protocols. We offer seamless staking integrations, audited infrastructure, robust rewards data, and more.",
+  "nRecentBlocks": 0,
+  "stake": 1000000000000,
+  "isJailed": true,
+  "unjailableAfter": 0,
+  "isActive": false,
+  "commission": "0.05",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.0",
+     "predictedApr": "0.0",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xeeee86f718f9da3e7250624a460f6ea710e9c006",
+  "signer": "0x8c323b484d301933cd7a11c12bebd173f36933e4",
+  "name": "Kinetiq x Hyperion",
+  "description": "Kinetiq x Hyperion is run by MAVAN, the largest single staking operation in the world. Providing institutional-grade non-custodial staking services. MAVAN is a Bitmine Immersion Technologies, Inc. (NYSE: BMNR) company.",
+  "nRecentBlocks": 1,
+  "stake": 616274216236056,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.04",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0214460982",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0214460982",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9984259259",
+     "predictedApr": "0.0214123405",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ },
+ {
+  "validator": "0xf8efb4cb844a8458114994203d7b0bfe2422a288",
+  "signer": "0xc71557db875380d09a23ce909dc07a80a17f9956",
+  "name": "Purrposeful x HyBridge x PiP",
+  "description": "Securing the network, bridging, aggregating, and PiPping with Purrpose. Operated by jan.hl (hypeburn.fun), with the support of HyBridge.xyz and the PiP community.",
+  "nRecentBlocks": 2,
+  "stake": 712795803148664,
+  "isJailed": false,
+  "unjailableAfter": null,
+  "isActive": true,
+  "commission": "0.0175",
+  "stats": [
+   [
+    "day",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0219487412",
+     "nSamples": 1440
+    }
+   ],
+   [
+    "week",
+    {
+     "uptimeFraction": "1.0",
+     "predictedApr": "0.0219487412",
+     "nSamples": 10080
+    }
+   ],
+   [
+    "month",
+    {
+     "uptimeFraction": "0.9992824074",
+     "predictedApr": "0.0219329909",
+     "nSamples": 43200
+    }
+   ]
+  ]
+ }
+]

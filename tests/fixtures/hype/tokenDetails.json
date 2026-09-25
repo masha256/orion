@@ -1,0 +1,39 @@
+{
+ "name": "HYPE",
+ "maxSupply": "1000000000.0",
+ "totalSupply": "998909900.8563855886",
+ "circulatingSupply": "298729645.0443511009",
+ "szDecimals": 2,
+ "weiDecimals": 8,
+ "midPx": "92.1605",
+ "markPx": "92.161",
+ "prevDayPx": "93.998",
+ "genesis": {
+  "userBalances": [],
+  "existingTokenBalances": [],
+  "blacklistUsers": []
+ },
+ "deployer": null,
+ "deployGas": "0.0",
+ "deployTime": "2024-11-29T06:45:52.532",
+ "seededUsdc": "0.0",
+ "nonCirculatingUserBalances": [
+  [
+   "0x43e9abea1910387c4292bca4b94de81462f8a251",
+   "241408951.6729242504"
+  ],
+  [
+   "0xfefefefefefefefefefefefefefefefefefefefe",
+   "47478177.0547392294"
+  ],
+  [
+   "0x0000000000000000000000000000000000000000",
+   "1673.78676325"
+  ],
+  [
+   "0x000000000000000000000000000000000000dead",
+   "2.71671343"
+  ]
+ ],
+ "futureEmissions": "411291450.5808942914"
+}

@@ -1,6 +1,7 @@
 import { OrionError } from '../../types.js';
 import type { SourceContext, SourceValue } from '../types.js';
 import { aeroAdapters } from './aero.js';
+import { hypeAdapters } from './hype.js';
 import { vvvAdapters } from './vvv.js';
 
 /** A named code adapter: the escape hatch for metrics the declarative source types cannot express. */
@@ -28,4 +29,4 @@ export function adapterNames(): string[] {
 }
 
 // Asset-specific adapters register here, exactly as custom valuation modules do in the engine registry.
-for (const adapter of [...vvvAdapters, ...aeroAdapters]) registerAdapter(adapter);
+for (const adapter of [...vvvAdapters, ...aeroAdapters, ...hypeAdapters]) registerAdapter(adapter);
