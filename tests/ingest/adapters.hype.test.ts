@@ -50,6 +50,7 @@ describe('HYPE adapters', () => {
     const expected = total - listed(FUND) - listed(CONTRACTS.zero) - listed(CONTRACTS.dead);
     expect(v).toMatchObject({ kind: 'level', source: 'api', observedAt: NOW_ISO });
     expect(v.kind === 'level' && v.value).toBeCloseTo(expected, 3);
+    expect(v.kind === 'level' && v.value).toBeCloseTo(951_430_047.2981697, 3);
     expect(v.kind === 'level' && v.value).toBeGreaterThan(950e6);
     expect(v.kind === 'level' && v.value).toBeLessThan(953e6);
     expect(v.detail).toMatch(/^tokenDetails 0x0d01dc56dcaaca66ad901c959b4011ec: total 998909900\.8563856 less 47479853\.5\d+ at assistance_fund, zero, dead$/);
@@ -145,5 +146,19 @@ describe('HYPE adapters', () => {
     expect(quad.kind === 'level' && quad.value).toBeCloseTo(2 * 9_480_000, 6);
     await expect(getAdapter('hype.emission_rate_annual').run(ctx, { exponent: 0 })).rejects.toThrow(/exponent 0 must be in \(0, 1\]/);
     await expect(getAdapter('hype.emission_rate_annual').run(ctx, { exponent: 1.5 })).rejects.toThrow(/exponent 1.5 must be in \(0, 1\]/);
+  });
+
+  it('uses the recorded fixture with non-default exponents', async () => {
+    // exponent 1: rate = 0.0237 * (400M / stakeSum) ^ 1 * stakeSum = 0.0237 * 400M = 9.48M always
+    const exp1 = await getAdapter('hype.emission_rate_annual').run(ctxWith().ctx, { exponent: 1 });
+    expect(exp1.kind === 'level' && exp1.value).toBeCloseTo(9_480_000, 6);
+    // exponent 0.25: rate = 0.0237 * (400M / stakeSum) ^ 0.25 * stakeSum
+    const exp025 = await getAdapter('hype.emission_rate_annual').run(ctxWith().ctx, { exponent: 0.25 });
+    const rate025 = 0.0237 * ((400_000_000 / stakeSum) ** 0.25);
+    expect(exp025.kind === 'level' && exp025.value).toBeCloseTo(rate025 * stakeSum, 6);
+    // Both differ from default (0.5)
+    const exp05 = await getAdapter('hype.emission_rate_annual').run(ctxWith().ctx, { exponent: 0.5 });
+    expect(exp1.kind === 'level' && exp1.value).not.toBeCloseTo(exp05.kind === 'level' && exp05.value ? exp05.value : 0, 3);
+    expect(exp025.kind === 'level' && exp025.value).not.toBeCloseTo(exp05.kind === 'level' && exp05.value ? exp05.value : 0, 3);
   });
 });
