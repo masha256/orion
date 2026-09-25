@@ -10,7 +10,7 @@ interface FakeResponse {
 function harness(responses: (FakeResponse | Error)[], options: Partial<HttpOptions> = {}) {
   let t = 1_000_000;
   const sleeps: number[] = [];
-  const calls: { url: string; headers: Record<string, string>; at: number }[] = [];
+  const calls: { url: string; headers: Record<string, string>; at: number; method: string; body?: string }[] = [];
   const deps: HttpDeps = {
     now: () => t,
     sleep: async (ms) => {
@@ -18,7 +18,7 @@ function harness(responses: (FakeResponse | Error)[], options: Partial<HttpOptio
       t += ms;
     },
     fetch: async (url, init) => {
-      calls.push({ url, headers: init.headers, at: t });
+      calls.push({ url, headers: init.headers, at: t, method: init.method, body: init.body });
       const r = responses.shift();
       if (!r) throw new Error('test bug: no response queued');
       if (r instanceof Error) throw r;
@@ -37,6 +37,31 @@ describe('http transport', () => {
     expect(h.calls).toHaveLength(1);
     expect(h.calls[0].headers).toMatchObject({ accept: 'application/json', 'x-key': 'k' });
     expect(h.sleeps).toEqual([]);
+  });
+
+  it('posts a body as JSON with the content type set, and parses the reply', async () => {
+    const h = harness([ok({ totalSupply: '1' })]);
+    expect(await h.http.postJson('https://x.test/info', { type: 'tokenDetails', tokenId: '0x1' }, { 'x-key': 'k' })).toEqual({ totalSupply: '1' });
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]).toMatchObject({ method: 'POST', body: '{"type":"tokenDetails","tokenId":"0x1"}' });
+    expect(h.calls[0].headers).toMatchObject({ accept: 'application/json', 'content-type': 'application/json', 'x-key': 'k' });
+    expect(h.sleeps).toEqual([]);
+  });
+
+  it('a GET carries no body and says so', async () => {
+    const h = harness([ok(1)]);
+    await h.http.getJson('https://x.test/a');
+    expect(h.calls[0]).toMatchObject({ method: 'GET', body: undefined });
+  });
+
+  it('retries a posted request like a GET, with the same body each time, and does not retry a 4xx', async () => {
+    const h = harness([{ status: 503 }, ok({ n: 2 })]);
+    expect(await h.http.postJson('https://x.test/info', { type: 'validatorSummaries' })).toEqual({ n: 2 });
+    expect(h.calls.map((c) => c.body)).toEqual(['{"type":"validatorSummaries"}', '{"type":"validatorSummaries"}']);
+    expect(h.sleeps).toEqual([1000]);
+    const bad = harness([{ status: 422 }]);
+    await expect(bad.http.postJson('https://x.test/info', { type: 'nope' })).rejects.toThrow(/HTTP 422/);
+    expect(bad.calls).toHaveLength(1);
   });
 
   it('retries a 5xx with exponential backoff from one second', async () => {
@@ -132,5 +157,15 @@ describe('http transport', () => {
     await expect(cached.getJson('https://x.test/b')).rejects.toThrow(/404/);
     await expect(cached.getJson('https://x.test/b')).rejects.toThrow(/404/);
     expect(h.calls).toHaveLength(2);
+  });
+
+  it('caches a POST by URL and body: the same body once, a different body again, and never as the GET', async () => {
+    const h = harness([ok({ n: 1 }), ok({ n: 2 }), ok({ n: 3 })]);
+    const cached = withRunCache(h.http);
+    expect(await cached.postJson('https://x.test/info', { type: 'a' })).toEqual({ n: 1 });
+    expect(await cached.postJson('https://x.test/info', { type: 'a' })).toEqual({ n: 1 });
+    expect(await cached.postJson('https://x.test/info', { type: 'b' })).toEqual({ n: 2 });
+    expect(await cached.getJson('https://x.test/info')).toEqual({ n: 3 });
+    expect(h.calls.map((c) => [c.method, c.body])).toEqual([['POST', '{"type":"a"}'], ['POST', '{"type":"b"}'], ['GET', undefined]]);
   });
 });
