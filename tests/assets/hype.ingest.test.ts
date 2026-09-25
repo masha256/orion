@@ -22,7 +22,7 @@ const recorded = (name: string): unknown => JSON.parse(readFileSync(`${ROOT}/tes
 
 const { config } = loadAsset(ROOT, 'hype');
 
-/** 100 days of holders revenue ending on the last complete day, about 1.4M USD a day (the 90-day sum was 140.5M on 2026-09-24). */
+/** 100 days of holders revenue ending on the last complete day, about 1.55M USD a day (139.5M over any 90 days; DefiLlama's real 90-day sum was 140.5M on 2026-09-24). */
 function chart(): { totalDataChart: [number, number][] } {
   const points: [number, number][] = [];
   for (let i = 100; i >= 1; i--) {
@@ -129,10 +129,13 @@ describe('assets/hype.yaml', () => {
     expect(signal.data_quality.grade).toBe('B'); // a manual row in force (the staker share) caps the grade, as VVV's revenue does
     expect(signal.spot!.price).toBe(92.36);
     expect(signal.horizons!['12m'].expected_target).toBeGreaterThan(0);
-    // A burn flow on the effective-total basis: the supply forecast at the horizon is below today's effective supply plus a year of emissions.
+    // A burn flow on the effective-total basis: the horizon supply is today's effective supply plus a year of emissions less the
+    // tokens the buyback dollars buy along the price path. With this wiring set that is about 16M tokens (the flat set solves to a
+    // target near 12 USD, so each dollar buys more tokens than at spot); the band fails if the burn is missing or an order out.
+    const noBurn = value('effective_supply') + value('emission_rate_annual');
     const hc = signal.horizons!['12m'].modules.hc.breakdown as { supply_at_horizon: number };
-    expect(hc.supply_at_horizon).toBeGreaterThan(value('effective_supply') - 20e6);
-    expect(hc.supply_at_horizon).toBeLessThan(value('effective_supply') - 5e6);
+    expect(hc.supply_at_horizon).toBeLessThan(noBurn - 12e6);
+    expect(hc.supply_at_horizon).toBeGreaterThan(noBurn - 20e6);
   });
 });
 
