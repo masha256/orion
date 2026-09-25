@@ -16,6 +16,7 @@ const DEFAULT_INFO_URL = 'https://api.hyperliquid.xyz/info';
 const STAKE_DECIMALS = 8;
 const ANCHOR_RATE = 0.0237;
 const ANCHOR_STAKE = 400_000_000;
+const EXPONENT = 0.5;
 
 const infoUrl = (ctx: SourceContext, params: Record<string, unknown>): string =>
   text(params, 'url', ctx.asset.external_ids.hyperliquid_info ?? DEFAULT_INFO_URL);
@@ -42,7 +43,11 @@ async function totalStake(ctx: SourceContext, params: Record<string, unknown>): 
   if (!Array.isArray(reply) || reply.length === 0) throw new Error("validatorSummaries: the info API's reply is not a non-empty list");
   const decimals = number(params, 'decimals', STAKE_DECIMALS);
   let raw = 0;
-  for (const [i, v] of reply.entries()) raw += amount((v as Record<string, unknown> | null)?.stake, `validator ${i}'s stake`);
+  for (const [i, v] of reply.entries()) {
+    const rawStake = amount((v as Record<string, unknown> | null)?.stake, `validator ${i}'s stake`);
+    if (rawStake < 0) throw new Error(`validator ${i}'s stake is negative`);
+    raw += rawStake;
+  }
   const stake = raw / 10 ** decimals;
   if (!(stake > 0)) throw new Error('validatorSummaries: the total stake is not positive');
   return { stake, validators: reply.length };
@@ -55,15 +60,22 @@ const effectiveSupply: AdapterDef = {
   async run(ctx, params) {
     const tokenId = text(params, 'token_id', ctx.asset.external_ids.hyperliquid_token ?? '');
     if (tokenId === '') throw new Error('no token id: set params.token_id or external_ids.hyperliquid_token');
-    const names = Array.isArray(params.subtract) ? params.subtract.filter((n): n is string => typeof n === 'string') : [];
+    if ('subtract' in params && !Array.isArray(params.subtract)) throw new Error('params.subtract must be an array of contract names');
+    const subtract = Array.isArray(params.subtract) ? params.subtract : [];
+    const names = subtract.filter((n): n is string => typeof n === 'string');
+    if ('subtract' in params && names.length !== subtract.length) throw new Error('params.subtract must contain only strings (contract names)');
     const addresses = names.map((n) => ctx.contract(n).toLowerCase()); // an unknown name is a configuration error and propagates
     const reply = await post(ctx, params, { type: 'tokenDetails', tokenId });
     const total = amount(reply.totalSupply, 'totalSupply');
+    if (names.length > 0 && !Array.isArray(reply.nonCirculatingUserBalances)) throw new Error('nonCirculatingUserBalances is missing or not an array');
     const listed = Array.isArray(reply.nonCirculatingUserBalances) ? reply.nonCirculatingUserBalances : [];
     let subtracted = 0;
     const found: string[] = [];
     for (const entry of listed) {
-      if (!Array.isArray(entry) || typeof entry[0] !== 'string') continue;
+      if (!Array.isArray(entry) || typeof entry[0] !== 'string') {
+        if (names.length > 0) throw new Error(`nonCirculatingUserBalances has an entry that is not a [string, balance] pair`);
+        continue;
+      }
       const at = addresses.indexOf(entry[0].toLowerCase());
       if (at === -1) continue;
       // An address absent from the list subtracts zero: a fund emptied by a vote shows as a supply jump, not a failed read.
@@ -85,16 +97,18 @@ const stakedSupply: AdapterDef = {
   },
 };
 
-/** Staking rewards a year: rate(stake) times stake, with rate = anchor_rate * sqrt(anchor_stake / stake). All of it goes to stakers. */
+/** Staking rewards a year: rate(stake) times stake, with rate = anchor_rate * (anchor_stake / stake) ** exponent. All of it goes to stakers. */
 const emissionRateAnnual: AdapterDef = {
   name: 'hype.emission_rate_annual',
   needsRpc: false,
   async run(ctx, params) {
     const anchorRate = number(params, 'anchor_rate', ANCHOR_RATE);
     const anchorStake = number(params, 'anchor_stake', ANCHOR_STAKE);
+    const exponent = number(params, 'exponent', EXPONENT);
     if (!(anchorRate > 0 && anchorRate < 1) || !(anchorStake > 0)) throw new Error(`anchor_rate ${anchorRate} and anchor_stake ${anchorStake} must be a rate in (0, 1) and a positive stake`);
+    if (!(exponent > 0 && exponent <= 1)) throw new Error(`exponent ${exponent} must be in (0, 1]`);
     const { stake, validators } = await totalStake(ctx, params);
-    const rate = anchorRate * Math.sqrt(anchorStake / stake);
+    const rate = anchorRate * ((anchorStake / stake) ** exponent);
     return api(ctx, rate * stake, `validatorSummaries: ${validators} validators, stake ${stake.toFixed(0)}, rate ${(rate * 100).toFixed(3)} percent a year`);
   },
 };

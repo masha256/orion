@@ -80,7 +80,7 @@ describe('HYPE adapters', () => {
     const { ctx, http } = ctxWith();
     const v = await getAdapter('hype.staked_supply').run(ctx, {});
     expect(v).toMatchObject({ kind: 'level', source: 'api', observedAt: NOW_ISO, detail: 'validatorSummaries: 35 validators' });
-    expect(v.kind === 'level' && v.value).toBeCloseTo(stakeSum, 3);
+    expect(v.kind === 'level' && v.value).toBeCloseTo(440_716_882.74898976, 3);
     expect(v.kind === 'level' && v.value).toBeGreaterThan(430e6);
     expect(v.kind === 'level' && v.value).toBeLessThan(450e6);
     expect(http.calls).toEqual([{ url: INFO, method: 'POST', headers: {}, body: { type: 'validatorSummaries' } }]);
@@ -123,5 +123,27 @@ describe('HYPE adapters', () => {
     await expect(getAdapter('hype.staked_supply').run(ctxWith({ validatorSummaries: [{ stake: 1 }, {}] }).ctx, {})).rejects.toThrow(/validator 1's stake is missing/);
     await expect(getAdapter('hype.emission_rate_annual').run(ctxWith().ctx, { anchor_rate: 1.5 })).rejects.toThrow(/anchor_rate 1.5/);
     await expect(getAdapter('hype.emission_rate_annual').run(ctxWith({ validatorSummaries: new Error('HTTP 503') }).ctx, {})).rejects.toThrow(/HTTP 503/);
+  });
+
+  it('refuses a missing nonCirculatingUserBalances and malformed entries when subtract is present', async () => {
+    await expect(getAdapter('hype.effective_supply').run(ctxWith({ tokenDetails: { totalSupply: '100', nonCirculatingUserBalances: undefined } }).ctx, SUBTRACT)).rejects.toThrow(/nonCirculatingUserBalances is missing or not an array/);
+    await expect(getAdapter('hype.effective_supply').run(ctxWith({ tokenDetails: { totalSupply: '100', nonCirculatingUserBalances: 'not-an-array' } }).ctx, SUBTRACT)).rejects.toThrow(/nonCirculatingUserBalances is missing or not an array/);
+    await expect(getAdapter('hype.effective_supply').run(ctxWith({ tokenDetails: { totalSupply: '100', nonCirculatingUserBalances: [{ addr: FUND, bal: '50' }] } }).ctx, SUBTRACT)).rejects.toThrow(/not a \[string, balance\] pair/);
+  });
+
+  it('refuses a malformed subtract param and negative stake', async () => {
+    await expect(getAdapter('hype.effective_supply').run(ctxWith().ctx, { subtract: 'assistance_fund' })).rejects.toThrow(/params.subtract must be an array/);
+    await expect(getAdapter('hype.effective_supply').run(ctxWith().ctx, { subtract: ['assistance_fund', 123] })).rejects.toThrow(/params.subtract must contain only strings/);
+    await expect(getAdapter('hype.staked_supply').run(ctxWith({ validatorSummaries: [{ stake: -1 }] }).ctx, {})).rejects.toThrow(/validator 0's stake is negative/);
+  });
+
+  it('takes the exponent param and refuses an invalid value', async () => {
+    const { ctx } = ctxWith({ validatorSummaries: [{ stake: 400_000_000 * 1e8 }] });
+    const v = await getAdapter('hype.emission_rate_annual').run(ctx, { exponent: 0.5 });
+    expect(v.kind === 'level' && v.value).toBeCloseTo(9_480_000, 6);
+    const quad = await getAdapter('hype.emission_rate_annual').run(ctxWith({ validatorSummaries: [{ stake: 1_600_000_000 * 1e8 }] }).ctx, { exponent: 0.5 });
+    expect(quad.kind === 'level' && quad.value).toBeCloseTo(2 * 9_480_000, 6);
+    await expect(getAdapter('hype.emission_rate_annual').run(ctx, { exponent: 0 })).rejects.toThrow(/exponent 0 must be in \(0, 1\]/);
+    await expect(getAdapter('hype.emission_rate_annual').run(ctx, { exponent: 1.5 })).rejects.toThrow(/exponent 1.5 must be in \(0, 1\]/);
   });
 });
