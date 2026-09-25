@@ -7,7 +7,7 @@ import { listPersonaNames, loadPersona, skillsFor } from '../../src/config/perso
 import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb } from '../../src/db/connection.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
-import { requiredAssumptionKeys } from '../../src/engine/requirements.js';
+import { requiredAssumptionKeys, validateAssetModules } from '../../src/engine/requirements.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { addDays } from '../../src/ingest/time.js';
@@ -22,7 +22,7 @@ const recorded = (name: string): unknown => JSON.parse(readFileSync(`${ROOT}/tes
 
 const { config } = loadAsset(ROOT, 'hype');
 
-/** 100 days of holders revenue ending on the last complete day, about 1.55M USD a day (the 30-day total was 57.2M on 2026-09-24). */
+/** 100 days of holders revenue ending on the last complete day, about 1.4M USD a day (the 90-day sum was 140.5M on 2026-09-24). */
 function chart(): { totalDataChart: [number, number][] } {
   const points: [number, number][] = [];
   for (let i = 100; i >= 1; i--) {
@@ -66,8 +66,9 @@ describe('assets/hype.yaml', () => {
     ]);
     // One manual metric: the staker share, 1.0 by construction, which the bootstrap researches and the user confirms.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual(['staker_emission_share']);
+    expect(validateAssetModules(config)).toEqual([]);
     // Pinned on 2026-09-24. A deliberate edit of assets/hype.yaml (the calibration bands) moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('5683e7a67bcf51284aff86ed27460364122c90259449115c4c29f0d2a38131f3');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('618c7918bda7e2ce6159597dd7e2b955f75f5ad646bdba116f4adf5f969767e5');
   });
 
   it('plans the source map of the spec: no chain, three adapters, one API-series flow, one derived level', () => {
@@ -101,24 +102,25 @@ describe('assets/hype.yaml', () => {
     expect(value('emission_rate_annual')).toBeGreaterThan(9.8e6);
     expect(value('emission_rate_annual')).toBeLessThan(10.1e6);
     expect(listActiveObservations(w.db, 'hype', 'staker_emission_share')).toEqual([]);
-    // The writer keeps only the backfill window (backfill_days 90 on a first run, no cursor): 2026-06-26 to 2026-09-23, 90 of the 100 days.
-    expect(listActiveObservations(w.db, 'hype', 'flow_usd.af_buyback')).toHaveLength(90);
-    // The run rate: the last 90 complete days summed and scaled to a year, written for every day with a full window: only 2026-09-23.
+    // The writer keeps only the backfill window (backfill_days 100 on a first run, no cursor): all 100 of the 100 days.
+    expect(listActiveObservations(w.db, 'hype', 'flow_usd.af_buyback')).toHaveLength(100);
+    // The run rate: the last 90 complete days summed and scaled to a year, written for every day with a full window: days 90 to 100 in the backfill.
     const revenue = listActiveObservations(w.db, 'hype', 'revenue_run_rate_usd');
-    expect(revenue).toHaveLength(1);
+    expect(revenue).toHaveLength(11);
     expect(revenue.at(-1)!.value).toBeGreaterThan(560e6);
     expect(revenue.at(-1)!.value).toBeLessThan(580e6);
     expect(revenue.at(-1)).toMatchObject({ source: 'api', sourceDetail: 'derived flow_annualized(flow_usd.af_buyback, 90d)' });
     const checked = r.sources.flatMap((s) => s.crossChecks);
     expect(checked).toHaveLength(1);
     expect(checked[0]).toMatchObject({ metricKey: 'price_usd', ok: true });
-    // Three posts to the info API, one per adapter, each cached for the run; the token details and the validators are read once each.
+    // Two posts: the stake and emission adapters share one cached validatorSummaries reply; token details and validators are read once each.
     expect(w.http.calls.filter((c) => c.url === INFO).map((c) => (c.body as { type: string }).type).sort()).toEqual(['tokenDetails', 'validatorSummaries']);
 
     createAssumptionSet(w.db, { assetId: 'hype', author: 'user', rationale: 'wiring', values: assumptions(), createdAt: NOW.toISOString() });
     const withoutShare = runValuation(w.db, loadAsset(ROOT, 'hype'), NOW);
     expect(withoutShare.signal.status).toBe('blocked');
     expect(withoutShare.signal.status_reasons.join(' ')).toMatch(/staker_emission_share/);
+    expect(withoutShare.signal.status_reasons).toHaveLength(1);
     // The user's confirmation of the bootstrap's row: 1.0 by construction.
     insertObservation(w.db, { assetId: 'hype', metricKey: 'staker_emission_share', observedAt: NOW.toISOString(), value: 1, source: 'manual', fetchedAt: NOW.toISOString() });
     const { signal } = runValuation(w.db, loadAsset(ROOT, 'hype'), NOW);
@@ -129,7 +131,8 @@ describe('assets/hype.yaml', () => {
     expect(signal.horizons!['12m'].expected_target).toBeGreaterThan(0);
     // A burn flow on the effective-total basis: the supply forecast at the horizon is below today's effective supply plus a year of emissions.
     const hc = signal.horizons!['12m'].modules.hc.breakdown as { supply_at_horizon: number };
-    expect(hc.supply_at_horizon).toBeLessThan(value('effective_supply') + value('emission_rate_annual'));
+    expect(hc.supply_at_horizon).toBeGreaterThan(value('effective_supply') - 20e6);
+    expect(hc.supply_at_horizon).toBeLessThan(value('effective_supply') - 5e6);
   });
 });
 

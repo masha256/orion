@@ -70,14 +70,15 @@ metrics:
 
   # DefiLlama's holders revenue for the hyperliquid parent (perps, spot orderbook, HLP): 99 percent of protocol trading fees,
   # excluding builder fees and deployer shares, converted to HYPE by the fund, plus HIP-1 auction burns. Revenue and holders
-  # revenue are the same series for HYPE.
+  # revenue are the same series for HYPE. Backfilled ten days beyond the 90-day window so the first fetch writes the run rate
+  # even when DefiLlama has not posted the newest day yet.
   flow_usd.af_buyback:
     type: flow
     unit: usd
     cadence: daily
     staleness_days: 4
     critical: true
-    source: { type: defillama, slug: hyperliquid, data_type: dailyHoldersRevenue, backfill_days: 90 }
+    source: { type: defillama, slug: hyperliquid, data_type: dailyHoldersRevenue, backfill_days: 100 }
 
   # The last 90 days of the buyback flow scaled to a year: HYPE's revenue IS its holder flow, so the window matches the holder
   # flow's (window_days 90) and the measured capture is 1 by construction.
