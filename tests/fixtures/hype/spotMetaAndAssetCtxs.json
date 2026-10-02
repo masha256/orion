@@ -1,0 +1,106 @@
+[
+ {
+  "tokens": [
+   {
+    "name": "USDC",
+    "szDecimals": 8,
+    "weiDecimals": 8,
+    "index": 0,
+    "tokenId": "0x6d1e7cde53ba9467b783cb7c530ce054",
+    "isCanonical": true,
+    "evmContract": {
+     "address": "0x6b9e773128f453f5c2c60935ee2de2cbc5390a24",
+     "evm_extra_wei_decimals": -2
+    },
+    "fullName": null,
+    "deployerTradingFeeShare": "0.0"
+   },
+   {
+    "name": "PURR",
+    "szDecimals": 0,
+    "weiDecimals": 5,
+    "index": 1,
+    "tokenId": "0xc1fb593aeffbeb02f85e0308e9956a90",
+    "isCanonical": true,
+    "evmContract": {
+     "address": "0x9b498c3c8a0b8cd8ba1d9851d40d186f1872b44e",
+     "evm_extra_wei_decimals": 13
+    },
+    "fullName": null,
+    "deployerTradingFeeShare": "0.0"
+   },
+   {
+    "name": "HYPE",
+    "szDecimals": 2,
+    "weiDecimals": 8,
+    "index": 150,
+    "tokenId": "0x0d01dc56dcaaca66ad901c959b4011ec",
+    "isCanonical": false,
+    "evmContract": null,
+    "fullName": "Hyperliquid",
+    "deployerTradingFeeShare": "0.0"
+   }
+  ],
+  "universe": [
+   {
+    "tokens": [
+     1,
+     0
+    ],
+    "name": "PURR/USDC",
+    "index": 0,
+    "isCanonical": true
+   },
+   {
+    "tokens": [
+     150,
+     268
+    ],
+    "name": "@207",
+    "index": 207,
+    "isCanonical": false
+   },
+   {
+    "tokens": [
+     150,
+     0
+    ],
+    "name": "@107",
+    "index": 107,
+    "isCanonical": false
+   }
+  ]
+ },
+ [
+  {
+   "prevDayPx": "0.16916",
+   "dayNtlVlm": "5098371.0843499983",
+   "markPx": "0.18283",
+   "midPx": "0.18301",
+   "circulatingSupply": "594801151.4987699986",
+   "coin": "PURR/USDC",
+   "totalSupply": "594801162.8052899837",
+   "dayBaseVlm": "30153291.0"
+  },
+  {
+   "prevDayPx": "89.544",
+   "dayNtlVlm": "83809898.0706201494",
+   "markPx": "91.271",
+   "midPx": "91.2715",
+   "circulatingSupply": "298644001.7157304883",
+   "coin": "@107",
+   "totalSupply": "998891801.4858174324",
+   "dayBaseVlm": "945776.6500000005"
+  },
+  {
+   "prevDayPx": "89.634",
+   "dayNtlVlm": "120565.33351",
+   "markPx": "91.247",
+   "midPx": "91.278",
+   "circulatingSupply": "298644001.7157304883",
+   "coin": "@207",
+   "totalSupply": "998891801.4858174324",
+   "dayBaseVlm": "1348.87"
+  }
+ ]
+]

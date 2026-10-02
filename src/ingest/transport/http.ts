@@ -34,6 +34,8 @@ export interface HttpOptions {
   maxRetryAfterMs: number;
   defaultSpacingMs: number;
   hostSpacingMs: Record<string, number>;
+  /** Per-host request timeouts, for an API that streams a large reply slowly; `timeoutMs` for every other host. */
+  hostTimeoutMs: Record<string, number>;
 }
 
 export const DEFAULT_HTTP_OPTIONS: HttpOptions = {
@@ -44,7 +46,13 @@ export const DEFAULT_HTTP_OPTIONS: HttpOptions = {
   defaultSpacingMs: 250,
   // Keyless CoinGecko allows about two rapid requests and then answers 429.
   hostSpacingMs: { 'api.coingecko.com': 2500 },
+  // Hyperliquid's info API serves its 300 KB spot meta at tens of KB a second on a slow link.
+  hostTimeoutMs: { 'api.hyperliquid.xyz': 60_000 },
 };
+
+export function timeoutMsFor(options: HttpOptions, host: string): number {
+  return options.hostTimeoutMs[host] ?? options.timeoutMs;
+}
 
 /** Retry-After is either a number of seconds or an HTTP date. Returns milliseconds to wait, or null. */
 function retryAfterMs(header: string | null, nowMs: number): number | null {
@@ -77,7 +85,7 @@ export function createHttpTransport(deps: HttpDeps, options: Partial<HttpOptions
       let res: HttpResponseLike;
       let text: string | undefined;
       try {
-        res = await deps.fetch(url, { method, headers: { accept: 'application/json', ...headers }, body, signal: AbortSignal.timeout(o.timeoutMs) });
+        res = await deps.fetch(url, { method, headers: { accept: 'application/json', ...headers }, body, signal: AbortSignal.timeout(timeoutMsFor(o, host)) });
         // Reading the body can fail the same way the request itself can (a timeout or reset mid-read);
         // it belongs inside the same retry path, not after it.
         if (res.status >= 200 && res.status < 300) text = await res.text();

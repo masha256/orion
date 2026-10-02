@@ -5,8 +5,8 @@ import type { AdapterDef } from './registry.js';
 
 /**
  * Hyperliquid's info API (POST, one JSON request type per read), for HYPE. The Assistance Fund lives on HyperCore, which
- * no EVM RPC exposes, so the supply and the stake are read from the API: total supply less the fund and the dead
- * addresses, the sum of validator stake, and the staking reward rate the docs give as inversely proportional to the
+ * no EVM RPC exposes, so the supply and the stake are read from the API: total supply (from the spot meta) less the fund and the dead
+ * addresses (their clearinghouse balances), the sum of validator stake, and the staking reward rate the docs give as inversely proportional to the
  * square root of total stake ("at 400M total HYPE staked, the reward rate is approximately 2.37% per year"; staking
  * page, read 2026-09-24). None of these adapters needs an RPC.
  */
@@ -53,7 +53,40 @@ async function totalStake(ctx: SourceContext, params: Record<string, unknown>): 
   return { stake, validators: reply.length };
 }
 
-/** Total supply less the balances the API lists as non-circulating at the named addresses: the fund and the dead addresses. */
+/**
+ * The token's total supply, from the spot meta: the token's pair against the quote (USDC, index 0) carries `totalSupply`.
+ * The `tokenDetails` reply carries it too, but with 94,023 genesis balances (5 MB), which a slow link cannot finish
+ * inside any sane timeout; the spot meta is 300 KB.
+ */
+async function totalSupply(ctx: SourceContext, params: Record<string, unknown>, tokenId: string): Promise<{ total: number; symbol: string; pair: string }> {
+  const reply = await ctx.http.postJson(infoUrl(ctx, params), { type: 'spotMetaAndAssetCtxs' });
+  if (!Array.isArray(reply) || reply.length < 2 || reply[0] === null || typeof reply[0] !== 'object' || !Array.isArray(reply[1])) {
+    throw new Error("spotMetaAndAssetCtxs: the info API's reply is not a [meta, contexts] pair");
+  }
+  const meta = reply[0] as Record<string, unknown>;
+  const row = (v: unknown): Record<string, unknown> | null => (v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : null);
+  const tokens = Array.isArray(meta.tokens) ? meta.tokens.map(row) : [];
+  const token = tokens.find((t) => typeof t?.tokenId === 'string' && t.tokenId.toLowerCase() === tokenId.toLowerCase());
+  if (!token || typeof token.index !== 'number' || typeof token.name !== 'string') throw new Error(`spotMetaAndAssetCtxs: no token with id ${tokenId}`);
+  const quote = number(params, 'quote_index', 0);
+  const universe = Array.isArray(meta.universe) ? meta.universe.map(row) : [];
+  const pair = universe.find((p) => Array.isArray(p?.tokens) && p.tokens[0] === token.index && p.tokens[1] === quote);
+  if (!pair || typeof pair.name !== 'string') throw new Error(`spotMetaAndAssetCtxs: no pair of ${token.name} (token ${token.index}) against quote token ${quote}`);
+  const context = (reply[1] as unknown[]).map(row).find((c) => c?.coin === pair.name);
+  if (!context) throw new Error(`spotMetaAndAssetCtxs: no context for pair ${pair.name}`);
+  return { total: amount(context.totalSupply, `${pair.name} totalSupply`), symbol: token.name, pair: pair.name };
+}
+
+/** One address's balance of the token from its clearinghouse state; an address holding none has no entry and counts as zero. */
+async function balanceAt(ctx: SourceContext, params: Record<string, unknown>, name: string, address: string, symbol: string): Promise<number> {
+  const reply = await post(ctx, params, { type: 'spotClearinghouseState', user: address });
+  if (!Array.isArray(reply.balances)) throw new Error(`spotClearinghouseState ${name}: balances is missing or not an array`);
+  const entry = reply.balances.find((b) => b !== null && typeof b === 'object' && (b as Record<string, unknown>).coin === symbol) as Record<string, unknown> | undefined;
+  // A fund emptied by a vote shows as a supply jump the deviation trigger sees, not as a failed read.
+  return entry ? amount(entry.total, `the ${symbol} balance at ${name}`) : 0;
+}
+
+/** Total supply less the token held at the named addresses: the fund and the dead addresses. Four small requests, cached per run. */
 const effectiveSupply: AdapterDef = {
   name: 'hype.effective_supply',
   needsRpc: false,
@@ -64,27 +97,18 @@ const effectiveSupply: AdapterDef = {
     const subtract = Array.isArray(params.subtract) ? params.subtract : [];
     const names = subtract.filter((n): n is string => typeof n === 'string');
     if ('subtract' in params && names.length !== subtract.length) throw new Error('params.subtract must contain only strings (contract names)');
-    const addresses = names.map((n) => ctx.contract(n).toLowerCase()); // an unknown name is a configuration error and propagates
-    const reply = await post(ctx, params, { type: 'tokenDetails', tokenId });
-    const total = amount(reply.totalSupply, 'totalSupply');
-    if (names.length > 0 && !Array.isArray(reply.nonCirculatingUserBalances)) throw new Error('nonCirculatingUserBalances is missing or not an array');
-    const listed = Array.isArray(reply.nonCirculatingUserBalances) ? reply.nonCirculatingUserBalances : [];
+    const addresses = names.map((n) => ctx.contract(n)); // an unknown name is a configuration error and propagates
+    const { total, symbol, pair } = await totalSupply(ctx, params, tokenId);
     let subtracted = 0;
     const found: string[] = [];
-    for (const entry of listed) {
-      if (!Array.isArray(entry) || typeof entry[0] !== 'string') {
-        if (names.length > 0) throw new Error(`nonCirculatingUserBalances has an entry that is not a [string, balance] pair`);
-        continue;
-      }
-      const at = addresses.indexOf(entry[0].toLowerCase());
-      if (at === -1) continue;
-      // An address absent from the list subtracts zero: a fund emptied by a vote shows as a supply jump, not a failed read.
-      subtracted += amount(entry[1], `the balance at ${names[at]}`);
-      found.push(names[at]);
+    for (const [i, name] of names.entries()) {
+      const balance = await balanceAt(ctx, params, name, addresses[i], symbol);
+      subtracted += balance;
+      if (balance > 0) found.push(name);
     }
     const value = total - subtracted;
     if (!(value > 0)) throw new Error(`effective supply ${value} is not positive (total ${total}, subtracted ${subtracted})`);
-    return api(ctx, value, `tokenDetails ${tokenId}: total ${total} less ${subtracted} at ${found.length > 0 ? found.join(', ') : 'none of ' + names.join(', ')}`);
+    return api(ctx, value, `spotMetaAndAssetCtxs ${pair}: total ${total} less ${subtracted} at ${found.length > 0 ? found.join(', ') : 'none of ' + names.join(', ')}`);
   },
 };
 

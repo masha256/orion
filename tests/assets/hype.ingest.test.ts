@@ -33,13 +33,19 @@ function chart(): { totalDataChart: [number, number][] } {
 }
 
 function world() {
-  const fixtures: Record<string, unknown> = { tokenDetails: recorded('tokenDetails'), validatorSummaries: recorded('validatorSummaries') };
+  const fixtures: Record<string, unknown> = { spotMetaAndAssetCtxs: recorded('spotMetaAndAssetCtxs'), validatorSummaries: recorded('validatorSummaries') };
+  for (const name of ['assistance_fund', 'zero', 'dead']) fixtures[`spotClearinghouseState:${config.contracts[name]}`] = recorded(`spotClearinghouseState-${config.contracts[name]}`);
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'hyperliquid', symbol: 'hype', current_price: 92.36, market_cap: 20545976252, circulating_supply: 222445714.07414138, total_supply: 955307079.4341414 }],
     [LLAMA_PRICE]: { coins: { 'hyperliquid:0x0d01dc56dcaaca66ad901c959b4011ec': { decimals: 8, symbol: 'HYPE', price: 92.35934496087437, timestamp: 1790215180, confidence: 0.99 } } },
     'https://api.llama.fi/summary/fees/hyperliquid': chart(),
-    // The info API answers by request type; the fixtures were recorded on 2026-09-24.
-    [INFO]: (_url: string, body?: unknown) => structuredClone(fixtures[(body as { type: string }).type]),
+    // The info API answers by request type (and, for a clearinghouse state, by address); recorded 2026-09-24 and 2026-10-02.
+    [INFO]: (_url: string, body?: unknown) => {
+      const { type, user } = body as { type: string; user?: string };
+      const reply = fixtures[user === undefined ? type : `${type}:${user}`];
+      if (reply === undefined) throw new Error(`no fixture for ${type} ${user ?? ''}`);
+      return structuredClone(reply);
+    },
   });
   const deps: FetchDeps = { http, rpcFactory: () => { throw new Error('HYPE reads no chain'); }, env: {}, sleep: async () => undefined, now: () => NOW };
   return { db: openDb(':memory:'), deps, http };
@@ -113,8 +119,9 @@ describe('assets/hype.yaml', () => {
     const checked = r.sources.flatMap((s) => s.crossChecks);
     expect(checked).toHaveLength(1);
     expect(checked[0]).toMatchObject({ metricKey: 'price_usd', ok: true });
-    // Two posts: the stake and emission adapters share one cached validatorSummaries reply; token details and validators are read once each.
-    expect(w.http.calls.filter((c) => c.url === INFO).map((c) => (c.body as { type: string }).type).sort()).toEqual(['tokenDetails', 'validatorSummaries']);
+    // Five posts: the spot meta, one clearinghouse state per subtracted address, and the validators once (the stake and emission
+    // adapters share the cached reply).
+    expect(w.http.calls.filter((c) => c.url === INFO).map((c) => (c.body as { type: string }).type).sort()).toEqual(['spotClearinghouseState', 'spotClearinghouseState', 'spotClearinghouseState', 'spotMetaAndAssetCtxs', 'validatorSummaries']);
 
     createAssumptionSet(w.db, { assetId: 'hype', author: 'user', rationale: 'wiring', values: assumptions(), createdAt: NOW.toISOString() });
     const withoutShare = runValuation(w.db, loadAsset(ROOT, 'hype'), NOW);

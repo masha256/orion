@@ -29,8 +29,9 @@ metrics:
     cross_checks:
       - { tolerance_pct: 2, source: { type: http_json, url: "https://coins.llama.fi/prices/current/hyperliquid:0x0d01dc56dcaaca66ad901c959b4011ec", path: "coins.hyperliquid:0x0d01dc56dcaaca66ad901c959b4011ec.price" } }
 
-  # Total supply less the fund and the two dead addresses, from the API's non-circulating list (about 951.4M). The docs call the
-  # fund's HYPE burned; the chain still lists it, so it is subtracted here. A fund emptied by a vote shows as a supply jump.
+  # Total supply (the HYPE/USDC pair in the spot meta) less the HYPE held at the fund and the two dead addresses (their
+  # clearinghouse balances), about 951.3M. The docs call the fund's HYPE burned; the chain still holds it, so it is subtracted
+  # here. A fund emptied by a vote shows as a supply jump. Four small requests: the 5 MB tokenDetails reply is avoided.
   effective_supply:
     type: level
     unit: tokens

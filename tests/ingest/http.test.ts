@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createHttpTransport, HttpError, withRunCache, type HttpDeps, type HttpOptions } from '../../src/ingest/transport/http.js';
+import { createHttpTransport, DEFAULT_HTTP_OPTIONS, HttpError, timeoutMsFor, withRunCache, type HttpDeps, type HttpOptions } from '../../src/ingest/transport/http.js';
 
 interface FakeResponse {
   status: number;
@@ -147,6 +147,13 @@ describe('http transport', () => {
     await h.http.getJson('https://x.test/b');
     expect(h.sleeps).toEqual([2500, 250]);
     expect(h.calls[1].at - h.calls[0].at).toBe(2500);
+  });
+
+  it('gives the Hyperliquid info API a minute, and every other host the default timeout', () => {
+    expect(timeoutMsFor(DEFAULT_HTTP_OPTIONS, 'api.hyperliquid.xyz')).toBe(60_000);
+    expect(timeoutMsFor(DEFAULT_HTTP_OPTIONS, 'api.coingecko.com')).toBe(15_000);
+    expect(timeoutMsFor({ ...DEFAULT_HTTP_OPTIONS, timeoutMs: 5000, hostTimeoutMs: { 'x.test': 1 } }, 'x.test')).toBe(1);
+    expect(timeoutMsFor({ ...DEFAULT_HTTP_OPTIONS, timeoutMs: 5000, hostTimeoutMs: {} }, 'api.hyperliquid.xyz')).toBe(5000);
   });
 
   it('caches one request per URL per run, failures included', async () => {
