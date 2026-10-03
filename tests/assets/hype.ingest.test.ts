@@ -73,8 +73,8 @@ describe('assets/hype.yaml', () => {
     // One manual metric: the staker share, 1.0 by construction, which the bootstrap researches and the user confirms.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual(['staker_emission_share']);
     expect(validateAssetModules(config)).toEqual([]);
-    // Pinned on 2026-09-24. A deliberate edit of assets/hype.yaml (the calibration bands) moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('618c7918bda7e2ce6159597dd7e2b955f75f5ad646bdba116f4adf5f969767e5');
+    // Pinned on 2026-10-03 with the calibration bands. A deliberate edit of assets/hype.yaml moves it; update the pin on purpose.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('6c2fe5c099988ca13cae04cc78c81e71991e8b770096defe38048d2a302cc80d');
   });
 
   it('plans the source map of the spec: no chain, three adapters, one API-series flow, one derived level', () => {

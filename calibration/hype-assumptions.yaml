@@ -1,0 +1,42 @@
+# HYPE calibrated assumptions: the "constructive" package the user chose on 2026-10-03 after a sensitivity sweep and three
+# priced packages (conservative / central / constructive), each shown under the 90-day, 30-day and trailing-year run rates; the
+# user kept the 90-day window. Anchors at the time: spot 91.10 USD, effective supply 951.3M (86.7B USD), 90-day buyback run rate
+# 576M USD (the market pays about 150 times it; 129 times the 30-day rate of 673M), emissions about 9.9M HYPE a year against a
+# buyback of about 6.3M. Base growth of 60 percent and a multiple of 80 express the view that 2026's revenue decline from the
+# 2025 peak reverses; the bull case (150 percent, 150x) is where the market sits. This set's 12m expected target was 97.5 USD
+# (bear 6.5 / base 47.7 / bull 288, dispersion 1.28): the base case sits at half of spot and the expected value leans on the
+# bull tail, as for VVV and AERO. The user heard this before choosing; do not re-litigate it.
+# Import: orion model assumptions import hype calibration/hype-assumptions.yaml --rationale "..."
+bear:
+  rev_growth_y1: 0.0
+  growth_fade_years: 3
+  terminal_growth: 0.0
+  capture_rate_terminal.af_buyback: 0.9
+  capture_ramp_years.af_buyback: 0
+  discount_rate_base: 0.22
+  discount_premium_programmatic: 0.03
+  multiple.fm_holder_flow: 30
+  regime_multiplier: 0.8
+  staked_ratio_horizon: 0.42
+base:
+  rev_growth_y1: 0.6
+  growth_fade_years: 6
+  terminal_growth: 0.03
+  capture_rate_terminal.af_buyback: 0.95
+  capture_ramp_years.af_buyback: 0
+  discount_rate_base: 0.18
+  discount_premium_programmatic: 0.02
+  multiple.fm_holder_flow: 80
+  regime_multiplier: 1.1
+  staked_ratio_horizon: 0.48
+bull:
+  rev_growth_y1: 1.5
+  growth_fade_years: 7
+  terminal_growth: 0.04
+  capture_rate_terminal.af_buyback: 1.0
+  capture_ramp_years.af_buyback: 0
+  discount_rate_base: 0.13
+  discount_premium_programmatic: 0.01
+  multiple.fm_holder_flow: 150
+  regime_multiplier: 1.4
+  staked_ratio_horizon: 0.6
