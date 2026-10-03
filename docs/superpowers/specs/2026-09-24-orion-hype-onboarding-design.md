@@ -1,6 +1,6 @@
 # Orion sub-project 7: HYPE onboarding
 
-Date: 2026-09-24. Status: executed (2026-09-25, branch `feat/hype`, 717 tests, final review clean); planned (`docs/superpowers/plans/2026-09-24-orion-hype-onboarding.md`, generated from a per-task prototype and verified by extraction); section 11 records the planning amendments and section 12 the execution amendments.
+Date: 2026-09-24. Status: executed, merged, calibrated and live (first signal 2026-10-03; the follow-ups note has the figures); planned (`docs/superpowers/plans/2026-09-24-orion-hype-onboarding.md`, generated from a per-task prototype and verified by extraction); section 11 records the planning amendments and section 12 the execution amendments.
 
 Extends `docs/superpowers/specs/2026-09-18-orion-valuation-framework-design.md` (section 3.7, the HYPE contrast case), `docs/superpowers/specs/2026-09-19-orion-ingestion-design.md` (sources, adapters, the HTTP transport), `docs/superpowers/specs/2026-09-22-orion-research-first-design.md` (the DefiLlama flow primary, the bootstrap, the inbox), and `docs/superpowers/specs/2026-09-23-orion-aero-onboarding-design.md` (the `flow_annualized` derived source, the onboarding sequence, the calibration method). Where this document and those differ, this one wins for the items it covers.
 
