@@ -10,6 +10,8 @@ export interface FakeRpcOptions {
   /** Contract call results by callKey(). An Error makes that one call fail. */
   calls?: Record<string, bigint | Error>;
   logs?: Omit<TransferLog, 'timestamp'>[];
+  /** Exposed as the transport's maxLogRange; the fake refuses wider queries. Default 2000 (Base), left unexposed. */
+  maxLogRange?: bigint;
 }
 
 export interface FakeRpc extends RpcTransport {
@@ -35,7 +37,10 @@ export function fakeRpc(o: FakeRpcOptions): FakeRpc {
     return { number: n, timestamp: timestampOf(n) };
   };
 
+  const cap = o.maxLogRange ?? 2000n;
   return {
+    ...(o.maxLogRange !== undefined ? { maxLogRange: o.maxLogRange } : {}),
+    ...(o.blockTimeSec !== undefined ? { blockTimeSec: o.blockTimeSec } : {}),
     stats,
     timestampOf,
     blockAtOrAfter: (ts) => BigInt(Math.max(0, Math.ceil((ts - o.genesisTs) / blockTime))),
@@ -59,7 +64,7 @@ export function fakeRpc(o: FakeRpcOptions): FakeRpc {
     },
     async getTransferLogs(q: LogQuery): Promise<TransferLog[]> {
       stats.logRanges.push([q.fromBlock, q.toBlock]);
-      if (q.toBlock - q.fromBlock + 1n > 2000n) throw new Error('query exceeds max block range 2000');
+      if (q.toBlock - q.fromBlock + 1n > cap) throw new Error(`query exceeds max block range ${cap}`);
       if (failures > 0) {
         failures--;
         throw new Error('fake RPC failure');

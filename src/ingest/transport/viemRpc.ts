@@ -1,7 +1,10 @@
-import { createPublicClient, http, parseAbi, parseAbiItem, type Address } from 'viem';
-import { base } from 'viem/chains';
+import { createPublicClient, http, parseAbi, parseAbiItem, type Address, type Chain } from 'viem';
+import { base, mainnet } from 'viem/chains';
 import { OrionError } from '../../types.js';
+import { chainInfo, supportedChainIds } from './chains.js';
 import type { CallResult, RpcFactory } from './rpc.js';
+
+const VIEM_CHAINS: Record<number, Chain> = { [base.id]: base, [mainnet.id]: mainnet };
 
 const TRANSFER = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');
 
@@ -24,10 +27,14 @@ export function cleanRpcErrorMessage(err: unknown): string {
   });
 }
 
-/** The only file that imports viem. Base only, until a second chain is actually needed. */
+/** The only file that imports viem. The chains are those of `chains.ts` that viem also knows. */
 export const createViemRpc: RpcFactory = (url, chainId) => {
-  if (chainId !== base.id) throw new OrionError('unsupported_chain', `chain_id ${chainId} is not supported; only Base (${base.id}) is`);
-  const client = createPublicClient({ chain: base, transport: http(url, { retryCount: 3, retryDelay: 1000, timeout: 20_000 }) });
+  const info = chainInfo(chainId);
+  const chain = VIEM_CHAINS[chainId];
+  if (!info || !chain) {
+    throw new OrionError('unsupported_chain', `chain_id ${chainId} is not supported; supported: ${supportedChainIds().join(', ')}`);
+  }
+  const client = createPublicClient({ chain, transport: http(url, { retryCount: 3, retryDelay: 1000, timeout: 20_000 }) });
 
   /** Every error leaving this file is safe to store and log: never the keyed RPC URL. */
   const clean = <T>(fn: () => Promise<T>): Promise<T> =>
@@ -36,6 +43,8 @@ export const createViemRpc: RpcFactory = (url, chainId) => {
     });
 
   return {
+    maxLogRange: info.maxLogRange,
+    blockTimeSec: info.blockTimeSec,
     latestBlock: () =>
       clean(async () => {
         const b = await client.getBlock();
@@ -48,7 +57,7 @@ export const createViemRpc: RpcFactory = (url, chainId) => {
       }),
     multicall: (calls, blockNumber) =>
       clean(async () => {
-        // One eth_call: the public Base RPC throttles bursts of separate calls, and the default
+        // One eth_call: public RPCs throttle bursts of separate calls, and the default
         // viem batch size would split a large read into many requests.
         const results = await client.multicall({
           allowFailure: true,
@@ -77,7 +86,7 @@ export const createViemRpc: RpcFactory = (url, chainId) => {
         return logs.map((l) => {
           const ts = (l as { blockTimestamp?: bigint | null }).blockTimestamp;
           if (ts === undefined || ts === null) {
-            throw new Error('the RPC did not return blockTimestamp on logs; use a Base RPC that does (https://mainnet.base.org does)');
+            throw new Error(`the RPC did not return blockTimestamp on logs; use a ${info.name} RPC that does`);
           }
           if (l.blockNumber === null || l.logIndex === null || l.transactionHash === null || l.args.from === undefined || l.args.value === undefined) {
             throw new Error('the RPC returned a pending or malformed Transfer log');

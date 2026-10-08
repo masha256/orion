@@ -17,14 +17,17 @@ import { buildPlan, hasSources, type FlowGroup, type SourceBatch } from './plan.
 import { sourceId } from './sourceId.js';
 import { getSourceHandler } from './sources/registry.js';
 import { monthOf, utcDay } from './time.js';
+import { CHAINS } from './transport/chains.js';
 import { withRunCache, type HttpTransport } from './transport/http.js';
 import type { BlockRef, RpcFactory, RpcTransport } from './transport/rpc.js';
 import {
   contractResolver, failed, type DailyPoint, type RaisedAnomaly, type ReadingResult, type SourceContext, type SourceRequest, type WrittenObservation,
 } from './types.js';
 
-/** Used when the asset's rpc_url_env variable is not set. */
-export const DEFAULT_RPC_URLS: Record<number, string> = { 8453: 'https://mainnet.base.org' };
+/** Used when the asset's rpc_url_env variable is not set. A chain with no keyless default (Ethereum) is absent. */
+export const DEFAULT_RPC_URLS: Record<number, string> = Object.fromEntries(
+  Object.values(CHAINS).flatMap((c) => (c.defaultRpcUrl === null ? [] : [[c.id, c.defaultRpcUrl]])),
+);
 
 export interface FetchDeps {
   http: HttpTransport;

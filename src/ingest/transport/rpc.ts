@@ -37,13 +37,17 @@ export interface RpcTransport {
   getBlock(number: bigint): Promise<BlockRef>;
   /** One eth_call at one block. A failed call is reported in its slot; the batch itself only throws on transport failure. */
   multicall(calls: ContractCall[], blockNumber: bigint): Promise<CallResult[]>;
-  /** One range of at most MAX_LOG_RANGE blocks. */
+  /** One range of at most `maxLogRange` blocks. */
   getTransferLogs(q: LogQuery): Promise<TransferLog[]>;
+  /** Blocks one eth_getLogs call may span on this chain. Default MAX_LOG_RANGE (Base's cap). */
+  readonly maxLogRange?: bigint;
+  /** Nominal seconds per block, for the block search's first estimate. Default 2 (Base). */
+  readonly blockTimeSec?: number;
 }
 
 export type RpcFactory = (url: string, chainId: number) => RpcTransport;
 
-/** https://mainnet.base.org caps eth_getLogs at 2,000 blocks per call (error -32614 beyond that). */
+/** The default log range: https://mainnet.base.org caps eth_getLogs at 2,000 blocks per call (error -32614 beyond that). */
 export const MAX_LOG_RANGE = 2000n;
 
 /**
@@ -57,8 +61,10 @@ export async function* getLogsChunked(
 ): AsyncGenerator<{ fromBlock: bigint; toBlock: bigint; logs: TransferLog[] }> {
   const attempts = opts.attempts ?? 4;
   const backoffMs = opts.backoffMs ?? 1000;
-  for (let from = q.fromBlock; from <= q.toBlock; from += MAX_LOG_RANGE) {
-    const to = from + MAX_LOG_RANGE - 1n < q.toBlock ? from + MAX_LOG_RANGE - 1n : q.toBlock;
+  const range = rpc.maxLogRange ?? MAX_LOG_RANGE;
+  if (range < 1n) throw new Error(`the log range must be at least one block, got ${range}`);
+  for (let from = q.fromBlock; from <= q.toBlock; from += range) {
+    const to = from + range - 1n < q.toBlock ? from + range - 1n : q.toBlock;
     let logs: TransferLog[] | null = null;
     let failure = '';
     for (let attempt = 1; attempt <= attempts && logs === null; attempt++) {
@@ -77,14 +83,15 @@ export async function* getLogsChunked(
 
 /**
  * The first block whose timestamp is at or after `targetTs`. Estimates from the anchor at
- * `blockTimeSec` per block, then corrects; it converges on irregular chains too, just more slowly.
+ * `blockTimeSec` per block (default: the transport's own, else 2), then corrects; it converges on irregular chains
+ * too, just more slowly.
  */
 export async function firstBlockAtOrAfter(
   rpc: RpcTransport,
   targetTs: number,
   anchor: BlockRef,
   latest: BlockRef,
-  blockTimeSec = 2,
+  blockTimeSec = rpc.blockTimeSec ?? 2,
 ): Promise<BlockRef> {
   if (latest.timestamp < targetTs) throw new Error(`no block at or after ${new Date(targetTs * 1000).toISOString()} yet`);
   const clamp = (n: bigint): bigint => (n < 0n ? 0n : n > latest.number ? latest.number : n);

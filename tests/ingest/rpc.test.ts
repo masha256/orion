@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { firstBlockAtOrAfter, getLogsChunked, type TransferLog } from '../../src/ingest/transport/rpc.js';
+import { DEFAULT_RPC_URLS } from '../../src/ingest/run.js';
+import { CHAINS } from '../../src/ingest/transport/chains.js';
 import { cleanRpcErrorMessage, createViemRpc } from '../../src/ingest/transport/viemRpc.js';
 import type { OrionError } from '../../src/types.js';
 import { fakeRpc } from '../helpers/fakeRpc.js';
@@ -80,15 +82,43 @@ describe('firstBlockAtOrAfter', () => {
 });
 
 describe('createViemRpc', () => {
-  it('supports Base only', () => {
-    expect(() => createViemRpc('http://localhost:1', 8453)).not.toThrow();
-    let code: string | undefined;
+  it('supports Base and Ethereum, each with its own log range and block time', () => {
+    expect(createViemRpc('http://localhost:1', 8453)).toMatchObject({ maxLogRange: 2000n, blockTimeSec: 2 });
+    expect(createViemRpc('http://localhost:1', 1)).toMatchObject({ maxLogRange: 10_000n, blockTimeSec: 12 });
+    let err: OrionError | undefined;
     try {
-      createViemRpc('http://localhost:1', 1);
-    } catch (err) {
-      code = (err as OrionError).code;
+      createViemRpc('http://localhost:1', 10);
+    } catch (e) {
+      err = e as OrionError;
     }
-    expect(code).toBe('unsupported_chain');
+    expect(err?.code).toBe('unsupported_chain');
+    expect(err?.message).toMatch(/supported: 1, 8453/);
+  });
+});
+
+describe('the chain table', () => {
+  it('gives Base a keyless default RPC and Ethereum none', () => {
+    expect(CHAINS[8453]).toMatchObject({ name: 'Base', maxLogRange: 2000n, blockTimeSec: 2, defaultRpcUrl: 'https://mainnet.base.org' });
+    expect(CHAINS[1]).toMatchObject({ name: 'Ethereum', maxLogRange: 10_000n, blockTimeSec: 12, defaultRpcUrl: null });
+    expect(DEFAULT_RPC_URLS).toEqual({ 8453: 'https://mainnet.base.org' });
+  });
+});
+
+describe('a chain with a wider log range and slower blocks', () => {
+  it('chunks by the transport\'s own range', async () => {
+    const rpc = fakeRpc({ genesisTs: 1_000_000, latest: 100_000n, blockTimeSec: 12, maxLogRange: 10_000n, logs: [log(9_999n), log(10_000n), log(25_000n)] });
+    const chunks = await collect(getLogsChunked(rpc, { ...Q, fromBlock: 0n, toBlock: 25_000n }, noSleep));
+    expect(chunks.map((c) => [c.fromBlock, c.toBlock])).toEqual([[0n, 9_999n], [10_000n, 19_999n], [20_000n, 25_000n]]);
+    expect(chunks.flatMap((c) => c.logs.map((l) => l.blockNumber))).toEqual([9_999n, 10_000n, 25_000n]);
+  });
+
+  it('finds a block from the transport\'s own block time in a handful of calls', async () => {
+    const rpc = fakeRpc({ genesisTs: 1_600_000_000, latest: 3_000_000n, blockTimeSec: 12 });
+    const latest = await rpc.latestBlock();
+    const target = 1_600_000_000 + 12 * 1_234_567 - 5;
+    const found = await firstBlockAtOrAfter(rpc, target, latest, latest);
+    expect(found.number).toBe(1_234_567n);
+    expect(rpc.stats.getBlock).toBeLessThanOrEqual(4);
   });
 });
 
@@ -101,6 +131,11 @@ describe('cleanRpcErrorMessage', () => {
   it('falls back to the full message with any URL trimmed down to its origin', () => {
     const err = new Error('HTTP request failed. URL: https://mainnet.base.org/rpc?key=SECRET Status: 503');
     expect(cleanRpcErrorMessage(err)).toBe('HTTP request failed. URL: https://mainnet.base.org Status: 503');
+  });
+
+  it('strips a key carried in the URL path, as Alchemy\'s is', () => {
+    const err = new Error('HTTP request failed. URL: https://eth-mainnet.g.alchemy.com/v2/alch_SECRET Status: 429');
+    expect(cleanRpcErrorMessage(err)).toBe('HTTP request failed. URL: https://eth-mainnet.g.alchemy.com Status: 429');
   });
 
   it('handles a non-Error value and a message with no URL', () => {
