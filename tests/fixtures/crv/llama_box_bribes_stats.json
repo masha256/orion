@@ -1,0 +1,56 @@
+{
+ "totalClaimed": 79079011.2299992,
+ "veCRVTotalClaimed": 17018894.310000088,
+ "vlCVXTotalClaimed": 62060116.91999991,
+ "basis": "added",
+ "source": "votemarket+votium",
+ "publisher": "CurveDEX (llama.box/curvedex)",
+ "updatedTimestamp": 1791451405,
+ "inceptionTimestamp": 1695081649,
+ "granularity": "weekly: Votemarket campaigns land on the Thursday epoch they fund, Votium rounds on their biweekly Tuesday. Days in between repeat the running total, so a day-over-day delta is zero except on those settlement days.",
+ "disclaimer": "Field names follow the legacy crvhub bounties schema so existing parsers keep working. The numbers are incentives ADDED (committed on Votemarket / Votium), not claimed; history starts 2023-09-19, not 2021.",
+ "claimsLast7Days": {
+  "totalClaimed": 149224.65999992192,
+  "veCRVTotalClaimed": 149224.66000000387,
+  "vlCVXTotalClaimed": 0.0,
+  "veBreakdown": [
+   {
+    "name": "Votemarket",
+    "claimedUsd": 149224.66000000003
+   }
+  ]
+ },
+ "claimsLast30Days": {
+  "totalClaimed": 1348992.6799995005,
+  "veCRVTotalClaimed": 721602.0500000101,
+  "vlCVXTotalClaimed": 627390.6299999952,
+  "veBreakdown": [
+   {
+    "name": "Votemarket",
+    "claimedUsd": 721602.0499999997
+   }
+  ]
+ },
+ "claimsLast180Days": {
+  "totalClaimed": 7434114.039998889,
+  "veCRVTotalClaimed": 4284586.140000122,
+  "vlCVXTotalClaimed": 3149527.899999991,
+  "veBreakdown": [
+   {
+    "name": "Votemarket",
+    "claimedUsd": 4284586.139999995
+   }
+  ]
+ },
+ "claimsLast365Days": {
+  "totalClaimed": 20473082.90999899,
+  "veCRVTotalClaimed": 10876251.2000001,
+  "vlCVXTotalClaimed": 9596831.70999989,
+  "veBreakdown": [
+   {
+    "name": "Votemarket",
+    "claimedUsd": 10876251.200000089
+   }
+  ]
+ }
+}

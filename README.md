@@ -85,6 +85,7 @@ An AI analyst persona maintains the assumptions, looks into anomalies, and resea
 orion persona assign vvv ai-infra-analyst                            # once: who covers the asset
 orion persona assign aero onchain-dex-analyst                        # the second asset (assets/aero.yaml): every metric fetched, no manual entry
 orion persona assign hype perp-exchange-analyst                      # the third (assets/hype.yaml): fetched from the Hyperliquid info API; one manual metric the bootstrap researches
+orion persona assign crv onchain-dex-analyst                         # the fourth (assets/crv.yaml): Ethereum mainnet, needs ORION_ETH_RPC_URL; every metric fetched
 orion agent run vvv --type weekly --out signals.jsonl                # review what moved; adjust within its bands
 orion agent run vvv --type triage --anomaly 7 --out signals.jsonl    # look into one anomaly
 orion agent run vvv --type triage --note "https://..." --out signals.jsonl   # a lead to verify; never evidence by itself

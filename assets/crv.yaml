@@ -1,0 +1,146 @@
+id: crv
+symbol: CRV
+name: Curve DAO Token
+chain: ethereum
+supply_basis: effective_total
+
+# Read live on 2026-10-08 (block 26,146,581); see docs/superpowers/specs/2026-10-08-orion-crv-onboarding-design.md section 2.
+contracts:
+  token: "0xD533a949740bb3306d119CC777fa900bA034cd52" # CRV; also the emission schedule (rate, start_epoch_time)
+  ve: "0x5f3b5DfEb7B28CDbD7FAba78963EE202a494e2A2" # VotingEscrow: veCRV locks; supply() is the CRV locked
+  crvusd: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E" # the FeeDistributor's token()
+  fee_distributor: "0xD16d5eC345Dd86Fb63C6a9C43c517210F1027914" # CurveFeeDistribution: pays veCRV weekly in crvUSD
+  fee_allocator: "0x22530d384cd9915e096ead2db7f82ee81f8eb468" # FeeAllocator: 90 percent to the distributor, 10 to the Treasury
+
+ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
+
+external_ids:
+  coingecko: curve-dao-token
+  defillama: curve-finance
+
+# Every metric is fetched: CRV has no manual metric, so a bootstrap run finds nothing to research and writes only its journal.
+metrics:
+  price_usd:
+    type: level
+    unit: usd
+    staleness_days: 3
+    critical: true
+    source: { type: coingecko, id: curve-dao-token, field: price }
+    cross_checks:
+      - { tolerance_pct: 2, source: { type: http_json, url: "https://coins.llama.fi/prices/current/ethereum:0xD533a949740bb3306d119CC777fa900bA034cd52", path: "coins.ethereum:0xD533a949740bb3306d119CC777fa900bA034cd52.price" } }
+
+  # No burn: the ERC-20 total is the effective supply. Locked CRV stays inside it (supply_basis effective_total).
+  effective_supply:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    critical: true
+    source: { type: erc20_supply, token: token }
+
+  # CoinGecko's own definition; informational under effective_total.
+  circulating_supply:
+    type: level
+    unit: tokens
+    staleness_days: 14
+    source: { type: coingecko, id: curve-dao-token, field: circulating_supply }
+
+  # Staking is locking for CRV, as for AERO: both metrics read the escrow's supply(), the CRV held in veCRV locks.
+  staked_supply:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    source: { type: contract_read, contract: ve, function: supply, decimals: 18 }
+
+  locked_supply:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    source: { type: contract_read, contract: ve, function: supply, decimals: 18 }
+
+  staker_emission_share:
+    type: level
+    unit: ratio
+    staleness_days: 7
+    source: { type: constant, value: 0, note: "all CRV emissions go to LP gauges; veCRV receives none (CRV.vy, GaugeController)" }
+
+  # Gross emissions to the gauges: the rate in force and the next coded cut (2^(-1/4), each 12 August at 22:17Z), read
+  # from the token contract. Each run writes both steps, so the engine sees the cut before it happens.
+  emission_rate_annual:
+    type: schedule
+    unit: tokens_per_year
+    staleness_days: 45
+    critical: true
+    source: { type: adapter, name: crv.emission_rate_annual }
+
+  # The revenue-funded flow to lockers, read on chain: crvUSD into the FeeDistributor from the FeeAllocator, weekly on
+  # Wednesdays (six of seven days are zero). DefiLlama's holders revenue adds third-party bribes and runs about 3x this,
+  # so it is not a cross-check; bribes are valued separately (vote_incentive_run_rate_usd, the vote_incentives module).
+  # Staleness 10 so one missed Wednesday does not grade the signal D.
+  flow_usd.fees:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    critical: true
+    source: { type: transfer_flow, token: crvusd, to: fee_distributor, from_allowlist: [ fee_allocator ], unit: usd, price_coingecko_id: crvusd }
+
+  # The last 91 days (13 Wednesdays) of fees to lockers, scaled to a year. A whole number of weeks, so the count of
+  # payouts in the window never changes; the holder flow's window matches it (AERO ruling F2).
+  revenue_run_rate_usd:
+    type: level
+    unit: usd
+    staleness_days: 10
+    critical: true
+    source: { type: derived, name: flow_annualized, params: { metric: flow_usd.fees, days: 91 } }
+
+  # Votemarket incentives committed to veCRV voters, 180 days scaled to a year (CurveDEX's feed, the one DefiLlama uses).
+  # Votium (vlCVX) is excluded: it pays CVX lockers, not CRV holders. Not critical: if the feed dies the signal grades C.
+  # The 30-day check is loose on purpose: it catches a dead or restated feed, not a lumpy month.
+  vote_incentive_run_rate_usd:
+    type: level
+    unit: usd
+    staleness_days: 10
+    source: { type: http_json, url: "https://llama.box/curvedex/api/bribes/stats.json", path: claimsLast180Days.veCRVTotalClaimed, scale: 2.0277777777777777 }
+    cross_checks:
+      - { tolerance_pct: 50, source: { type: http_json, url: "https://llama.box/curvedex/api/bribes/stats.json", path: claimsLast30Days.veCRVTotalClaimed, scale: 12.166666666666666 } }
+
+holder_flows:
+  - { id: fees, kind: fee_share, capture_rule: programmatic, recipient_base: locked, metric: flow_usd.fees, window_days: 91 }
+
+# Chosen by the user on 2026-10-08: as AERO (no revenue multiple: revenue and the holder flow are one series), plus the
+# vote incentives as an additive component on the DIEM precedent. The decay is the contract's own 2^(-1/4) per year.
+# Structural: the agent may only propose changes here.
+modules:
+  - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.6 }
+  - { id: fm_holder_flow, type: forward_multiple, kind: estimate, weight: 0.4, params: { basis: holder_flow } }
+  - { id: vote_incentives, type: vote_incentives, kind: component, params: { metric: vote_incentive_run_rate_usd, years: 10, post_horizon_emission_decay: 0.159103584746285 } }
+
+scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }
+
+# Key-wide bounds only, wide enough for the calibration sweep. Agent bands are added after the user calibrates, by the
+# mirror rule; until then the agent uses these bounds.
+assumptions:
+  rev_growth_y1: { min: -0.6, max: 2.0 }
+  growth_fade_years: { min: 1, max: 8 }
+  terminal_growth: { min: 0, max: 0.05 }
+  capture_rate_terminal.fees: { min: 0.5, max: 1.0 }
+  capture_ramp_years.fees: { min: 0, max: 4 }
+  discount_rate_base: { min: 0.08, max: 0.35 }
+  discount_premium_programmatic: { min: 0, max: 0.15 }
+  multiple.fm_holder_flow: { min: 3, max: 60 }
+  regime_multiplier: { min: 0.4, max: 1.6 }
+  staked_ratio_horizon: { min: 0.2, max: 0.6 }
+  incentive_efficiency_drift: { min: -0.5, max: 0.3 }
+  incentive_discount_rate: { min: 0.1, max: 0.5 }
+
+agent:
+  budgets:
+    weekly: { input_tokens: 2000000 }
+
+review_triggers:
+  driver_deviation_pct: 25
+  provisional_move_pct: 25
+  calendar:
+    - { date: "2027-08-12", note: "CRV emission rate cut, epoch 7 (22:17Z): 97.2M to 81.7M CRV a year" }
+
+peer_set: []

@@ -100,7 +100,7 @@ Bribes are not a holder flow in the framework's sense (section 3.2 position 1: h
 `src/ingest/transport/viemRpc.ts` today refuses any chain but Base. Changes:
 
 - A chain table: `{ 8453: { viem: base, maxLogRange: 2000n, blockTimeSec: 2, defaultUrl: 'https://mainnet.base.org' }, 1: { viem: mainnet, maxLogRange: 10000n, blockTimeSec: 12, defaultUrl: none } }`. `DEFAULT_RPC_URLS` in `run.ts` reads from it; chain 1 has no keyless default (free endpoints refuse ranged logs and archive reads), so a missing `ORION_ETH_RPC_URL` fails with the existing `missing_rpc_url` error naming the variable.
-- `MAX_LOG_RANGE` becomes per chain and travels on the transport (`rpc.maxLogRange`); `getLogsChunked` reads it. 10,000 blocks is about 33 hours on mainnet, so a 100-day backfill is about 73 calls.
+- `MAX_LOG_RANGE` becomes per chain and travels on the transport (`rpc.maxLogRange`); `getLogsChunked` reads it. 10,000 blocks is about 33 hours on mainnet. The scanner reads a day at a time (each day commits on its own, so a backfill resumes), and a mainnet day is about 7,200 blocks, so a 100-day backfill is 100 calls of one day each.
 - `firstBlockAtOrAfter` takes `blockTimeSec` from the transport (12 on mainnet), not the literal 2.
 - The `blockTimestamp` guard message names the asset's chain, not Base.
 - `cleanRpcErrorMessage` already strips the URL; the Alchemy key is in the path, so add a test that a mainnet error message carries no `/v2/` segment.
@@ -203,7 +203,7 @@ Assumption bounds (key-wide, before calibration): `rev_growth_y1 [-0.6, 2.0]`, `
 
 1. Code (sections 3 to 5) with tests, on `feat/crv`.
 2. `assets/crv.yaml`; `orion asset validate`; `orion persona assign crv onchain-dex-analyst`.
-3. Dry fetch from a throwaway home: `orion data fetch crv --dry-run`. Expected: 100 days of flow rows (14 non-zero), about 73 log calls; supply, lock, rate within 0.1 percent of section 2.2; next step dated 2027-08-12T22:17Z; price check inside 2 percent; vote incentives about 8.7M with the 30-day check inside 50 percent.
+3. Dry fetch from a throwaway home: `orion data fetch crv --dry-run`. Expected: 100 days of flow rows (14 non-zero), 100 log calls (one per day); supply, lock, rate within 0.1 percent of section 2.2; next step dated 2027-08-12T22:17Z; price check inside 2 percent; vote incentives about 8.7M with the 30-day check inside 50 percent.
 4. First tick: blocked (no set); bootstrap with an empty manual list (journal only), as AERO.
 5. Calibration: sweep, priced packages under the 91-day (5.2M), 30-day and 1-year on-chain windows, each shown with and without the vote-incentives component; the user chooses; import; bands; commit.
 6. First signal; a fourth Hermes cron line `orion-crv` after `orion-aero` (17:20 PDT / 16:20 PST, delivered to orion-ops).
@@ -217,3 +217,23 @@ Assumption bounds (key-wide, before calibration): `rev_growth_y1 [-0.6, 2.0]`, `
 - **Vote incentives rest on one publisher.** llama.box is a single off-chain source counting incentives added, not claimed, and it replaced a feed that went stale in 2026-07. The metric is not critical; if it goes stale the module has no input. Decision for the plan: either the module returns 0 with a breakdown flag when the extra driver is stale (signal stays ok, value understated), or the extra is required and the signal blocks. Recommendation: required-but-not-critical as `utility_claim`'s extras are, so staleness grades the signal C rather than hiding the gap. A later on-chain Votemarket read (v2 is multi-chain) would remove the dependency.
 - **Bribes follow emissions down.** The decay param makes the component shrink 15.9 percent a year with the schedule; the bull case can hold it up only through `incentive_efficiency_drift` (bribers paying more per dollar of emissions) or a higher P_H.
 - **Private constants.** The 2^(1/4) and 365-day constants are from source, not readable; pinned in the adapter with the source reference.
+
+## Amendments
+
+### 2026-10-08: implementation and the live dry run
+
+Built on `feat/crv` per `docs/superpowers/plans/2026-10-08-orion-crv-onboarding.md`. Changes from the text above:
+
+- **Schedule steps.** An adapter result can be `schedule_steps` (the step in force, then each later step), accepted only on a `schedule` metric, validated, each step its own observation. Re-running supersedes the future step rather than stacking it.
+- **Log calls.** The transfer scanner reads one day per call (each day commits on its own), so a mainnet backfill is one call per day (about 7,200 blocks, inside the 10,000 cap): 100 calls for 100 days, about two minutes on Alchemy.
+- **Derived provenance.** `revenue_run_rate_usd` derives from an on-chain flow, so it is stamped `onchain`, not `api`.
+- **The component tracks the model's own price.** `vote_incentives` scales incentives by P_H / P0. Under the flat wiring set the fee-only target is about 4 percent of spot, so the component is about 0.0003 USD a token, not the 0.0066 of section 6, which assumed P_H = P0. Calibration will show the size under the user's assumptions; if the user prefers incentives valued at spot (P_H / P0 fixed at 1), that is a one-parameter change.
+
+Live dry run (`orion data fetch crv --dry-run`, throwaway home, the user's Alchemy endpoint, 2026-10-08 10:33Z): every source ok, no anomaly.
+
+- price 0.3864 (CoinGecko) against 0.3859 (DefiLlama), inside 2 percent
+- effective supply 2,424,328,238; locked 840,616,397 (34.7 percent); circulating (CoinGecko) 1,572,492,036
+- emissions 97,161,875 a year now, 81,703,072 from 2027-08-12T22:17:28Z
+- staker emission share 0 (constant)
+- vote incentives 8,688,189 a year (180 days), 30-day check 8,779,492 (1.05 percent apart, inside 50)
+- fees: 100 days, 15 non-zero (every Wednesday), 1,456,822 USD in total, 1,280,700 in the last 91 days; run rate 5,136,873 USD a year at 2026-10-08
