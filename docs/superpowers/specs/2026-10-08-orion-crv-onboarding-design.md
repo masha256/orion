@@ -1,6 +1,6 @@
 # Orion sub-project 8: CRV onboarding
 
-Date: 2026-10-08. Status: draft for the user's review; not yet planned.
+Date: 2026-10-08. Status: draft for the user's review; not yet planned. Revised the same day: bribes are valued as a `vote_incentives` component (sections 2.5 and 6).
 
 Extends `docs/superpowers/specs/2026-09-18-orion-valuation-framework-design.md`, `docs/superpowers/specs/2026-09-19-orion-ingestion-design.md` (sources, adapters, transfer scans), `docs/superpowers/specs/2026-09-22-orion-research-first-design.md` (bootstrap, inbox), `docs/superpowers/specs/2026-09-23-orion-aero-onboarding-design.md` (`flow_annualized`, the ve-model contrast case, the onboarding sequence) and `docs/superpowers/specs/2026-09-24-orion-hype-onboarding-design.md`. Where this document and those differ, this one wins for the items it covers.
 
@@ -13,11 +13,12 @@ In scope:
 1. **Ethereum mainnet support** in the RPC transport: chain 1, per-chain log range and block time, a default env name.
 2. **A `constant` source type**: a fixed value written as a fetched observation, so structural constants do not cap the grade at B.
 3. **Two `crv` adapters**: the emission schedule (the rate in force plus the next step) and nothing else; locked supply and total supply are declarative.
-4. **`assets/crv.yaml`**: every metric fetched, no manual metric, one holder flow measured on chain, two modules, key-wide bounds; agent bands after calibration.
-5. **Persona**: reuse `onchain-dex-analyst` (ve-model DEX, same mechanism as AERO), with a CRV paragraph if the bootstrap shows it needs one.
-6. The onboarding sequence, as for AERO and HYPE.
+4. **A `vote_incentives` engine module** (component): values the vote incentives (bribes) paid to veCRV voters, which are not revenue and so not a holder flow (section 6).
+5. **`assets/crv.yaml`**: every metric fetched, no manual metric, one holder flow measured on chain, two estimate modules plus the component, key-wide bounds; agent bands after calibration.
+6. **Persona**: reuse `onchain-dex-analyst` (ve-model DEX, same mechanism as AERO), adding a paragraph on vote incentives: they are emissions-market income, not revenue; watch the llama.box feed, Votemarket versus Votium, and the gap DefiLlama's holders revenue opens by including them.
+7. The onboarding sequence, as for AERO and HYPE.
 
-Out of scope: bribes as a holder flow (third-party money, not revenue; section 2.3); crvUSD/LlamaLend as separate flows (they reach the same FeeDistributor and are measured there); Convex/vlCVX look-through; UNI and LINK.
+Out of scope: bribes as a holder flow (third-party money, not revenue; section 2.3: they are the component instead); Votium incentives (paid to vlCVX, not to CRV holders; section 2.5); an on-chain read of Votemarket (multi-chain in v2; deferred); crvUSD/LlamaLend as separate flows (they reach the same FeeDistributor and are measured there); Convex/vlCVX look-through; UNI and LINK.
 
 ### Decisions made with the user (2026-10-08)
 
@@ -25,6 +26,7 @@ Out of scope: bribes as a holder flow (third-party money, not revenue; section 2
 - Zero-valued structural metrics get a `constant` source so the data-quality grade stays at A (a manual row in force caps it at B).
 - The emission schedule is an adapter that reads the CRV contract, including the next 13 August reduction, not a hand-entered dated row.
 - Flow source: on chain (section 2.3), DefiLlama demoted to an advisory cross-check or dropped.
+- Bribes: valued, as a separate additive component on the DIEM precedent, not as a second holder flow (section 6). Votemarket (veCRV) only.
 
 ## 2. Reference data (as of 2026-10-08)
 
@@ -77,6 +79,22 @@ Shape: weekly, not daily. Six of every seven days are zero. Two consequences:
 
 CoinGecko `curve-dao-token` 0.3933; DefiLlama `coins.llama.fi/prices/current/ethereum:0xD533…cd52` 0.3897 (0.9 percent apart; a 2 percent cross-check). Market cap 619M USD on CoinGecko circulating; 953M on the effective total.
 
+### 2.5 Vote incentives (bribes) [A, one source]
+
+Third parties pay veCRV voters to direct gauge weight, that is, to steer CRV emissions to their pools. CurveDEX publishes the series at `https://llama.box/curvedex/api/bribes/stats.json` (the source DefiLlama's Curve adapter switched to in 2026-08 after the crvhub file went stale on 2026-07-11). Fields used: `claimsLastNDays.veCRVTotalClaimed` (USD, Votemarket only) and `vlCVXTotalClaimed` (Votium). The feed's `basis` is `added`: incentives committed to campaigns, not claimed; `granularity` weekly (Votemarket campaigns land on the Thursday epoch they fund).
+
+| Window | Votemarket (veCRV) | annualized | Votium (vlCVX) |
+|---|---|---|---|
+| 30 days | 0.72M | 8.78M | 0.63M |
+| 180 days | 4.28M | 8.69M | 3.15M |
+| 365 days | 10.88M | 10.88M | 9.60M |
+
+Against the on-chain fee flow of 5.20M a year, vote incentives to veCRV are about 1.7 times the fees. Ignoring them understates what lockers receive by more than half.
+
+Votium is out: it pays vlCVX holders for directing Convex's veCRV; cvxCRV holders do not receive it. It is CVX's value, not CRV's.
+
+Bribes are not a holder flow in the framework's sense (section 3.2 position 1: holder flows are revenue-funded). They are a price the market pays for the vote over emissions, so they scale with the dollar value of the emissions being directed, not with Curve's fees, and they disappear if emissions do. The model in section 6 encodes that.
+
 ## 3. Ethereum mainnet in the transport
 
 `src/ingest/transport/viemRpc.ts` today refuses any chain but Base. Changes:
@@ -123,7 +141,36 @@ A third adapter is not needed: `locked_supply` and `staked_supply` are `contract
 
 Tests: against recorded `eth_call` replies (fixtures from block 26,146,581): the step in force 97,161,875 CRV a year (rate × 31,536,000); the next step 81,703,072; the next step dated 2027-08-12T22:17:28Z; each refusal.
 
-## 6. The asset file
+## 6. The `vote_incentives` module
+
+A new engine module, `src/engine/modules/voteIncentives.ts`, registered beside `utility_claim`. `allowedKinds: ['component']`: additive on top of the blend, never weighted, never a holder flow. Generic: AERO (whose spec left incentives out for want of a series) can adopt it with a source.
+
+**Inputs.**
+
+- Extra driver (level metric) named by `params.metric`, default `vote_incentive_run_rate_usd`: annualized USD of incentives to the token's voters today.
+- `drivers.price` (P0), the emission step in force today (E0) and `ctx.terminalEmissionRate` (E_H, the last schedule step, which for CRV is the post-2027-08-12 rate when H reaches past it), `ctx.priceAtHorizon` (P_H), `ctx.supplyAtHorizon` (S_H).
+- Params: `years` (N, default 10); `post_horizon_emission_decay` (default 0, the engine's flat convention; CRV sets `0.159103584746285`, that is 1 - 2^(-1/4), because its schedule is coded in the contract: data, not assumption).
+- Assumptions: `incentive_efficiency_drift` (yearly change in USD of incentives per USD of emissions directed; 0 means bribers keep paying the same rate) and `incentive_discount_rate` (positive; its own rate, higher than the fee flow's because the payer is discretionary).
+
+**Formula.** Incentives move with the dollar value of emissions being directed:
+
+```
+E_t      = E_H * (1 - decay)^t                                   t = 1..N years after the horizon
+B_t      = B0 * (E_t / E0) * (P_H / P0) * (1 + drift)^(H + t)
+value    = sum_t B_t / (1 + r)^t / S_H                           per token, at the horizon
+```
+
+with `B0` the extra driver. The P_H / P0 term makes the component depend on the target, which the engine already solves by fixed-point iteration (`solveScenario`). The feedback coefficient is the component's share of the target, about 2 percent for CRV today; the module refuses (EngineError) if `B_1 / (1 + r) / S_H / P_H` exceeds 0.5, which would mean a value made mostly of its own price.
+
+**Breakdown.** `b0_usd`, `emission_ratio_at_horizon` (E_H / E0), `price_ratio` (P_H / P0), `incentives_year1_usd`, `aggregate_pv_usd`, `years`, `decay`, and a note: "Vote incentives are paid by third parties for gauge votes; they are not protocol revenue and scale with the dollar value of emissions."
+
+**Validation.** `validateParams`: `years` a positive integer ≤ 30; `decay` in [0, 1); `metric` a string. `assumptionKeys`: the two above. `requiredExtra`: `[params.metric]`.
+
+**Rough size for CRV.** B0 8.7M; E_H / E0 0.841 at the 12-month horizon; drift 0; P_H = P0; r 0.20; decay 0.159; N 10: B_1 = 8.69M × 0.841 × 0.841 = 6.14M, PV ≈ 16.6M, about 0.0066 USD per token on 2.52B tokens at the horizon, the same order as the fee stream's value and both small against the 0.39 spot. The gap to spot stays a growth and multiple question, as for AERO.
+
+Tests: the formula against a hand-computed fixture; zero drift and flat price reduce to an emissions-weighted annuity; decay 0 with E_H = E0 is a plain annuity; higher emissions raise the value, higher decay or discount lower it; the feedback refusal; parameter validation; replay byte-identical.
+
+## 7. The asset file
 
 `assets/crv.yaml`: `id: crv`, `symbol: CRV`, `name: Curve DAO Token`, `chain: ethereum`, `supply_basis: effective_total`, `contracts` as section 2.1, `ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }`, `external_ids: { coingecko: curve-dao-token, defillama: curve-finance }`.
 
@@ -138,32 +185,35 @@ Tests: against recorded `eth_call` replies (fixtures from block 26,146,581): the
 | `emission_rate_annual` | schedule, tokens_per_year, critical, staleness 45 | adapter `crv.emission_rate_annual` | none | section 5 |
 | `flow_usd.fees` | flow, usd, daily, critical, staleness 10 | transfer_flow crvusd -> fee_distributor, allowlist `[fee_allocator]`, unit usd, `price_coingecko_id: crvusd` | defillama `curve-finance` `dailyHoldersRevenue`, `compare: monthly_sum`, tolerance wide (see below) | weekly payouts; staleness 10 so one missed Wednesday does not grade D |
 | `revenue_run_rate_usd` | level, usd, critical, staleness 10 | derived `flow_annualized` `{ metric: flow_usd.fees, days: 91 }` | none | 13 payouts |
+| `vote_incentive_run_rate_usd` | level, usd, staleness 10 | http_json `https://llama.box/curvedex/api/bribes/stats.json`, path `claimsLast180Days.veCRVTotalClaimed`, scale `365/180` (2.027777…) | http_json path `claimsLast30Days.veCRVTotalClaimed`, scale `365/30`, tolerance 50 percent (advisory: catches a dead or restated feed, not a lumpy month) | Votemarket to veCRV, 180 days annualized; not critical, so a dead feed does not block the signal (see section 9 on staleness) |
 
 The DefiLlama cross-check: its series includes bribes and runs about 3x the on-chain flow, so a tolerance tight enough to mean anything would fire every month. Options: (a) no cross-check; (b) an advisory check with tolerance 250 percent, which catches only a collapse of the on-chain read. Recommendation: (a), and the persona reads DefiLlama ex-bribes as context.
 
 `holder_flows: [{ id: fees, kind: fee_share, capture_rule: programmatic, recipient_base: locked, metric: flow_usd.fees, window_days: 91 }]`.
 
-`modules`: `holder_cashflow` 0.6, `forward_multiple` on holder flow 0.4, as AERO; no revenue multiple (revenue and holder flow are one series). `scenario_probabilities` 25/50/25.
+`modules`: `holder_cashflow` 0.6, `forward_multiple` on holder flow 0.4, as AERO; no revenue multiple (revenue and holder flow are one series). Plus `{ id: vote_incentives, type: vote_incentives, kind: component, params: { metric: vote_incentive_run_rate_usd, years: 10, post_horizon_emission_decay: 0.159103584746285 } }`. `scenario_probabilities` 25/50/25.
 
-Assumption bounds (key-wide, before calibration): `rev_growth_y1 [-0.6, 2.0]`, `growth_fade_years [1, 8]`, `terminal_growth [0, 0.05]`, `capture_rate_terminal.fees [0.5, 1.0]`, `capture_ramp_years.fees [0, 4]`, `discount_rate_base [0.08, 0.35]`, `discount_premium_programmatic [0, 0.15]` (required: the flow is programmatic), `multiple.fm_holder_flow [3, 60]`, `regime_multiplier [0.4, 1.6]`, `staked_ratio_horizon [0.2, 0.6]` (0.35 today). Bands by the mirror rule after calibration.
+Assumption bounds (key-wide, before calibration): `rev_growth_y1 [-0.6, 2.0]`, `growth_fade_years [1, 8]`, `terminal_growth [0, 0.05]`, `capture_rate_terminal.fees [0.5, 1.0]`, `capture_ramp_years.fees [0, 4]`, `discount_rate_base [0.08, 0.35]`, `discount_premium_programmatic [0, 0.15]` (required: the flow is programmatic), `multiple.fm_holder_flow [3, 60]`, `regime_multiplier [0.4, 1.6]`, `staked_ratio_horizon [0.2, 0.6]` (0.35 today), `incentive_efficiency_drift [-0.5, 0.3]`, `incentive_discount_rate [0.1, 0.5]`. Bands by the mirror rule after calibration.
 
 `review_triggers`: `driver_deviation_pct: 25`, `provisional_move_pct: 25`; calendar `2027-08-12: CRV emission rate cut (epoch 7, 22:17Z)`.
 
 `agent`: defaults, weekly input budget 2,000,000 as for the others.
 
-## 7. Onboarding sequence
+## 8. Onboarding sequence
 
 1. Code (sections 3 to 5) with tests, on `feat/crv`.
 2. `assets/crv.yaml`; `orion asset validate`; `orion persona assign crv onchain-dex-analyst`.
-3. Dry fetch from a throwaway home: `orion data fetch crv --dry-run`. Expected: 100 days of flow rows (14 non-zero), about 73 log calls; supply, lock, rate within 0.1 percent of section 2.2; next step dated 2027-08-12T22:17Z; price check inside 2 percent.
+3. Dry fetch from a throwaway home: `orion data fetch crv --dry-run`. Expected: 100 days of flow rows (14 non-zero), about 73 log calls; supply, lock, rate within 0.1 percent of section 2.2; next step dated 2027-08-12T22:17Z; price check inside 2 percent; vote incentives about 8.7M with the 30-day check inside 50 percent.
 4. First tick: blocked (no set); bootstrap with an empty manual list (journal only), as AERO.
-5. Calibration: sweep, priced packages under the 91-day (5.2M), 30-day and 1-year on-chain windows; the user chooses; import; bands; commit.
+5. Calibration: sweep, priced packages under the 91-day (5.2M), 30-day and 1-year on-chain windows, each shown with and without the vote-incentives component; the user chooses; import; bands; commit.
 6. First signal; a fourth Hermes cron line `orion-crv` after `orion-aero` (17:20 PDT / 16:20 PST, delivered to orion-ops).
 
-## 8. Risks and expectations
+## 9. Risks and expectations
 
 - **Emissions dwarf the flow.** 97.2M CRV a year is about 38M USD at spot against 5.2M USD a year to lockers: the holder-cashflow module will be strongly bearish, more than AERO's. A low base case is the model working.
 - **The fee route is governance-set.** A new allocator, hook or token shows as an unlisted sender or a zero week; the anomaly blocks the signal, which is right.
 - **Weekly lumps.** A 13-week window smooths them; a missed Wednesday shows as a 7.7 percent dip in the run rate, under the 25 percent deviation trigger.
 - **Convex.** Most veCRV is held through Convex; lockers' look-through yield is not CRV holders' yield. Effective-total basis values the flow across all CRV, as AERO does.
+- **Vote incentives rest on one publisher.** llama.box is a single off-chain source counting incentives added, not claimed, and it replaced a feed that went stale in 2026-07. The metric is not critical; if it goes stale the module has no input. Decision for the plan: either the module returns 0 with a breakdown flag when the extra driver is stale (signal stays ok, value understated), or the extra is required and the signal blocks. Recommendation: required-but-not-critical as `utility_claim`'s extras are, so staleness grades the signal C rather than hiding the gap. A later on-chain Votemarket read (v2 is multi-chain) would remove the dependency.
+- **Bribes follow emissions down.** The decay param makes the component shrink 15.9 percent a year with the schedule; the bull case can hold it up only through `incentive_efficiency_drift` (bribers paying more per dollar of emissions) or a higher P_H.
 - **Private constants.** The 2^(1/4) and 365-day constants are from source, not readable; pinned in the adapter with the source reference.
