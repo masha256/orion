@@ -21,7 +21,20 @@ export async function updateAsset(
   // the fetch; by the time the fetch returns, the chain head may be ahead of `now`. Valuing at `now`
   // would then make latestLevel skip what the fetch just wrote (observedAt > asOf). Value no earlier
   // than the newest thing the fetch wrote, and no earlier than the current time either.
-  const newestWritten = fetch.written.reduce((max, w) => Math.max(max, Date.parse(w.observedAt)), 0);
+  // A schedule metric's later steps are dated in the future on purpose (CRV's coded cut, a year out): only its
+  // earliest step written, the one in force, counts, else the valuation would run at the date of the next cut.
+  const metrics = loaded.config.metrics;
+  const firstScheduleStep = new Map<string, number>();
+  for (const w of fetch.written) {
+    if (metrics[w.metricKey]?.type !== 'schedule') continue;
+    const t = Date.parse(w.observedAt);
+    firstScheduleStep.set(w.metricKey, Math.min(firstScheduleStep.get(w.metricKey) ?? Infinity, t));
+  }
+  const newestWritten = fetch.written.reduce((max, w) => {
+    const t = Date.parse(w.observedAt);
+    if (metrics[w.metricKey]?.type === 'schedule' && t > firstScheduleStep.get(w.metricKey)!) return max;
+    return Math.max(max, t);
+  }, 0);
   const asOf = new Date(Math.max(deps.now().getTime(), newestWritten));
   const { runId, signal } = runValuation(db, loaded, asOf);
   return { fetch, runId, signal };

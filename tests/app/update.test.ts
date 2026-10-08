@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { updateAsset } from '../../src/app/update.js';
 import { decideAnomaly } from '../../src/db/anomalies.js';
 import { createAssumptionSet } from '../../src/db/assumptions.js';
+import { parseAssetYaml } from '../../src/config/load.js';
 import { insertObservation } from '../../src/db/observations.js';
+import { callKey } from '../helpers/fakeRpc.js';
+import { INGEST_ASSET_YAML, TOKEN } from '../helpers/ingestAsset.js';
 import { miniAssumptions } from '../helpers/assets.js';
 import { CG_MARKETS, harness, NOW, STATS } from '../helpers/fetchHarness.js';
 
@@ -41,6 +44,23 @@ describe('updateAsset', () => {
     const blockObservedAt = fetch.written.find((w) => w.metricKey === 'effective_supply')!.observedAt;
     expect(Date.parse(blockObservedAt)).toBeGreaterThan(h.deps.now().getTime());
     expect(Date.parse(signal.generated_at)).toBeGreaterThanOrEqual(Date.parse(blockObservedAt));
+  });
+
+  it('does not value at the date of a future schedule step the fetch wrote (a coded emission cut a year out)', async () => {
+    const yaml = INGEST_ASSET_YAML.replace(
+      'source: { type: contract_read, contract: staking, function: emissionRatePerSecond, decimals: 18, scale: 31536000 }',
+      'source: { type: adapter, name: crv.emission_rate_annual }',
+    );
+    const nowSec = BigInt(NOW.getTime() / 1000);
+    const calls = { [callKey(TOKEN, 'rate')]: 3080982847903985532n, [callKey(TOKEN, 'start_epoch_time')]: nowSec - 30n * 86_400n };
+    const h = harness({ loaded: parseAssetYaml(yaml), calls });
+    seedManual(h);
+    const { fetch, signal } = await updateAsset(h.db, h.loaded, NOW, h.deps);
+    const steps = fetch.written.filter((w) => w.metricKey === 'emission_rate_annual').map((w) => Date.parse(w.observedAt));
+    expect(steps).toHaveLength(2);
+    expect(steps[1]).toBeGreaterThan(NOW.getTime() + 300 * 86_400_000); // the cut, 335 days out
+    expect(Date.parse(signal.generated_at)).toBeLessThan(NOW.getTime() + 86_400_000); // valued now, not at the cut
+    expect(Date.parse(signal.generated_at)).toBeGreaterThanOrEqual(steps[0]); // the step in force still counts
   });
 
   it('still runs the valuation when a source failed, on the last good observation', async () => {
