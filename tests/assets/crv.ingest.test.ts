@@ -96,7 +96,7 @@ describe('assets/crv.yaml', () => {
     // Every metric has a source, and none is manual: a bootstrap run has nothing to research and the grade can be A.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // Pinned on 2026-10-08. A deliberate edit of assets/crv.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('333c077cc0c3bf01450752b2000259011f44f3a33e28bdc31eb5d6640b58ae8c');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('fa928a2804318e61d4f3441694d5b35af5695aa75a5e0c04498b10b2ab995ad7');
   });
 
   it('plans the source map of the spec: one transfer scan, a constant, an adapter, the bribes feed', () => {
@@ -155,11 +155,11 @@ describe('assets/crv.yaml', () => {
     expect(signal.horizons!['12m'].expected_target).toBeGreaterThan(0);
     const component = signal.horizons!['12m'].modules.vote_incentives;
     expect(component).toMatchObject({ type: 'vote_incentives', kind: 'component', weight: null });
-    // The component scales the incentives by the model's own horizon price over spot. With these flat wiring
-    // assumptions the fee-only target is about 4 percent of spot, so the incentives shrink with it.
-    expect(component.breakdown).toMatchObject({ metric: 'vote_incentive_run_rate_usd', years_valued: 10, incentives_run_rate_usd: expect.closeTo(8_688_188.56, 1) });
-    expect(component.breakdown.price_ratio as number).toBeLessThan(0.1);
-    expect(component.value).toBeGreaterThan(0);
+    // Valued at spot (price_basis spot): independent of the fee model's target, about 0.0078 USD a token
+    // (19.8M USD of discounted incentives over supply at the horizon).
+    expect(component.breakdown).toMatchObject({ metric: 'vote_incentive_run_rate_usd', years_valued: 10, price_basis: 'spot', price_ratio: 1, incentives_run_rate_usd: expect.closeTo(8_688_188.56, 1) });
+    expect(component.value).toBeGreaterThan(0.004);
+    expect(component.value).toBeLessThan(0.009);
     // Over supply at the horizon, which emissions have grown past today's 2.42B.
     expect(component.value).toBeLessThan((component.breakdown.aggregate_pv_usd as number) / 2_424_321_556);
   });

@@ -57,6 +57,9 @@ describe('vote_incentives', () => {
     expect(m.validateParams({ years: 31 })).toEqual(['years must be an integer from 1 to 30']);
     expect(m.validateParams({ post_horizon_emission_decay: 1 })).toEqual(['post_horizon_emission_decay must be a number in [0, 1)']);
     expect(m.validateParams({ post_horizon_emission_decay: -0.1 })).toEqual(['post_horizon_emission_decay must be a number in [0, 1)']);
+    expect(m.validateParams({ price_basis: 'spot' })).toEqual([]);
+    expect(m.validateParams({ price_basis: 'horizon' })).toEqual([]);
+    expect(m.validateParams({ price_basis: 'market' })).toEqual(['price_basis must be "spot" or "horizon"']);
   });
 
   it('is a plain discounted annuity when emissions, price, and drift are flat', () => {
@@ -81,6 +84,20 @@ describe('vote_incentives', () => {
     const r = m.compute(c);
     expect(r.valuePerToken).toBeCloseTo((y1 / 1.25 + y2 / 1.5625) / 1000, 10);
     expect(r.breakdown.first_year_incentives_usd).toBeCloseTo(y1, 9);
+  });
+
+  it('on the spot basis ignores the horizon price, and bounds itself against spot', () => {
+    const at = (priceAtHorizon: number) => m.compute(ctx({ params: { years: 3, price_basis: 'spot' }, priceAtHorizon })).valuePerToken;
+    expect(at(100)).toBeCloseTo((1000 / 1.25 + 1000 / 1.5625 + 1000 / 1.953125) / 1000, 12);
+    expect(at(4)).toBe(at(100));
+    expect(at(400)).toBe(at(100));
+    expect(m.compute(ctx({ params: { price_basis: 'spot' }, priceAtHorizon: 4 })).breakdown).toMatchObject({ price_basis: 'spot', price_ratio: 1 });
+    // Horizon basis is the default and does follow P_H.
+    expect(m.compute(ctx({ params: { years: 3 }, priceAtHorizon: 50 })).valuePerToken).toBeCloseTo(at(100) / 2, 12);
+    // 20 a token against a spot of 100 passes on spot even though it is 500 percent of a horizon price of 4 ...
+    expect(() => m.compute(ctx({ params: { years: 1, price_basis: 'spot' }, incentives: 25_000, priceAtHorizon: 4 }))).not.toThrow();
+    // ... and above half of spot it refuses.
+    expect(() => m.compute(ctx({ params: { years: 1, price_basis: 'spot' }, incentives: 70_000 }))).toThrow(/percent of the spot price/);
   });
 
   it('reads the step in force, the future step, and the decay past it', () => {

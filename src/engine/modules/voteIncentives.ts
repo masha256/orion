@@ -14,6 +14,15 @@ const metricOf = (params: Record<string, unknown>): string =>
   typeof params.metric === 'string' ? params.metric : DEFAULT_METRIC;
 
 /**
+ * Which price the incentives are scaled by. `spot` (incentives valued at today's price, P_H / P0 fixed at 1): the
+ * market's own pricing of the vote, independent of the fee model. `horizon` (P_H / P0): incentives follow the model's
+ * own target, so the component echoes the estimate modules instead of adding a second view.
+ */
+type PriceBasis = 'spot' | 'horizon';
+const isPriceBasis = (x: unknown): x is PriceBasis => x === 'spot' || x === 'horizon';
+const priceBasisOf = (params: Record<string, unknown>): PriceBasis => (isPriceBasis(params.price_basis) ? params.price_basis : 'horizon');
+
+/**
  * Emissions per year in force `tau` years from as-of: the schedule step in force then; past the last step's date, that
  * step reduced by `decay` for every whole year since it (CRV: a coded 2^(-1/4) cut each year, about 15.9 percent).
  */
@@ -48,6 +57,7 @@ export const voteIncentives: ValuationModule = {
       const y = params.years;
       if (typeof y !== 'number' || !Number.isInteger(y) || y < 1 || y > 30) errors.push('years must be an integer from 1 to 30');
     }
+    if (params.price_basis !== undefined && !isPriceBasis(params.price_basis)) errors.push('price_basis must be "spot" or "horizon"');
     if (params.post_horizon_emission_decay !== undefined) {
       const d = params.post_horizon_emission_decay;
       if (typeof d !== 'number' || !(d >= 0 && d < 1)) errors.push('post_horizon_emission_decay must be a number in [0, 1)');
@@ -81,7 +91,8 @@ export const voteIncentives: ValuationModule = {
     if (!(e0 > 0)) throw new EngineError('vote_incentives needs a positive emission rate now');
     const p0 = ctx.drivers.price.value;
     if (!(p0 > 0)) throw new EngineError('vote_incentives needs a positive spot price');
-    const priceRatio = ctx.priceAtHorizon / p0;
+    const basis = priceBasisOf(p);
+    const priceRatio = basis === 'spot' ? 1 : ctx.priceAtHorizon / p0;
 
     let pv = 0;
     const years: { t: number; emission_ratio: number; incentives_usd: number }[] = [];
@@ -93,10 +104,13 @@ export const voteIncentives: ValuationModule = {
       years.push({ t, emission_ratio: emissionRatio, incentives_usd: incentives });
     }
     const valuePerToken = pv / ctx.supplyAtHorizon;
-    if (ctx.priceAtHorizon > 0 && valuePerToken / ctx.priceAtHorizon > MAX_SHARE_OF_PRICE) {
+    // On the horizon basis the component feeds the price it is scaled by: refuse when it would mostly price itself.
+    // On the spot basis there is no loop; the same bound against spot catches a broken feed or a unit error.
+    const ref = basis === 'spot' ? p0 : ctx.priceAtHorizon;
+    if (ref > 0 && valuePerToken / ref > MAX_SHARE_OF_PRICE) {
       throw new EngineError(
-        `vote_incentives would be ${(100 * valuePerToken / ctx.priceAtHorizon).toFixed(0)} percent of the horizon price; ` +
-          `above ${100 * MAX_SHARE_OF_PRICE} percent the component is mostly pricing itself`,
+        `vote_incentives would be ${(100 * valuePerToken / ref).toFixed(0)} percent of the ${basis === 'spot' ? 'spot' : 'horizon'} price; ` +
+          `above ${100 * MAX_SHARE_OF_PRICE} percent it is not a credible add-on`,
       );
     }
 
@@ -106,6 +120,7 @@ export const voteIncentives: ValuationModule = {
         metric,
         incentives_run_rate_usd: b0.value,
         emission_rate_now: e0,
+        price_basis: basis,
         price_ratio: priceRatio,
         years_valued: N,
         post_horizon_emission_decay: decay,
