@@ -22,5 +22,7 @@ export function sourceId(s: SourceConfig): string {
       return `adapter:${s.name}`;
     case 'derived':
       return `derived:${s.name}`;
+    case 'constant':
+      return 'constant';
   }
 }

@@ -44,6 +44,12 @@ export const SourceSchema = z.discriminatedUnion('type', [
     price_coingecko_id: name.optional(),
   }),
   z.strictObject({ type: z.literal('adapter'), name, params }),
+  /**
+   * A structural constant of the asset (CRV's staker emission share is 0: every emission goes to LP gauges). Written as
+   * a fetched level every run, so it never goes stale and, not being manual, does not cap the grade. Changing it is an
+   * edit of the asset file, which moves the config hash and which the agent can only propose.
+   */
+  z.strictObject({ type: z.literal('constant'), value: z.number().finite(), note: z.string().min(1) }),
   z.strictObject({ type: z.literal('derived'), name, params }),
 ]);
 
@@ -77,7 +83,7 @@ export function contractNames(s: SourceConfig): string[] {
   }
 }
 
-const LEVEL_PRIMARY: ReadonlySet<string> = new Set(['coingecko', 'http_json', 'erc20_supply', 'contract_read', 'adapter', 'derived']);
+const LEVEL_PRIMARY: ReadonlySet<string> = new Set(['coingecko', 'http_json', 'erc20_supply', 'contract_read', 'adapter', 'derived', 'constant']);
 const LEVEL_CHECK: ReadonlySet<string> = new Set(['coingecko', 'http_json', 'erc20_supply', 'contract_read', 'adapter']);
 const FLOW_PRIMARY: ReadonlySet<string> = new Set(['transfer_flow', 'defillama']);
 const FLOW_CHECK: ReadonlySet<string> = new Set(['defillama', 'adapter']);

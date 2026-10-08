@@ -106,6 +106,21 @@ describe('declarative sources in the asset config', () => {
       .toMatch(/price_usd.*http_json cannot be the primary source of a required metric/);
   });
 
+  it('takes a constant as the primary of a level or schedule metric, and nowhere else', () => {
+    const SHARE = 'staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }';
+    const asConstant = INGEST_ASSET_YAML.replace(SHARE, 'staker_emission_share: { type: level, unit: ratio, staleness_days: 30, source: { type: constant, value: 0, note: "none to stakers" } }');
+    expect(bad(asConstant)).toBe('');
+    expect(parseAssetYaml(asConstant).config.metrics.staker_emission_share.source).toEqual({ type: 'constant', value: 0, note: 'none to stakers' });
+    expect(bad(INGEST_ASSET_YAML.replace(SHARE, 'staker_emission_share: { type: level, unit: ratio, staleness_days: 30, source: { type: constant, value: 0 } }'))).toMatch(/note/);
+    expect(bad(INGEST_ASSET_YAML.replace(SHARE, 'staker_emission_share: { type: level, unit: ratio, staleness_days: 30, source: { type: constant, value: 0, note: "" } }'))).toMatch(/note/);
+    expect(bad(INGEST_ASSET_YAML.replace('source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], unit: tokens }', 'source: { type: constant, value: 1, note: x }')))
+      .toMatch(/flow_tokens\.fees.*constant cannot be the source of a flow metric/);
+    expect(bad(INGEST_ASSET_YAML.replace('- { tolerance_pct: 2, source: { type: http_json, url: "https://api.example.test/stats", path: price } }', '- { source: { type: constant, value: 10, note: x } }')))
+      .toMatch(/price_usd.*constant cannot be a cross-check/);
+    expect(isChainSource({ type: 'constant', value: 0, note: 'x' })).toBe(false);
+    expect(contractNames({ type: 'constant', value: 0, note: 'x' })).toEqual([]);
+  });
+
   it('requires the ingest block when a chain source is configured', () => {
     expect(bad(INGEST_ASSET_YAML.replace('ingest: { chain_id: 8453, rpc_url_env: TEST_RPC_URL, backfill_days: 3 }\n', ''))).toMatch(/ingest.*required/);
   });

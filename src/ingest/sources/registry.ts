@@ -4,6 +4,7 @@ import type { SourceHandler } from '../types.js';
 import { adapterSource } from './adapter.js';
 import { chainLevelsSource } from './chainLevels.js';
 import { coingeckoSource } from './coingecko.js';
+import { constantSource } from './constant.js';
 import { defillamaSource } from './defillama.js';
 import { httpJsonSource } from './httpJson.js';
 
@@ -15,6 +16,7 @@ const HANDLERS: Partial<Record<SourceConfig['type'], SourceHandler>> = {
   erc20_supply: chainLevelsSource,
   contract_read: chainLevelsSource,
   adapter: adapterSource,
+  constant: constantSource,
 };
 
 export function getSourceHandler(type: SourceConfig['type']): SourceHandler {
