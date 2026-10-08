@@ -20,7 +20,7 @@ Spec: `docs/superpowers/specs/2026-10-08-orion-crv-onboarding-design.md`. Plan: 
    The market prices roughly the constructive bull case (+150 percent growth at 50x); the user heard this before choosing.
 4. First signal: `crv-20261008T115239Z-47`, ok, grade A, spot 0.3830; 12m expected 0.0322 (bear 0.0067 / base 0.0227 / bull
    0.0767, dispersion 0.74, upside -91.6 percent); modules hc 0.0175, fm_holder_flow 0.0361, vote_incentives 0.0072 (component).
-5. Cron line `orion-crv`: pending.
+5. Cron line `orion-crv`: job 58f7c92759f6, `20 17 * * *` PDT (00:20 UTC; 16:20 PST after DST), pre-run script `orion-tick-crv.sh` (per-asset wrapper, as vvv/hype/aero), deliver orion-ops (telegram:1620897892:16022), replies attached; prompt is the orion-aero prompt with AERO/aero → CRV/crv. The 2026-10-31 DST reminder lists it.
 
 ## Open
 

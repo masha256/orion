@@ -17,7 +17,7 @@ The scheduled agent runs `run-daily.sh`, reads the tick report it prints, and me
 
 Replace `/path/to/orion`. The 5 percent threshold is a starting point.
 
-The prompt is a template: nothing in it is specific to VVV except the name, because everything asset-specific lives in `assets/<id>.yaml`. For another asset (`aero`, `hype`), schedule another job with the same text and `vvv`/`VVV` replaced, a few minutes apart from the others. One job per asset keeps one asset's failure or timeout out of another's report.
+The prompt is a template: nothing in it is specific to VVV except the name, because everything asset-specific lives in `assets/<id>.yaml`. For another asset (`aero`, `hype`, `crv`), schedule another job with the same text and `vvv`/`VVV` replaced, a few minutes apart from the others. One job per asset keeps one asset's failure or timeout out of another's report.
 
 ```text
 You run the daily Orion tick for the VVV token on this server, report the result to me, and carry out the decisions I reply with.
