@@ -196,6 +196,32 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
         }
         continue;
       }
+      if (result.value.kind === 'schedule_steps') {
+        const def = asset.metrics[r.metricKey];
+        const steps = result.value.steps;
+        const refusal =
+          def.type !== 'schedule'
+            ? `schedule steps can only be stored on a schedule metric, not a ${def.type} one`
+            : steps.length === 0
+              ? 'the source returned no schedule step'
+              : (steps.map((s) => (Number.isNaN(Date.parse(s.observedAt)) ? `step date ${s.observedAt} is not a date` : validateReading(def, s.value))).find((x) => x !== null) ??
+                (steps.some((s, i) => i > 0 && !(Date.parse(s.observedAt) > Date.parse(steps[i - 1].observedAt))) ? 'schedule steps must be in strictly increasing date order' : null));
+        if (refusal) {
+          markFailed(outcome, `${r.metricKey}: ${refusal}`);
+          continue;
+        }
+        const { source, detail } = result.value;
+        for (const step of steps) {
+          const observedAt = new Date(step.observedAt).toISOString();
+          const observationId = dryRun
+            ? null
+            : insertObservation(db, { assetId: asset.id, metricKey: r.metricKey, observedAt, value: step.value, source, sourceDetail: detail, fetchedAt: startedAt }).id;
+          written.push({ metricKey: r.metricKey, value: step.value, observedAt, periodDays: null, source, observationId });
+        }
+        outcome.metricsWritten.push(r.metricKey);
+        primaryValue.set(r.metricKey, steps[0].value);
+        continue;
+      }
       if (result.value.kind !== 'level') {
         markFailed(outcome, `${r.metricKey}: a ${result.value.kind} cannot be stored as an observation`);
         continue;
@@ -304,8 +330,8 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
         markFailed(outcome, `${r.metricKey}: ${result.error}`);
         continue;
       }
-      if (result.value.kind === 'level') {
-        markFailed(outcome, `${r.metricKey}: expected a daily or monthly series, got a level`);
+      if (result.value.kind === 'level' || result.value.kind === 'schedule_steps') {
+        markFailed(outcome, `${r.metricKey}: expected a daily or monthly series, got a ${result.value.kind === 'level' ? 'level' : 'schedule'}`);
         continue;
       }
       const days = storedDailyFlow(db, asset.id, r.metricKey);

@@ -17,9 +17,20 @@ export interface MonthlyPoint {
   value: number;
 }
 
-/** What a source returned, with the source's own timestamp. Series are for cross-checks only; they never become observations. */
+/** One step of a schedule: `value` in force from `observedAt`. */
+export interface ScheduleStepReading {
+  value: number;
+  observedAt: string;
+}
+
+/**
+ * What a source returned, with the source's own timestamp. Series are for cross-checks only; they never become
+ * observations. `schedule_steps` is a schedule metric's primary reading when the source knows future steps too (a
+ * coded halving): the step in force first, then each later step, every one written as its own observation.
+ */
 export type SourceValue =
   | { kind: 'level'; value: number; observedAt: string; source: 'onchain' | 'api'; detail: string }
+  | { kind: 'schedule_steps'; steps: ScheduleStepReading[]; source: 'onchain' | 'api'; detail: string }
   | { kind: 'daily_series'; points: DailyPoint[]; detail: string }
   | { kind: 'monthly_series'; points: MonthlyPoint[]; detail: string };
 
