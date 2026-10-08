@@ -3,6 +3,7 @@ import { forwardMultiple } from './forwardMultiple.js';
 import { holderCashflow } from './holderCashflow.js';
 import type { ValuationModule } from './types.js';
 import { utilityClaim } from './utilityClaim.js';
+import { voteIncentives } from './voteIncentives.js';
 
 const MODULES = new Map<string, ValuationModule>();
 
@@ -13,6 +14,7 @@ export function registerModule(m: ValuationModule): void {
 registerModule(holderCashflow);
 registerModule(forwardMultiple);
 registerModule(utilityClaim);
+registerModule(voteIncentives);
 
 export function getModule(type: string): ValuationModule {
   const m = MODULES.get(type);
