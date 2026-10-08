@@ -1,0 +1,49 @@
+# CRV calibrated assumptions: the "central" package the user chose on 2026-10-08 after a sensitivity sweep and three priced
+# packages (conservative / central / constructive), each shown under the 28-day, 91-day and 357-day on-chain fee windows and
+# with and without the vote_incentives component; the user kept the 91-day window. Anchors at the time: spot 0.383 USD,
+# effective supply 2.424B (928M USD), locked 840.6M, emissions 97.2M CRV a year (about 37M USD) against 5.14M USD a year of
+# crvUSD fees to veCRV (91 days, on chain) and 8.69M USD a year of Votemarket incentives (valued at spot). Base growth of
+# 10 percent with a multiple of 10 follows AERO's central stance. This set's 12m expected target was 0.032 USD (bear 0.007 /
+# base 0.023 / bull 0.077, dispersion 0.75), about 8 percent of spot; the market prices roughly the constructive bull case
+# (+150 percent growth at 50x). The vote incentives add about 0.007 a token (about 30 percent of the expected value). The user
+# heard this before choosing; do not re-litigate it.
+# Import: orion model assumptions import crv calibration/crv-assumptions.yaml --rationale "..."
+bear:
+  rev_growth_y1: -0.3
+  growth_fade_years: 3
+  terminal_growth: 0.0
+  capture_rate_terminal.fees: 0.9
+  capture_ramp_years.fees: 0
+  discount_rate_base: 0.28
+  discount_premium_programmatic: 0.03
+  multiple.fm_holder_flow: 6
+  regime_multiplier: 0.7
+  staked_ratio_horizon: 0.30
+  incentive_efficiency_drift: -0.2
+  incentive_discount_rate: 0.35
+base:
+  rev_growth_y1: 0.1
+  growth_fade_years: 4
+  terminal_growth: 0.02
+  capture_rate_terminal.fees: 1.0
+  capture_ramp_years.fees: 0
+  discount_rate_base: 0.20
+  discount_premium_programmatic: 0.02
+  multiple.fm_holder_flow: 10
+  regime_multiplier: 1.0
+  staked_ratio_horizon: 0.35
+  incentive_efficiency_drift: 0.0
+  incentive_discount_rate: 0.25
+bull:
+  rev_growth_y1: 0.6
+  growth_fade_years: 5
+  terminal_growth: 0.03
+  capture_rate_terminal.fees: 1.0
+  capture_ramp_years.fees: 0
+  discount_rate_base: 0.15
+  discount_premium_programmatic: 0.01
+  multiple.fm_holder_flow: 18
+  regime_multiplier: 1.3
+  staked_ratio_horizon: 0.42
+  incentive_efficiency_drift: 0.1
+  incentive_discount_rate: 0.18

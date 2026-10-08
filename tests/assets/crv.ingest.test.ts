@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { runValuation } from '../../src/app/valuation.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
@@ -95,8 +96,8 @@ describe('assets/crv.yaml', () => {
     expect(requiredExtraMetrics(config)).toEqual(['vote_incentive_run_rate_usd']);
     // Every metric has a source, and none is manual: a bootstrap run has nothing to research and the grade can be A.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
-    // Pinned on 2026-10-08. A deliberate edit of assets/crv.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('fa928a2804318e61d4f3441694d5b35af5695aa75a5e0c04498b10b2ab995ad7');
+    // Pinned on 2026-10-08 when the bands were written. A deliberate edit of assets/crv.yaml moves it; update the pin on purpose.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('906256d3a9419667e05bc8dbe897a58f089e58f6f57f34efef01b3adc5147708');
   });
 
   it('plans the source map of the spec: one transfer scan, a constant, an adapter, the bribes feed', () => {
@@ -167,6 +168,21 @@ describe('assets/crv.yaml', () => {
   it('refuses to run without the Ethereum RPC URL', async () => {
     const w = world();
     await expect(fetchAsset(w.db, { config, hash: 'test' }, NOW, { ...w.deps, env: {} })).rejects.toMatchObject({ code: 'missing_rpc_url' });
+  });
+});
+
+describe('calibration/crv-assumptions.yaml', () => {
+  it('is complete and sits inside the agent bands of assets/crv.yaml', () => {
+    const raw = parseYaml(readFileSync(`${ROOT}/calibration/crv-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
+    for (const s of ['bear', 'base', 'bull'] as const) {
+      expect(Object.keys(raw[s]).sort()).toEqual(requiredAssumptionKeys(config));
+      for (const [key, value] of Object.entries(raw[s])) {
+        const b = config.assumptions[key];
+        const band = b[s] ?? b;
+        expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
+        expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
+      }
+    }
   });
 });
 
