@@ -19,6 +19,8 @@ export interface FlowMember {
   unit: 'usd' | 'tokens';
   countFrom: string[];
   priceCoingeckoId: string | null;
+  /** Vault-share conversion read at the day's last block; null when the token is not a share. Address lowercased. */
+  sharePrice: { address: string; functionName: string; decimals: number } | null;
 }
 
 /** transfer_flow metrics that share a token, a sink, and an allowlist share one log scan and one cursor. Addresses are lowercased. */
@@ -114,6 +116,7 @@ export function buildPlan(asset: AssetConfig, opts: { metrics?: string[] } = {})
         unit: s.unit,
         countFrom: (s.count_from ?? s.from_allowlist).map(address),
         priceCoingeckoId: s.price_coingecko_id ?? null,
+        sharePrice: s.share_price ? { address: address(s.share_price.contract), functionName: s.share_price.function, decimals: s.share_price.decimals } : null,
       });
       groups.set(scanKey, group);
     } else {

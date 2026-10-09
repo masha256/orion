@@ -42,6 +42,14 @@ export const SourceSchema = z.discriminatedUnion('type', [
     count_from: z.array(name).min(1).optional(),
     unit: z.enum(['usd', 'tokens']),
     price_coingecko_id: name.optional(),
+    /**
+     * When the transferred token is a vault share, convert each day's shares to the underlying token before pricing:
+     * tokens × `function()` (e.g. pricePerShare, scaled by `decimals`), read at the last block of the day. The price id
+     * is then the underlying's. Optional with no default, so existing config hashes do not move.
+     */
+    share_price: z
+      .strictObject({ contract: name, function: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), decimals: z.number().int().min(0).max(36) })
+      .optional(),
   }),
   z.strictObject({ type: z.literal('adapter'), name, params }),
   /**
@@ -77,7 +85,7 @@ export function contractNames(s: SourceConfig): string[] {
     case 'contract_read':
       return [s.contract];
     case 'transfer_flow':
-      return [s.token, s.to, ...s.from_allowlist, ...(s.count_from ?? [])];
+      return [s.token, s.to, ...s.from_allowlist, ...(s.count_from ?? []), ...(s.share_price ? [s.share_price.contract] : [])];
     default:
       return [];
   }

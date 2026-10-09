@@ -4,7 +4,7 @@ import { advanceCursor, getCursor } from '../db/fetchCursors.js';
 import { emptySourceOutcome, type FlowConflict, type SourceOutcome, type UnlistedTransfer } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
 import { MS_PER_DAY, OrionError } from '../types.js';
-import type { FlowGroup } from './plan.js';
+import type { FlowGroup, FlowMember } from './plan.js';
 import { ERC20_ABI } from './sources/chainLevels.js';
 import { COINGECKO_API, coingeckoHeaders } from './sources/coingecko.js';
 import { addDays, dayStartMs, utcDay } from './time.js';
@@ -186,6 +186,22 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
       const senders = new Map<string, { count: number; tokens: number }>();
       let counted = 0;
       let unlistedToday = 0;
+      // Share prices for the day, read once at its last block and only when a counted transfer needs one.
+      const sharePrices = new Map<string, number>();
+      const sharePriceOf = async (sp: NonNullable<FlowMember['sharePrice']>): Promise<number> => {
+        const key = `${sp.address}.${sp.functionName}`;
+        const hit = sharePrices.get(key);
+        if (hit !== undefined) return hit;
+        const [r] = await rpc.multicall(
+          [{ address: sp.address, signature: `function ${sp.functionName}() view returns (uint256)`, functionName: sp.functionName }],
+          next.number - 1n,
+        );
+        if (!r.ok) throw new Error(`${sp.functionName}() on ${sp.address} at block ${next.number - 1n}: ${r.error}`);
+        const v = unitsToNumber(r.value, sp.decimals);
+        if (!(v > 0) || !Number.isFinite(v)) throw new Error(`${sp.functionName}() on ${sp.address} returned ${v}; day ${day} was not written`);
+        sharePrices.set(key, v);
+        return v;
+      };
 
       for await (const chunk of getLogsChunked(rpc, { token: group.token, to: group.sink, fromBlock: from.number, toBlock: next.number - 1n }, { sleep: args.sleep })) {
         for (const log of chunk.logs) {
@@ -204,7 +220,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
           senders.set(name, tally);
           for (const m of group.members) {
             if (!m.countFrom.includes(sender)) continue;
-            let amount = tokens;
+            let amount = m.sharePrice ? tokens * (await sharePriceOf(m.sharePrice)) : tokens;
             if (m.unit === 'usd') {
               const price = priceAt(series.get(m.priceCoingeckoId!)!, log.timestamp * 1000);
               if (price === null) {
@@ -212,7 +228,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
                   `no ${m.priceCoingeckoId} price point at or before ${new Date(log.timestamp * 1000).toISOString()}; day ${day} was not written`,
                 );
               }
-              amount = tokens * price;
+              amount *= price;
             }
             sums.set(m.metricKey, sums.get(m.metricKey)! + amount);
           }
@@ -224,6 +240,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
         day,
         blocks: [Number(from.number), Number(next.number) - 1],
         senders: Object.fromEntries([...senders.entries()].sort(([a], [b]) => (a < b ? -1 : 1))),
+        ...(sharePrices.size > 0 ? { share_price: Object.fromEntries([...sharePrices.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) } : {}),
       });
       const ids = new Map<string, number | null>(group.members.map((m) => [m.metricKey, null]));
       if (!dryRun) {

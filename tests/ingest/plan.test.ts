@@ -46,9 +46,9 @@ describe('buildPlan', () => {
     expect(g.sink).toBe(SINK);
     expect(g.allowlist).toEqual([{ name: 'pool', address: POOL }, { name: 'safe', address: SAFE }]);
     expect(g.members).toEqual([
-      { metricKey: 'flow_usd.fees', unit: 'usd', countFrom: [POOL, SAFE], priceCoingeckoId: 'mini-token' },
-      { metricKey: 'flow_tokens.fees', unit: 'tokens', countFrom: [POOL, SAFE], priceCoingeckoId: null },
-      { metricKey: 'flow_usd.fees_programmatic', unit: 'usd', countFrom: [POOL], priceCoingeckoId: 'mini-token' },
+      { metricKey: 'flow_usd.fees', unit: 'usd', countFrom: [POOL, SAFE], priceCoingeckoId: 'mini-token', sharePrice: null },
+      { metricKey: 'flow_tokens.fees', unit: 'tokens', countFrom: [POOL, SAFE], priceCoingeckoId: null, sharePrice: null },
+      { metricKey: 'flow_usd.fees_programmatic', unit: 'usd', countFrom: [POOL], priceCoingeckoId: 'mini-token', sharePrice: null },
     ]);
   });
 
