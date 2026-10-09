@@ -41,8 +41,9 @@ The flow is paid only to staked yCRV; the unstaked share goes to Yearn's treasur
 model would spread it over 72.0M tokens; the holder who stakes owns it over 63.3M. New optional holder-flow field
 `valued_per: recipients` (only with `recipient_base: staked`): the flow is divided by the staked share **now**
 (`valuedOverShare` on the driver = staked / effective supply, 0.880 live), in both `holder_cashflow` and
-`forward_multiple`. Held at today's share, not the horizon assumption, because the paid amount does not grow with the
-staked amount: more stakers split the same cash. Refused when nothing is staked. Every existing asset is byte-for-byte
+`forward_multiple`. Held at today's share, not the horizon assumption: the splitter sets the stakers' cut from the staked
+share (87.3 percent of fees at 88.0 percent staked), so the cash paid grows and shrinks with the staked amount and the
+cash per staked token barely moves with it. Refused when nothing is staked. Every existing asset is byte-for-byte
 unchanged (the VVV golden test passes; breakdown fields are added only when the share is not 1). No ENGINE_VERSION bump:
 no existing output moves.
 
