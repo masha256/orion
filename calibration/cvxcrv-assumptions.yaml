@@ -1,0 +1,62 @@
+# cvxCRV calibrated assumptions: the "central" package with the 91-day window, chosen by the user on 2026-10-09 ("Central and
+# 91 for both") after the same three packages as yCRV were priced under the 28-, 91-, 182- and 357-day on-chain windows.
+# Anchors: spot 0.1429 USD (CRV about 0.36), 423.8M cvxCRV, 342.2M in the staking wrapper (0.807). Cash to stakers over 91
+# days, a year: crvUSD fees 2.67M, CRV 1.87M, CVX 0.68M, but the CVX program stopped: its last top-up was a partial one on
+# 2026-08-27, daily CVX fell from about 4.4k USD to about 36 USD by mid-September and the CvxDistribution rate is now about
+# 4 CVX a year. So capture_rate_terminal.cvx is 0 in every scenario (the stream stays configured, at the user's request, so
+# a restart shows up); fees and CRV keep their 91-day shares of the run rate (0.512 / 0.358). Shares, not 1 per flow:
+# capture is each flow's share of the summed run rate. Without CVX the cash is about 4.54M a year, 9.5 percent at spot.
+# Everything else is yCRV's central package (bribes and CRV both track CRV emissions): base -11 percent in year one,
+# -5 percent long run, discount 20 percent, 8x; discretionary premium 10 percent (CVX only, so it does not move the value).
+# This set's 12m expected target was 0.067 USD (bear 0.028 / base 0.060 / bull 0.122), 53 percent under spot; staked total
+# return -44 percent. The market price needs about +38 percent year-one growth on these settings (flat cash at 8x implies an
+# 8 percent discount rate; at 17 percent, 19x). If CVX restarts at its old share the expected target is 0.077.
+# Import: orion model assumptions import cvxcrv calibration/cvxcrv-assumptions.yaml --rationale "..."
+bear:
+  rev_growth_y1: -0.25
+  growth_fade_years: 3
+  terminal_growth: -0.08
+  capture_rate_terminal.fees: 0.512
+  capture_ramp_years.fees: 0
+  capture_rate_terminal.crv: 0.358
+  capture_ramp_years.crv: 0
+  capture_rate_terminal.cvx: 0
+  capture_ramp_years.cvx: 0
+  discount_rate_base: 0.25
+  discount_premium_programmatic: 0.03
+  discount_premium_discretionary: 0.12
+  staked_ratio_horizon: 0.81
+  multiple.fm_holder_flow: 5
+  regime_multiplier: 0.8
+base:
+  rev_growth_y1: -0.11
+  growth_fade_years: 4
+  terminal_growth: -0.05
+  capture_rate_terminal.fees: 0.512
+  capture_ramp_years.fees: 0
+  capture_rate_terminal.crv: 0.358
+  capture_ramp_years.crv: 0
+  capture_rate_terminal.cvx: 0
+  capture_ramp_years.cvx: 0
+  discount_rate_base: 0.2
+  discount_premium_programmatic: 0.02
+  discount_premium_discretionary: 0.1
+  staked_ratio_horizon: 0.81
+  multiple.fm_holder_flow: 8
+  regime_multiplier: 1
+bull:
+  rev_growth_y1: 0.05
+  growth_fade_years: 4
+  terminal_growth: -0.02
+  capture_rate_terminal.fees: 0.512
+  capture_ramp_years.fees: 0
+  capture_rate_terminal.crv: 0.358
+  capture_ramp_years.crv: 0
+  capture_rate_terminal.cvx: 0
+  capture_ramp_years.cvx: 0
+  discount_rate_base: 0.16
+  discount_premium_programmatic: 0.01
+  discount_premium_discretionary: 0.08
+  staked_ratio_horizon: 0.81
+  multiple.fm_holder_flow: 11
+  regime_multiplier: 1.2

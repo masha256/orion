@@ -1,0 +1,57 @@
+# sdCRV calibrated assumptions: the "central" package with the 91-day window, chosen by the user on 2026-10-09 ("Central and
+# 91 for both") after the same three packages as yCRV were priced under the 28-, 91-, 182- and 357-day on-chain windows.
+# Anchors: spot 0.1920 USD (CRV about 0.36), 119.0M sdCRV, 106.9M in the gauge (0.898). Cash to gauge stakers over 91 days,
+# a year: 2.47M USD (crvUSD fees 0.66M, CRV 0.22M, vote incentives paid in sdCRV 1.60M), 12.9 percent at spot. Capture is
+# each flow's 91-day share of the summed run rate (0.265 / 0.089 / 0.646). Bribes are 65 percent of the cash and fell from
+# about 300-370k USD a month in Oct-Jan to 110-175k in Jun-Sep with the CRV price, so growth here is the bribe path, as for
+# yCRV: base -11 percent in year one, -5 percent long run, discount 20 percent, 8x (yCRV's central package).
+# This set's 12m expected target was 0.118 USD (bear 0.049 / base 0.104 / bull 0.213), 39 percent under spot; staked total
+# return -27 percent. The market price needs about +20 percent year-one growth (yCRV: +19). The 357-day window was not used:
+# it would carry last winter's bribe levels. The constructive bull (0.42-0.67) would exceed CRV's price; the ceiling rule
+# is parked by the user and central stays under it.
+# Import: orion model assumptions import sdcrv calibration/sdcrv-assumptions.yaml --rationale "..."
+bear:
+  rev_growth_y1: -0.25
+  growth_fade_years: 3
+  terminal_growth: -0.08
+  capture_rate_terminal.fees: 0.265
+  capture_ramp_years.fees: 0
+  capture_rate_terminal.crv: 0.089
+  capture_ramp_years.crv: 0
+  capture_rate_terminal.bribes: 0.646
+  capture_ramp_years.bribes: 0
+  discount_rate_base: 0.25
+  discount_premium_programmatic: 0.03
+  staked_ratio_horizon: 0.9
+  multiple.fm_holder_flow: 5
+  regime_multiplier: 0.8
+base:
+  rev_growth_y1: -0.11
+  growth_fade_years: 4
+  terminal_growth: -0.05
+  capture_rate_terminal.fees: 0.265
+  capture_ramp_years.fees: 0
+  capture_rate_terminal.crv: 0.089
+  capture_ramp_years.crv: 0
+  capture_rate_terminal.bribes: 0.646
+  capture_ramp_years.bribes: 0
+  discount_rate_base: 0.2
+  discount_premium_programmatic: 0.02
+  staked_ratio_horizon: 0.9
+  multiple.fm_holder_flow: 8
+  regime_multiplier: 1
+bull:
+  rev_growth_y1: 0.05
+  growth_fade_years: 4
+  terminal_growth: -0.02
+  capture_rate_terminal.fees: 0.265
+  capture_ramp_years.fees: 0
+  capture_rate_terminal.crv: 0.089
+  capture_ramp_years.crv: 0
+  capture_rate_terminal.bribes: 0.646
+  capture_ramp_years.bribes: 0
+  discount_rate_base: 0.16
+  discount_premium_programmatic: 0.01
+  staked_ratio_horizon: 0.9
+  multiple.fm_holder_flow: 11
+  regime_multiplier: 1.2

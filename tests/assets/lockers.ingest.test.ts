@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 import { runValuation } from '../../src/app/valuation.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
 import { createAssumptionSet } from '../../src/db/assumptions.js';
@@ -90,7 +91,7 @@ const sd = loadAsset(ROOT, 'sdcrv').config.contracts;
 const CASES: Case[] = [
   {
     id: 'cvxcrv',
-    hash: 'a9ab66a32d0da2ae3c67153a656075db6949537e217224fe692001b8b83e29c3',
+    hash: '5acb294ca9c5aed16c7bad63cb632d1c6bea612f03cdfb5a98967db5f992458b',
     coingecko: 'convex-crv',
     price: 0.1392,
     llamaPrice: 0.1391,
@@ -107,7 +108,7 @@ const CASES: Case[] = [
   },
   {
     id: 'sdcrv',
-    hash: '34ef12a4664ed6bd04a4ddd4944d22d6f5d92565cfa5013301e737c5f0f0c83f',
+    hash: '702131c3f3218afa7714280037f2a73aad6b1dbbdfe5d4a4b11e17d7d1147710',
     coingecko: 'stake-dao-crv',
     price: 0.1884,
     llamaPrice: 0.1832,
@@ -191,7 +192,8 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     expect(rows('revenue_run_rate_usd').at(-1)!.value).toBeCloseTo((expected * 365) / 91, 0);
     expect(rows('revenue_run_rate_usd').at(-1)!.sourceDetail).toBe(`derived flow_annualized(${flowIds.map((id) => `flow_usd.${id}`).join('+')}, 91d)`);
 
-    createAssumptionSet(w.db, { assetId: c.id, author: 'user', rationale: 'wiring', values: flat(oneSet(flowIds, c.extraKeys)), createdAt: NOW.toISOString() });
+    const calibrated = parseYaml(readFileSync(`${ROOT}/calibration/${c.id}-assumptions.yaml`, 'utf8')) as AssumptionValues;
+    createAssumptionSet(w.db, { assetId: c.id, author: 'user', rationale: 'calibration', values: calibrated, createdAt: NOW.toISOString() });
     const { signal } = runValuation(w.db, loadAsset(ROOT, c.id), NOW);
     expect(signal.status_reasons).toEqual([]);
     expect(signal.status).toBe('ok');
@@ -204,3 +206,30 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     expect((h.modules.hc.breakdown.flows as Record<string, Record<string, unknown>>)[flowIds[0]].valued_over_share).toBeCloseTo(share, 12);
   });
 });
+
+for (const id of ['cvxcrv', 'sdcrv'] as const) {
+  describe(`calibration/${id}-assumptions.yaml`, () => {
+    const { config } = loadAsset(ROOT, id);
+    const raw = parseYaml(readFileSync(`${ROOT}/calibration/${id}-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
+
+    it('is complete and sits inside the agent bands', () => {
+      for (const s of ['bear', 'base', 'bull'] as const) {
+        expect(Object.keys(raw[s]).sort()).toEqual(requiredAssumptionKeys(config));
+        for (const [key, value] of Object.entries(raw[s])) {
+          const b = config.assumptions[key];
+          const band = b[s] ?? b;
+          expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
+          expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
+        }
+      }
+    });
+
+    it('splits the run rate across the flows (capture shares sum to at most 1, and no band lets them pass 1.1)', () => {
+      const flows = config.holder_flows.map((f) => f.id);
+      for (const s of ['bear', 'base', 'bull'] as const) {
+        expect(flows.reduce((t, f) => t + raw[s][`capture_rate_terminal.${f}`], 0)).toBeLessThanOrEqual(1);
+      }
+      expect(flows.reduce((t, f) => t + config.assumptions[`capture_rate_terminal.${f}`].max, 0)).toBeLessThanOrEqual(1.35);
+    });
+  });
+}
