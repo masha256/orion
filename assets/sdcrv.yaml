@@ -1,0 +1,145 @@
+# sdCRV (StakeDAO): a liquid claim on veCRV locked permanently by StakeDAO's locker, valued as staked in the sdCRV
+# gauge for its three reward streams, vote incentives included (user, 2026-10-09: "Yes count sdcrv bribes").
+#
+# Cash paths, read on chain 2026-10-09 (spec docs/superpowers/specs/2026-10-09-orion-lockers-onboarding-design.md):
+#   crvUSD: Curve FeeDistributor -> StakeDAO locker -> CurveAccumulator, which splits it 85 percent to the sdCRV gauge,
+#     10 percent to a liquidity fee recipient and 5 percent to the treasury. 91 days: 164,457 crvUSD to the gauge.
+#   CRV: FeeReceiver (StakeDAO's fee on the CRV its strategies earn) -> CurveAccumulator -> gauge (66 percent; the rest
+#     to veBoost delegation). 189,832 CRV in 91 days.
+#   Vote incentives: Botmarket sells the bribes paid for sdCRV's votes into sdCRV and funds a MultiMerkleStash weekly
+#     (2,452,748 sdCRV in 91 days, about 1.8M USD a year, about 66 percent of the cash). Claimants are sdCRV gauge
+#     stakers (the top claimants hold their sdCRV in the gauge), so the bribes go to the same base as the fees.
+# The gauge lists SDT as a reward, but SDT's gauge weight is 0: no SDT was paid in 91 days, so it is left out.
+id: sdcrv
+symbol: sdCRV
+name: StakeDAO CRV (staked in the sdCRV gauge)
+chain: ethereum
+supply_basis: effective_total
+
+contracts:
+  token: "0xD1b5651E55D4CeeD36251c61c50C889B36F6abB5" # sdCRV
+  gauge: "0x7f50786a0b15723d741727882ee99a0bf34e3466" # Stake DAO sdCRV Gauge: totalSupply() is the sdCRV staked
+  crvusd: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E"
+  crv: "0xD533a949740bb3306d119CC777fa900bA034cd52"
+  accumulator: "0x11f78501e6b0cbc5de4c7e6bbabaacdb973eb4cd" # CurveAccumulator: funds the gauge with crvUSD and CRV
+  merkle_stash: "0x03e34b085c52985f6a5d27243f20c84bddc01db4" # MultiMerkleStash: stakers claim the vote incentives here
+  botmarket: "0xadfbfd06633eb92fc9b58b3152fe92b0a24eb1ff" # Botmarket: sells bribe tokens into sdCRV, funds the stash
+  locker: "0x52f541764E6e90eeBc5c21Ff570De0e2D63766B6" # StakeDAO's veCRV (reference; not read)
+
+ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
+
+external_ids:
+  coingecko: stake-dao-crv
+  defillama: stakedao
+
+metrics:
+  # CoinGecko's sdCRV quote is thinner than cvxCRV's: it ran +2 to +6 percent over DefiLlama (which tracks the
+  # sdCRV/CRV Curve pool) on 2026-10-03..09, +16 percent on 10-08; median -0.3 percent over 90 days. 5 percent lets the
+  # usual spread through and still flags a day like 10-08.
+  price_usd:
+    type: level
+    unit: usd
+    staleness_days: 3
+    critical: true
+    source: { type: coingecko, id: stake-dao-crv, field: price }
+    cross_checks:
+      - { tolerance_pct: 5, source: { type: http_json, url: "https://coins.llama.fi/prices/current/ethereum:0xD1b5651E55D4CeeD36251c61c50C889B36F6abB5", path: "coins.ethereum:0xD1b5651E55D4CeeD36251c61c50C889B36F6abB5.price" } }
+
+  effective_supply:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    critical: true
+    source: { type: erc20_supply, token: token }
+
+  staked_supply:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    critical: true
+    source: { type: contract_read, contract: gauge, function: totalSupply, decimals: 18 }
+
+  staker_emission_share:
+    type: level
+    unit: ratio
+    staleness_days: 7
+    source: { type: constant, value: 0, note: "sdCRV has no emissions of its own (the gauge's SDT weight is 0); stakers are paid in crvUSD, CRV and sdCRV bribes" }
+
+  emission_rate_annual:
+    type: schedule
+    unit: tokens_per_year
+    staleness_days: 7
+    critical: true
+    source: { type: constant, value: 0, note: "sdCRV is minted 1:1 against CRV locked by StakeDAO; no emission schedule" }
+
+  flow_usd.fees:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    critical: true
+    source: { type: transfer_flow, token: crvusd, to: gauge, from_allowlist: [ accumulator ], unit: usd, price_coingecko_id: crvusd }
+
+  flow_usd.crv:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    critical: true
+    source: { type: transfer_flow, token: crv, to: gauge, from_allowlist: [ accumulator ], unit: usd, price_coingecko_id: curve-dao-token }
+
+  # Bribes arrive as sdCRV: priced at sdCRV's own price (a fall in sdCRV lowers this stream as well as the spot).
+  flow_usd.bribes:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    critical: true
+    source: { type: transfer_flow, token: token, to: merkle_stash, from_allowlist: [ botmarket ], unit: usd, price_coingecko_id: stake-dao-crv }
+
+  revenue_run_rate_usd:
+    type: level
+    unit: usd
+    staleness_days: 10
+    critical: true
+    source: { type: derived, name: flow_annualized, params: { metrics: [ flow_usd.fees, flow_usd.crv, flow_usd.bribes ], days: 91 } }
+
+holder_flows:
+  - { id: fees, kind: fee_share, capture_rule: programmatic, recipient_base: staked, valued_per: recipients, metric: flow_usd.fees, window_days: 91 }
+  - { id: crv, kind: fee_share, capture_rule: programmatic, recipient_base: staked, valued_per: recipients, metric: flow_usd.crv, window_days: 91 }
+  - { id: bribes, kind: fee_share, capture_rule: programmatic, recipient_base: staked, valued_per: recipients, metric: flow_usd.bribes, window_days: 91 }
+
+modules:
+  - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.6 }
+  - { id: fm_holder_flow, type: forward_multiple, kind: estimate, weight: 0.4, params: { basis: holder_flow } }
+
+scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }
+
+# Key-wide bounds only, wide enough for the calibration sweep. Agent bands are added after the user calibrates.
+assumptions:
+  rev_growth_y1: { min: -0.6, max: 2 }
+  growth_fade_years: { min: 1, max: 8 }
+  terminal_growth: { min: -0.2, max: 0.05 }
+  capture_rate_terminal.fees: { min: 0, max: 2 }
+  capture_ramp_years.fees: { min: 0, max: 6 }
+  capture_rate_terminal.crv: { min: 0, max: 2 }
+  capture_ramp_years.crv: { min: 0, max: 6 }
+  capture_rate_terminal.bribes: { min: 0, max: 2 }
+  capture_ramp_years.bribes: { min: 0, max: 6 }
+  discount_rate_base: { min: 0.08, max: 0.35 }
+  discount_premium_programmatic: { min: 0, max: 0.15 }
+  multiple.fm_holder_flow: { min: 3, max: 60 }
+  regime_multiplier: { min: 0.4, max: 1.6 }
+  staked_ratio_horizon: { min: 0.5, max: 1 }
+
+agent:
+  budgets:
+    weekly: { input_tokens: 2000000 }
+
+review_triggers:
+  driver_deviation_pct: 25
+  provisional_move_pct: 25
+  calendar:
+    - { date: "2027-08-12", note: "CRV emission rate cut (97.2M to 81.7M CRV a year): vote incentives, most of sdCRV's cash, track emissions" }
+
+peer_set: []
