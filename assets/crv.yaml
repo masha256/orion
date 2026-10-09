@@ -11,6 +11,10 @@ contracts:
   crvusd: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E" # the FeeDistributor's token()
   fee_distributor: "0xD16d5eC345Dd86Fb63C6a9C43c517210F1027914" # CurveFeeDistribution: pays veCRV weekly in crvUSD
   fee_allocator: "0x22530d384cd9915e096ead2db7f82ee81f8eb468" # FeeAllocator: 90 percent to the distributor, 10 to the Treasury
+  # The liquid lockers' veCRV holders (monitor-only lines below; read live 2026-10-09, all locked to 2030).
+  locker_convex: "0x989AEb4d175e16225E39E87d0D97A3360524AD80" # Convex VoterProxy (cvxCRV)
+  locker_stakedao: "0x52f541764E6e90eeBc5c21Ff570De0e2D63766B6" # StakeDAO CRV locker (sdCRV)
+  locker_yearn: "0xF147b8125d2ef93FB6965Db97D6746952a133934" # Yearn CurveYCRVVoter (yCRV)
 
 ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
 
@@ -56,6 +60,19 @@ metrics:
     unit: tokens
     staleness_days: 7
     source: { type: contract_read, contract: ve, function: supply, decimals: 18 }
+
+  # Liquid lockers' share of veCRV, read daily for display, monitor_only: never a driver, never in the grade.
+  # ve_power.*: voting power, balanceOf(locker); sets the locker's share of fees and votes. Lockers relock at the max,
+  #   so their power barely decays while direct locks do, and their share drifts up even when nothing changes.
+  # ve_locked.*: CRV locked, locked(locker).amount; the steadier share (against locked_supply). "Everyone else" is the
+  #   remainder of the totals.
+  ve_power_total: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: ve, function: totalSupply, decimals: 18 } }
+  ve_power.convex: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: ve, function: balanceOf, args: [ locker_convex ], decimals: 18 } }
+  ve_power.stakedao: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: ve, function: balanceOf, args: [ locker_stakedao ], decimals: 18 } }
+  ve_power.yearn: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: ve, function: balanceOf, args: [ locker_yearn ], decimals: 18 } }
+  ve_locked.convex: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: ve, function: locked, args: [ locker_convex ], returns: [ int128, uint256 ], pick: 0, decimals: 18 } }
+  ve_locked.stakedao: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: ve, function: locked, args: [ locker_stakedao ], returns: [ int128, uint256 ], pick: 0, decimals: 18 } }
+  ve_locked.yearn: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: ve, function: locked, args: [ locker_yearn ], returns: [ int128, uint256 ], pick: 0, decimals: 18 } }
 
   staker_emission_share:
     type: level

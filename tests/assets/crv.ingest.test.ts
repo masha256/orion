@@ -65,6 +65,14 @@ function world() {
       [callKey(C.token, 'decimals')]: 18n,
       [callKey(C.crvusd, 'decimals')]: 18n,
       [callKey(C.ve, 'supply')]: 840_614_647n * E18,
+      // The liquid lockers (monitor-only), read live 2026-10-09 at block 26153692.
+      [callKey(C.ve, 'totalSupply')]: 773_693_863n * E18,
+      [callKey(C.ve, 'balanceOf', [C.locker_convex])]: 418_311_184n * E18,
+      [callKey(C.ve, 'balanceOf', [C.locker_stakedao])]: 117_574_827n * E18,
+      [callKey(C.ve, 'balanceOf', [C.locker_yearn])]: 83_094_985n * E18,
+      [`${callKey(C.ve, 'locked', [C.locker_convex])}[0]`]: 423_932_072n * E18,
+      [`${callKey(C.ve, 'locked', [C.locker_stakedao])}[0]`]: 119_154_691n * E18,
+      [`${callKey(C.ve, 'locked', [C.locker_yearn])}[0]`]: 83_401_058n * E18,
       [callKey(C.token, 'rate')]: 3080982847903985532n,
       [callKey(C.token, 'start_epoch_time')]: 1786573048n,
     },
@@ -97,7 +105,7 @@ describe('assets/crv.yaml', () => {
     // Every metric has a source, and none is manual: a bootstrap run has nothing to research and the grade can be A.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // Pinned on 2026-10-08 when the bands were written. A deliberate edit of assets/crv.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('906256d3a9419667e05bc8dbe897a58f089e58f6f57f34efef01b3adc5147708');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('a957d7fc6be9caf4357ed4b014aab4ad8ac991bf052608f2a3b1b0e6c32e4c0e');
   });
 
   it('plans the source map of the spec: one transfer scan, a constant, an adapter, the bribes feed', () => {
@@ -105,7 +113,14 @@ describe('assets/crv.yaml', () => {
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
       ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
       [`http_json:${LLAMA}`, ['cross_check:price_usd']],
-      ['chain_levels', ['primary:effective_supply', 'primary:staked_supply', 'primary:locked_supply']],
+      [
+        'chain_levels',
+        [
+          'primary:effective_supply', 'primary:staked_supply', 'primary:locked_supply', 'primary:ve_power_total',
+          'primary:ve_power.convex', 'primary:ve_power.stakedao', 'primary:ve_power.yearn',
+          'primary:ve_locked.convex', 'primary:ve_locked.stakedao', 'primary:ve_locked.yearn',
+        ],
+      ],
       ['constant', ['primary:staker_emission_share']],
       ['adapter:crv.emission_rate_annual', ['primary:emission_rate_annual']],
       [`http_json:${BRIBES}`, ['primary:vote_incentive_run_rate_usd', 'cross_check:vote_incentive_run_rate_usd']],
@@ -131,6 +146,10 @@ describe('assets/crv.yaml', () => {
     expect(rows('emission_rate_annual').map((o) => [o.observedAt > NOW.toISOString(), Math.round(o.value)])).toEqual([[false, 97_161_875], [true, 81_703_072]]);
     expect(rows('emission_rate_annual')[1].observedAt).toBe('2027-08-12T22:17:28.000Z');
     expect(value('vote_incentive_run_rate_usd')).toBeCloseTo(4_284_586.14 * 365 / 180, 0);
+    // The lockers' veCRV, monitor-only: Yearn 10.74 percent of voting power, 9.92 percent of the CRV locked.
+    expect(value('ve_power.yearn') / value('ve_power_total')).toBeCloseTo(0.1074, 4);
+    expect(value('ve_locked.yearn') / value('locked_supply')).toBeCloseTo(0.0992, 4);
+    expect(['convex', 'stakedao', 'yearn'].map((k) => Math.round(value(`ve_locked.${k}`)))).toEqual([423_932_072, 119_154_691, 83_401_058]);
 
     // The 100-day backfill: every day stored, weekly payouts and zero days between.
     const fees = rows('flow_usd.fees');
@@ -163,6 +182,27 @@ describe('assets/crv.yaml', () => {
     expect(component.value).toBeLessThan(0.009);
     // Over supply at the horizon, which emissions have grown past today's 2.42B.
     expect(component.value).toBeLessThan((component.breakdown.aggregate_pv_usd as number) / 2_424_321_556);
+  });
+
+  it('keeps the monitor-only locker lines out of the valuation: a failed read leaves the signal ok at grade A', async () => {
+    const w = world();
+    const failing = { ...w.deps, rpcFactory: () => ({ ...w.rpc, multicall: async (calls: Parameters<typeof w.rpc.multicall>[0], b: bigint) => {
+      const out = await w.rpc.multicall(calls, b);
+      return out.map((r, i) => (calls[i].functionName === 'locked' || calls[i].functionName === 'balanceOf' ? { ok: false as const, error: 'execution reverted' } : r));
+    } }) };
+    const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, failing);
+    const chain = r.sources.find((s) => s.sourceId === 'chain_levels')!;
+    // A failed reading marks its source failed (the existing rule), but the source's other readings are still written.
+    expect(chain.status).toBe('failed');
+    expect(chain.error!.split('; ').map((e) => e.split(':')[0])).toEqual([
+      've_power.convex', 've_power.stakedao', 've_power.yearn', 've_locked.convex', 've_locked.stakedao', 've_locked.yearn',
+    ]);
+    expect(listActiveObservations(w.db, 'crv', 've_power.yearn')).toEqual([]);
+    expect(listActiveObservations(w.db, 'crv', 'staked_supply')).toHaveLength(1);
+    createAssumptionSet(w.db, { assetId: 'crv', author: 'user', rationale: 'wiring', values: assumptions(), createdAt: NOW.toISOString() });
+    const { signal } = runValuation(w.db, loadAsset(ROOT, 'crv'), NOW);
+    expect(signal.status).toBe('ok');
+    expect(signal.data_quality.grade).toBe('A');
   });
 
   it('refuses to run without the Ethereum RPC URL', async () => {
