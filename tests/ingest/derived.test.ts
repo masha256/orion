@@ -214,6 +214,40 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
     expect(r.anomalies.find((a) => a.kind === 'revenue_disclosure_stale')).toMatchObject({ id: null });
   });
 
+  describe('flow_annualized over several flows (metrics: [...])', () => {
+    const SUMMED = INGEST_ASSET_YAML.replace(
+      'revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 60, critical: true }',
+      'revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 60, critical: true, source: { type: derived, name: flow_annualized, params: { metrics: [flow_usd.fees, flow_usd.fees_programmatic], days: 3 } } }',
+    );
+    const seed = (db: Parameters<typeof insertObservation>[0], metricKey: string, first: string, values: number[]) =>
+      values.forEach((value, i) =>
+        insertObservation(db, { assetId: 'mini', metricKey, observedAt: addDays(first, i + 1), periodDays: 1, value, source: 'onchain', fetchedAt: NOW.toISOString() }),
+      );
+
+    it('sums the flows day by day, over days every flow has, and names them all in the detail', async () => {
+      expect(SUMMED).not.toBe(INGEST_ASSET_YAML);
+      const h = harness({ loaded: parseAssetYaml(SUMMED) });
+      seed(h.db, 'flow_usd.fees', '2026-09-10', [10, 20, 30, 40]); // 10..13
+      seed(h.db, 'flow_usd.fees_programmatic', '2026-09-11', [1, 2, 3, 4]); // 11..14: day 10 has only one flow
+      await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['revenue_run_rate_usd'] });
+      const rows = listActiveObservations(h.db, 'mini', 'revenue_run_rate_usd');
+      // Days with both flows: 11 (21), 12 (32), 13 (43). One full 3-day window, ending on the 13th: 96.
+      expect(rows.map((o) => [o.observedAt.slice(0, 10), o.value])).toEqual([['2026-09-14', (96 * 365) / 3]]);
+      expect(rows[0]).toMatchObject({ source: 'onchain', sourceDetail: 'derived flow_annualized(flow_usd.fees+flow_usd.fees_programmatic, 3d)' });
+    });
+
+    it('refuses a bad list as configuration', async () => {
+      const codeOf = async (yaml: string) => {
+        const h = harness({ loaded: parseAssetYaml(yaml) });
+        return fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['revenue_run_rate_usd'] }).then(() => undefined, (e: unknown) => (e as OrionError).code);
+      };
+      expect(await codeOf(SUMMED.replace('metrics: [flow_usd.fees, flow_usd.fees_programmatic]', 'metrics: [flow_usd.fees]'))).toBe('invalid_source_config');
+      expect(await codeOf(SUMMED.replace('metrics: [flow_usd.fees, flow_usd.fees_programmatic]', 'metrics: [flow_usd.fees, flow_usd.fees]'))).toBe('invalid_source_config');
+      expect(await codeOf(SUMMED.replace('metrics: [flow_usd.fees, flow_usd.fees_programmatic]', 'metrics: [flow_usd.fees, price_usd]'))).toBe('invalid_source_config');
+      expect(await codeOf(SUMMED.replace('metrics: [flow_usd.fees, flow_usd.fees_programmatic]', 'metric: flow_usd.fees, metrics: [flow_usd.fees, flow_usd.fees_programmatic]'))).toBe('invalid_source_config');
+    });
+  });
+
   it('does nothing for an asset without a usage_index metric', async () => {
     const h = harness();
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);

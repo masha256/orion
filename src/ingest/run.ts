@@ -97,6 +97,24 @@ function storedDailyFlow(db: Db, assetId: string, metricKey: string): Map<string
   return days;
 }
 
+/** The flow metric(s) a derived level reads: `metric` (one name) or, for flow_annualized, `metrics` (two or more). */
+function flowMetricsOf(metricKey: string, name: DerivedName, params: Record<string, unknown>): string[] {
+  const one = params.metric;
+  const many = params.metrics;
+  if (one !== undefined && many !== undefined) {
+    throw new OrionError('invalid_source_config', `metrics.${metricKey}: ${name} takes "metric" or "metrics", not both`);
+  }
+  if (many === undefined) {
+    if (typeof one !== 'string') throw new OrionError('invalid_source_config', `metrics.${metricKey}: ${name} needs "metric" to name a flow metric`);
+    return [one];
+  }
+  if (name !== 'flow_annualized') throw new OrionError('invalid_source_config', `metrics.${metricKey}: only flow_annualized sums several flows`);
+  if (!Array.isArray(many) || many.length < 2 || !many.every((m) => typeof m === 'string') || new Set(many).size !== many.length) {
+    throw new OrionError('invalid_source_config', `metrics.${metricKey}: ${name} "metrics" must list two or more different flow metrics`);
+  }
+  return many as string[];
+}
+
 function readsChain(batch: SourceBatch): boolean {
   return batch.requests.some((r) => isChainSource(r.source) || (r.source.type === 'adapter' && getAdapter(r.source.name).needsRpc));
 }
@@ -364,18 +382,35 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     if (r.source.type !== 'derived') continue;
     const outcome = outcomeOf(sourceId(r.source));
     const name = r.source.name as DerivedName; // buildPlan refused any other name
-    const flowMetric = r.source.params.metric;
+    // `metric` names one flow; `metrics` (flow_annualized only) names several, summed day by day: an asset paid in
+    // several reward streams, each its own holder flow, has their sum as its revenue. A day counts only when every
+    // listed flow has it, so a stream that lags never shows up as a drop in the total.
+    const flowMetrics = flowMetricsOf(r.metricKey, name, r.source.params);
+    const flowMetric = flowMetrics.join('+');
     const windowDays = r.source.params.days ?? 30;
-    if (typeof flowMetric !== 'string' || asset.metrics[flowMetric]?.type !== 'flow') {
-      throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: ${name} needs "metric" to name a flow metric`);
+    for (const m of flowMetrics) {
+      if (asset.metrics[m]?.type !== 'flow') {
+        throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: ${name} needs "metric" to name a flow metric ("${m}" is not one)`);
+      }
     }
     if (typeof windowDays !== 'number' || !Number.isInteger(windowDays) || windowDays < 1) {
       throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: ${name} "days" must be a positive integer`);
     }
     // A derivation carries the provenance of its input: an API series' flow gives an api level, a transfer scan's an onchain one.
-    const provenance: 'onchain' | 'api' = asset.metrics[flowMetric].source?.type === 'defillama' ? 'api' : 'onchain';
-    const days = storedDailyFlow(db, asset.id, flowMetric);
-    for (const p of scannedDaily.get(flowMetric) ?? []) days.set(p.day, p.value);
+    const apiInputs = flowMetrics.filter((m) => asset.metrics[m].source?.type === 'defillama').length;
+    if (apiInputs > 0 && apiInputs < flowMetrics.length) {
+      throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: ${name} cannot sum API-series and on-chain flows`);
+    }
+    const provenance: 'onchain' | 'api' = apiInputs > 0 ? 'api' : 'onchain';
+    const perFlow = flowMetrics.map((m) => {
+      const d = storedDailyFlow(db, asset.id, m);
+      for (const p of scannedDaily.get(m) ?? []) d.set(p.day, p.value);
+      return d;
+    });
+    const days = new Map<string, number>();
+    for (const [day] of perFlow[0]) {
+      if (perFlow.every((d) => d.has(day))) days.set(day, perFlow.reduce((s, d) => s + d.get(day)!, 0));
+    }
     // Keyed by observedAt: a re-scan (--backfill-days) can change a stored day's value, which changes
     // every index window that covers it. Skip only when the existing row already has this value; a
     // changed value must be rewritten (insertObservation supersedes the row at the same observedAt).
