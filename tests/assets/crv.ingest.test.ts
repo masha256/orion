@@ -105,7 +105,7 @@ describe('assets/crv.yaml', () => {
     // Every metric has a source, and none is manual: a bootstrap run has nothing to research and the grade can be A.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // Pinned on 2026-10-08 when the bands were written. A deliberate edit of assets/crv.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('a957d7fc6be9caf4357ed4b014aab4ad8ac991bf052608f2a3b1b0e6c32e4c0e');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('bf06a29f8d5387ae6740a2191b0b6df34752b2c301d468e6137576be690f427d');
   });
 
   it('plans the source map of the spec: one transfer scan, a constant, an adapter, the bribes feed', () => {

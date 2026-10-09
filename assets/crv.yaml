@@ -132,7 +132,7 @@ holder_flows:
 modules:
   - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.6 }
   - { id: fm_holder_flow, type: forward_multiple, kind: estimate, weight: 0.4, params: { basis: holder_flow } }
-  - { id: vote_incentives, type: vote_incentives, kind: component, params: { metric: vote_incentive_run_rate_usd, years: 10, post_horizon_emission_decay: 0.159103584746285, price_basis: spot } }
+  - { id: vote_incentives, type: vote_incentives, kind: component, params: { metric: vote_incentive_run_rate_usd, years: 10, post_horizon_emission_decay: 0.159103584746285, price_basis: spot, staked_return: locked } }
 
 scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }
 
