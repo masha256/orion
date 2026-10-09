@@ -1,0 +1,47 @@
+# yCRV calibrated assumptions: the "central" package the user chose on 2026-10-09 after a sensitivity sweep and three priced
+# packages (conservative / central / constructive) under the 91-, 182- and 357-day on-chain payout windows; the user kept 91
+# days (as CRV). Anchors at the time: spot 0.1834 USD (CRV 0.35), yCRV supply 71.96M, 63.33M staked in YearnBoostedStaker
+# (0.880), crvUSD to stakers 1.52M USD a year (91 days; 182 days 1.74M, 357 days 2.38M: monthly payouts fell from about
+# 220k USD in Nov-Mar to about 128k in Jul-Sep with the CRV price), a 13.1 percent cash yield on staked yCRV at spot. About 74
+# percent of the cash is CRV vote incentives sold for crvUSD, so growth here is the bribe path: base decays with CRV
+# emissions (-11 percent in year one, -5 percent long run), bear harder, bull a mild recovery. Discount 20 percent and the
+# 25/50/25 weights follow CRV's central package; 8x holder-flow multiple.
+# This set's 12m expected target was 0.122 USD (bear 0.051 / base 0.108 / bull 0.221, dispersion 0.82), 34 percent under
+# spot. The market price needs about +19 percent year-one growth on these settings, i.e. it prices bribes holding up (flat
+# bribes at an 8x multiple imply an 11.5 percent discount rate). The constructive bull case (0.455) would exceed CRV's price,
+# which a wrapper mintable 1:1 from CRV cannot credibly do; the ceiling rule is not built. The user heard this before
+# choosing; do not re-litigate it.
+# Import: orion model assumptions import ycrv calibration/ycrv-assumptions.yaml --rationale "..."
+bear:
+  rev_growth_y1: -0.25
+  growth_fade_years: 3
+  terminal_growth: -0.08
+  capture_rate_terminal.fees: 1
+  capture_ramp_years.fees: 0
+  discount_rate_base: 0.25
+  discount_premium_programmatic: 0.03
+  multiple.fm_holder_flow: 5
+  regime_multiplier: 0.8
+  staked_ratio_horizon: 0.88
+base:
+  rev_growth_y1: -0.11
+  growth_fade_years: 4
+  terminal_growth: -0.05
+  capture_rate_terminal.fees: 1
+  capture_ramp_years.fees: 0
+  discount_rate_base: 0.2
+  discount_premium_programmatic: 0.02
+  multiple.fm_holder_flow: 8
+  regime_multiplier: 1
+  staked_ratio_horizon: 0.88
+bull:
+  rev_growth_y1: 0.05
+  growth_fade_years: 4
+  terminal_growth: -0.02
+  capture_rate_terminal.fees: 1
+  capture_ramp_years.fees: 0
+  discount_rate_base: 0.16
+  discount_premium_programmatic: 0.01
+  multiple.fm_holder_flow: 11
+  regime_multiplier: 1.2
+  staked_ratio_horizon: 0.88

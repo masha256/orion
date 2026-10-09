@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { runValuation } from '../../src/app/valuation.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
@@ -90,8 +91,8 @@ describe('assets/ycrv.yaml', () => {
     ]);
     expect(requiredExtraMetrics(config)).toEqual([]);
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
-    // Pinned on 2026-10-09. A deliberate edit of assets/ycrv.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('5c7d0a059d422dc4677ec4ace7ba9891b541f3cd5fee699cf846ee081611fac0');
+    // Pinned on 2026-10-09 when the bands were written. A deliberate edit of assets/ycrv.yaml moves it; update the pin on purpose.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('4731ed9ee1830351db217273eed23eda8d4c20acf48b5a09fd1e4eafac20cbc2');
   });
 
   it('plans one transfer scan of vault shares, converted at the share price', () => {
@@ -146,5 +147,20 @@ describe('assets/ycrv.yaml', () => {
   it('refuses to run without the Ethereum RPC URL', async () => {
     const w = world();
     await expect(fetchAsset(w.db, { config, hash: 'test' }, NOW, { ...w.deps, env: {} })).rejects.toMatchObject({ code: 'missing_rpc_url' });
+  });
+});
+
+describe('calibration/ycrv-assumptions.yaml', () => {
+  it('is complete and sits inside the agent bands of assets/ycrv.yaml', () => {
+    const raw = parseYaml(readFileSync(`${ROOT}/calibration/ycrv-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
+    for (const s of ['bear', 'base', 'bull'] as const) {
+      expect(Object.keys(raw[s]).sort()).toEqual(requiredAssumptionKeys(config));
+      for (const [key, value] of Object.entries(raw[s])) {
+        const b = config.assumptions[key];
+        const band = b[s] ?? b;
+        expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
+        expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
+      }
+    }
   });
 });
