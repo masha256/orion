@@ -1,5 +1,5 @@
 import { EngineError } from '../errors.js';
-import { flowUsdAt, need } from '../paths.js';
+import { flowUsdAt, need, perValuedToken } from '../paths.js';
 import { captureKeys, discountKeys, discountRateFor, REVENUE_KEYS } from './keys.js';
 import type { ValuationModule } from './types.js';
 
@@ -49,7 +49,7 @@ export const holderCashflow: ValuationModule = {
       let pv = 0;
       let last = 0;
       for (let t = 1; t <= N; t++) {
-        last = flowUsdAt(H + t - 0.5, f, ctx.drivers, ctx.assumptions) / ctx.supplyAfterHorizon(t - 0.5);
+        last = perValuedToken(flowUsdAt(H + t - 0.5, f, ctx.drivers, ctx.assumptions), ctx.supplyAfterHorizon(t - 0.5), f);
         pv += last / Math.pow(1 + r, t);
       }
       const terminal = (last * (1 + gPerToken)) / (r - gPerToken) / Math.pow(1 + r, N);
@@ -58,6 +58,8 @@ export const holderCashflow: ValuationModule = {
         discount_rate: r,
         capture_rule: f.captureRule,
         recipient_base: f.recipientBase,
+        // Only when it is not 1, so the output of every existing asset stays byte for byte the same.
+        ...(f.valuedOverShare !== 1 ? { valued_over_share: f.valuedOverShare } : {}),
         explicit_pv_per_token: pv,
         terminal_pv_per_token: terminal,
         explicit_pv_usd: pv * supplyAtHorizon,

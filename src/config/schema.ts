@@ -23,6 +23,12 @@ const HolderFlowSchema = z.strictObject({
   recipient_base: z.enum(['all', 'staked', 'locked']),
   metric: z.string(),
   window_days: z.number().positive().default(90),
+  /**
+   * `recipients`: value the flow per token of its recipients (staked supply now) instead of per token of supply. For a
+   * flow paid only to stakers whose unstaked share goes elsewhere (yCRV: to Yearn's treasury), so the cash per staked
+   * token is the claim a holder who stakes buys. Optional with no default, so existing config hashes do not move.
+   */
+  valued_per: z.enum(['supply', 'recipients']).optional(),
 });
 
 const ModuleInstanceSchema = z.strictObject({
@@ -147,6 +153,9 @@ export const AssetConfigSchema = z
       if (flowIds.has(f.id)) issue(`holder_flows: duplicate id "${f.id}"`);
       flowIds.add(f.id);
       if (a.metrics[f.metric]?.type !== 'flow') issue(`holder_flows: "${f.id}" must reference a metric of type flow`);
+      if (f.valued_per === 'recipients' && f.recipient_base !== 'staked') {
+        issue(`holder_flows: "${f.id}" can be valued per recipients only with recipient_base staked`);
+      }
     }
 
     const moduleIds = new Set<string>();

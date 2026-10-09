@@ -16,6 +16,8 @@ export interface HolderFlowDriver {
   kind: FlowKind;
   captureRule: CaptureRule;
   recipientBase: RecipientBase;
+  /** Share of supply the flow is valued over: the staked ratio now for a flow valued per recipients, else 1. */
+  valuedOverShare: number;
   annualizedUsd: DriverValue;
   captureRate: number;
 }
@@ -207,11 +209,13 @@ export function computeDrivers(
   if (missing.size > 0 || overlapping.size > 0) return report(null);
   if (!price || !revenue || !effective || !staked || !share || !emissionNow) return report(null);
 
+  const stakedShareNow = effective.value > 0 ? staked.value / effective.value : 0;
   const holderFlows: HolderFlowDriver[] = flows.map(({ def, annualized }) => ({
     id: def.id,
     kind: def.kind,
     captureRule: def.capture_rule,
     recipientBase: def.recipient_base,
+    valuedOverShare: def.valued_per === 'recipients' ? stakedShareNow : 1,
     annualizedUsd: annualized,
     captureRate: revenue.value > 0 ? annualized.value / revenue.value : 0,
   }));

@@ -33,6 +33,16 @@ export function captureRateAt(tau: number, c0: number, cT: number, rampYears: nu
   return c0 + (cT - c0) * Math.min(1, tau / rampYears);
 }
 
+/**
+ * A holder flow per token of the supply it is valued over: all of it, or the recipients' share (the staked ratio now).
+ * A flow paid only to stakers grows and shrinks with the staked amount (the unstaked share goes elsewhere), so the
+ * cash per staked token is held at today's share rather than at the horizon assumption.
+ */
+export function perValuedToken(usd: number, supply: number, flow: HolderFlowDriver): number {
+  if (!(flow.valuedOverShare > 0)) throw new EngineError(`flow ${flow.id} is valued per recipients but the staked share is ${flow.valuedOverShare}`);
+  return usd / (supply * flow.valuedOverShare);
+}
+
 /** Annualized USD run-rate of one holder flow at time tau. */
 export function flowUsdAt(tau: number, flow: HolderFlowDriver, drivers: Drivers, a: ScenarioAssumptions): number {
   const revenue = revenueAt(tau, drivers.revenueRunRate.value, a);
