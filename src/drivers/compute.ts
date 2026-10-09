@@ -190,7 +190,7 @@ export function computeDrivers(
   const standard = new Set<string>(Object.values(STD_METRICS));
   const extra: Record<string, DriverValue> = {};
   for (const [key, def] of Object.entries(asset.metrics)) {
-    if (def.type !== 'level' || standard.has(key) || flowMetricKeys.has(key)) continue;
+    if (def.type !== 'level' || def.monitor_only === true || standard.has(key) || flowMetricKeys.has(key)) continue;
     const v = level(key, extraRequired.includes(key));
     if (v) extra[key] = v;
   }

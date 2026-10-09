@@ -14,6 +14,11 @@ const MetricDefSchema = z.strictObject({
   /** Primary source. A metric without one stays manual. Optional with no default, so existing config hashes do not move. */
   source: SourceSchema.optional(),
   cross_checks: z.array(CrossCheckSchema).optional(),
+  /**
+   * Fetched and stored daily but kept out of the valuation: not a driver, so its staleness or a failed read never
+   * touches the grade or the signal (e.g. each liquid locker's share of veCRV). Optional with no default (hashes).
+   */
+  monitor_only: z.boolean().optional(),
 });
 
 const HolderFlowSchema = z.strictObject({
@@ -146,6 +151,15 @@ export const AssetConfigSchema = z
     ];
     for (const [key, type] of typed) {
       if (a.metrics[key] && a.metrics[key].type !== type) issue(`metrics: "${key}" must have type ${type}`);
+    }
+    // A monitor-only metric is invisible to the valuation, so nothing the valuation needs may be one.
+    const standardKeys = new Set<string>(Object.values(STD_METRICS));
+    const valuationRefs = new Set<string>([...a.holder_flows.map((f) => f.metric), ...a.total_return_variants.map((v) => v.yield_multiplier_metric)]);
+    for (const [key, def] of Object.entries(a.metrics)) {
+      if (def.monitor_only !== true) continue;
+      if (def.type !== 'level') issue(`metrics: "${key}" is monitor_only, which is for level metrics`);
+      if (def.critical) issue(`metrics: "${key}" is monitor_only and cannot be critical`);
+      if (standardKeys.has(key) || valuationRefs.has(key)) issue(`metrics: "${key}" is used by the valuation and cannot be monitor_only`);
     }
 
     const flowIds = new Set<string>();
