@@ -90,6 +90,9 @@ export function signalSummary(s: Signal, opts: { rationale?: boolean } = {}): st
     lines.push(
       '     ' + Object.entries(h.modules).map(([id, m]) => `${id} ${fmt(m.value)}${m.weight === null ? ' (component)' : ` (w ${m.weight.toFixed(2)})`}`).join('  '),
     );
+    if ((h.staked_cash_per_token ?? 0) > 0) {
+      lines.push(`     cash paid to stakers during the horizon ${fmt(h.staked_cash_per_token!)} a token (in staked total return)`);
+    }
     for (const [id, v] of Object.entries(h.extras)) lines.push(`     ${id} ${v.toFixed(1)}%`);
   }
   if (s.status_reasons.length > 0) lines.push(`reasons: ${s.status_reasons.join('; ')}`);

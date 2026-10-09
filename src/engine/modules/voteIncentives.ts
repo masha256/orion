@@ -1,14 +1,25 @@
 import { yearsBetween } from '../supply.js';
 import { EngineError } from '../errors.js';
 import { need } from '../paths.js';
+import type { Drivers } from '../../drivers/compute.js';
 import type { ModuleContext, ValuationModule } from './types.js';
+
+/**
+ * `staked_return`: who collects the incentives, so the staked total return can add those paid during the horizon
+ * (`all`, `staked` or `locked` supply). Absent: they are left out of the staked total return. Optional with no
+ * default, so existing config hashes do not move.
+ */
+type ReturnBase = 'all' | 'staked' | 'locked';
+const isReturnBase = (x: unknown): x is ReturnBase => x === 'all' || x === 'staked' || x === 'locked';
+export const incentiveReturnBase = (params: Record<string, unknown>): ReturnBase | null =>
+  isReturnBase(params.staked_return) ? params.staked_return : null;
 
 const DEFAULT_METRIC = 'vote_incentive_run_rate_usd';
 const DEFAULT_YEARS = 10;
 /** Above this share of the horizon price the component is mostly pricing itself; refuse rather than report it. */
 const MAX_SHARE_OF_PRICE = 0.5;
 
-const num = (params: Record<string, unknown>, key: string, fallback: number): number =>
+export const num = (params: Record<string, unknown>, key: string, fallback: number): number =>
   typeof params[key] === 'number' ? (params[key] as number) : fallback;
 const metricOf = (params: Record<string, unknown>): string =>
   typeof params.metric === 'string' ? params.metric : DEFAULT_METRIC;
@@ -20,18 +31,22 @@ const metricOf = (params: Record<string, unknown>): string =>
  */
 type PriceBasis = 'spot' | 'horizon';
 const isPriceBasis = (x: unknown): x is PriceBasis => x === 'spot' || x === 'horizon';
-const priceBasisOf = (params: Record<string, unknown>): PriceBasis => (isPriceBasis(params.price_basis) ? params.price_basis : 'horizon');
+export const priceBasisOf = (params: Record<string, unknown>): PriceBasis => (isPriceBasis(params.price_basis) ? params.price_basis : 'horizon');
 
 /**
  * Emissions per year in force `tau` years from as-of: the schedule step in force then; past the last step's date, that
  * step reduced by `decay` for every whole year since it (CRV: a coded 2^(-1/4) cut each year, about 15.9 percent).
  */
 export function emissionAt(ctx: ModuleContext, tau: number, decay: number): number {
-  const asOf = ctx.drivers.asOf;
-  const steps = ctx.drivers.emissionSchedule
+  return emissionAtDrivers(ctx.drivers, tau, decay);
+}
+
+export function emissionAtDrivers(drivers: Drivers, tau: number, decay: number): number {
+  const asOf = drivers.asOf;
+  const steps = drivers.emissionSchedule
     .map((s) => ({ t: yearsBetween(asOf, s.from), rate: s.value }))
     .sort((a, b) => a.t - b.t);
-  if (steps.length === 0) return ctx.drivers.emissionRateNow.value;
+  if (steps.length === 0) return drivers.emissionRateNow.value;
   let i = 0;
   while (i + 1 < steps.length && steps[i + 1].t <= tau) i++;
   const last = steps.length - 1;
@@ -58,6 +73,7 @@ export const voteIncentives: ValuationModule = {
       if (typeof y !== 'number' || !Number.isInteger(y) || y < 1 || y > 30) errors.push('years must be an integer from 1 to 30');
     }
     if (params.price_basis !== undefined && !isPriceBasis(params.price_basis)) errors.push('price_basis must be "spot" or "horizon"');
+    if (params.staked_return !== undefined && !isReturnBase(params.staked_return)) errors.push('staked_return must be "all", "staked" or "locked"');
     if (params.post_horizon_emission_decay !== undefined) {
       const d = params.post_horizon_emission_decay;
       if (typeof d !== 'number' || !(d >= 0 && d < 1)) errors.push('post_horizon_emission_decay must be a number in [0, 1)');

@@ -49,6 +49,8 @@ function toHorizon(h: HorizonOutput): SignalHorizon {
     modules,
     dispersion: h.dispersion,
     staked_total_return_pct: h.stakedTotalReturnPct,
+    staked_cash_per_token: h.stakedCashPerToken,
+    staked_cash_streams: h.scenarios.base.stakedCashStreams,
     extras: h.extras,
   };
 }

@@ -128,10 +128,28 @@ describe('VVV end to end on the frozen golden config, seed data, and draft assum
     }
   });
 
+  it('pays no cash during the horizon: a burn is not a payout, so the staked total return is as before 1.3.0', () => {
+    for (const h of Object.values(output.horizons)) {
+      expect(h.stakedCashPerToken).toBe(0);
+      for (const s of Object.values(h.scenarios)) expect(s.stakedCashStreams).toEqual([]);
+    }
+  });
+
   it('reproduces the pinned engine output byte for byte', () => {
     const hash = createHash('sha256').update(canonicalJson(output)).digest('hex');
     // Changing this hash means engine or driver math changed: bump ENGINE_VERSION in
     // src/engine/version.ts, then update the hash.
-    expect(hash).toBe('6b3f9fa36241c2071c0108d5b5d0b2cf5dba2d0ccd574c65f53da9e3c519311a');
+    expect(hash).toBe('90872650befcbc13f02a06db20a5efce8839a80ef877f75a0ae9b888e71348e3');
+    // Engine 1.3.0 only added the staked-cash keys (all zero for VVV): without them the output is the 1.2.0 one.
+    const stripped = JSON.parse(canonicalJson(output)) as { engineVersion: string; horizons: Record<string, Record<string, unknown>> };
+    for (const h of Object.values(stripped.horizons)) {
+      delete h.stakedCashPerToken;
+      for (const s of Object.values(h.scenarios as Record<string, Record<string, unknown>>)) {
+        delete s.stakedCashPerToken;
+        delete s.stakedCashStreams;
+      }
+    }
+    stripped.engineVersion = '1.2.0';
+    expect(createHash('sha256').update(canonicalJson(stripped)).digest('hex')).toBe('6b3f9fa36241c2071c0108d5b5d0b2cf5dba2d0ccd574c65f53da9e3c519311a');
   });
 });

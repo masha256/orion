@@ -17,6 +17,14 @@ const HorizonSchema = z.strictObject({
   modules: z.record(z.string(), ModuleSchema),
   dispersion: z.number(),
   staked_total_return_pct: z.number(),
+  /**
+   * Added with engine 1.3.0 (additive, schema_version stays 1): USD per receiving token paid in cash during the horizon,
+   * included in staked_total_return_pct, with its streams (base scenario). Signals stored before it have no such key.
+   */
+  staked_cash_per_token: z.number().optional(),
+  staked_cash_streams: z
+    .array(z.strictObject({ id: z.string(), source: z.enum(['holder_flow', 'vote_incentives']), recipient_base: z.enum(['all', 'staked', 'locked']), usd: z.number(), usd_per_token: z.number() }))
+    .optional(),
   extras: z.record(z.string(), z.number()),
 });
 

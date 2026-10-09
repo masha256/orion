@@ -7,6 +7,7 @@ import { EngineError } from './errors.js';
 import { getModule } from './modules/registry.js';
 import type { ModuleResult, ValuationModule } from './modules/types.js';
 import { need } from './paths.js';
+import { stakedCashDuringHorizon, type CashStream } from './stakedCash.js';
 import { emissionsBetween, forecastSupply, postHorizonSupply } from './supply.js';
 import { ENGINE_VERSION } from './version.js';
 
@@ -23,6 +24,9 @@ export interface ScenarioOutput {
   probability: number;
   supplyAtHorizon: number;
   stakingYield: number;
+  /** USD per receiving token paid in cash during the horizon (fee shares, opted-in vote incentives). */
+  stakedCashPerToken: number;
+  stakedCashStreams: CashStream[];
   iterations: number;
   converged: boolean;
   dispersion: number;
@@ -43,6 +47,8 @@ export interface HorizonOutput {
   modules: Record<string, ModuleSummary>;
   dispersion: number;
   stakedTotalReturnPct: number;
+  /** Probability-weighted USD per receiving token paid in cash during the horizon; part of the staked total return. */
+  stakedCashPerToken: number;
   extras: Record<string, number>;
 }
 export interface EngineOutput {
@@ -81,6 +87,7 @@ function solveScenario(
   let target = drivers.price.value;
   let supply = 0;
   let stakingYield = 0;
+  let effectiveAtHorizon = 0;
   let modules: Record<string, ModuleResult> = {};
   let iterations = 0;
   let converged = false;
@@ -94,6 +101,7 @@ function solveScenario(
       asset.supply_basis === 'circulating'
         ? forecastSupply({ asset, drivers, assumptions: a, horizonYears: H, targetPrice: target, basis: 'effective_total' })
         : supply;
+    effectiveAtHorizon = effectiveSupply;
     stakingYield = (avgEmission * drivers.stakerEmissionShare.value) / (stakedRatio * effectiveSupply);
     const post = postHorizonSupply({ asset, drivers, horizonYears: H, supplyAtHorizon: supply });
     modules = {};
@@ -124,7 +132,14 @@ function solveScenario(
     .filter((i) => i.def.kind === 'estimate')
     .map((i) => ({ weight: i.def.weight ?? 0, value: modules[i.def.id].valuePerToken }));
 
-  return { target, probability, supplyAtHorizon: supply, stakingYield, iterations, converged, dispersion: dispersionOf(estimates), modules };
+  const cash = stakedCashDuringHorizon({
+    asset, drivers, assumptions: a, horizonYears: H, effectiveAtHorizon, targetPrice: target, instances: instances.map((i) => i.def),
+  });
+
+  return {
+    target, probability, supplyAtHorizon: supply, stakingYield, stakedCashPerToken: cash.usdPerToken, stakedCashStreams: cash.streams,
+    iterations, converged, dispersion: dispersionOf(estimates), modules,
+  };
 }
 
 export function runEngine(input: EngineInput): EngineOutput {
@@ -147,6 +162,7 @@ export function runEngine(input: EngineInput): EngineOutput {
 
     const expectedTarget = SCENARIOS.reduce((sum, s) => sum + probs[s] * scenarios[s].target, 0);
     const expectedYield = SCENARIOS.reduce((sum, s) => sum + probs[s] * scenarios[s].stakingYield, 0);
+    const expectedCash = SCENARIOS.reduce((sum, s) => sum + probs[s] * scenarios[s].stakedCashPerToken, 0);
 
     const modules: Record<string, ModuleSummary> = {};
     for (const { def } of instances) {
@@ -162,8 +178,10 @@ export function runEngine(input: EngineInput): EngineOutput {
       };
     }
 
+    // A staked holder ends the horizon with the token (worth the target, compounded by emissions paid in tokens) plus
+    // the cash paid to it along the way, which the target does not contain (the modules value flows from the horizon).
     const totalReturn = (multiplier: number) =>
-      ((expectedTarget / spot) * Math.pow(1 + expectedYield * multiplier, H) - 1) * 100;
+      (((expectedTarget + expectedCash) / spot) * Math.pow(1 + expectedYield * multiplier, H) - 1) * 100;
 
     const extras: Record<string, number> = {};
     for (const v of asset.total_return_variants) {
@@ -181,6 +199,7 @@ export function runEngine(input: EngineInput): EngineOutput {
         instances.filter((i) => i.def.kind === 'estimate').map((i) => ({ weight: i.def.weight ?? 0, value: modules[i.def.id].value })),
       ),
       stakedTotalReturnPct: totalReturn(1),
+      stakedCashPerToken: expectedCash,
       extras,
     };
   }

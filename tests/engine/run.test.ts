@@ -26,7 +26,11 @@ describe('runEngine', () => {
     expect(h.scenarios.base.supplyAtHorizon).toBeCloseTo(100, 9);
     expect(h.modules.hc.value).toBeCloseTo(10, 6);
     expect(h.dispersion).toBe(0);
-    expect(h.stakedTotalReturnPct).toBeCloseTo(0, 4);
+    // The fee share pays 1 a token a year in cash (10 percent of 1000 over 100 tokens): the price holds at 10 and the
+    // staked holder also collects 1, so the staked total return is 10 percent while the upside is 0.
+    expect(h.stakedCashPerToken).toBeCloseTo(1, 9);
+    expect(h.stakedTotalReturnPct).toBeCloseTo(10, 6);
+    expect(h.scenarios.base.stakedCashStreams).toEqual([{ id: 'fees', source: 'holder_flow', recipient_base: 'all', usd: expect.closeTo(100, 9), usd_per_token: expect.closeTo(1, 9) }]);
   });
 
   it('is deterministic', () => {
@@ -39,9 +43,12 @@ describe('runEngine', () => {
     // 1.1.0 figure of 1000 / 110. Hand derivation: tests/engine/dilution.test.ts.
     expect(diluted.expectedTarget).toBeCloseTo(DILUTED_MINI, 6);
     expect(diluted.expectedTarget).toBeLessThan(1000 / 110);
-    // staker APR = 10 / (0.5 * 110); total return = (target/spot) * (1 + y) - 1
+    // staker APR = 10 / (0.5 * 110); cash = the 100 a year of fees over a supply growing 100 -> 110: 10 ln 1.1 a token;
+    // total return = ((target + cash) / spot) * (1 + y) - 1
     const y = 10 / (0.5 * 110);
-    expect(diluted.stakedTotalReturnPct).toBeCloseTo(((DILUTED_MINI / 10) * (1 + y) - 1) * 100, 6);
+    const cash = 10 * Math.log(1.1);
+    expect(diluted.stakedCashPerToken).toBeCloseTo(cash, 4); // monthly midpoints: within 1e-5 of the integral
+    expect(diluted.stakedTotalReturnPct).toBeCloseTo((((DILUTED_MINI + cash) / 10) * (1 + y) - 1) * 100, 3);
   });
 
   it('raises the target when growth rises', () => {
@@ -113,6 +120,7 @@ describe('runEngine', () => {
     const drivers = computeDrivers(asset, list, AS_OF).drivers!;
     const h = runEngine({ asset, drivers, assumptions: miniAssumptions() }).horizons['12m'];
     const y = (10 / (0.5 * 110)) * 0.8;
-    expect(h.extras.locked_total_return_pct).toBeCloseTo(((DILUTED_MINI / 10) * (1 + y) - 1) * 100, 6);
+    const cash = 10 * Math.log(1.1);
+    expect(h.extras.locked_total_return_pct).toBeCloseTo((((DILUTED_MINI + cash) / 10) * (1 + y) - 1) * 100, 3);
   });
 });
