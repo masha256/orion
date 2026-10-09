@@ -54,6 +54,41 @@ describe('chain level sources', () => {
     expect(out[1].ok).toBe(true);
   });
 
+  it('passes contract addresses as arguments, and reads one value out of a multi-value return', async () => {
+    const VE = '0x5f3b5DfEb7B28CDbD7FAba78963EE202a494e2A2';
+    const LOCKER = '0xF147b8125d2ef93FB6965Db97D6746952a133934';
+    // Read live on 2026-10-09: Yearn's voting power and its locked CRV (locked() returns (int128 amount, uint256 end)).
+    const rpc = fakeRpc({
+      genesisTs: 0,
+      latest: 10n,
+      calls: {
+        [callKey(VE, 'balanceOf', [LOCKER])]: 83_095_096_753_000_000_000_000_000n,
+        [`${callKey(VE, 'locked', [LOCKER])}[0]`]: 83_401_058_651_000_000_000_000_000n,
+      },
+    });
+    const ctx = sourceCtx({ rpc, block: await rpc.latestBlock(), contract: (n: string) => ({ ve: VE, yearn: LOCKER })[n]! });
+    const out = await getSourceHandler('contract_read').fetch(
+      [
+        req('ve_power.yearn', { type: 'contract_read', contract: 've', function: 'balanceOf', args: ['yearn'], abi_type: 'uint256', decimals: 18, scale: 1, offset: 0 }),
+        req('ve_locked.yearn', { type: 'contract_read', contract: 've', function: 'locked', args: ['yearn'], returns: ['int128', 'uint256'], pick: 0, abi_type: 'uint256', decimals: 18, scale: 1, offset: 0 }),
+      ],
+      ctx,
+    );
+    expect(levelOf(out[0])).toBeCloseTo(83_095_096.753, 3);
+    expect(levelOf(out[1])).toBeCloseTo(83_401_058.651, 3);
+    expect(rpc.stats.multicall).toBe(1);
+  });
+
+  it('names the arguments in a failed read', async () => {
+    const rpc = fakeRpc({ genesisTs: 0, latest: 10n, calls: {} });
+    const ctx = sourceCtx({ rpc, block: await rpc.latestBlock(), contract: (n: string) => ({ ve: STAKING, yearn: TOKEN })[n]! });
+    const [r] = await getSourceHandler('contract_read').fetch(
+      [req('ve_power.yearn', { type: 'contract_read', contract: 've', function: 'balanceOf', args: ['yearn'], abi_type: 'uint256', decimals: 18, scale: 1, offset: 0 })],
+      ctx,
+    );
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/^balanceOf\(yearn\) on ve: /) });
+  });
+
   it('fails the whole batch without an RPC connection or a block', async () => {
     await expect(getSourceHandler('contract_read').fetch(requests, sourceCtx())).rejects.toThrow(/RPC/);
   });

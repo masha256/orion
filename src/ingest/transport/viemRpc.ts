@@ -14,6 +14,20 @@ const TRANSFER = parseAbiItem('event Transfer(address indexed from, address inde
  * the cron log). Falls back to the full message with any URL's path and query string stripped down to
  * its origin.
  */
+/**
+ * The integer a read returns: the result itself, or for a multi-value return the `pick`-th value. Orion reads only
+ * unsigned quantities, so a negative value (an int128 field) is refused rather than passed on.
+ */
+export function pickValue(result: unknown, pick: number | undefined): CallResult {
+  const raw = pick === undefined ? result : Array.isArray(result) ? result[pick] : undefined;
+  if (typeof raw !== 'bigint' && typeof raw !== 'number') {
+    return { ok: false, error: pick === undefined ? 'the call returned no integer' : `the call returned no integer at position ${pick}` };
+  }
+  const value = BigInt(raw);
+  if (value < 0n) return { ok: false, error: `the call returned a negative value (${value})` };
+  return { ok: true, value };
+}
+
 export function cleanRpcErrorMessage(err: unknown): string {
   const shortMessage = (err as { shortMessage?: unknown } | null)?.shortMessage;
   if (typeof shortMessage === 'string' && shortMessage.length > 0) return shortMessage;
@@ -70,9 +84,10 @@ export const createViemRpc: RpcFactory = (url, chainId) => {
             args: c.args ?? [],
           })),
         });
-        return results.map(
-          (r): CallResult => (r.status === 'success' ? { ok: true, value: BigInt(r.result as bigint | number) } : { ok: false, error: cleanRpcErrorMessage(r.error) }),
-        );
+        return results.map((r, i): CallResult => {
+          if (r.status !== 'success') return { ok: false, error: cleanRpcErrorMessage(r.error) };
+          return pickValue(r.result, calls[i].pick);
+        });
       }),
     getTransferLogs: (q) =>
       clean(async () => {

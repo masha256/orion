@@ -10,6 +10,8 @@ export interface ContractCall {
   signature: string;
   functionName: string;
   args?: readonly unknown[];
+  /** For a function returning several values: the index of the one to read (it must be an integer). */
+  pick?: number;
 }
 
 /** Every read Orion makes returns an unsigned integer. */

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { firstBlockAtOrAfter, getLogsChunked, type TransferLog } from '../../src/ingest/transport/rpc.js';
 import { DEFAULT_RPC_URLS } from '../../src/ingest/run.js';
 import { CHAINS } from '../../src/ingest/transport/chains.js';
-import { cleanRpcErrorMessage, createViemRpc } from '../../src/ingest/transport/viemRpc.js';
+import { cleanRpcErrorMessage, createViemRpc, pickValue } from '../../src/ingest/transport/viemRpc.js';
 import type { OrionError } from '../../src/types.js';
 import { fakeRpc } from '../helpers/fakeRpc.js';
 
@@ -141,5 +141,20 @@ describe('cleanRpcErrorMessage', () => {
   it('handles a non-Error value and a message with no URL', () => {
     expect(cleanRpcErrorMessage('boom')).toBe('boom');
     expect(cleanRpcErrorMessage(new Error('connection refused'))).toBe('connection refused');
+  });
+});
+
+describe('pickValue', () => {
+  it('reads a single integer, or one value of a multi-value return', () => {
+    expect(pickValue(5n, undefined)).toEqual({ ok: true, value: 5n });
+    expect(pickValue(7, undefined)).toEqual({ ok: true, value: 7n });
+    expect(pickValue([83n, 1916784000n], 0)).toEqual({ ok: true, value: 83n });
+    expect(pickValue([83n, 1916784000n], 1)).toEqual({ ok: true, value: 1916784000n });
+  });
+
+  it('refuses a missing position, a non-integer, and a negative value', () => {
+    expect(pickValue([1n], 3)).toEqual({ ok: false, error: 'the call returned no integer at position 3' });
+    expect(pickValue('0xabc', undefined)).toEqual({ ok: false, error: 'the call returned no integer' });
+    expect(pickValue([-4n, 0n], 0)).toEqual({ ok: false, error: 'the call returned a negative value (-4)' });
   });
 });

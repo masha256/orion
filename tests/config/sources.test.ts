@@ -54,6 +54,23 @@ describe('declarative sources in the asset config', () => {
     expect(isChainSource(config.metrics.price_usd.source!)).toBe(false);
   });
 
+  it('takes address arguments and a picked return value on contract_read, checked against the contracts', () => {
+    const SRC = 'source: { type: contract_read, contract: staking, function: totalSupply, decimals: 18 }';
+    const withSrc = (s: string) => {
+      const yaml = INGEST_ASSET_YAML.replace(SRC, s);
+      expect(yaml).not.toBe(INGEST_ASSET_YAML);
+      return yaml;
+    };
+    const { config } = parseAssetYaml(withSrc('source: { type: contract_read, contract: staking, function: locked, args: [token], returns: [int128, uint256], pick: 0, decimals: 18 }'));
+    expect(config.metrics.staked_supply.source).toMatchObject({ args: ['token'], returns: ['int128', 'uint256'], pick: 0 });
+    expect(contractNames(config.metrics.staked_supply.source!)).toEqual(['staking', 'token']);
+    expect(bad(withSrc('source: { type: contract_read, contract: staking, function: balanceOf, args: [nowhere], decimals: 18 }'))).toMatch(/staked_supply.*unknown contract "nowhere"/);
+    expect(bad(withSrc('source: { type: contract_read, contract: staking, function: locked, returns: [int128, uint256], decimals: 18 }'))).toMatch(/returns and pick go together/);
+    expect(bad(withSrc('source: { type: contract_read, contract: staking, function: locked, returns: [int128, uint256], pick: 2, decimals: 18 }'))).toMatch(/pick 2 is past the 2 return values/);
+    // A plain read keeps its old shape, so existing config hashes do not move.
+    expect(ingestAsset().config.metrics.staked_supply.source).not.toHaveProperty('args');
+  });
+
   it('rejects an unknown contract name', () => {
     expect(bad(INGEST_ASSET_YAML.replace('subtract_balances: [burn_sink]', 'subtract_balances: [nowhere]'))).toMatch(
       /effective_supply.*unknown contract "nowhere"/,

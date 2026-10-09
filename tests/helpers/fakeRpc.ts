@@ -57,7 +57,7 @@ export function fakeRpc(o: FakeRpcOptions): FakeRpc {
     async multicall(calls: ContractCall[], _blockNumber: bigint): Promise<CallResult[]> {
       stats.multicall++;
       return calls.map((c) => {
-        const hit = o.calls?.[callKey(c.address, c.functionName, c.args)];
+        const hit = o.calls?.[callKey(c.address, c.functionName, c.args) + (c.pick !== undefined ? `[${c.pick}]` : '')];
         if (hit === undefined) return { ok: false, error: `no fake result for ${callKey(c.address, c.functionName, c.args)}` };
         return hit instanceof Error ? { ok: false, error: hit.message } : { ok: true, value: hit };
       });

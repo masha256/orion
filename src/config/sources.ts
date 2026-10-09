@@ -32,6 +32,14 @@ export const SourceSchema = z.discriminatedUnion('type', [
     decimals: z.number().int().min(0).max(36).default(0),
     scale: z.number().default(1),
     offset: z.number().default(0),
+    /** Contract names passed as `address` arguments, e.g. `balanceOf(holder)`. Optional with no default (hashes). */
+    args: z.array(name).min(1).optional(),
+    /**
+     * For a function returning several values (a struct, e.g. veCRV `locked(address)` -> (int128 amount, uint256 end)):
+     * the full return types, and which one to read. `abi_type` is ignored when set. A negative value is refused.
+     */
+    returns: z.array(z.string().regex(/^u?int(8|16|32|64|128|256)$/)).min(2).optional(),
+    pick: z.number().int().min(0).optional(),
   }),
   z.strictObject({
     type: z.literal('transfer_flow'),
@@ -83,7 +91,7 @@ export function contractNames(s: SourceConfig): string[] {
     case 'erc20_supply':
       return [s.token, ...s.subtract_balances];
     case 'contract_read':
-      return [s.contract];
+      return [s.contract, ...(s.args ?? [])];
     case 'transfer_flow':
       return [s.token, s.to, ...s.from_allowlist, ...(s.count_from ?? []), ...(s.share_price ? [s.share_price.contract] : [])];
     default:
@@ -115,6 +123,12 @@ export function sourceIssues(asset: SourceBearingAsset, requiredMetrics: string[
     if (s.type === 'transfer_flow') {
       if (s.unit === 'usd' && s.price_coingecko_id === undefined) issues.push(`${where}: a transfer_flow with unit usd needs price_coingecko_id`);
       for (const c of s.count_from ?? []) if (!s.from_allowlist.includes(c)) issues.push(`${where}: count_from "${c}" is not in from_allowlist`);
+    }
+    if (s.type === 'contract_read' && (s.returns === undefined) !== (s.pick === undefined)) {
+      issues.push(`${where}: returns and pick go together`);
+    }
+    if (s.type === 'contract_read' && s.returns !== undefined && s.pick !== undefined && s.pick >= s.returns.length) {
+      issues.push(`${where}: pick ${s.pick} is past the ${s.returns.length} return values`);
     }
     if (isChainSource(s)) usesChain = true;
   };

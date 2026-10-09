@@ -39,8 +39,18 @@ export const chainLevelsSource: SourceHandler = {
         };
       }
       if (s.type === 'contract_read') {
-        const call = { address: ctx.contract(s.contract), signature: `function ${s.function}() view returns (${s.abi_type})`, functionName: s.function };
-        return { kind: 'read', call: slot(call, `${s.function}() on ${s.contract}`), decimals: s.decimals, scale: s.scale, offset: s.offset };
+        const args = s.args ?? [];
+        const inputs = args.map(() => 'address').join(',');
+        const returns = s.returns ?? [s.abi_type];
+        const call = {
+          address: ctx.contract(s.contract),
+          signature: `function ${s.function}(${inputs}) view returns (${returns.join(', ')})`,
+          functionName: s.function,
+          ...(args.length > 0 ? { args: args.map((a) => ctx.contract(a)) } : {}),
+          ...(s.pick !== undefined ? { pick: s.pick } : {}),
+        };
+        const label = `${s.function}(${args.join(',')}) on ${s.contract}`;
+        return { kind: 'read', call: slot(call, label), decimals: s.decimals, scale: s.scale, offset: s.offset };
       }
       throw new Error(`chain_levels cannot serve a ${s.type} source`);
     });
