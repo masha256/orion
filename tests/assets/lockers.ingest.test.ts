@@ -91,7 +91,7 @@ const sd = loadAsset(ROOT, 'sdcrv').config.contracts;
 const CASES: Case[] = [
   {
     id: 'cvxcrv',
-    hash: '5acb294ca9c5aed16c7bad63cb632d1c6bea612f03cdfb5a98967db5f992458b',
+    hash: 'efca414ec5491dde48a3096b22cd41bc50f9f75e24d9cc967e9db693b851d7b0',
     coingecko: 'convex-crv',
     price: 0.1392,
     llamaPrice: 0.1391,
@@ -108,7 +108,7 @@ const CASES: Case[] = [
   },
   {
     id: 'sdcrv',
-    hash: '702131c3f3218afa7714280037f2a73aad6b1dbbdfe5d4a4b11e17d7d1147710',
+    hash: '0602cb8ca960265c4d77ed799a2979e947987fd0e6fdcc9f4e4028c154a86fcd',
     coingecko: 'stake-dao-crv',
     price: 0.1884,
     llamaPrice: 0.1832,
@@ -164,7 +164,11 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
 
   it('plans one transfer scan per stream and a summed run rate', () => {
     const plan = buildPlan(config);
-    expect(plan.flowGroups.map((g) => g.members.map((m) => m.metricKey))).toEqual(flowIds.map((id) => [`flow_usd.${id}`]));
+    // One scan per holder-flow stream, then the report-only revenue and gross scans (never a holder flow).
+    const reportFlows = Object.entries(config.metrics).filter(([, d]) => d.type === 'flow' && d.monitor_only === true).map(([k]) => k);
+    const r = config.reporting!;
+    expect([...reportFlows].sort()).toEqual([...(r.revenue ?? []), ...(r.volume ?? [])].sort());
+    expect(plan.flowGroups.map((g) => g.members.map((m) => m.metricKey))).toEqual([...flowIds.map((id) => [`flow_usd.${id}`]), ...reportFlows.map((m) => [m])]);
     expect(plan.derived.map((r) => [r.metricKey, r.source.type === 'derived' ? r.source.params : null])).toEqual([
       ['revenue_run_rate_usd', { metrics: flowIds.map((id) => `flow_usd.${id}`), days: 91 }],
     ]);

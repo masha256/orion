@@ -137,4 +137,58 @@ const emissionRateAnnual: AdapterDef = {
   },
 };
 
-export const hypeAdapters: AdapterDef[] = [effectiveSupply, stakedSupply, emissionRateAnnual];
+/**
+ * The fund's buys, read from its own fills: USDC spent per completed UTC day on the HYPE spot pair (`pair`, e.g. "@107"),
+ * summed px x sz over buy fills. A daily series, written like an API flow (cursor, revision days, never a zero for a day
+ * the API did not return). The info API keeps about two weeks of fills, so history starts when this goes live: it is
+ * collected forward, next to the DefiLlama series the valuation reads, until it has a window of its own.
+ */
+const FILLS_PAGE = 2000;
+const fundBuysDaily: AdapterDef = {
+  name: 'hype.fund_buys_daily',
+  needsRpc: false,
+  async run(ctx, params) {
+    const user = ctx.contract(text(params, 'fund', 'assistance_fund'));
+    const pair = text(params, 'pair', '');
+    if (pair === '') throw new Error('params.pair (the spot pair the fund buys on, e.g. "@107") is required');
+    const days = number(params, 'days', 14);
+    const nowMs = Date.parse(ctx.nowIso);
+    const todayStart = Math.floor(nowMs / 86_400_000) * 86_400_000;
+    const sums = new Map<string, number>();
+    let fills = 0;
+    for (let d = days; d >= 1; d--) {
+      const start = todayStart - d * 86_400_000;
+      const end = start + 86_400_000;
+      let from = start;
+      // Pages of at most FILLS_PAGE fills, oldest first: continue from the last fill's time until the day is done.
+      for (let page = 0; page < 50; page++) {
+        const reply = await ctx.http.postJson(infoUrl(ctx, params), { type: 'userFillsByTime', user, startTime: from, endTime: end - 1, aggregateByTime: false });
+        if (!Array.isArray(reply)) throw new Error("userFillsByTime: the info API's reply is not a list");
+        const day = new Date(start).toISOString().slice(0, 10);
+        let lastTime = from;
+        for (const f of reply as Record<string, unknown>[]) {
+          const t = amount(f.time, 'a fill time');
+          lastTime = Math.max(lastTime, t);
+          if (f.coin !== pair || f.side !== 'B' || t < start || t >= end) continue;
+          sums.set(day, (sums.get(day) ?? 0) + amount(f.px, 'a fill price') * amount(f.sz, 'a fill size'));
+          fills++;
+        }
+        if (reply.length < FILLS_PAGE) break;
+        from = lastTime + 1;
+      }
+    }
+    // A day with no fill is a real zero only when the API returned something for the days around it: the fund buys
+    // every day, so an empty day inside the API's memory is written as 0 and an empty run fails the read.
+    if (fills === 0) throw new Error(`userFillsByTime: no ${pair} buy fill by the fund in the last ${days} days`);
+    const points: { day: string; value: number }[] = [];
+    for (let d = days; d >= 1; d--) {
+      const day = new Date(todayStart - d * 86_400_000).toISOString().slice(0, 10);
+      points.push({ day, value: sums.get(day) ?? 0 });
+    }
+    // Drop leading empty days: before the API's memory, not zero buys.
+    while (points.length > 0 && points[0].value === 0) points.shift();
+    return { kind: 'daily_series', points, detail: `hyperliquid userFillsByTime ${user} ${pair} buys` };
+  },
+};
+
+export const hypeAdapters: AdapterDef[] = [effectiveSupply, stakedSupply, emissionRateAnnual, fundBuysDaily];

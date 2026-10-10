@@ -78,7 +78,7 @@ describe('assets/vvv.yaml ingestion', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => b.sourceId).sort()).toEqual([
       'adapter:vvv.burn_history_tokens', 'adapter:vvv.diem_target_supply', 'adapter:vvv.staker_emission_share', 'adapter:vvv.staker_share_from_api',
-      'chain_levels', 'coingecko', 'defillama:venice:dailyHoldersRevenue',
+      'chain_levels', 'coingecko', 'defillama:venice:dailyHoldersRevenue', 'defillama:venice:dailyRevenue',
       `http_json:${VENICE}/diem_stats`, `http_json:${VENICE}/vvv_staking_yield`, `http_json:${VENICE}/vvv_stats`,
     ]);
     expect(plan.flowGroups).toHaveLength(1);

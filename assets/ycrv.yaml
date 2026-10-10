@@ -26,6 +26,9 @@ contracts:
   distributor: "0xb226c52eb411326cdb54824a88abafdaaff16d3d" # SingleTokenRewardDistributor: pays YBS stakers weekly
   voter: "0xF147b8125d2ef93FB6965Db97D6746952a133934" # CurveYCRVVoter: Yearn's veCRV (reference; not read)
   splitter: "0x05fc8174050f0a41deb7e562187911d45cd5e401" # YCRVSplitter (reference; not read)
+  crvusd: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E"
+  fee_burner: "0xb911fcce8d5afcec73e072653107260bb23c1ee8" # Yearn FeeBurner: auctions the vote incentives into crvUSD for the splitter
+  yearn_treasury: "0x044f9c86a0da637a235e83564215dc271bc0defc" # SimpleTreasuryVault: the splitter's 20 percent and the Receiver's 10
 
 ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
 
@@ -92,6 +95,32 @@ metrics:
     critical: true
     source: { type: derived, name: flow_annualized, params: { metric: flow_usd.fees, days: 91 } }
 
+  # Report-only (monitor_only, never a driver). Yearn's revenue on yCRV: the vault shares its treasury vault takes, 20
+  # percent from the splitter and the Receiver's 10 percent performance fee, about 28 percent of what the splitter mints
+  # (2026-10-10, 91 days: 129K of 459K yvcrvUSD). The gross is the crvUSD the splitter receives: Curve fees from the
+  # voter and the vote incentives FeeBurner sells (about 529K over 91 days).
+  flow_usd.yearn_revenue:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source:
+      type: transfer_flow
+      token: yv_crvusd
+      to: yearn_treasury
+      from_allowlist: [ splitter, receiver ]
+      unit: usd
+      price_coingecko_id: crvusd
+      share_price: { contract: yv_crvusd, function: pricePerShare, decimals: 18 }
+  flow_usd.yearn_gross:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: crvusd, to: splitter, from_allowlist: [ voter, fee_burner ], unit: usd, price_coingecko_id: crvusd }
+
 holder_flows:
   # Paid only to staked yCRV (the unstaked share goes to Yearn's treasury), so valued per staked token.
   - { id: fees, kind: fee_share, capture_rule: programmatic, recipient_base: staked, valued_per: recipients, metric: flow_usd.fees, window_days: 91 }
@@ -133,3 +162,10 @@ review_triggers:
     - { date: "2027-08-12", note: "CRV emission rate cut (97.2M to 81.7M CRV a year): vote incentives, most of yCRV's cash, track emissions" }
 
 peer_set: []
+
+# Report-only holder yield and growth (orion report yield). Paid in crvUSD vault shares, redeemable 1:1: no haircut.
+reporting:
+  window_days: 91
+  haircuts: { fees: 0 }
+  revenue: [ flow_usd.yearn_revenue ]
+  volume: [ flow_usd.yearn_gross ]

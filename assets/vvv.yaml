@@ -170,6 +170,16 @@ metrics:
     staleness_days: 90
     source: { type: contract_read, contract: staking, function: veniceEmissionsPercentageWhenLocked, decimals: 18, scale: -1, offset: 1 }
 
+  # Report-only (monitor_only, never a driver). Venice discloses revenue only now and then (revenue_run_rate_usd);
+  # DefiLlama's daily series is the labelled proxy between disclosures (Mike, 2026-10-10).
+  flow_usd.revenue_proxy:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 4
+    monitor_only: true
+    source: { type: defillama, slug: venice, data_type: dailyRevenue, backfill_days: 365 }
+
 holder_flows:
   - { id: burn, kind: burn, capture_rule: discretionary, recipient_base: all, metric: flow_usd.burn, window_days: 90 }
 
@@ -228,3 +238,10 @@ review_triggers:
     - { date: "2026-10-01", note: "Announced emission cut to 2.0M VVV per year" }
 
 peer_set: []
+
+# Report-only holder yield and growth (orion report yield). Burns: no haircut.
+reporting:
+  window_days: 90
+  haircuts: { burn: 0 }
+  revenue: [ flow_usd.revenue_proxy ]
+  revenue_disclosed: revenue_run_rate_usd

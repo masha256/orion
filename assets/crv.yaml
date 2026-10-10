@@ -15,6 +15,7 @@ contracts:
   locker_convex: "0x989AEb4d175e16225E39E87d0D97A3360524AD80" # Convex VoterProxy (cvxCRV)
   locker_stakedao: "0x52f541764E6e90eeBc5c21Ff570De0e2D63766B6" # StakeDAO CRV locker (sdCRV)
   locker_yearn: "0xF147b8125d2ef93FB6965Db97D6746952a133934" # Yearn CurveYCRVVoter (yCRV)
+  hooker: "0x9a9df35cd8e88565694ca6ad5093c236c7f6f69d" # Hooker: sends every protocol fee (crvUSD) to the FeeAllocator
 
 ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
 
@@ -121,6 +122,17 @@ metrics:
     cross_checks:
       - { tolerance_pct: 50, source: { type: http_json, url: "https://llama.box/curvedex/api/bribes/stats.json", path: claimsLast30Days.veCRVTotalClaimed, scale: 12.166666666666666 } }
 
+  # Report-only (monitor_only, never a driver): Curve's own revenue, every protocol fee in crvUSD as it enters the
+  # FeeAllocator (90 percent to veCRV, 10 to the treasury). Weekly, like the holder flow. Read 2026-10-10: 1.42M crvUSD
+  # over 91 days.
+  flow_usd.protocol_revenue:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: crvusd, to: fee_allocator, from_allowlist: [ hooker ], unit: usd, price_coingecko_id: crvusd }
+
 holder_flows:
   - { id: fees, kind: fee_share, capture_rule: programmatic, recipient_base: locked, metric: flow_usd.fees, window_days: 91 }
 
@@ -169,3 +181,13 @@ review_triggers:
     - { date: "2027-08-12", note: "CRV emission rate cut, epoch 7 (22:17Z): 97.2M to 81.7M CRV a year" }
 
 peer_set: []
+
+# Report-only holder yield and growth (orion report yield): no driver, no grade, no signal. Haircuts are the fraction a
+# holder loses turning a payout into cash, sized from pool depth (2026-10-10): crvUSD fees none; vote incentives 3
+# percent (a basket of mostly long-tail tokens, sold by the claimer).
+reporting:
+  window_days: 91
+  haircuts: { fees: 0 }
+  extra_cash:
+    - { id: vote_incentives, metric: vote_incentive_run_rate_usd, haircut: 0.03, recipient_base: locked }
+  revenue: [ flow_usd.protocol_revenue ]

@@ -16,9 +16,46 @@ const MetricDefSchema = z.strictObject({
   cross_checks: z.array(CrossCheckSchema).optional(),
   /**
    * Fetched and stored daily but kept out of the valuation: not a driver, so its staleness or a failed read never
-   * touches the grade or the signal (e.g. each liquid locker's share of veCRV). Optional with no default (hashes).
+   * touches the grade or the signal (e.g. each liquid locker's share of veCRV; a protocol's revenue flow, read only by
+   * the report). An unlisted sender or a failing source on it raises no anomaly, so it never wakes the agent.
+   * Optional with no default (hashes).
    */
   monitor_only: z.boolean().optional(),
+});
+
+/**
+ * Report-only holder-yield and growth series (no driver, no grade, no signal): the holder flows in three buckets with a
+ * haircut each, yields on price, period-over-period growth, and the protocol's own revenue. Optional with no default,
+ * so an asset without it keeps its config hash.
+ */
+const ReportingSchema = z.strictObject({
+  /** The trailing window for every series, and the length of each half of a growth comparison. */
+  window_days: z.number().int().min(7).max(365),
+  /**
+   * Per holder flow id: the fraction lost turning the flow into a holder's cash. A cash payout's slippage, sized from
+   * pool depth; a buy-and-hold's overhang. A burn has none (0).
+   */
+  haircuts: z.record(z.string(), z.number().min(0).max(0.5)),
+  /** Flow metrics whose sum is the protocol's own revenue (the cut it keeps, not what it passes through). */
+  revenue: z.array(z.string()).min(1).optional(),
+  /** Flow metrics whose sum is the gross the protocol handles (e.g. the CRV a locker collects before its cut). */
+  volume: z.array(z.string()).min(1).optional(),
+  /** A level metric entered from disclosures (VVV's revenue run rate): its growth between disclosures. */
+  revenue_disclosed: z.string().optional(),
+  /**
+   * Cash to holders that the valuation keeps outside holder_flows (CRV's vote incentives, a component): an annual run-rate
+   * level metric, its haircut, and whose tokens receive it.
+   */
+  extra_cash: z
+    .array(
+      z.strictObject({
+        id: z.string().regex(/^[a-z0-9_]+$/),
+        metric: z.string(),
+        haircut: z.number().min(0).max(0.5),
+        recipient_base: z.enum(['all', 'staked', 'locked']),
+      }),
+    )
+    .optional(),
 });
 
 const HolderFlowSchema = z.strictObject({
@@ -129,6 +166,7 @@ export const AssetConfigSchema = z
       .default([]),
     review_triggers: ReviewTriggersSchema.default({}),
     peer_set: z.array(z.string()).default([]),
+    reporting: ReportingSchema.optional(),
   })
   .superRefine((a, ctx) => {
     const issue = (message: string) => ctx.addIssue({ code: 'custom', message });
@@ -157,7 +195,7 @@ export const AssetConfigSchema = z
     const valuationRefs = new Set<string>([...a.holder_flows.map((f) => f.metric), ...a.total_return_variants.map((v) => v.yield_multiplier_metric)]);
     for (const [key, def] of Object.entries(a.metrics)) {
       if (def.monitor_only !== true) continue;
-      if (def.type !== 'level') issue(`metrics: "${key}" is monitor_only, which is for level metrics`);
+      if (def.type !== 'level' && def.type !== 'flow') issue(`metrics: "${key}" is monitor_only, which is for level and flow metrics`);
       if (def.critical) issue(`metrics: "${key}" is monitor_only and cannot be critical`);
       if (standardKeys.has(key) || valuationRefs.has(key)) issue(`metrics: "${key}" is used by the valuation and cannot be monitor_only`);
     }
@@ -207,6 +245,28 @@ export const AssetConfigSchema = z
       }
     }
 
+    if (a.reporting) {
+      const r = a.reporting;
+      for (const f of a.holder_flows) if (r.haircuts[f.id] === undefined) issue(`reporting: haircuts has no entry for holder flow "${f.id}"`);
+      for (const id of Object.keys(r.haircuts)) {
+        const f = a.holder_flows.find((x) => x.id === id);
+        if (!f) issue(`reporting: haircuts names "${id}", which is not a holder flow`);
+        else if (f.kind === 'burn' && r.haircuts[id] !== 0) issue(`reporting: "${id}" is a burn, whose haircut is 0`);
+      }
+      for (const field of ['revenue', 'volume'] as const) {
+        const list = r[field] ?? [];
+        if (new Set(list).size !== list.length) issue(`reporting: ${field} lists a metric twice`);
+        for (const m of list) if (a.metrics[m]?.type !== 'flow') issue(`reporting: ${field} "${m}" is not a flow metric`);
+      }
+      for (const x of r.extra_cash ?? []) {
+        if (a.metrics[x.metric]?.type !== 'level') issue(`reporting: extra_cash "${x.id}" must reference a level metric`);
+        if (a.holder_flows.some((f) => f.id === x.id)) issue(`reporting: extra_cash id "${x.id}" is also a holder flow id`);
+      }
+      if (r.revenue_disclosed !== undefined && a.metrics[r.revenue_disclosed]?.type !== 'level') {
+        issue(`reporting: revenue_disclosed "${r.revenue_disclosed}" is not a level metric`);
+      }
+    }
+
     for (const message of sourceIssues(a, required)) issue(message);
     for (const key of ['driver_deviation_pct', 'provisional_move_pct', 'revenue_stale_move_pct'] as const) {
       const v = a.review_triggers[key];
@@ -223,6 +283,7 @@ export const AssetConfigSchema = z
 
 export type AssetConfig = z.infer<typeof AssetConfigSchema>;
 export type MetricDef = AssetConfig['metrics'][string];
+export type ReportingDef = NonNullable<AssetConfig['reporting']>;
 export type HolderFlowDef = AssetConfig['holder_flows'][number];
 export type ModuleInstanceDef = AssetConfig['modules'][number];
 export type FlowKind = HolderFlowDef['kind'];

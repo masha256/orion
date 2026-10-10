@@ -93,6 +93,26 @@ metrics:
 # burn, chosen by the user on 2026-09-24: the fund's HYPE is burned per the docs and behaves so as long as nobody can spend it;
 # the engine shrinks the supply forecast by the fund's purchases. programmatic: the split is protocol code, changed only by
 # network upgrade or validator vote.
+
+  # Report-only (monitor_only, never a driver). The fund's buys read from Hyperliquid itself (its own fills on the HYPE
+  # spot pair), next to the DefiLlama series the valuation reads. The info API keeps about two weeks of fills, so this
+  # series starts the day it goes live and grows forward.
+  flow_usd.af_buys_direct:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 4
+    monitor_only: true
+    source: { type: adapter, name: hype.fund_buys_daily, params: { fund: assistance_fund, pair: "@107", days: 14 } }
+  # Protocol revenue (all fees Hyperliquid keeps), a labelled DefiLlama proxy until a direct read is built.
+  flow_usd.revenue_proxy:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 4
+    monitor_only: true
+    source: { type: defillama, slug: hyperliquid, data_type: dailyRevenue, backfill_days: 365 }
+
 holder_flows:
   - { id: af_buyback, kind: burn, capture_rule: programmatic, recipient_base: all, metric: flow_usd.af_buyback, window_days: 90 }
 
@@ -132,3 +152,10 @@ review_triggers:
   provisional_move_pct: 25
 
 peer_set: []
+
+# Report-only holder yield and growth (orion report yield). The fund buys and holds, but stays a burn here as in the
+# valuation (Mike, 2026-10-10: keep the two layers in sync), so no haircut.
+reporting:
+  window_days: 90
+  haircuts: { af_buyback: 0 }
+  revenue: [ flow_usd.revenue_proxy ]

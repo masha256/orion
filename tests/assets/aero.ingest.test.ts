@@ -77,8 +77,8 @@ describe('assets/aero.yaml', () => {
     ]);
     // Every metric has a source: a bootstrap run has nothing to research on this asset.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
-    // Pinned on 2026-09-23. A deliberate edit of assets/aero.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/aero.yaml`, 'utf8')).hash).toBe('67377d966848eb4de629c354e38a1f8ecb5d8b523d68f9255680a3df4a5e3269');
+    // Pinned on 2026-10-10 with the report-only block. A deliberate edit of assets/aero.yaml moves it; update the pin on purpose.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/aero.yaml`, 'utf8')).hash).toBe('298508ec2d10fd881157f7931003055e090155685979ae96267d7accfb265fe3');
   });
 
   it('plans the source map of the spec: no transfer scan, one API-series flow, one derived level, two adapters', () => {

@@ -62,6 +62,7 @@ function world() {
       [callKey(C.ybs, 'totalSupply')]: 63_328_341n * E18,
       [callKey(C.yv_crvusd, 'decimals')]: 18n,
       [callKey(C.yv_crvusd, 'pricePerShare')]: PPS,
+      [callKey(C.crvusd, 'decimals')]: 18n, // the report-only gross scan
     },
     logs: saturdays().map((iso, i) => ({ blockNumber: blockAt(iso), logIndex: 0, txHash: `0x${i.toString(16)}`, from: C.receiver, value: PAYOUT * E18 })),
   });
@@ -91,8 +92,8 @@ describe('assets/ycrv.yaml', () => {
     ]);
     expect(requiredExtraMetrics(config)).toEqual([]);
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
-    // Pinned on 2026-10-09 when the bands were written. A deliberate edit of assets/ycrv.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('4731ed9ee1830351db217273eed23eda8d4c20acf48b5a09fd1e4eafac20cbc2');
+    // Pinned on 2026-10-10 with the report-only block. A deliberate edit of assets/ycrv.yaml moves it; update the pin on purpose.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('65db27caea4be88f0a4859b47166f42fa2bedb01a2d361d5e20c68bac2e0aaff');
   });
 
   it('plans one transfer scan of vault shares, converted at the share price', () => {
@@ -105,6 +106,9 @@ describe('assets/ycrv.yaml', () => {
     ]);
     expect(plan.flowGroups.map((g) => g.members)).toEqual([
       [{ metricKey: 'flow_usd.fees', unit: 'usd', countFrom: [C.receiver.toLowerCase()], priceCoingeckoId: 'crvusd', sharePrice: { address: C.yv_crvusd.toLowerCase(), functionName: 'pricePerShare', decimals: 18 } }],
+      // Report-only: Yearn's revenue (vault shares into its treasury vault) and the gross crvUSD into the splitter.
+      [{ metricKey: 'flow_usd.yearn_revenue', unit: 'usd', countFrom: [C.splitter.toLowerCase(), C.receiver.toLowerCase()], priceCoingeckoId: 'crvusd', sharePrice: { address: C.yv_crvusd.toLowerCase(), functionName: 'pricePerShare', decimals: 18 } }],
+      [{ metricKey: 'flow_usd.yearn_gross', unit: 'usd', countFrom: [C.voter.toLowerCase(), C.fee_burner.toLowerCase()], priceCoingeckoId: 'crvusd', sharePrice: null }],
     ]);
     expect(plan.derived.map((r) => r.metricKey)).toEqual(['revenue_run_rate_usd']);
   });

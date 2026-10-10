@@ -28,6 +28,8 @@ contracts:
   cvx_mint: "0x0000000000000000000000000000000000000000" # CVX minted on CRV rewards arrives from the zero address
   booster: "0xF403C135812408BFbE8713b5A23a04b3D48AAE31" # reference; not read
   voter_proxy: "0x989AEb4d175e16225E39E87d0D97A3360524AD80" # Convex's veCRV (reference; not read)
+  cvx_reward_pool: "0xCF50b810E57Ac33B91dCF525C6ddd9881B139332" # cvxRewardPool: CVX stakers' 4.5 percent of the Booster's CRV
+  convex_treasury: "0x1389388d01708118b497f59521f6943be2541bb7" # TreasuryFunds: the Booster's platformFee (2 percent)
 
 ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
 
@@ -104,6 +106,39 @@ metrics:
     critical: true
     source: { type: derived, name: flow_annualized, params: { metrics: [ flow_usd.fees, flow_usd.crv, flow_usd.cvx ], days: 91 } }
 
+  # Report-only (monitor_only, never a driver). Convex's revenue is the cut its Booster keeps of the CRV it earns (getters
+  # read 2026-10-10, out of 10000: lockIncentive 1000 to cvxCRV stakers, stakerIncentive 450 to CVX stakers, platformFee
+  # 200 to the treasury; earmarkIncentive 50 goes to callers and is not revenue). Measured outflows match the getters to
+  # four decimals. The gross is the CRV the VoterProxy sends the Booster (about 16.4M over 91 days).
+  flow_usd.convex_gross_crv:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: crv, to: booster, from_allowlist: [ voter_proxy ], unit: usd, price_coingecko_id: curve-dao-token }
+  flow_usd.convex_rev_cvxcrv:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: crv, to: base_reward_pool, from_allowlist: [ booster ], unit: usd, price_coingecko_id: curve-dao-token }
+  flow_usd.convex_rev_cvx:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: crv, to: cvx_reward_pool, from_allowlist: [ booster ], unit: usd, price_coingecko_id: curve-dao-token }
+  flow_usd.convex_rev_treasury:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: crv, to: convex_treasury, from_allowlist: [ booster ], unit: usd, price_coingecko_id: curve-dao-token }
+
 holder_flows:
   # All three are paid only to stakers, so each is valued per staked token. CVX is a treasury program Convex can end,
   # so it is discretionary: its own discount premium and capture path carry its wind-down.
@@ -151,3 +186,11 @@ review_triggers:
     - { date: "2027-08-12", note: "CRV emission rate cut (97.2M to 81.7M CRV a year): the CRV stream tracks emissions" }
 
 peer_set: []
+
+# Report-only holder yield and growth (orion report yield). Haircuts from pool depth (2026-10-10): crvUSD none; CRV 1
+# percent (a day's CRV, about $5K, moves the TriCRV pool 0.6 percent; a week's 4.4); CVX 0.5 (the CVX/ETH pool is deep).
+reporting:
+  window_days: 91
+  haircuts: { fees: 0, crv: 0.01, cvx: 0.005 }
+  revenue: [ flow_usd.convex_rev_cvxcrv, flow_usd.convex_rev_cvx, flow_usd.convex_rev_treasury ]
+  volume: [ flow_usd.convex_gross_crv ]

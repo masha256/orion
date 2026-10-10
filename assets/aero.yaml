@@ -130,3 +130,9 @@ review_triggers:
   provisional_move_pct: 25
 
 peer_set: []
+
+# Report-only holder yield and growth (orion report yield). AERO's fees arrive as the pools' own tokens, many long-tail:
+# 2 percent. Protocol revenue waits for the post-migration rebuild (reminder 2026-11-05).
+reporting:
+  window_days: 90
+  haircuts: { fees: 0.02 }

@@ -101,7 +101,7 @@ export function contractNames(s: SourceConfig): string[] {
 
 const LEVEL_PRIMARY: ReadonlySet<string> = new Set(['coingecko', 'http_json', 'erc20_supply', 'contract_read', 'adapter', 'derived', 'constant']);
 const LEVEL_CHECK: ReadonlySet<string> = new Set(['coingecko', 'http_json', 'erc20_supply', 'contract_read', 'adapter']);
-const FLOW_PRIMARY: ReadonlySet<string> = new Set(['transfer_flow', 'defillama']);
+const FLOW_PRIMARY: ReadonlySet<string> = new Set(['transfer_flow', 'defillama', 'adapter']);
 const FLOW_CHECK: ReadonlySet<string> = new Set(['defillama', 'adapter']);
 
 export interface SourceBearingAsset {

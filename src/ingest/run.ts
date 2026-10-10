@@ -78,10 +78,15 @@ function markFailed(outcome: SourceOutcome, text: string): void {
   outcome.error = outcome.error === null ? text : `${outcome.error}; ${text}`;
 }
 
-/** An unlisted sender degrades the group's critical metrics; with none critical, its first metric. */
+/**
+ * An unlisted sender degrades the group's critical metrics; with none critical, its first metric. A group that feeds only
+ * monitor-only metrics (report series such as protocol revenue) raises nothing: its senders are not a valuation input.
+ */
 function unlistedAnomalyMetrics(loaded: LoadedAsset, group: FlowGroup): string[] {
-  const critical = group.members.map((m) => m.metricKey).filter((k) => loaded.config.metrics[k].critical);
-  return critical.length > 0 ? critical : [group.members[0].metricKey];
+  const metrics = group.members.map((m) => m.metricKey).filter((k) => loaded.config.metrics[k].monitor_only !== true);
+  if (metrics.length === 0) return [];
+  const critical = metrics.filter((k) => loaded.config.metrics[k].critical);
+  return critical.length > 0 ? critical : [metrics[0]];
 }
 
 /**
@@ -198,12 +203,12 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
         markFailed(outcome, `${r.metricKey}: ${result.error}`);
         continue;
       }
-      if (result.value.kind === 'daily_series' && r.source.type === 'defillama' && asset.metrics[r.metricKey].type === 'flow') {
+      if (result.value.kind === 'daily_series' && (r.source.type === 'defillama' || r.source.type === 'adapter') && asset.metrics[r.metricKey].type === 'flow') {
         const def = asset.metrics[r.metricKey];
         try {
           const flow = writeApiFlow({
             db, asset, metricKey: r.metricKey, scanKey: `${batch.sourceId}>${r.metricKey}`, points: result.value.points, detail: result.value.detail, now,
-            backfillDays: opts.backfillDays ?? r.source.backfill_days ?? DEFAULT_API_FLOW_BACKFILL_DAYS, rescan: opts.backfillDays !== undefined,
+            backfillDays: opts.backfillDays ?? (r.source.type === 'defillama' ? r.source.backfill_days : undefined) ?? DEFAULT_API_FLOW_BACKFILL_DAYS, rescan: opts.backfillDays !== undefined,
             adopt: opts.adopt ?? false, dryRun, outcome, validate: (value) => validateReading(def, value),
           });
           written.push(...flow.written);
@@ -397,7 +402,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: ${name} "days" must be a positive integer`);
     }
     // A derivation carries the provenance of its input: an API series' flow gives an api level, a transfer scan's an onchain one.
-    const apiInputs = flowMetrics.filter((m) => asset.metrics[m].source?.type === 'defillama').length;
+    const apiInputs = flowMetrics.filter((m) => ['defillama', 'adapter'].includes(asset.metrics[m].source?.type ?? '')).length;
     if (apiInputs > 0 && apiInputs < flowMetrics.length) {
       throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: ${name} cannot sum API-series and on-chain flows`);
     }
@@ -448,9 +453,17 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     }
   }
 
-  // Failure streaks: this run plus the two previous attempts of the same source.
+  // Failure streaks: this run plus the two previous attempts of the same source. A source that feeds only monitor-only
+  // metrics raises none: it is report data, and the alert would wake the agent over something the valuation never reads.
+  const metricsOfSource = new Map<string, string[]>();
+  for (const b of plan.batches) metricsOfSource.set(b.sourceId, [...(metricsOfSource.get(b.sourceId) ?? []), ...b.requests.map((r) => r.metricKey)]);
+  for (const g of plan.flowGroups) metricsOfSource.set(g.sourceId, [...(metricsOfSource.get(g.sourceId) ?? []), ...g.members.map((m) => m.metricKey)]);
+  const monitorOnly = (id: string) => {
+    const keys = metricsOfSource.get(id) ?? [];
+    return keys.length > 0 && keys.every((k) => asset.metrics[k]?.monitor_only === true);
+  };
   for (const outcome of outcomes.values()) {
-    if (outcome.status !== 'failed') continue;
+    if (outcome.status !== 'failed' || monitorOnly(outcome.sourceId)) continue;
     const previous = recentSourceStatuses(db, asset.id, outcome.sourceId, 2);
     if (previous.length === 2 && previous.every((s) => s === 'failed')) {
       raise({

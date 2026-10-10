@@ -41,7 +41,18 @@ function world() {
     'https://api.llama.fi/summary/fees/hyperliquid': chart(),
     // The info API answers by request type (and, for a clearinghouse state, by address); recorded 2026-09-24 and 2026-10-02.
     [INFO]: (_url: string, body?: unknown) => {
-      const { type, user } = body as { type: string; user?: string };
+      const { type, user, startTime } = body as { type: string; user?: string; startTime?: number };
+      // The fund's fills: two buys a day on @107 (10 and 20 HYPE at 50), plus a sell and another pair, which do not count.
+      // The API keeps about two weeks, so days before 2026-09-14 have none.
+      if (type === 'userFillsByTime') {
+        if (startTime! < Date.parse('2026-09-14T00:00:00Z')) return [];
+        return [
+          { coin: '@107', side: 'B', px: '50', sz: '10', time: startTime! + 1000 },
+          { coin: '@107', side: 'B', px: '50', sz: '20', time: startTime! + 2000 },
+          { coin: '@107', side: 'A', px: '50', sz: '99', time: startTime! + 3000 },
+          { coin: '@1', side: 'B', px: '1', sz: '99', time: startTime! + 4000 },
+        ];
+      }
       const reply = fixtures[user === undefined ? type : `${type}:${user}`];
       if (reply === undefined) throw new Error(`no fixture for ${type} ${user ?? ''}`);
       return structuredClone(reply);
@@ -73,8 +84,8 @@ describe('assets/hype.yaml', () => {
     // One manual metric: the staker share, 1.0 by construction, which the bootstrap researches and the user confirms.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual(['staker_emission_share']);
     expect(validateAssetModules(config)).toEqual([]);
-    // Pinned on 2026-10-03 with the calibration bands. A deliberate edit of assets/hype.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('6c2fe5c099988ca13cae04cc78c81e71991e8b770096defe38048d2a302cc80d');
+    // Pinned on 2026-10-10 with the report-only block. A deliberate edit of assets/hype.yaml moves it; update the pin on purpose.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('fddacccfb05120de845162ce9c7c8c42c360d2ca08e63331c6dbca84bbce21e7');
   });
 
   it('plans the source map of the spec: no chain, three adapters, one API-series flow, one derived level', () => {
@@ -86,6 +97,8 @@ describe('assets/hype.yaml', () => {
       ['adapter:hype.staked_supply', ['primary:staked_supply']],
       ['adapter:hype.emission_rate_annual', ['primary:emission_rate_annual']],
       ['defillama:hyperliquid:dailyHoldersRevenue', ['primary:flow_usd.af_buyback']],
+      ['adapter:hype.fund_buys_daily', ['primary:flow_usd.af_buys_direct']],
+      ['defillama:hyperliquid:dailyRevenue', ['primary:flow_usd.revenue_proxy']],
     ]);
     expect(plan.flowGroups).toEqual([]);
     expect(plan.derived.map((r) => r.metricKey)).toEqual(['revenue_run_rate_usd']);
@@ -120,8 +133,16 @@ describe('assets/hype.yaml', () => {
     expect(checked).toHaveLength(1);
     expect(checked[0]).toMatchObject({ metricKey: 'price_usd', ok: true });
     // Five posts: the spot meta, one clearinghouse state per subtracted address, and the validators once (the stake and emission
-    // adapters share the cached reply).
-    expect(w.http.calls.filter((c) => c.url === INFO).map((c) => (c.body as { type: string }).type).sort()).toEqual(['spotClearinghouseState', 'spotClearinghouseState', 'spotClearinghouseState', 'spotMetaAndAssetCtxs', 'validatorSummaries']);
+    // adapters share the cached reply); plus the report-only fills, one per day of the 14.
+    const posts = w.http.calls.filter((c) => c.url === INFO).map((c) => (c.body as { type: string }).type);
+    expect(posts.filter((t) => t !== 'userFillsByTime').sort()).toEqual(['spotClearinghouseState', 'spotClearinghouseState', 'spotClearinghouseState', 'spotMetaAndAssetCtxs', 'validatorSummaries']);
+    expect(posts.filter((t) => t === 'userFillsByTime')).toHaveLength(14);
+    // The direct series: 1,500 USD of buys a day (30 HYPE at 50) from 2026-09-14, the first day the fills reach, to the last
+    // complete day; the sell and the other pair are left out, and the days before the API's memory are not written as zero.
+    const direct = listActiveObservations(w.db, 'hype', 'flow_usd.af_buys_direct');
+    expect(direct.map((o) => o.value)).toEqual(Array(10).fill(1500));
+    expect(direct[0].observedAt).toBe('2026-09-15T00:00:00.000Z');
+    expect(direct[0].source).toBe('api');
 
     createAssumptionSet(w.db, { assetId: 'hype', author: 'user', rationale: 'wiring', values: assumptions(), createdAt: NOW.toISOString() });
     const withoutShare = runValuation(w.db, loadAsset(ROOT, 'hype'), NOW);

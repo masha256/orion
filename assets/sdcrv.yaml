@@ -25,6 +25,11 @@ contracts:
   merkle_stash: "0x03e34b085c52985f6a5d27243f20c84bddc01db4" # MultiMerkleStash: stakers claim the vote incentives here
   botmarket: "0xadfbfd06633eb92fc9b58b3152fe92b0a24eb1ff" # Botmarket: sells bribe tokens into sdCRV, funds the stash
   locker: "0x52f541764E6e90eeBc5c21Ff570De0e2D63766B6" # StakeDAO's veCRV (reference; not read)
+  sd_accountant: "0x93b4b9bd266ffa8af68e39edfa8cfe2a62011ce0" # Accountant: takes getProtocolFeePercent (16.5 percent) of strategy CRV
+  sd_staking_v2_fee: "0x239fe53f10fe77e9c6ed896e3ae4ab8e43eed082" # StakingV2FeeRecipient: older strategies' fee
+  sd_fee_receiver: "0x60136fefe23d269af41ab72de483d186dc4318d6" # FeeReceiver: splits the fee to veSDT, treasury, and sdCRV (accumulator)
+  sd_liquidity_fee: "0x576d7ad8eae92d9a972104aac56c15255ddbe080" # LiquidityFeeRecipient: 10 percent of the crvUSD fees
+  sd_treasury: "0x9ebbb3d59d53d6ad3fa5464f36c2e84abb7cf5c1" # TreasuryRecipient: 5 percent of the crvUSD fees (and part of the CRV fee)
 
 ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
 
@@ -104,6 +109,39 @@ metrics:
     critical: true
     source: { type: derived, name: flow_annualized, params: { metrics: [ flow_usd.fees, flow_usd.crv, flow_usd.bribes ], days: 91 } }
 
+  # Report-only (monitor_only, never a driver). StakeDAO's revenue: the 16.5 percent its Accountant keeps of strategy CRV
+  # (sent on to the FeeReceiver, which splits it about evenly between veSDT, the treasury and sdCRV), plus the 15 percent
+  # of Curve's crvUSD fees the accumulator keeps (10 liquidity, 5 treasury). The gross is the CRV the locker passes to
+  # the Accountant (about 5.4M over 91 days).
+  flow_usd.sd_gross_crv:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: crv, to: sd_accountant, from_allowlist: [ locker ], unit: usd, price_coingecko_id: curve-dao-token }
+  flow_usd.sd_rev_crv:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: crv, to: sd_fee_receiver, from_allowlist: [ sd_accountant, sd_staking_v2_fee ], unit: usd, price_coingecko_id: curve-dao-token }
+  flow_usd.sd_rev_fees_liquidity:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: crvusd, to: sd_liquidity_fee, from_allowlist: [ accumulator ], unit: usd, price_coingecko_id: crvusd }
+  flow_usd.sd_rev_fees_treasury:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: crvusd, to: sd_treasury, from_allowlist: [ accumulator ], unit: usd, price_coingecko_id: crvusd }
+
 holder_flows:
   - { id: fees, kind: fee_share, capture_rule: programmatic, recipient_base: staked, valued_per: recipients, metric: flow_usd.fees, window_days: 91 }
   - { id: crv, kind: fee_share, capture_rule: programmatic, recipient_base: staked, valued_per: recipients, metric: flow_usd.crv, window_days: 91 }
@@ -147,3 +185,12 @@ review_triggers:
     - { date: "2027-08-12", note: "CRV emission rate cut (97.2M to 81.7M CRV a year): vote incentives, most of sdCRV's cash, track emissions" }
 
 peer_set: []
+
+# Report-only holder yield and growth (orion report yield). Haircuts from pool depth (2026-10-10): crvUSD none; CRV 0.5
+# percent (about $600 a day); the vote incentives are paid in sdCRV itself, whose one real pool (sdCRV/CRV, $1.5M) loses
+# 1.3 percent on a day's payout and 9 on a week's, plus 0.5 more selling the CRV: 5 percent.
+reporting:
+  window_days: 91
+  haircuts: { fees: 0, crv: 0.005, bribes: 0.05 }
+  revenue: [ flow_usd.sd_rev_crv, flow_usd.sd_rev_fees_liquidity, flow_usd.sd_rev_fees_treasury ]
+  volume: [ flow_usd.sd_gross_crv ]

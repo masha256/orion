@@ -1,0 +1,104 @@
+import { describe, expect, it } from 'vitest';
+import { parseAssetYaml } from '../../src/config/load.js';
+import { addDays } from '../../src/ingest/time.js';
+import { growthOf, holderYieldReport, type ReportLevels } from '../../src/report/holderYield.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+const series = (first: string, values: number[]) => new Map(values.map((v, i) => [addDays(first, i), v] as const));
+const flat = (first: string, n: number, v: number) => series(first, Array.from({ length: n }, () => v));
+
+describe('growthOf', () => {
+  it('compares the latest window with the one before it and annualizes the ratio', () => {
+    // 10 days at 1, then 10 days at 2: the latest 10-day window is double the prior one.
+    const daily = new Map([['f', series('2026-01-01', [...Array(10).fill(1), ...Array(10).fill(2)])]]);
+    const g = growthOf(daily, ['f'], '2026-01-20', 10);
+    expect(g.current).toBe(20);
+    expect(g.prior).toBe(10);
+    expect(g.change).toBeCloseTo(1);
+    expect(g.annualized).toBeCloseTo(2 ** 36.5 - 1);
+  });
+  it('is null until both windows are complete, and n/m when a window is zero', () => {
+    const daily = new Map([['f', flat('2026-01-01', 15, 1)]]);
+    expect(growthOf(daily, ['f'], '2026-01-15', 10).annualized).toBeNull();
+    const zero = new Map([['f', series('2026-01-01', [...Array(10).fill(0), ...Array(10).fill(3)])]]);
+    const g = growthOf(zero, ['f'], '2026-01-20', 10);
+    expect(g.annualized).toBeNull();
+    expect(g.note).toMatch(/not meaningful/);
+  });
+  it('sums several metrics, each net of its weight', () => {
+    const daily = new Map([
+      ['a', flat('2026-01-01', 20, 1)],
+      ['b', series('2026-01-01', [...Array(10).fill(0), ...Array(10).fill(1)])],
+    ]);
+    // prior: a 10 + b 0 = 10; current: a 10 + 0.5 * b 10 = 15.
+    const g = growthOf(daily, ['a', 'b'], '2026-01-20', 10, [1, 0.5]);
+    expect(g.prior).toBe(10);
+    expect(g.current).toBe(15);
+  });
+});
+
+/** The HYPE fixture with a reporting block: one burn-tagged flow plus a revenue proxy. */
+const hypeYaml = readFileSync(fileURLToPath(new URL('../fixtures/hype.yaml', import.meta.url)), 'utf8');
+
+describe('holderYieldReport', () => {
+  const levels: ReportLevels = {
+    price: 2, effectiveSupply: 1000, stakedSupply: 400, lockedSupply: null, emissionRateAnnual: 50, extra: {}, disclosed: [],
+  };
+
+  it('puts each holder flow in the bucket its kind names, and derives the yields from them', () => {
+    const asset = parseAssetYaml(`${hypeYaml}\nreporting: { window_days: 10, haircuts: { buyback: 0 } }\n`).config;
+    const day = '2026-01-20';
+    const flowMetric = asset.holder_flows[0].metric;
+    const daily = new Map([[flowMetric, flat('2026-01-01', 20, 1)]]);
+    const r = holderYieldReport({ asset, day, daily, levels });
+    expect(r.flows[0].bucket).toBe(asset.holder_flows[0].kind === 'burn' ? 'burn' : asset.holder_flows[0].kind === 'buy_and_hold' ? 'hold' : 'cash');
+    // 10 per window of 10 days: 365 a year, on a market cap of 2000.
+    expect(r.flows[0].gross).toBeCloseTo(365);
+    const y = r.yields;
+    expect(y.shareholder).toBeCloseTo(365 / 2000);
+    expect(y.dilution).toBeCloseTo(0.05);
+    expect(y.netShareholder).toBeCloseTo(365 / 2000 - 0.05);
+    expect(y.multiple).toBeCloseTo(2000 / 365);
+    // Flat flow: growth 0, so the trailing PEG is not meaningful.
+    expect(r.holderFlowGrowth.annualized).toBeCloseTo(0);
+    expect(y.pegTrailing).toBeNull();
+  });
+
+  it('nets a haircut out of the yield and the growth, and reports the PEG when growth is positive', () => {
+    const base = parseAssetYaml(hypeYaml).config;
+    const id = base.holder_flows[0].id;
+    const yaml = hypeYaml.replace('kind: buy_and_hold', 'kind: fee_share');
+    const asset = parseAssetYaml(`${yaml}\nreporting: { window_days: 10, haircuts: { ${id}: 0.1 } }\n`).config;
+    const flowMetric = asset.holder_flows[0].metric;
+    const daily = new Map([[flowMetric, series('2026-01-01', [...Array(10).fill(1), ...Array(10).fill(1.1)])]]);
+    const r = holderYieldReport({ asset, day: '2026-01-20', daily, levels });
+    expect(r.flows[0].bucket).toBe('cash');
+    expect(r.flows[0].net).toBeCloseTo(r.flows[0].gross! * 0.9);
+    expect(r.yields.buyback).toBe(0);
+    expect(r.yields.cash).toBeCloseTo(r.flows[0].net! / (recipientsOf(asset.holder_flows[0].recipient_base) * 2));
+    expect(r.holderFlowGrowth.change).toBeCloseTo(0.1);
+    expect(r.yields.pegTrailing).toBeCloseTo(r.yields.multiple! / (r.holderFlowGrowth.annualized! * 100));
+  });
+
+  it('refuses a reporting block that misses a holder flow, names a stranger, or haircuts a burn', () => {
+    const id = parseAssetYaml(hypeYaml).config.holder_flows[0].id;
+    expect(() => parseAssetYaml(`${hypeYaml}\nreporting: { window_days: 10, haircuts: {} }\n`)).toThrow(/haircuts has no entry/);
+    expect(() => parseAssetYaml(`${hypeYaml}\nreporting: { window_days: 10, haircuts: { ${id}: 0, nope: 0 } }\n`)).toThrow(/not a holder flow/);
+    const burn = hypeYaml.replace('kind: buy_and_hold', 'kind: burn');
+    expect(() => parseAssetYaml(`${burn}\nreporting: { window_days: 10, haircuts: { ${id}: 0.1 } }\n`)).toThrow(/is a burn, whose haircut is 0/);
+  });
+
+  it('accepts a monitor-only flow metric, and still refuses monitor_only on anything the valuation reads', () => {
+    const extra = hypeYaml.replace('metrics:\n', 'metrics:\n  flow_usd.revenue_proxy: { type: flow, unit: usd, staleness_days: 4, monitor_only: true }\n');
+    expect(() => parseAssetYaml(extra)).not.toThrow();
+    const flowMetric = parseAssetYaml(hypeYaml).config.holder_flows[0].metric;
+    const bad = hypeYaml.replace(new RegExp(`(  ${flowMetric.replace('.', '\\.')}: \\{)`), '$1 monitor_only: true,');
+    expect(bad).not.toBe(hypeYaml);
+    expect(() => parseAssetYaml(bad)).toThrow(/used by the valuation/);
+  });
+
+  function recipientsOf(base: string): number {
+    return base === 'all' ? levels.effectiveSupply! : levels.stakedSupply!;
+  }
+});
