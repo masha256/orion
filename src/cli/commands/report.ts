@@ -7,7 +7,12 @@ import { output, withDb, type CliContext } from '../util.js';
 
 const usd = (x: number | null) => (x === null ? 'n/a' : `$${(x / 1e6).toFixed(2)}M`);
 const pct = (x: number | null, d = 1) => (x === null ? 'n/a' : `${(x * 100).toFixed(d)}%`);
-const g = (x: Growth) => (x.annualized === null ? `n/m${x.change !== null ? ` (90d/90d ${pct(x.change)})` : ''}` : `${pct(x.annualized)} ann. (${pct(x.change)} per window)`);
+/** Growth: the annualized change, or why there is none (too little history vs. a zero or negative window). */
+const g = (x: Growth) => {
+  if (x.annualized !== null) return `${pct(x.annualized)} ann. (${pct(x.change)} per window)`;
+  if (x.current === null || x.prior === null) return 'pending (needs 2 windows of daily history)';
+  return `n/m${x.change !== null ? ` (per window ${pct(x.change)})` : ''}`;
+};
 
 export function reportLines(r: HolderYieldReport): string[] {
   const y = r.yields;
