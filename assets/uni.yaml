@@ -1,0 +1,161 @@
+id: uni
+symbol: UNI
+name: Uniswap
+chain: ethereum
+supply_basis: effective_total
+
+# Read live on 2026-10-11; see docs/superpowers/specs/2026-10-11-orion-uni-onboarding-design.md section 1.
+contracts:
+  token: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984" # UNI; totalSupply() stays 1e9, burns go to dead
+  dead: "0x000000000000000000000000000000000000dEaD" # every fee burn ends here (Firepit / L2 burns bridged back)
+  timelock: "0x1a9C8182C09F50C8318d769245beA52c32BE35BC" # DAO Timelock: the treasury (262.2M UNI), the 100M one-off burn (2025-12-27)
+  vesting: "0xca046a83edb78f74ae338bb5a291bf6fdac9e1d2" # UNIVesting: 5M UNI a quarter from the Timelock to Uniswap Labs
+  chainlink_uni_usd: "0x553303d460EE0afB37EdFf9bE42922D8FF63220e" # Chainlink UNI / USD, 8 decimals
+
+ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
+
+external_ids:
+  coingecko: uniswap
+  defillama: uniswap
+
+# Every metric is fetched: no manual metric, so a bootstrap run finds nothing to research and writes only its journal.
+# DefiLlama only for gross swap fees, the one series with no on-chain source (Mike, 2026-10-11).
+metrics:
+  price_usd:
+    type: level
+    unit: usd
+    staleness_days: 3
+    critical: true
+    source: { type: coingecko, id: uniswap, field: price }
+    cross_checks:
+      - { tolerance_pct: 2, source: { type: contract_read, contract: chainlink_uni_usd, function: latestAnswer, decimals: 8 } }
+
+  # 1e9 less the burned UNI at dead. The Timelock's treasury stays inside (supply_basis effective_total, Mike 2026-10-11):
+  # treasury UNI can be spent, and the burn reaches every token.
+  effective_supply:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    critical: true
+    source: { type: erc20_supply, token: token, subtract_balances: [ dead ] }
+
+  # CoinGecko's own definition; informational under effective_total.
+  circulating_supply:
+    type: level
+    unit: tokens
+    staleness_days: 14
+    source: { type: coingecko, id: uniswap, field: circulating_supply }
+
+  # No staking: UNI pays no one for staking, and the burn reaches every holder.
+  staked_supply:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    source: { type: constant, value: 0, note: "UNI has no staking (2026-10-11); the fee burn reaches all holders" }
+
+  staker_emission_share:
+    type: level
+    unit: ratio
+    staleness_days: 7
+    source: { type: constant, value: 0, note: "no staking, no staking rewards" }
+
+  # The minter (up to 2 percent a year by governance) has never been used. The Labs vest is not an emission here: the
+  # Timelock's UNI is already in effective supply, so it is reported as dilution instead (reporting.dilution).
+  emission_rate_annual:
+    type: schedule
+    unit: tokens_per_year
+    staleness_days: 45
+    critical: true
+    source: { type: constant, value: 0, note: "UNI minter never used; the Labs vest moves treasury UNI already counted in effective supply" }
+
+  # The holder flow, read on chain: every UNI transfer to dead, at each day's price. Anyone may burn to release a chain's
+  # fee jar (Firepit): 75 percent arrives through five L2 bridge contracts, 25 percent from mainnet searcher contracts that
+  # rotate weekly (2026-07-03..10-11), so every sender counts (from_any, Mike 2026-10-11) and an unlisted-sender alarm would
+  # only be noise. The Timelock is ignored: it made the one-off 100M treasury burn, which is a supply event, not a flow.
+  flow_usd.burn:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 5
+    critical: true
+    source: { type: transfer_flow, token: token, to: dead, from_any: true, from_ignore: [ timelock ], unit: usd, price_coingecko_id: uniswap }
+
+  # The same burn in UNI: the flow's own measure, flat at about 23.6M a year while the dollar value tracked the price.
+  flow_tokens.burn:
+    type: flow
+    unit: tokens
+    cadence: daily
+    staleness_days: 5
+    monitor_only: true
+    source: { type: transfer_flow, token: token, to: dead, from_any: true, from_ignore: [ timelock ], unit: tokens }
+
+  # The last 91 days of burns, scaled to a year (Mike, 2026-10-11: 91 days at each day's price, backfill 100).
+  revenue_run_rate_usd:
+    type: level
+    unit: usd
+    staleness_days: 5
+    critical: true
+    source: { type: derived, name: flow_annualized, params: { metric: flow_usd.burn, days: 91 } }
+
+  # Report-only (monitor_only, never a driver). The Labs growth budget: UNIVesting pulls quarterlyVestingAmount each
+  # calendar quarter, as far as the Timelock's allowance reaches (20M on 2026-10-11: four quarters, to 2027-10).
+  labs_vest_rate: { type: level, unit: tokens_per_year, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: vesting, function: quarterlyVestingAmount, decimals: 18, scale: 4 } }
+  labs_vest_approved: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: token, function: allowance, args: [ timelock, vesting ], decimals: 18 } }
+  treasury_uni: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: token, function: balanceOf, args: [ timelock ], decimals: 18 } }
+
+  # Gross swap fees, LPs and protocol, every Uniswap version and chain: display only, the protocol's gross (reporting volume).
+  flow_usd.swap_fees:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 5
+    monitor_only: true
+    source: { type: defillama, slug: uniswap, data_type: dailyFees, backfill_days: 100 }
+
+holder_flows:
+  - { id: burn, kind: burn, capture_rule: programmatic, recipient_base: all, metric: flow_usd.burn, window_days: 91 }
+
+# Chosen by the user on 2026-10-11: HYPE's shape. The discounted burn carries most of the weight, the market's multiple on
+# it the rest; no revenue multiple (revenue and the holder flow are one series). Structural: the agent may only propose.
+modules:
+  - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.6 }
+  - { id: fm_holder_flow, type: forward_multiple, kind: estimate, weight: 0.4, params: { basis: holder_flow } }
+
+scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }
+
+# Key-wide bounds only, wide enough for the calibration sweep; agent bands come with the calibration.
+# staked_ratio_horizon: the engine requires a positive value, but with no staking, no emission and no fee_share flow it
+# moves nothing (staking yield = emissions x a zero share).
+assumptions:
+  rev_growth_y1: { min: -0.6, max: 3.0 }
+  growth_fade_years: { min: 1, max: 10 }
+  terminal_growth: { min: 0, max: 0.05 }
+  capture_rate_terminal.burn: { min: 0.5, max: 1.0 }
+  capture_ramp_years.burn: { min: 0, max: 4 }
+  discount_rate_base: { min: 0.08, max: 0.35 }
+  discount_premium_programmatic: { min: 0, max: 0.15 }
+  multiple.fm_holder_flow: { min: 3, max: 200 }
+  regime_multiplier: { min: 0.4, max: 1.6 }
+  staked_ratio_horizon: { min: 0.01, max: 1 }
+
+agent:
+  budgets:
+    weekly: { input_tokens: 2000000 }
+
+review_triggers:
+  driver_deviation_pct: 25
+  provisional_move_pct: 25
+
+peer_set: []
+
+# Report-only holder yield and growth (orion report yield). A burn: no haircut. The Labs vest is the report's dilution
+# (Mike, 2026-10-11), capped by what governance has approved, so the net shareholder yield shows the burn against it.
+reporting:
+  window_days: 91
+  haircuts: { burn: 0 }
+  income:
+    lines:
+      - { id: burn, to: holders, metric: flow_usd.burn, note: "every protocol fee burns UNI" }
+  volume: [ flow_usd.swap_fees ]
+  dilution:
+    - { id: labs_vest, metric: labs_vest_rate, cap_metric: labs_vest_approved, note: "Timelock to Uniswap Labs via UNIVesting" }
