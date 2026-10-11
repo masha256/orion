@@ -63,7 +63,7 @@ One cron line gives a daily signal and runs the analyst on its schedule:
 - Fetched flow rows never silently overwrite hand-entered ones. Without `--adopt`, a fetch that would overlap them writes nothing for that scan and lists the conflicting rows. `--adopt` rejects only rows whose source is `manual`.
 - Several metrics can share one burn-flow scan (same token, sink, and allowlist) and so share its cursor: `--metric` on any one of them fetches every metric that shares its scan, at no extra cost.
 - A metric added later to an existing scan group gets no history by itself (the cursor is already past those days): re-run with `--backfill-days <n>`.
-- The cron line above runs in the machine's local time; the code itself works in UTC either way, and any time after 00:05 UTC picks up the previous UTC day.
+- The cron line above runs in the machine's local time; the code itself works in UTC either way, and any time after 00:05 UTC picks up the previous UTC day. Prefer a slot well clear of UTC midnight: off-chain series (DefiLlama) can post the previous day late, and a local-time job near 00:00 UTC drifts across it at every DST change. The live server runs 05:05 to 05:40 America/Los_Angeles (12:05 to 13:40 UTC across the year), so the schedule never moves.
 - A plain `--dry-run` on a database that still has hand-entered burn rows reports the burn scan as `skipped` and lists the conflicts; add `--adopt` to the dry run to see what would be written without writing it.
 - Cross-check readings are never stored. A reading outside its tolerance opens an anomaly:
 
