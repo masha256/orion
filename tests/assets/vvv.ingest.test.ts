@@ -82,7 +82,7 @@ describe('assets/vvv.yaml ingestion', () => {
       `http_json:${VENICE}/diem_stats`, `http_json:${VENICE}/vvv_staking_yield`, `http_json:${VENICE}/vvv_stats`,
     ]);
     expect(plan.flowGroups).toHaveLength(1);
-    expect(plan.flowGroups[0].members.map((m) => [m.metricKey, m.unit, m.countFrom.length])).toEqual([
+    expect(plan.flowGroups[0].members.map((m) => [m.metricKey, m.unit, m.countFrom?.length])).toEqual([
       ['flow_usd.burn', 'usd', 2], ['flow_tokens.burn', 'tokens', 2], ['flow_usd.burn_programmatic', 'usd', 1],
     ]);
     expect(plan.derived.map((r) => r.metricKey)).toEqual(['usage_index']);

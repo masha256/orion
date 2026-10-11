@@ -45,8 +45,14 @@ export const SourceSchema = z.discriminatedUnion('type', [
     type: z.literal('transfer_flow'),
     token: name,
     to: name,
-    from_allowlist: z.array(name).min(1),
-    /** Subset of the allowlist to sum. Default: all of it. */
+    /** The senders whose transfers are the flow; any other sender is reported as unlisted. Exactly one of this and `from_any`. */
+    from_allowlist: z.array(name).min(1).optional(),
+    /**
+     * Every sender is the flow except the ignore lists (UNI: anyone may burn UNI to release fees, and searcher contracts rotate
+     * weekly, so an allowlist would flag noise). Nothing is ever reported as unlisted. Optional with no default (hashes).
+     */
+    from_any: z.literal(true).optional(),
+    /** Subset of the allowlist to sum. Default: all of it. Not with `from_any`. */
     count_from: z.array(name).min(1).optional(),
     unit: z.enum(['usd', 'tokens']),
     price_coingecko_id: name.optional(),
@@ -75,7 +81,9 @@ export const SourceSchema = z.discriminatedUnion('type', [
      */
     mint_sender: z.literal('erc4626_deposit').optional(),
   }).superRefine((s, ctx) => {
-    const allow = new Set(s.from_allowlist);
+    if ((s.from_allowlist === undefined) === (s.from_any === undefined)) ctx.addIssue({ code: 'custom', message: 'a transfer_flow needs exactly one of from_allowlist and from_any' });
+    if (s.from_any && s.count_from) ctx.addIssue({ code: 'custom', message: 'count_from picks from an allowlist; with from_any every sender counts' });
+    const allow = new Set(s.from_allowlist ?? []);
     for (const n of [...(s.from_ignore ?? []), ...(s.from_ignore_clones_of ?? [])]) {
       if (allow.has(n)) ctx.addIssue({ code: 'custom', message: `${n} is on from_allowlist and on an ignore list; a sender is one or the other` });
     }
@@ -115,7 +123,7 @@ export function contractNames(s: SourceConfig): string[] {
       return [s.contract, ...(s.args ?? [])];
     case 'transfer_flow':
       return [
-        s.token, s.to, ...s.from_allowlist, ...(s.count_from ?? []), ...(s.share_price ? [s.share_price.contract] : []),
+        s.token, s.to, ...(s.from_allowlist ?? []), ...(s.count_from ?? []), ...(s.share_price ? [s.share_price.contract] : []),
         ...(s.from_ignore ?? []), ...(s.from_ignore_clones_of ?? []),
       ];
     default:
@@ -146,7 +154,7 @@ export function sourceIssues(asset: SourceBearingAsset, requiredMetrics: string[
     for (const c of contractNames(s)) if (asset.contracts[c] === undefined) issues.push(`${where}: unknown contract "${c}"`);
     if (s.type === 'transfer_flow') {
       if (s.unit === 'usd' && s.price_coingecko_id === undefined) issues.push(`${where}: a transfer_flow with unit usd needs price_coingecko_id`);
-      for (const c of s.count_from ?? []) if (!s.from_allowlist.includes(c)) issues.push(`${where}: count_from "${c}" is not in from_allowlist`);
+      for (const c of s.count_from ?? []) if (!(s.from_allowlist ?? []).includes(c)) issues.push(`${where}: count_from "${c}" is not in from_allowlist`);
     }
     if (s.type === 'contract_read' && (s.returns === undefined) !== (s.pick === undefined)) {
       issues.push(`${where}: returns and pick go together`);

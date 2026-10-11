@@ -259,7 +259,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
             }
           }
           const tokens = unitsToNumber(log.value, decimals);
-          const name = allow.get(sender);
+          let name = allow.get(sender);
           if (name === undefined) {
             // Not this flow, and known to be so: a zero-amount transfer (it moves nothing), a listed sender, or a clone of a
             // listed implementation. None is counted (an unlisted sender never is); they are only kept out of the report.
@@ -275,6 +275,9 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
               ignored.clones++;
               continue;
             }
+          }
+          if (name === undefined && group.anySender) name = sender; // from_any: every sender not ignored is the flow, by address
+          if (name === undefined) {
             result.unlisted.push({ txHash: log.txHash, logIndex: log.logIndex, blockNumber: Number(log.blockNumber), from: sender, tokens, day });
             unlistedToday++;
             continue;
@@ -285,7 +288,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
           tally.tokens += tokens;
           senders.set(name, tally);
           for (const m of group.members) {
-            if (!m.countFrom.includes(sender)) continue;
+            if (m.countFrom !== null && !m.countFrom.includes(sender)) continue;
             let amount = m.sharePrice ? tokens * (await sharePriceOf(m.sharePrice)) : tokens;
             if (m.unit === 'usd') {
               const price = priceAt(series.get(m.priceCoingeckoId!)!, log.timestamp * 1000);

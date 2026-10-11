@@ -171,3 +171,38 @@ describe('mint_sender: erc4626_deposit', () => {
     expect(scan(r).unlistedTransfers.map((t) => t.from)).toEqual([ZERO]);
   });
 });
+
+
+/** The mini asset with its fees and token flows on a from_any scan (the programmatic member, a count_from, is dropped). */
+function withAnySender(ignore: string[]): string {
+  return INGEST_ASSET_YAML
+    .replace(`  safe: "${SAFE}"\n`, `  safe: "${SAFE}"\n  forwarder: "${FORWARDER}"\n`)
+    .replaceAll('from_allowlist: [pool, safe], unit:', `from_any: true, from_ignore: [${ignore.join(', ')}], unit:`)
+    .replace(/\n  flow_usd\.fees_programmatic:[\s\S]*?count_from: \[pool\][^\n]*\n/, '\n');
+}
+
+describe('transfer_flow from_any', () => {
+  it('counts every sender but the ignored ones, reports none as unlisted, and keeps per-sender totals by address', async () => {
+    const logs = [log(FORWARDER, 5n * E18, 0), log(POOL, 2n * E18, 1), log(STRANGER, 1n * E18, 2)];
+    const loaded = parseAssetYaml(withAnySender(['forwarder']));
+    const h = harness({ loaded, logs });
+    const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
+    expect(scan(r).sourceId).toBe('transfer_flow:token>burn_sink[*]');
+    expect(scan(r).unlistedTransfers).toEqual([]);
+    expect(r.anomalies.filter((a) => a.kind === 'unlisted_sender')).toEqual([]);
+    expect(scan(r).notes).toContain('not counted, as configured: 1 from from_ignore senders');
+    expect(fees(r)).toEqual([0, 30, 0]); // pool 2 + stranger 1 tokens at 10 USD; the ignored 5 left out
+    const day = listActiveObservations(h.db, 'mini').find((o) => o.metricKey === 'flow_usd.fees' && o.value === 30)!;
+    expect(Object.keys(JSON.parse(day.sourceDetail!).senders).sort()).toEqual([POOL, STRANGER].sort());
+    expect(buildPlan(h.loaded.config).flowGroups[0].anySender).toBe(true);
+  });
+
+  it('needs exactly one of from_allowlist and from_any, and refuses count_from with from_any', () => {
+    const both = INGEST_ASSET_YAML.replace('from_allowlist: [pool, safe], unit: tokens', 'from_allowlist: [pool, safe], from_any: true, unit: tokens');
+    expect(() => parseAssetYaml(both)).toThrow(/exactly one of from_allowlist and from_any/);
+    const neither = INGEST_ASSET_YAML.replace('from_allowlist: [pool, safe], unit: tokens', 'unit: tokens');
+    expect(() => parseAssetYaml(neither)).toThrow(/exactly one of from_allowlist and from_any/);
+    const counted = INGEST_ASSET_YAML.replace('from_allowlist: [pool, safe], count_from: [pool]', 'from_any: true, count_from: [pool]');
+    expect(() => parseAssetYaml(counted)).toThrow(/count_from picks from an allowlist/);
+  });
+});

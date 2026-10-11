@@ -17,7 +17,7 @@ export function sourceId(s: SourceConfig): string {
     case 'contract_read':
       return 'chain_levels';
     case 'transfer_flow':
-      return `transfer_flow:${s.token}>${s.to}[${[...s.from_allowlist].sort().join(',')}]`;
+      return `transfer_flow:${s.token}>${s.to}[${s.from_any ? '*' : [...s.from_allowlist!].sort().join(',')}]`;
     case 'adapter':
       return `adapter:${s.name}`;
     case 'derived':

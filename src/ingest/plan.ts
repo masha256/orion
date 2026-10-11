@@ -17,7 +17,8 @@ export interface SourceBatch {
 export interface FlowMember {
   metricKey: string;
   unit: 'usd' | 'tokens';
-  countFrom: string[];
+  /** null: every counted sender (a from_any scan). */
+  countFrom: string[] | null;
   priceCoingeckoId: string | null;
   /** Vault-share conversion read at the day's last block; null when the token is not a share. Address lowercased. */
   sharePrice: { address: string; functionName: string; decimals: number } | null;
@@ -34,6 +35,8 @@ export interface FlowGroup {
   ignore: string[];
   /** Implementations whose EIP-1167 clones are ignored (from_ignore_clones_of, all members). Not part of the scan key. */
   ignoreClonesOf: string[];
+  /** Every sender not ignored is the flow (from_any): none is unlisted. Set only when true, so plan fixtures keep their shape. */
+  anySender?: true;
   /** How a mint's sender is read (mint_sender on any member). Not part of the scan key. */
   mintSender?: 'erc4626_deposit';
   members: FlowMember[];
@@ -55,7 +58,7 @@ export function hasSources(asset: AssetConfig): boolean {
 function flowScanKey(s: SourceOf<'transfer_flow'>, address: (name: string) => string): string {
   const token = address(s.token);
   const sink = address(s.to);
-  const allowlist = [...s.from_allowlist].map(address).sort();
+  const allowlist = s.from_any ? ['*'] : [...s.from_allowlist!].map(address).sort();
   return sha256(`${token}|${sink}|${allowlist.join(',')}`).slice(0, 16);
 }
 
@@ -112,7 +115,7 @@ export function buildPlan(asset: AssetConfig, opts: { metrics?: string[] } = {})
       derived.push({ metricKey, role: 'primary', source: s, tolerancePct: def.tolerance_pct });
     } else if (s.type === 'transfer_flow') {
       needsRpc = true;
-      const allowlist = [...s.from_allowlist].sort().map((name) => ({ name, address: address(name) }));
+      const allowlist = [...(s.from_allowlist ?? [])].sort().map((name) => ({ name, address: address(name) }));
       const token = address(s.token);
       const sink = address(s.to);
       const scanKey = flowScanKey(s, address);
@@ -121,10 +124,11 @@ export function buildPlan(asset: AssetConfig, opts: { metrics?: string[] } = {})
       group.ignore = union(group.ignore, s.from_ignore);
       group.ignoreClonesOf = union(group.ignoreClonesOf, s.from_ignore_clones_of);
       if (s.mint_sender) group.mintSender = s.mint_sender;
+      if (s.from_any) group.anySender = true;
       group.members.push({
         metricKey,
         unit: s.unit,
-        countFrom: (s.count_from ?? s.from_allowlist).map(address),
+        countFrom: s.from_any ? null : (s.count_from ?? s.from_allowlist!).map(address),
         priceCoingeckoId: s.price_coingecko_id ?? null,
         sharePrice: s.share_price ? { address: address(s.share_price.contract), functionName: s.share_price.function, decimals: s.share_price.decimals } : null,
       });
