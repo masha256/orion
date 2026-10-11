@@ -63,6 +63,23 @@ describe('holderYieldReport', () => {
     // Flat flow: growth 0, so the trailing PEG is not meaningful.
     expect(r.holderFlowGrowth.annualized).toBeCloseTo(0);
     expect(y.pegTrailing).toBeNull();
+    expect(y.dilutionLines).toBeUndefined();
+  });
+
+  it('adds reporting.dilution releases to the dilution, each capped by what is approved', () => {
+    const yaml = hypeYaml.replace('metrics:\n', 'metrics:\n  vest_rate: { type: level, unit: tokens_per_year, staleness_days: 7, monitor_only: true }\n  vest_cap: { type: level, unit: tokens, staleness_days: 7, monitor_only: true }\n');
+    const asset = parseAssetYaml(`${yaml}\nreporting: { window_days: 10, haircuts: { buyback: 0 }, dilution: [ { id: vest, metric: vest_rate, cap_metric: vest_cap } ] }\n`).config;
+    const daily = new Map([[asset.holder_flows[0].metric, flat('2026-01-01', 20, 1)]]);
+    const at = (rate: number | null, cap: number | null) => holderYieldReport({ asset, day: '2026-01-20', daily, levels: { ...levels, dilution: { vest: { rate, cap } } } }).yields;
+    // emission 50 + vest 100 (cap 300) on 1000 effective: 15 percent.
+    expect(at(100, 300).dilution).toBeCloseTo(0.15);
+    expect(at(100, 300).dilutionLines).toEqual([{ id: 'vest', tokensPerYear: 100, yield: 0.1 }]);
+    // Only 40 approved: the cap binds.
+    expect(at(100, 40).dilution).toBeCloseTo(0.09);
+    expect(at(100, 40).netShareholder).toBeCloseTo(365 / 2000 - 0.09);
+    // An unread line leaves the dilution unknown rather than understated.
+    expect(at(null, 40).dilution).toBeNull();
+    expect(() => parseAssetYaml(`${hypeYaml}\nreporting: { window_days: 10, haircuts: { buyback: 0 }, dilution: [ { id: vest, metric: nope } ] }\n`)).toThrow(/dilution "vest" metric "nope" is not a level metric/);
   });
 
   it('nets a haircut out of the yield and the growth, and reports the PEG when growth is positive', () => {

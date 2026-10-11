@@ -72,6 +72,7 @@ export function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: string):
     lockedSupply: asset.metrics[STD_METRICS.lockedSupply] ? level(STD_METRICS.lockedSupply) : null,
     emissionRateAnnual: level(STD_METRICS.emissionRate),
     extra,
+    ...(r.dilution ? { dilution: Object.fromEntries(r.dilution.map((d) => [d.id, { rate: level(d.metric), cap: d.cap_metric ? level(d.cap_metric) : null }])) } : {}),
     disclosed,
   };
   const daily = new Map(reportFlowMetrics(asset).map((m) => [m, dailyOf(db, asset.id, m)] as const));

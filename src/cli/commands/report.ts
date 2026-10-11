@@ -20,6 +20,7 @@ export function reportLines(r: HolderYieldReport): string[] {
     `${r.asset}  day ${r.day}  window ${r.windowDays}d  price ${r.price ?? 'n/a'}  mcap ${usd(r.marketCap)}`,
     ...r.flows.map((f) => `  ${f.bucket.padEnd(4)}  ${f.id.padEnd(16)} gross ${usd(f.gross)}  haircut ${pct(f.haircut)}  net ${usd(f.net)}  yield ${pct(f.yield, 2)}  growth ${g(f.growth)}`),
     `  yields: cash ${pct(y.cash, 2)}  buyback ${pct(y.buyback, 2)}  shareholder ${pct(y.shareholder, 2)}  dilution ${pct(y.dilution, 2)}  net ${pct(y.netShareholder, 2)}`,
+    ...(y.dilutionLines ?? []).map((d) => `    dilution: ${d.id} ${d.tokensPerYear === null ? 'n/a' : `${(d.tokensPerYear / 1e6).toFixed(2)}M tokens/yr`} (${pct(d.yield, 2)} of supply)`),
     `  multiple ${y.multiple === null ? 'n/a' : `${y.multiple.toFixed(1)}x`}  holder-flow growth ${g(r.holderFlowGrowth)}  trailing PEG ${y.pegTrailing === null ? 'n/m' : y.pegTrailing.toFixed(2)}`,
   ];
   if (r.income) {

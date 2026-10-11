@@ -24,6 +24,8 @@ export interface ReportLevels {
   emissionRateAnnual: number | null;
   /** Annual run rates of the `extra_cash` level metrics, by metric key. */
   extra: Record<string, number | null>;
+  /** `reporting.dilution` lines: the rate (tokens a year) and the cap (tokens), by line id; null when unread. */
+  dilution?: Record<string, { rate: number | null; cap: number | null }>;
   /** Disclosed revenue levels (oldest first), for `revenue_disclosed`. */
   disclosed: { observedAt: string; value: number }[];
 }
@@ -86,6 +88,8 @@ export interface HolderYieldReport {
     shareholder: number | null;
     /** Annual supply growth from emissions. */
     dilution: number | null;
+    /** reporting.dilution lines (tokens a year, after the cap, and as a share of effective supply); absent without the block. */
+    dilutionLines?: { id: string; tokensPerYear: number | null; yield: number | null }[];
     /** shareholder - dilution. */
     netShareholder: number | null;
     /** 1 / shareholder: price over net holder cash per token. */
@@ -225,7 +229,18 @@ export function holderYieldReport(input: ReportInput): HolderYieldReport {
   const buyback = bb.length === 0 ? 0 : sumOrNull(bb.map((x) => x.yield));
   const shareholder = cash === null || buyback === null ? null : cash + buyback;
   const eff = lv.effectiveSupply;
-  const dilution = finite(lv.emissionRateAnnual) && finite(eff) && eff > 0 ? lv.emissionRateAnnual / eff : null;
+  // Emissions plus any release outside the schedule (reporting.dilution), each capped by what is approved.
+  const releases = (r.dilution ?? []).map((d) => {
+    const x = lv.dilution?.[d.id];
+    if (!x || !finite(x.rate)) return null;
+    return d.cap_metric === undefined ? x.rate : finite(x.cap) ? Math.min(x.rate, x.cap) : null;
+  });
+  const released = sumOrNull(releases);
+  const dilution =
+    finite(lv.emissionRateAnnual) && finite(eff) && eff > 0 && (r.dilution === undefined || released !== null)
+      ? (lv.emissionRateAnnual + (released ?? 0)) / eff
+      : null;
+  const dilutionLines = (r.dilution ?? []).map((d, i) => ({ id: d.id, tokensPerYear: releases[i], yield: finite(releases[i]) && finite(eff) && eff > 0 ? releases[i]! / eff : null }));
   const netShareholder = shareholder === null || dilution === null ? null : shareholder - dilution;
 
   // Growth of all holder cash with a daily series, each flow net of its haircut.
@@ -262,7 +277,7 @@ export function holderYieldReport(input: ReportInput): HolderYieldReport {
     asset: asset.id, day, windowDays: W, price,
     marketCap: finite(price) && finite(eff) ? price * eff : null,
     flows, buckets,
-    yields: { cash, buyback, shareholder, dilution, netShareholder, multiple, pegTrailing },
+    yields: { cash, buyback, shareholder, dilution, netShareholder, multiple, pegTrailing, ...(r.dilution ? { dilutionLines } : {}) },
     holderFlowGrowth,
     income, volume: series2(r.volume), revenueDisclosed, notes,
   };

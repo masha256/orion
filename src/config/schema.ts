@@ -70,6 +70,15 @@ const ReportingSchema = z.strictObject({
     .optional(),
   /** Flow metrics whose sum is the gross the protocol handles (e.g. the CRV a locker collects before its cut). */
   volume: z.array(z.string()).min(1).optional(),
+  /**
+   * Supply released to the market outside the emission schedule (UNI's Labs vest from the Timelock): a level in tokens per
+   * year, optionally capped by a level in tokens (what governance has approved so far). Added to the report's dilution
+   * only, never to the valuation: under effective_total supply those tokens are already counted.
+   */
+  dilution: z
+    .array(z.strictObject({ id: z.string().regex(/^[a-z0-9_]+$/), metric: z.string(), cap_metric: z.string().optional(), note: z.string().optional() }))
+    .min(1)
+    .optional(),
   /** A level metric entered from disclosures (VVV's revenue run rate): its growth between disclosures. */
   revenue_disclosed: z.string().optional(),
   /**
@@ -313,6 +322,11 @@ export const AssetConfigSchema = z
       for (const x of r.extra_cash ?? []) {
         if (a.metrics[x.metric]?.type !== 'level') issue(`reporting: extra_cash "${x.id}" must reference a level metric`);
         if (a.holder_flows.some((f) => f.id === x.id)) issue(`reporting: extra_cash id "${x.id}" is also a holder flow id`);
+      }
+      for (const d of r.dilution ?? []) {
+        for (const m of [d.metric, ...(d.cap_metric ? [d.cap_metric] : [])]) {
+          if (a.metrics[m]?.type !== 'level') issue(`reporting: dilution "${d.id}" metric "${m}" is not a level metric`);
+        }
       }
       if (r.revenue_disclosed !== undefined && a.metrics[r.revenue_disclosed]?.type !== 'level') {
         issue(`reporting: revenue_disclosed "${r.revenue_disclosed}" is not a level metric`);
