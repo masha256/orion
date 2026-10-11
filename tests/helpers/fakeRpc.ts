@@ -1,4 +1,4 @@
-import type { BlockRef, CallResult, ContractCall, LogQuery, RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.js';
+import type { BlockRef, CallResult, ContractCall, LogQuery, ReceiptLog, RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.js';
 
 export interface FakeRpcOptions {
   /** Timestamp of block 0, in unix seconds. */
@@ -14,10 +14,12 @@ export interface FakeRpcOptions {
   maxLogRange?: bigint;
   /** Runtime code by lowercased address, for getCode; anything else has none ('0x'). */
   code?: Record<string, string>;
+  /** Receipt logs by tx hash, for getReceiptLogs; anything else has none. */
+  receipts?: Record<string, ReceiptLog[]>;
 }
 
 export interface FakeRpc extends RpcTransport {
-  stats: { getBlock: number; multicall: number; logRanges: [bigint, bigint][]; getCode: number };
+  stats: { getBlock: number; multicall: number; logRanges: [bigint, bigint][]; getCode: number; receipts: number };
   failNextLogCalls(n: number): void;
   timestampOf(n: bigint): number;
   /** First block whose timestamp is at or after `ts`. Regular chains only. */
@@ -31,7 +33,7 @@ export function callKey(address: string, functionName: string, args: readonly un
 export function fakeRpc(o: FakeRpcOptions): FakeRpc {
   const blockTime = o.blockTimeSec ?? 2;
   const timestampOf = o.timestampOf ?? ((n: bigint) => o.genesisTs + Number(n) * blockTime);
-  const stats: FakeRpc['stats'] = { getBlock: 0, multicall: 0, logRanges: [], getCode: 0 };
+  const stats: FakeRpc['stats'] = { getBlock: 0, multicall: 0, logRanges: [], getCode: 0, receipts: 0 };
   let failures = 0;
 
   const block = (n: bigint): BlockRef => {
@@ -63,6 +65,10 @@ export function fakeRpc(o: FakeRpcOptions): FakeRpc {
         if (hit === undefined) return { ok: false, error: `no fake result for ${callKey(c.address, c.functionName, c.args)}` };
         return hit instanceof Error ? { ok: false, error: hit.message } : { ok: true, value: hit };
       });
+    },
+    async getReceiptLogs(txHash: string): Promise<ReceiptLog[]> {
+      stats.receipts++;
+      return o.receipts?.[txHash] ?? [];
     },
     async getCode(address: string): Promise<string> {
       stats.getCode++;

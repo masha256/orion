@@ -89,6 +89,11 @@ export const createViemRpc: RpcFactory = (url, chainId) => {
           return pickValue(r.result, calls[i].pick);
         });
       }),
+    getReceiptLogs: (txHash) =>
+      clean(async () => {
+        const r = await client.getTransactionReceipt({ hash: txHash as `0x${string}` });
+        return r.logs.map((l) => ({ address: l.address.toLowerCase(), topics: l.topics.map((t) => t.toLowerCase()), data: l.data, logIndex: l.logIndex }));
+      }),
     getCode: (address) => clean(async () => (await client.getCode({ address: address as Address })) ?? '0x'),
     getTransferLogs: (q) =>
       clean(async () => {

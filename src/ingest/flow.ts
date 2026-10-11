@@ -9,7 +9,7 @@ import { ERC20_ABI } from './sources/chainLevels.js';
 import { COINGECKO_API, coingeckoHeaders } from './sources/coingecko.js';
 import { addDays, dayStartMs, utcDay } from './time.js';
 import type { HttpTransport } from './transport/http.js';
-import { firstBlockAtOrAfter, getLogsChunked, type BlockRef, type RpcTransport } from './transport/rpc.js';
+import { firstBlockAtOrAfter, getLogsChunked, type BlockRef, type ReceiptLog, type RpcTransport } from './transport/rpc.js';
 import type { DailyPoint, WrittenObservation } from './types.js';
 import { unitsToNumber } from './units.js';
 
@@ -131,6 +131,26 @@ export function cloneImplementation(code: string): string | null {
   return `0x${c.slice(CLONE_PREFIX.length, CLONE_PREFIX.length + 40)}`;
 }
 
+/** topic0 of ERC-4626 `Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares)`. */
+export const ERC4626_DEPOSIT_TOPIC = '0xdcbc1c05240f31ff3ad067ef1ee35ce4997762752e3a095284754544f4c709d7';
+const ZERO = '0x0000000000000000000000000000000000000000';
+const topicAddress = (t: string | undefined) => (t === undefined ? null : `0x${t.slice(-40)}`.toLowerCase());
+
+/**
+ * The depositor behind a vault mint: the Deposit log of `vault` in the receipt whose owner is `sink` and whose shares equal
+ * the minted `value`, the first such log after the mint (a vault emits Transfer, then Deposit). Null when there is none.
+ */
+export function mintDepositor(logs: ReceiptLog[], vault: string, sink: string, value: bigint, mintLogIndex: number): string | null {
+  const hits = logs
+    .filter((l) => l.address.toLowerCase() === vault && l.topics[0]?.toLowerCase() === ERC4626_DEPOSIT_TOPIC && topicAddress(l.topics[2]) === sink)
+    .filter((l) => {
+      const d = l.data.replace(/^0x/, '');
+      return d.length >= 128 && BigInt(`0x${d.slice(64, 128)}`) === value;
+    })
+    .sort((a, b) => Math.abs(a.logIndex - mintLogIndex) - Math.abs(b.logIndex - mintLogIndex) || a.logIndex - b.logIndex);
+  return hits.length > 0 ? topicAddress(hits[0].topics[1]) : null;
+}
+
 export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult> {
   const { db, asset, group, rpc, latest, dryRun } = args;
   const outcome = emptySourceOutcome(group.sourceId);
@@ -198,6 +218,8 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
       return impl !== null && cloneImpls.has(impl);
     };
     const ignored = { zero: 0, listed: 0, clones: 0 };
+    if (group.mintSender && !rpc.getReceiptLogs) throw new Error('mint_sender needs an RPC transport that reads receipts');
+    let mintsAttributed = 0;
     const retired = new Set<number>();
     const wroteAny = new Set<string>();
     let from = await firstBlockAtOrAfter(rpc, rangeStartMs / 1000, latest, latest);
@@ -228,7 +250,14 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
 
       for await (const chunk of getLogsChunked(rpc, { token: group.token, to: group.sink, fromBlock: from.number, toBlock: next.number - 1n }, { sleep: args.sleep })) {
         for (const log of chunk.logs) {
-          const sender = log.from.toLowerCase();
+          let sender = log.from.toLowerCase();
+          if (sender === ZERO && group.mintSender === 'erc4626_deposit') {
+            const depositor = mintDepositor(await rpc.getReceiptLogs!(log.txHash), group.token, group.sink, log.value, log.logIndex);
+            if (depositor !== null) {
+              sender = depositor;
+              mintsAttributed++;
+            }
+          }
           const tokens = unitsToNumber(log.value, decimals);
           const name = allow.get(sender);
           if (name === undefined) {
@@ -317,6 +346,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
       ignored.clones > 0 ? `${ignored.clones} from ignored clones` : '',
     ].filter((p) => p !== '');
     if (parts.length > 0) outcome.notes.push(`not counted, as configured: ${parts.join(', ')}`);
+    if (mintsAttributed > 0) outcome.notes.push(`${mintsAttributed} mint(s) attributed to their ERC-4626 depositor`);
     if (dryRun && conflicts.length > 0) outcome.notes.push(`--adopt would reject ${conflicts.map((c) => `#${c.observationId}`).join(', ')}`);
   } catch (err) {
     if (err instanceof OrionError) throw err;

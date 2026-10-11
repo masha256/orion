@@ -34,6 +34,13 @@ export interface LogQuery {
   toBlock: bigint;
 }
 
+export interface ReceiptLog {
+  address: string;
+  topics: string[];
+  data: string;
+  logIndex: number;
+}
+
 export interface RpcTransport {
   latestBlock(): Promise<BlockRef>;
   getBlock(number: bigint): Promise<BlockRef>;
@@ -43,6 +50,8 @@ export interface RpcTransport {
   getTransferLogs(q: LogQuery): Promise<TransferLog[]>;
   /** Runtime bytecode at an address ('0x' for none), for clone detection. Optional: only from_ignore_clones_of needs it. */
   getCode?(address: string): Promise<string>;
+  /** Every log of one transaction's receipt (addresses and topics lowercased). Optional: only mint_sender needs it. */
+  getReceiptLogs?(txHash: string): Promise<ReceiptLog[]>;
   /** Blocks one eth_getLogs call may span on this chain. Default MAX_LOG_RANGE (Base's cap). */
   readonly maxLogRange?: bigint;
   /** Nominal seconds per block, for the block search's first estimate. Default 2 (Base). */

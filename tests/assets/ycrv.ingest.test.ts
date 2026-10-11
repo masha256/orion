@@ -93,7 +93,7 @@ describe('assets/ycrv.yaml', () => {
     expect(requiredExtraMetrics(config)).toEqual([]);
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // Pinned on 2026-10-10 with the report-only block. A deliberate edit of assets/ycrv.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('65db27caea4be88f0a4859b47166f42fa2bedb01a2d361d5e20c68bac2e0aaff');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('1d02ca942264a6bc9d31b0e443a908addd7c24735bd6575b226820cf331fe9e3');
   });
 
   it('plans one transfer scan of vault shares, converted at the share price', () => {

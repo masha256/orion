@@ -34,6 +34,8 @@ export interface FlowGroup {
   ignore: string[];
   /** Implementations whose EIP-1167 clones are ignored (from_ignore_clones_of, all members). Not part of the scan key. */
   ignoreClonesOf: string[];
+  /** How a mint's sender is read (mint_sender on any member). Not part of the scan key. */
+  mintSender?: 'erc4626_deposit';
   members: FlowMember[];
 }
 
@@ -118,6 +120,7 @@ export function buildPlan(asset: AssetConfig, opts: { metrics?: string[] } = {})
       const union = (a: string[], b: string[] | undefined) => [...new Set([...a, ...(b ?? []).map(address)])].sort();
       group.ignore = union(group.ignore, s.from_ignore);
       group.ignoreClonesOf = union(group.ignoreClonesOf, s.from_ignore_clones_of);
+      if (s.mint_sender) group.mintSender = s.mint_sender;
       group.members.push({
         metricKey,
         unit: s.unit,

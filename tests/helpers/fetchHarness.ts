@@ -1,7 +1,7 @@
 import type { LoadedAsset } from '../../src/config/load.js';
 import { openDb, type Db } from '../../src/db/connection.js';
 import type { FetchDeps } from '../../src/ingest/run.js';
-import type { TransferLog } from '../../src/ingest/transport/rpc.js';
+import type { ReceiptLog, TransferLog } from '../../src/ingest/transport/rpc.js';
 import { fakeHttp, type FakeHttp, type Route } from './fakeHttp.js';
 import { callKey, fakeRpc, type FakeRpc } from './fakeRpc.js';
 import { ingestAsset, SINK, STAKING, TOKEN } from './ingestAsset.js';
@@ -63,6 +63,7 @@ export function harness(
     logs?: Omit<TransferLog, 'timestamp'>[];
     /** Runtime code by lowercased address, for clone detection. */
     code?: Record<string, string>;
+    receipts?: Record<string, ReceiptLog[]>;
     env?: Record<string, string | undefined>;
     now?: Date;
     /** Compute the RPC's latest block from this time instead of `now`, so a test can put the chain head ahead of (or behind) the fetch's `now` independently of `deps.now()`. */
@@ -78,6 +79,7 @@ export function harness(
     calls: { ...defaultCalls(), ...over.calls },
     logs: over.logs ?? [],
     code: over.code,
+    receipts: over.receipts,
   });
   const deps: FetchDeps = {
     http,

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { parseAssetYaml } from '../../src/config/load.js';
 import { listActiveObservations } from '../../src/db/observations.js';
-import { cloneImplementation } from '../../src/ingest/flow.js';
+import { cloneImplementation, ERC4626_DEPOSIT_TOPIC, mintDepositor } from '../../src/ingest/flow.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchResult } from '../../src/ingest/run.js';
-import type { TransferLog } from '../../src/ingest/transport/rpc.js';
+import type { ReceiptLog, TransferLog } from '../../src/ingest/transport/rpc.js';
 import { GENESIS_TS, harness } from '../helpers/fetchHarness.js';
-import { INGEST_ASSET_YAML, POOL, SAFE } from '../helpers/ingestAsset.js';
+import { SINK, INGEST_ASSET_YAML, POOL, SAFE, TOKEN } from '../helpers/ingestAsset.js';
 
 const E18 = 10n ** 18n;
 const FORWARDER = '0x7777777777777777777777777777777777777777';
@@ -105,5 +105,69 @@ describe('transfer_flow ignore rules', () => {
 
   it('refuses a sender on both the allowlist and an ignore list', () => {
     expect(() => parseAssetYaml(withIgnore({ ignore: ['pool'] }))).toThrow(/pool is on from_allowlist and on an ignore list/);
+  });
+});
+
+const ZERO = '0x0000000000000000000000000000000000000000';
+const CONVERTER = '0x5555555555555555555555555555555555555555';
+const KEEPER = '0x2468246824682468246824682468246824682468';
+const word = (x: bigint | string) => (typeof x === 'bigint' ? x.toString(16) : x.replace(/^0x/, '')).padStart(64, '0');
+/** The vault's ERC-4626 Deposit(sender, owner, assets, shares), as a receipt log. */
+const deposit = (vault: string, sender: string, owner: string, shares: bigint, logIndex: number): ReceiptLog => ({
+  address: vault.toLowerCase(), topics: [ERC4626_DEPOSIT_TOPIC, `0x${word(sender)}`, `0x${word(owner)}`], data: `0x${word(shares + 7n)}${word(shares)}`, logIndex,
+});
+const withMint = (lines: { ignore?: string[]; mint?: boolean }) =>
+  withIgnore({ ignore: lines.ignore })
+    .replace(`  forwarder: "${FORWARDER}"\n`, `  forwarder: "${FORWARDER}"\n  converter: "${CONVERTER}"\n`)
+    .replace(', , unit: usd,', ', unit: usd,')
+    .replace('from_allowlist: [pool, safe], ', `from_allowlist: [pool, safe], ${lines.mint ? 'mint_sender: erc4626_deposit, ' : ''}`);
+
+describe('mint_sender: erc4626_deposit', () => {
+  const mint = (shares: bigint, tx: string, i: number) => ({ blockNumber: blockAt(DAY), logIndex: i, txHash: tx, from: ZERO, value: shares });
+
+  it('mintDepositor picks the vault Deposit owned by the sink with the minted shares', () => {
+    const sink = SINK.toLowerCase();
+    const vault = TOKEN.toLowerCase();
+    const logs = [
+      deposit(vault, KEEPER, '0x1234567890123456789012345678901234567890', 5n, 3), // another owner
+      deposit('0x' + 'ab'.repeat(20), KEEPER, sink, 5n, 4), // another vault
+      deposit(vault, KEEPER, sink, 6n, 5), // other shares
+      deposit(vault, CONVERTER, sink, 5n, 9),
+    ];
+    expect(mintDepositor(logs, vault, sink, 5n, 8)).toBe(CONVERTER);
+    expect(mintDepositor(logs.slice(0, 3), vault, sink, 5n, 8)).toBeNull();
+  });
+
+  it('a mint whose depositor is on from_ignore is neither counted nor reported', async () => {
+    const tx = '0xm1';
+    const h = harness({
+      loaded: parseAssetYaml(withMint({ ignore: ['converter'], mint: true })),
+      logs: [mint(3n * E18, tx, 1), log(POOL, 2n * E18, 5)],
+      receipts: { [tx]: [deposit(TOKEN, CONVERTER, SINK, 3n * E18, 2)] },
+    });
+    const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
+    expect(scan(r).unlistedTransfers).toEqual([]);
+    expect(scan(r).notes).toEqual(expect.arrayContaining(['1 mint(s) attributed to their ERC-4626 depositor', 'not counted, as configured: 1 from from_ignore senders']));
+    expect(fees(r)).toEqual([0, 20, 0]);
+  });
+
+  it('a mint with no matching Deposit stays 0x0 and is reported', async () => {
+    const h = harness({ loaded: parseAssetYaml(withMint({ ignore: ['converter'], mint: true })), logs: [mint(3n * E18, '0xm2', 1)], receipts: {} });
+    const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
+    expect(scan(r).unlistedTransfers.map((t) => t.from)).toEqual([ZERO]);
+  });
+
+  it('a mint attributed to an unlisted depositor is reported under the depositor', async () => {
+    const tx = '0xm3';
+    const h = harness({ loaded: parseAssetYaml(withMint({ mint: true })), logs: [mint(3n * E18, tx, 1)], receipts: { [tx]: [deposit(TOKEN, KEEPER, SINK, 3n * E18, 2)] } });
+    const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
+    expect(scan(r).unlistedTransfers.map((t) => t.from)).toEqual([KEEPER]);
+  });
+
+  it('without mint_sender, no receipt is read and a mint stays 0x0', async () => {
+    const h = harness({ loaded: parseAssetYaml(withMint({ ignore: ['converter'] })), logs: [mint(3n * E18, '0xm4', 1)] });
+    const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
+    expect(h.rpc.stats.receipts).toBe(0);
+    expect(scan(r).unlistedTransfers.map((t) => t.from)).toEqual([ZERO]);
   });
 });

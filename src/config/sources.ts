@@ -68,6 +68,12 @@ export const SourceSchema = z.discriminatedUnion('type', [
      * too many to list). Matched on the sender's runtime code; trailing immutable-arg bytes after the proxy are allowed.
      */
     from_ignore_clones_of: z.array(name).min(1).optional(),
+    /**
+     * Who a mint (a transfer from 0x0) is from. erc4626_deposit: the depositor of the vault's own ERC-4626 Deposit event in
+     * the same transaction (token = vault, owner = the sink, shares = the minted amount); the allow/ignore lists then apply
+     * to that address. A mint with no matching Deposit stays 0x0 (so it is reported). Optional with no default (hashes).
+     */
+    mint_sender: z.literal('erc4626_deposit').optional(),
   }).superRefine((s, ctx) => {
     const allow = new Set(s.from_allowlist);
     for (const n of [...(s.from_ignore ?? []), ...(s.from_ignore_clones_of ?? [])]) {
