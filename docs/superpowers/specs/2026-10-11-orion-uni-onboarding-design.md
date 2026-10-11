@@ -83,4 +83,17 @@ No engine change, no `ENGINE_VERSION` bump.
 
 ## Amendments
 
-(Filled in during the build.)
+- **2026-10-11, build (no value-changing deviation):**
+  - `staked_ratio_horizon` bounds are 0.01–1. The engine requires a positive value; with no staking, no emission and no
+    fee_share flow, it moves nothing.
+  - `flow_tokens.burn` is a monitor_only twin on the same scan (one log scan, two series).
+  - Gross swap fees go in `reporting.volume`; the income statement has one line (burn = revenue, payout 100%).
+- **2026-10-11, scratch-home live run** (real fetch, throwaway `ORION_HOME`, live DB untouched; about 2 minutes):
+  - Every source ok and no anomaly. The Chainlink price cross-check was 0.2% off CoinGecko.
+  - Price 7.56. Effective supply 887,216,419. Circulating 624,978,422 (CoinGecko). Treasury 262,247,996.
+    Labs vest 20.0M/yr, with 20.0M approved.
+  - Burn over the 91 days to 2026-10-10: 5,880,001 UNI, $32.83M. Run rate $131.68M.
+  - Gross swap fees $1.708B/yr (DefiLlama).
+  - Report: burn yield 1.96%, dilution 2.25% (Labs vest), net shareholder yield −0.29%, multiple 50.9x.
+  - Placeholder valuation (flat set, **not a calibration**): status ok, grade A. 12m expected 3.20 against spot 7.56:
+    hc 1.36 and fm_holder_flow 5.96 at a 30x multiple. The market pays about 51x the trailing burn.
