@@ -29,9 +29,12 @@ contracts:
   crvusd: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E"
   fee_burner: "0xb911fcce8d5afcec73e072653107260bb23c1ee8" # Yearn FeeBurner: auctions the vote incentives into crvUSD for the splitter
   yearn_treasury: "0x044f9c86a0da637a235e83564215dc271bc0defc" # SimpleTreasuryVault: the splitter's 20 percent and the Receiver's 10
-  # Yearn converter (owner 0x4444aaaacdba5580282365e25b16309bd770ce4a): since ~2026-10-07 it turns the yvyCRV vault's fees into
-  # yvcrvUSD minted straight to the treasury (~$0.5M a year). That is the yvyCRV product's fee, not the yCRV splitter's cut,
-  # so it is ignored on yearn_revenue (Mike, 2026-10-11). The mint is from 0x0, hence mint_sender below.
+  # st-yCRV (yVault 0.4.3, auto-compounding yCRV): 10 percent performance fee, paid to the treasury in its own shares.
+  st_ycrv: "0x27b5739e22ad9033bcbf192059122d163b60349d"
+  # YCrvRevenueSwapper (owner 0x4444aaaacdba5580282365e25b16309bd770ce4a): since ~2026-10-07 it sells st-yCRV fee shares the
+  # treasury already earned (110K passed via the Yearn multisig) for crvUSD and mints yvcrvUSD back to the treasury. The fee
+  # is counted when earned (flow_usd.yearn_styc_fee); counting the conversion too would double it, so it is ignored here.
+  # The mint is from 0x0, hence mint_sender below.
   yvycrv_fee_converter: "0x988feb96c388cc010564bb8c8ad5cec8d479a2a2"
 
 ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
@@ -114,12 +117,30 @@ metrics:
       token: yv_crvusd
       to: yearn_treasury
       from_allowlist: [ splitter, receiver ]
-      # from_ignore: the yvyCRV fee converter (contracts above); its mints are found by their ERC-4626 Deposit (mint_sender).
+      # from_ignore: the fee converter (contracts above): a re-conversion of st-yCRV fees counted in yearn_styc_fee.
+      # Its mints are found by their ERC-4626 Deposit (mint_sender).
       from_ignore: [ yvycrv_fee_converter ]
       mint_sender: erc4626_deposit
       unit: usd
       price_coingecko_id: crvusd
       share_price: { contract: yv_crvusd, function: pricePerShare, decimals: 18 }
+  # Yearn's st-yCRV performance fee (10 percent of the vault's gains), paid daily to the treasury in st-yCRV shares and
+  # valued as shares x pricePerShare x yCRV. Part of Yearn's yCRV revenue (Mike, 2026-10-11): ~$30K in the 91 days to
+  # 2026-10-11, ~$49K in the 91 before.
+  flow_usd.yearn_styc_fee:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source:
+      type: transfer_flow
+      token: st_ycrv
+      to: yearn_treasury
+      from_allowlist: [ st_ycrv ]
+      unit: usd
+      price_coingecko_id: yearn-crv
+      share_price: { contract: st_ycrv, function: pricePerShare, decimals: 18 }
   flow_usd.yearn_gross:
     type: flow
     unit: usd
@@ -174,5 +195,5 @@ peer_set: []
 reporting:
   window_days: 91
   haircuts: { fees: 0 }
-  revenue: [ flow_usd.yearn_revenue ]
+  revenue: [ flow_usd.yearn_revenue, flow_usd.yearn_styc_fee ]
   volume: [ flow_usd.yearn_gross ]
