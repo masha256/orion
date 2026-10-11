@@ -198,5 +198,7 @@ peer_set: []
 reporting:
   window_days: 91
   haircuts: { fees: 0, crv: 0.01, cvx: 0.005 }
-  revenue: [ flow_usd.convex_rev_cvxcrv, flow_usd.convex_rev_cvx, flow_usd.convex_rev_treasury ]
+  # Protocol revenue = what Convex keeps: the CVX stakers' 4.5 percent and the treasury's 2 (Mike, 2026-10-11). The 10 percent
+  # lock incentive (convex_rev_cvxcrv) goes to cvxCRV stakers, i.e. holder cash, so it is recorded but not counted here.
+  revenue: [ flow_usd.convex_rev_cvx, flow_usd.convex_rev_treasury ]
   volume: [ flow_usd.convex_gross_crv ]

@@ -29,6 +29,7 @@ contracts:
   sd_staking_v2_fee: "0x239fe53f10fe77e9c6ed896e3ae4ab8e43eed082" # StakingV2FeeRecipient: older strategies' fee
   sd_fee_receiver: "0x60136fefe23d269af41ab72de483d186dc4318d6" # FeeReceiver: splits the fee to veSDT, treasury, and sdCRV (accumulator)
   sd_liquidity_fee: "0x576d7ad8eae92d9a972104aac56c15255ddbe080" # LiquidityFeeRecipient: 10 percent of the crvUSD fees
+  sd_vesdt_recipient: "0x1fe537bd59a221854a53a5b7a81585b572787fce" # VeSDTRecipient: veSDT holders' share of the CRV fee
   sd_treasury: "0x9ebbb3d59d53d6ad3fa5464f36c2e84abb7cf5c1" # TreasuryRecipient: 5 percent of the crvUSD fees (and part of the CRV fee)
   # StakeDAO strategy sidecar implementations: ~90 EIP-1167 clones of these send their pools' CRV to the Accountant. They are
   # strategy CRV the Accountant fees on, not the locker's own CRV (gross volume is the locker's; Accountant->FeeReceiver is
@@ -133,6 +134,23 @@ metrics:
     staleness_days: 10
     monitor_only: true
     source: { type: transfer_flow, token: crv, to: sd_fee_receiver, from_allowlist: [ sd_accountant, sd_staking_v2_fee ], unit: usd, price_coingecko_id: curve-dao-token }
+  # The FeeReceiver splits the CRV fee three ways (91 days to 2026-10-11: veSDT 36, treasury 33, sdCRV accumulator 30
+  # percent). The accumulator's part reaches sdCRV stakers (and boost delegators), so only veSDT and the treasury are
+  # StakeDAO's protocol revenue (Mike, 2026-10-11). sd_rev_crv above is the whole fee, kept as a record.
+  flow_usd.sd_rev_crv_vesdt:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: crv, to: sd_vesdt_recipient, from_allowlist: [ sd_fee_receiver ], unit: usd, price_coingecko_id: curve-dao-token }
+  flow_usd.sd_rev_crv_treasury:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: crv, to: sd_treasury, from_allowlist: [ sd_fee_receiver ], unit: usd, price_coingecko_id: curve-dao-token }
   flow_usd.sd_rev_fees_liquidity:
     type: flow
     unit: usd
@@ -198,5 +216,7 @@ peer_set: []
 reporting:
   window_days: 91
   haircuts: { fees: 0, crv: 0.005, bribes: 0.05 }
-  revenue: [ flow_usd.sd_rev_crv, flow_usd.sd_rev_fees_liquidity, flow_usd.sd_rev_fees_treasury ]
+  # Protocol revenue = what StakeDAO keeps: the veSDT and treasury parts of the CRV fee, and its 15 percent of the crvUSD fees
+  # (Mike, 2026-10-11). The fee's sdCRV-accumulator part is holder cash, so sd_rev_crv (the whole fee) is not counted here.
+  revenue: [ flow_usd.sd_rev_crv_vesdt, flow_usd.sd_rev_crv_treasury, flow_usd.sd_rev_fees_liquidity, flow_usd.sd_rev_fees_treasury ]
   volume: [ flow_usd.sd_gross_crv ]

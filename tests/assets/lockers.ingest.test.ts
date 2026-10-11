@@ -91,7 +91,7 @@ const sd = loadAsset(ROOT, 'sdcrv').config.contracts;
 const CASES: Case[] = [
   {
     id: 'cvxcrv',
-    hash: 'd82530f85f70f9e6271be920809e06b15499c71ebc89428ef4a01954fa37f6eb',
+    hash: 'ab48c50204f00ecd32735ce9abcf7498db21322ff1b4273c6e0bac09803c4bcb',
     coingecko: 'convex-crv',
     price: 0.1392,
     llamaPrice: 0.1391,
@@ -108,7 +108,7 @@ const CASES: Case[] = [
   },
   {
     id: 'sdcrv',
-    hash: '92e2828c3567b29e2a9c03be51f27cc662737300556c8ec349a9fdba83b63793',
+    hash: '907fd4e25642d54d55a3dcb3b9a312f06d95316660bf1de4e349f1e429f67196',
     coingecko: 'stake-dao-crv',
     price: 0.1884,
     llamaPrice: 0.1832,
@@ -167,7 +167,9 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     // One scan per holder-flow stream, then the report-only revenue and gross scans (never a holder flow).
     const reportFlows = Object.entries(config.metrics).filter(([, d]) => d.type === 'flow' && d.monitor_only === true).map(([k]) => k);
     const r = config.reporting!;
-    expect([...reportFlows].sort()).toEqual([...(r.revenue ?? []), ...(r.volume ?? [])].sort());
+    // Every revenue and volume line is a report-only flow; a report-only flow may also be a record only (e.g. the whole
+    // fee, of which only the protocol's part is revenue).
+    expect(reportFlows).toEqual(expect.arrayContaining([...(r.revenue ?? []), ...(r.volume ?? [])]));
     expect(plan.flowGroups.map((g) => g.members.map((m) => m.metricKey))).toEqual([...flowIds.map((id) => [`flow_usd.${id}`]), ...reportFlows.map((m) => [m])]);
     expect(plan.derived.map((r) => [r.metricKey, r.source.type === 'derived' ? r.source.params : null])).toEqual([
       ['revenue_run_rate_usd', { metrics: flowIds.map((id) => `flow_usd.${id}`), days: 91 }],
