@@ -31,11 +31,15 @@ function dailyOf(db: Db, assetId: string, metricKey: string): Map<string, number
   return days;
 }
 
-/** The newest day that every holder flow has: the default day a report covers. */
+/**
+ * The newest day that every flow the report reads has (holder flows, income lines, volume): the default day a report
+ * covers. A series that runs a day ahead of another (HYPE's buybacks vs its revenue proxy) must not leave the slower one
+ * blank in the report.
+ */
 export function lastCompleteReportDay(db: Db, asset: AssetConfig): string | null {
   let last: string | null = null;
-  for (const f of asset.holder_flows) {
-    const days = [...dailyOf(db, asset.id, f.metric).keys()].sort();
+  for (const metric of reportFlowMetrics(asset)) {
+    const days = [...dailyOf(db, asset.id, metric).keys()].sort();
     const d = days.at(-1);
     if (d === undefined) return null;
     if (last === null || d < last) last = d;
@@ -47,7 +51,7 @@ export function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: string):
   const r = asset.reporting;
   if (!r) throw new Error(`assets/${asset.id}.yaml has no reporting block`);
   const target = day ?? lastCompleteReportDay(db, asset);
-  if (target === null) throw new Error(`${asset.id}: no stored day for every holder flow yet`);
+  if (target === null) throw new Error(`${asset.id}: no stored day for every report flow yet`);
   const asOf = new Date(Date.parse(`${addDays(target, 1)}T00:00:00.000Z`) + MS_PER_DAY - 1).toISOString(); // to the end of the next day: the levels read with that day's run
   const level = (key: string): number | null => {
     const rows = listActiveObservations(db, asset.id, key).filter((o) => o.status === 'confirmed');
