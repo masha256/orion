@@ -81,6 +81,70 @@ describe('holderYieldReport', () => {
     expect(r.yields.pegTrailing).toBeCloseTo(r.yields.multiple! / (r.holderFlowGrowth.annualized! * 100));
   });
 
+  describe('income statement', () => {
+    const withMetrics = hypeYaml.replace(
+      'metrics:\n',
+      'metrics:\n' +
+        ['rev', 'kept', 'kept2', 'cost', 'total', 'reserve'].map((m) => `  flow_usd.${m}: { type: flow, unit: usd, staleness_days: 4, monitor_only: true }\n`).join(''),
+    );
+    const make = (income: string) => parseAssetYaml(`${withMetrics}\nreporting: { window_days: 10, haircuts: { buyback: 0 }, income: ${income} }\n`).config;
+    const day = '2026-01-20';
+    const d = (v: number) => flat('2026-01-01', 20, v);
+
+    it('sums its lines into revenue, paid to holders, costs and protocol income, with ratios of revenue', () => {
+      const asset = make(`{ lines: [
+        { id: h, to: holders, metric: flow_usd.buyback },
+        { id: k, to: protocol, metric: flow_usd.kept },
+        { id: c, to: cost, estimate: { of: flow_usd.buyback, ratio: 0.05 } } ],
+        checks: [ { total: [ flow_usd.total ], parts: [ h, k ] } ],
+        outside_revenue: [ { id: r, metric: flow_usd.reserve } ] }`);
+      const daily = new Map([['flow_usd.buyback', d(8)], ['flow_usd.kept', d(2)], ['flow_usd.total', d(10.5)], ['flow_usd.reserve', d(1)]]);
+      const i = holderYieldReport({ asset, day, daily, levels }).income!;
+      const yr = (x: number) => (x * 10 * 365) / 10;
+      expect(i.holders.annualized).toBeCloseTo(yr(8));
+      expect(i.protocol.annualized).toBeCloseTo(yr(2));
+      expect(i.costs.annualized).toBeCloseTo(yr(0.4));
+      expect(i.revenue.annualized).toBeCloseTo(yr(10.4));
+      expect(i.payoutRatio).toBeCloseTo(8 / 10.4);
+      expect(i.protocolMargin).toBeCloseTo(2 / 10.4);
+      expect(i.lines.find((l) => l.id === 'c')!.basis).toBe('estimate');
+      // The check reports the gap, never books it: parts 10 against a measured 10.5.
+      expect(i.checks[0].gapPct).toBeCloseTo((10 / 10.5 - 1) * 100);
+      // A reserve payout is listed apart and stays out of the payout ratio.
+      expect(i.outsideRevenue[0].annualized).toBeCloseTo(yr(1));
+    });
+
+    it('takes protocol income as the remainder of a measured total (a revenue proxy)', () => {
+      const asset = make(`{ lines: [ { id: h, to: holders, metric: flow_usd.buyback }, { id: c, to: cost, metric: flow_usd.cost } ], remainder_of: [ flow_usd.rev ] }`);
+      const daily = new Map([['flow_usd.buyback', d(7)], ['flow_usd.cost', d(1)], ['flow_usd.rev', d(10)]]);
+      const i = holderYieldReport({ asset, day, daily, levels }).income!;
+      expect(i.revenue.annualized).toBeCloseTo(365 * 10);
+      expect(i.protocol.annualized).toBeCloseTo(365 * 2);
+      const rem = i.lines.find((l) => l.basis === 'remainder')!;
+      expect(rem.to).toBe('protocol');
+      expect(rem.annualized).toBeCloseTo(365 * 2);
+      expect(i.protocolMargin).toBeCloseTo(0.2);
+    });
+
+    it('grows each part on its own series', () => {
+      const asset = make(`{ lines: [ { id: h, to: holders, metric: flow_usd.buyback }, { id: k, to: protocol, metric: flow_usd.kept } ] }`);
+      const daily = new Map([['flow_usd.buyback', d(1)], ['flow_usd.kept', series('2026-01-01', [...Array(10).fill(1), ...Array(10).fill(2)])]]);
+      const i = holderYieldReport({ asset, day, daily, levels }).income!;
+      expect(i.holders.growth.change).toBeCloseTo(0);
+      expect(i.protocol.growth.change).toBeCloseTo(1);
+      expect(i.revenue.growth.change).toBeCloseTo(0.5);
+    });
+
+    it('refuses a line with both or neither of metric and estimate, a protocol line beside remainder_of, and unknown names', () => {
+      expect(() => make(`{ lines: [ { id: h, to: holders } ] }`)).toThrow(/metric or an estimate/);
+      expect(() => make(`{ lines: [ { id: h, to: holders, metric: flow_usd.buyback, estimate: { of: flow_usd.kept, ratio: 1 } } ] }`)).toThrow(/metric or an estimate/);
+      expect(() => make(`{ lines: [ { id: k, to: protocol, metric: flow_usd.kept } ], remainder_of: [ flow_usd.rev ] }`)).toThrow(/list no protocol line/);
+      expect(() => make(`{ lines: [ { id: h, to: holders, metric: flow_usd.nope } ] }`)).toThrow(/not a flow metric/);
+      expect(() => make(`{ lines: [ { id: h, to: holders, metric: flow_usd.buyback } ], checks: [ { total: [ flow_usd.total ], parts: [ x ] } ] }`)).toThrow(/not a line id/);
+      expect(() => make(`{ lines: [ { id: h, to: holders, metric: flow_usd.buyback }, { id: h, to: protocol, metric: flow_usd.kept } ] }`)).toThrow(/used twice/);
+    });
+  });
+
   it('refuses a reporting block that misses a holder flow, names a stranger, or haircuts a burn', () => {
     const id = parseAssetYaml(hypeYaml).config.holder_flows[0].id;
     expect(() => parseAssetYaml(`${hypeYaml}\nreporting: { window_days: 10, haircuts: {} }\n`)).toThrow(/haircuts has no entry/);

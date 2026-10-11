@@ -243,5 +243,10 @@ peer_set: []
 reporting:
   window_days: 90
   haircuts: { burn: 0 }
-  revenue: [ flow_usd.revenue_proxy ]
   revenue_disclosed: revenue_run_rate_usd
+  # Income statement (Mike, 2026-10-11): revenue = DefiLlama dailyRevenue (labelled proxy; disclosures below); paid to
+  # holders = the burns; protocol income = the rest.
+  income:
+    lines:
+      - { id: burn, to: holders, metric: flow_usd.burn }
+    remainder_of: [ flow_usd.revenue_proxy ]

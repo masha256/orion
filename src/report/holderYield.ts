@@ -94,10 +94,36 @@ export interface HolderYieldReport {
     pegTrailing: number | null;
   };
   holderFlowGrowth: Growth;
-  revenue: { annualized: number | null; growth: Growth; metrics: string[] } | null;
+  income: IncomeStatement | null;
   volume: { annualized: number | null; growth: Growth; metrics: string[] } | null;
   revenueDisclosed: { latest: number | null; latestAt: string | null; previous: number | null; previousAt: string | null; annualizedGrowth: number | null } | null;
   notes: string[];
+}
+
+/** One line of the income statement, annualized over the window. */
+export interface IncomeLine {
+  id: string;
+  to: 'holders' | 'protocol' | 'cost';
+  annualized: number | null;
+  /** 'measured' (a daily flow), 'estimate' (a contractual ratio of another flow), 'remainder' (total less the rest). */
+  basis: 'measured' | 'estimate' | 'remainder';
+  note?: string;
+}
+
+/**
+ * Revenue = everything the protocol takes in from the market; paid to holders + protocol income + costs = revenue.
+ * Ratios are of revenue. A reserve payout (outside revenue) is listed apart, never in the payout ratio.
+ */
+export interface IncomeStatement {
+  revenue: { annualized: number | null; growth: Growth };
+  holders: { annualized: number | null; growth: Growth };
+  protocol: { annualized: number | null; growth: Growth };
+  costs: { annualized: number | null };
+  payoutRatio: number | null;
+  protocolMargin: number | null;
+  lines: IncomeLine[];
+  checks: { total: string[]; parts: string[]; measured: number | null; sumOfParts: number | null; gapPct: number | null }[];
+  outsideRevenue: { id: string; annualized: number | null; note?: string }[];
 }
 
 const finite = (x: number | null): x is number => x !== null && Number.isFinite(x);
@@ -213,6 +239,8 @@ export function holderYieldReport(input: ReportInput): HolderYieldReport {
     notes.push('yields are per token of each flow\'s recipients (staked or locked supply), i.e. to a holder in every flow\'s base');
   }
 
+  const income = r.income ? incomeStatement(r.income, daily, day, W) : null;
+
   const series2 = (metrics: string[] | undefined) =>
     metrics === undefined ? null : { metrics, annualized: annualize(windowSum(daily, metrics, day, W)), growth: growthOf(daily, metrics, day, W) };
 
@@ -236,6 +264,57 @@ export function holderYieldReport(input: ReportInput): HolderYieldReport {
     flows, buckets,
     yields: { cash, buyback, shareholder, dilution, netShareholder, multiple, pegTrailing },
     holderFlowGrowth,
-    revenue: series2(r.revenue), volume: series2(r.volume), revenueDisclosed, notes,
+    income, volume: series2(r.volume), revenueDisclosed, notes,
+  };
+}
+
+type IncomeConfig = NonNullable<NonNullable<AssetConfig['reporting']>['income']>;
+
+/** A weighted sum of flow metrics, for one income figure: [metric, weight] terms. */
+type Terms = [string, number][];
+
+function incomeStatement(inc: IncomeConfig, daily: Map<string, Map<string, number>>, day: string, W: number): IncomeStatement {
+  const annual = (terms: Terms): number | null => {
+    let s = 0;
+    for (const [m, w] of terms) {
+      const x = windowSum(daily, [m], day, W);
+      if (x === null) return null;
+      s += x * w;
+    }
+    return (s * DAYS_PER_YEAR) / W;
+  };
+  const grow = (terms: Terms): Growth => (terms.length === 0 ? { current: 0, prior: 0, change: null, annualized: null, note: 'no lines' } : growthOf(daily, terms.map((t) => t[0]), day, W, terms.map((t) => t[1])));
+  const termsOf = (l: IncomeConfig['lines'][number]): Terms => (l.metric ? [[l.metric, 1]] : [[l.estimate!.of, l.estimate!.ratio]]);
+  const of = (to: IncomeLine['to']): Terms => inc.lines.filter((l) => l.to === to).flatMap(termsOf);
+
+  const holdersT = of('holders');
+  const costT = of('cost');
+  const totalT: Terms = inc.remainder_of ? inc.remainder_of.map((m) => [m, 1]) : inc.lines.flatMap(termsOf);
+  const protocolT: Terms = inc.remainder_of ? [...totalT, ...holdersT.map(([m, w]) => [m, -w] as [string, number]), ...costT.map(([m, w]) => [m, -w] as [string, number])] : of('protocol');
+
+  const lines: IncomeLine[] = inc.lines.map((l) => ({ id: l.id, to: l.to, annualized: annual(termsOf(l)), basis: l.metric ? 'measured' : 'estimate', ...(l.note ? { note: l.note } : {}) }));
+  if (inc.remainder_of) lines.push({ id: 'protocol_income', to: 'protocol', annualized: annual(protocolT), basis: 'remainder', note: 'revenue less holders and costs' });
+
+  const revenue = annual(totalT);
+  const holders = annual(holdersT);
+  const protocol = annual(protocolT);
+  const ratio = (x: number | null) => (finite(x) && finite(revenue) && revenue > 0 ? x / revenue : null);
+  const byId = new Map(inc.lines.map((l) => [l.id, l]));
+  const checks = (inc.checks ?? []).map((c) => {
+    const measured = annual(c.total.map((m) => [m, 1]));
+    const sumOfParts = annual(c.parts.flatMap((p) => termsOf(byId.get(p)!)));
+    const gapPct = finite(measured) && finite(sumOfParts) && measured > 0 ? (sumOfParts / measured - 1) * 100 : null;
+    return { total: c.total, parts: c.parts, measured, sumOfParts, gapPct };
+  });
+  return {
+    revenue: { annualized: revenue, growth: grow(totalT) },
+    holders: { annualized: holders, growth: grow(holdersT) },
+    protocol: { annualized: protocol, growth: grow(protocolT) },
+    costs: { annualized: annual(costT) },
+    payoutRatio: ratio(holders),
+    protocolMargin: ratio(protocol),
+    lines,
+    checks,
+    outsideRevenue: (inc.outside_revenue ?? []).map((o) => ({ id: o.id, annualized: annual([[o.metric, 1]]), ...(o.note ? { note: o.note } : {}) })),
   };
 }

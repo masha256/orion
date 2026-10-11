@@ -16,6 +16,7 @@ contracts:
   locker_stakedao: "0x52f541764E6e90eeBc5c21Ff570De0e2D63766B6" # StakeDAO CRV locker (sdCRV)
   locker_yearn: "0xF147b8125d2ef93FB6965Db97D6746952a133934" # Yearn CurveYCRVVoter (yCRV)
   hooker: "0x9a9df35cd8e88565694ca6ad5093c236c7f6f69d" # Hooker: sends every protocol fee (crvUSD) to the FeeAllocator
+  curve_treasury: "0x6508ef65b0bd57eabd0f1d52685a70433b2d290b" # Curve Treasury: the FeeAllocator's 10 percent
 
 ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
 
@@ -125,6 +126,14 @@ metrics:
   # Report-only (monitor_only, never a driver): Curve's own revenue, every protocol fee in crvUSD as it enters the
   # FeeAllocator (90 percent to veCRV, 10 to the treasury). Weekly, like the holder flow. Read 2026-10-10: 1.42M crvUSD
   # over 91 days.
+  # Curve's own 10 percent of fees: FeeAllocator -> Treasury (report-only income line).
+  flow_usd.curve_treasury:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: crvusd, to: curve_treasury, from_allowlist: [ fee_allocator ], unit: usd, price_coingecko_id: crvusd }
   flow_usd.protocol_revenue:
     type: flow
     unit: usd
@@ -190,4 +199,11 @@ reporting:
   haircuts: { fees: 0 }
   extra_cash:
     - { id: vote_incentives, metric: vote_incentive_run_rate_usd, haircut: 0.03, recipient_base: locked }
-  revenue: [ flow_usd.protocol_revenue ]
+  # Income statement (Mike, 2026-10-11): revenue = every protocol fee (Hooker -> FeeAllocator); 90 percent paid to veCRV,
+  # 10 percent kept. Vote incentives are third parties paying veCRV voters, not Curve's revenue (they stay in extra_cash).
+  income:
+    lines:
+      - { id: vecrv_fees, to: holders, metric: flow_usd.fees }
+      - { id: treasury, to: protocol, metric: flow_usd.curve_treasury }
+    checks:
+      - { total: [ flow_usd.protocol_revenue ], parts: [ vecrv_fees, treasury ] }

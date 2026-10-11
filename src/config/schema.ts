@@ -36,8 +36,38 @@ const ReportingSchema = z.strictObject({
    * pool depth; a buy-and-hold's overhang. A burn has none (0).
    */
   haircuts: z.record(z.string(), z.number().min(0).max(0.5)),
-  /** Flow metrics whose sum is the protocol's own revenue (the cut it keeps, not what it passes through). */
-  revenue: z.array(z.string()).min(1).optional(),
+  /**
+   * The income statement (Mike, 2026-10-11): revenue is everything the protocol takes in from the market; each line says
+   * where its part goes: to holders (payout), kept by the protocol (protocol income), or a cost (keepers, third parties).
+   */
+  income: z
+    .strictObject({
+      lines: z
+        .array(
+          z
+            .strictObject({
+              id: z.string().regex(/^[a-z0-9_]+$/),
+              to: z.enum(['holders', 'protocol', 'cost']),
+              /** A measured daily flow metric... */
+              metric: z.string().optional(),
+              /** ...or a fixed contractual ratio of another line's metric (Convex's 0.5 percent caller fee is 5 percent of the 10). */
+              estimate: z.strictObject({ of: z.string(), ratio: z.number().positive().max(10) }).optional(),
+              note: z.string().optional(),
+            })
+            .refine((l) => (l.metric === undefined) !== (l.estimate === undefined), { message: 'an income line has a metric or an estimate, not both' }),
+        )
+        .min(1),
+      /**
+       * Revenue measured as a total (VVV and HYPE: DefiLlama's dailyRevenue proxy): protocol income is the total less the
+       * holder and cost lines, and no protocol line may be listed.
+       */
+      remainder_of: z.array(z.string()).min(1).optional(),
+      /** Reconciliations: a measured total that the listed lines should add up to (the gap is reported, never booked). */
+      checks: z.array(z.strictObject({ total: z.array(z.string()).min(1), parts: z.array(z.string()).min(1) })).optional(),
+      /** Holder payouts not funded from revenue (a treasury reserve, e.g. cvxCRV's CVX): shown apart from the payout ratio. */
+      outside_revenue: z.array(z.strictObject({ id: z.string().regex(/^[a-z0-9_]+$/), metric: z.string(), note: z.string().optional() })).optional(),
+    })
+    .optional(),
   /** Flow metrics whose sum is the gross the protocol handles (e.g. the CRV a locker collects before its cut). */
   volume: z.array(z.string()).min(1).optional(),
   /** A level metric entered from disclosures (VVV's revenue run rate): its growth between disclosures. */
@@ -253,7 +283,29 @@ export const AssetConfigSchema = z
         if (!f) issue(`reporting: haircuts names "${id}", which is not a holder flow`);
         else if (f.kind === 'burn' && r.haircuts[id] !== 0) issue(`reporting: "${id}" is a burn, whose haircut is 0`);
       }
-      for (const field of ['revenue', 'volume'] as const) {
+      const inc = r.income;
+      if (inc) {
+        const ids = new Set<string>();
+        const flow = (m: string, where: string) => {
+          if (a.metrics[m]?.type !== 'flow') issue(`reporting.income: ${where} "${m}" is not a flow metric`);
+        };
+        for (const l of inc.lines) {
+          if (ids.has(l.id)) issue(`reporting.income: line id "${l.id}" is used twice`);
+          ids.add(l.id);
+          if (l.metric) flow(l.metric, `line ${l.id}`);
+          if (l.estimate) flow(l.estimate.of, `line ${l.id} estimate`);
+        }
+        if (inc.remainder_of) {
+          for (const m of inc.remainder_of) flow(m, 'remainder_of');
+          if (inc.lines.some((l) => l.to === 'protocol')) issue('reporting.income: with remainder_of, protocol income is the remainder; list no protocol line');
+        }
+        for (const c of inc.checks ?? []) {
+          for (const m of c.total) flow(m, 'check total');
+          for (const p of c.parts) if (!ids.has(p)) issue(`reporting.income: check part "${p}" is not a line id`);
+        }
+        for (const o of inc.outside_revenue ?? []) flow(o.metric, `outside_revenue ${o.id}`);
+      }
+      for (const field of ['volume'] as const) {
         const list = r[field] ?? [];
         if (new Set(list).size !== list.length) issue(`reporting: ${field} lists a metric twice`);
         for (const m of list) if (a.metrics[m]?.type !== 'flow') issue(`reporting: ${field} "${m}" is not a flow metric`);

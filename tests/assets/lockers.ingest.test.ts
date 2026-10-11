@@ -91,7 +91,7 @@ const sd = loadAsset(ROOT, 'sdcrv').config.contracts;
 const CASES: Case[] = [
   {
     id: 'cvxcrv',
-    hash: 'ab48c50204f00ecd32735ce9abcf7498db21322ff1b4273c6e0bac09803c4bcb',
+    hash: 'a17e2669ea9ca8e16b146dace5c60be5a5eb25c9d5f651d371ef706f20d7ca3d',
     coingecko: 'convex-crv',
     price: 0.1392,
     llamaPrice: 0.1391,
@@ -108,7 +108,7 @@ const CASES: Case[] = [
   },
   {
     id: 'sdcrv',
-    hash: '907fd4e25642d54d55a3dcb3b9a312f06d95316660bf1de4e349f1e429f67196',
+    hash: 'd6ea789885a6f31f6f0eaf1def80ccfe069e0f51dd729d7ef2701f21415592df',
     coingecko: 'stake-dao-crv',
     price: 0.1884,
     llamaPrice: 0.1832,
@@ -169,7 +169,8 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     const r = config.reporting!;
     // Every revenue and volume line is a report-only flow; a report-only flow may also be a record only (e.g. the whole
     // fee, of which only the protocol's part is revenue).
-    expect(reportFlows).toEqual(expect.arrayContaining([...(r.revenue ?? []), ...(r.volume ?? [])]));
+    const incomeMetrics = (r.income?.lines ?? []).flatMap((l) => (l.metric ? [l.metric] : []));
+    expect(reportFlows).toEqual(expect.arrayContaining([...incomeMetrics.filter((m) => config.metrics[m]?.monitor_only), ...(r.volume ?? [])]));
     expect(plan.flowGroups.map((g) => g.members.map((m) => m.metricKey))).toEqual([...flowIds.map((id) => [`flow_usd.${id}`]), ...reportFlows.map((m) => [m])]);
     expect(plan.derived.map((r) => [r.metricKey, r.source.type === 'derived' ? r.source.params : null])).toEqual([
       ['revenue_run_rate_usd', { metrics: flowIds.map((id) => `flow_usd.${id}`), days: 91 }],

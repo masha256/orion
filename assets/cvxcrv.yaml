@@ -198,7 +198,17 @@ peer_set: []
 reporting:
   window_days: 91
   haircuts: { fees: 0, crv: 0.01, cvx: 0.005 }
-  # Protocol revenue = what Convex keeps: the CVX stakers' 4.5 percent and the treasury's 2 (Mike, 2026-10-11). The 10 percent
-  # lock incentive (convex_rev_cvxcrv) goes to cvxCRV stakers, i.e. holder cash, so it is recorded but not counted here.
-  revenue: [ flow_usd.convex_rev_cvx, flow_usd.convex_rev_treasury ]
   volume: [ flow_usd.convex_gross_crv ]
+  # Income statement (Mike, 2026-10-11). Revenue = what Convex takes in on its veCRV: the veCRV crvUSD fees (all passed to
+  # cvxCRV stakers) and its 17 percent of the CRV its LPs earn (lock 10 to cvxCRV stakers, staker 4.5 to CVX stakers and
+  # platform 2 to the treasury: Convex's income; caller 0.5 to keepers: a cost). The LPs' gross CRV is volume.
+  # flow_usd.fees is the wrapper's receipt (~99 percent of staked cvxCRV); the CRV lock line is measured at the pool (all).
+  income:
+    lines:
+      - { id: vecrv_fees, to: holders, metric: flow_usd.fees, note: wrapper stakers }
+      - { id: crv_lock_incentive, to: holders, metric: flow_usd.convex_rev_cvxcrv }
+      - { id: cvx_stakers, to: protocol, metric: flow_usd.convex_rev_cvx }
+      - { id: treasury, to: protocol, metric: flow_usd.convex_rev_treasury }
+      - { id: callers, to: cost, estimate: { of: flow_usd.convex_rev_cvxcrv, ratio: 0.05 }, note: 50 of the lock's 1000 bps }
+    outside_revenue:
+      - { id: cvx_rewards, metric: flow_usd.cvx, note: treasury CVX program; ran dry 2026-08 }

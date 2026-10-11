@@ -105,7 +105,7 @@ describe('assets/crv.yaml', () => {
     // Every metric has a source, and none is manual: a bootstrap run has nothing to research and the grade can be A.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // Pinned on 2026-10-10 with the report-only block (protocol revenue, reporting). A deliberate edit of assets/crv.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('ccf48239175d0b906d272d5d902b51d933ae79066b61f7aef60888656fcc0c32');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('fdbe75702c6737ca3bbbad782f10961558bbf8717ca9ea44ce6ffbed2be3d227');
   });
 
   it('plans the source map of the spec: one transfer scan, a constant, an adapter, the bribes feed', () => {
@@ -125,8 +125,8 @@ describe('assets/crv.yaml', () => {
       ['adapter:crv.emission_rate_annual', ['primary:emission_rate_annual']],
       [`http_json:${BRIBES}`, ['primary:vote_incentive_run_rate_usd', 'cross_check:vote_incentive_run_rate_usd']],
     ]);
-    // The holder flow, then the report-only protocol revenue (every fee into the FeeAllocator).
-    expect(plan.flowGroups.map((g) => g.members.map((m) => [m.metricKey, m.unit]))).toEqual([[['flow_usd.fees', 'usd']], [['flow_usd.protocol_revenue', 'usd']]]);
+    // The holder flow, then the report-only income lines: Curve's 10 percent (Treasury) and every fee into the FeeAllocator.
+    expect(plan.flowGroups.map((g) => g.members.map((m) => [m.metricKey, m.unit]))).toEqual([[['flow_usd.fees', 'usd']], [['flow_usd.curve_treasury', 'usd']], [['flow_usd.protocol_revenue', 'usd']]]);
     expect(plan.derived.map((r) => r.metricKey)).toEqual(['revenue_run_rate_usd']);
     expect(plan.needsRpc).toBe(true);
   });
@@ -164,7 +164,7 @@ describe('assets/crv.yaml', () => {
 
     const checked = r.sources.flatMap((s) => s.crossChecks);
     expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true], ['vote_incentive_run_rate_usd', true]]);
-    expect(w.rpc.stats.logRanges).toHaveLength(200); // two scans (fees, protocol revenue), 100 days each: the scanner commits a day at a time; a mainnet day (7,200 blocks) fits one call
+    expect(w.rpc.stats.logRanges).toHaveLength(300); // three scans (fees, protocol revenue, treasury), 100 days each: the scanner commits a day at a time; a mainnet day (7,200 blocks) fits one call
     expect(w.rpc.stats.logRanges.every(([a, b]) => b - a + 1n <= 10_000n)).toBe(true);
 
     createAssumptionSet(w.db, { assetId: 'crv', author: 'user', rationale: 'wiring', values: assumptions(), createdAt: NOW.toISOString() });

@@ -36,6 +36,7 @@ contracts:
   # 16.6 percent of the locker's CRV alone), so their clones are ignored on sd_gross_crv.
   sd_sidecar_impl_a: "0xef7cffdef21538b63cc541bf206bb382d922a216"
   sd_sidecar_impl_b: "0x66c3ce4718a39d44ce2430eb3e8b8d43c18ba1fa"
+  sd_boost_delegation: "0xe1f9c8ebbc80a013caf0940fdd1a8554d763b9cf" # VeBoostDelegationMultiRewards: boost delegators' CRV
 
 ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
 
@@ -151,6 +152,14 @@ metrics:
     staleness_days: 10
     monitor_only: true
     source: { type: transfer_flow, token: crv, to: sd_treasury, from_allowlist: [ sd_fee_receiver ], unit: usd, price_coingecko_id: curve-dao-token }
+  # The accumulator passes part of its CRV fee to veCRV boost delegators (VeBoostDelegationMultiRewards): a cost.
+  flow_usd.sd_boost_delegation:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: crv, to: sd_boost_delegation, from_allowlist: [ accumulator ], unit: usd, price_coingecko_id: curve-dao-token }
   flow_usd.sd_rev_fees_liquidity:
     type: flow
     unit: usd
@@ -216,7 +225,20 @@ peer_set: []
 reporting:
   window_days: 91
   haircuts: { fees: 0, crv: 0.005, bribes: 0.05 }
-  # Protocol revenue = what StakeDAO keeps: the veSDT and treasury parts of the CRV fee, and its 15 percent of the crvUSD fees
-  # (Mike, 2026-10-11). The fee's sdCRV-accumulator part is holder cash, so sd_rev_crv (the whole fee) is not counted here.
-  revenue: [ flow_usd.sd_rev_crv_vesdt, flow_usd.sd_rev_crv_treasury, flow_usd.sd_rev_fees_liquidity, flow_usd.sd_rev_fees_treasury ]
   volume: [ flow_usd.sd_gross_crv ]
+  # Income statement (Mike, 2026-10-11). Revenue = what StakeDAO takes in on its veCRV: the veCRV crvUSD fees, its CRV fee
+  # (16.5 percent of strategy CRV), and the vote incentives (sold into sdCRV). Paid to sdCRV stakers: 85 percent of the
+  # crvUSD, the accumulator's part of the CRV fee, the incentives. Kept: veSDT and treasury parts of the CRV fee, 15 percent
+  # of the crvUSD (the 10 percent liquidity part funds sdCRV pool incentives at StakeDAO's direction). Cost: boost delegators.
+  income:
+    lines:
+      - { id: vecrv_fees, to: holders, metric: flow_usd.fees }
+      - { id: crv_fee_share, to: holders, metric: flow_usd.crv }
+      - { id: vote_incentives, to: holders, metric: flow_usd.bribes }
+      - { id: vesdt, to: protocol, metric: flow_usd.sd_rev_crv_vesdt }
+      - { id: treasury_crv, to: protocol, metric: flow_usd.sd_rev_crv_treasury }
+      - { id: liquidity_fee, to: protocol, metric: flow_usd.sd_rev_fees_liquidity }
+      - { id: treasury_fees, to: protocol, metric: flow_usd.sd_rev_fees_treasury }
+      - { id: boost_delegators, to: cost, metric: flow_usd.sd_boost_delegation }
+    checks:
+      - { total: [ flow_usd.sd_rev_crv ], parts: [ vesdt, treasury_crv, crv_fee_share, boost_delegators ] }

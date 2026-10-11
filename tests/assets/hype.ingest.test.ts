@@ -85,7 +85,7 @@ describe('assets/hype.yaml', () => {
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual(['staker_emission_share']);
     expect(validateAssetModules(config)).toEqual([]);
     // Pinned on 2026-10-10 with the report-only block. A deliberate edit of assets/hype.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('fddacccfb05120de845162ce9c7c8c42c360d2ca08e63331c6dbca84bbce21e7');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('8abfc116d3c59f750434424e7410a30556273531f723219864b4af51a5814e6d');
   });
 
   it('plans the source map of the spec: no chain, three adapters, one API-series flow, one derived level', () => {

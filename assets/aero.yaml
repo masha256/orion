@@ -136,3 +136,7 @@ peer_set: []
 reporting:
   window_days: 90
   haircuts: { fees: 0.02 }
+  # Income statement (Mike, 2026-10-11): all fees go to veAERO voters; the protocol keeps none (revisit at the rebuild).
+  income:
+    lines:
+      - { id: voter_fees, to: holders, metric: flow_usd.fees }

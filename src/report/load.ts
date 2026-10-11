@@ -9,7 +9,16 @@ import { holderYieldReport, type HolderYieldReport, type ReportLevels } from './
 /** Every flow metric the report reads: the holder flows, plus revenue and volume. */
 export function reportFlowMetrics(asset: AssetConfig): string[] {
   const r = asset.reporting;
-  return [...new Set([...asset.holder_flows.map((f) => f.metric), ...(r?.revenue ?? []), ...(r?.volume ?? [])])];
+  const inc = r?.income;
+  const income = inc
+    ? [
+        ...inc.lines.map((l) => l.metric ?? l.estimate!.of),
+        ...(inc.remainder_of ?? []),
+        ...(inc.checks ?? []).flatMap((c) => c.total),
+        ...(inc.outside_revenue ?? []).map((o) => o.metric),
+      ]
+    : [];
+  return [...new Set([...asset.holder_flows.map((f) => f.metric), ...income, ...(r?.volume ?? [])])];
 }
 
 /** A flow metric's stored daily rows (confirmed, active), keyed by the UTC day each covers. */

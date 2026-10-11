@@ -22,7 +22,17 @@ export function reportLines(r: HolderYieldReport): string[] {
     `  yields: cash ${pct(y.cash, 2)}  buyback ${pct(y.buyback, 2)}  shareholder ${pct(y.shareholder, 2)}  dilution ${pct(y.dilution, 2)}  net ${pct(y.netShareholder, 2)}`,
     `  multiple ${y.multiple === null ? 'n/a' : `${y.multiple.toFixed(1)}x`}  holder-flow growth ${g(r.holderFlowGrowth)}  trailing PEG ${y.pegTrailing === null ? 'n/m' : y.pegTrailing.toFixed(2)}`,
   ];
-  if (r.revenue) lines.push(`  protocol revenue ${usd(r.revenue.annualized)}  growth ${g(r.revenue.growth)}`);
+  if (r.income) {
+    const i = r.income;
+    lines.push(`  income statement (annualized, ${r.windowDays}d):`);
+    lines.push(`    revenue          ${usd(i.revenue.annualized)}  growth ${g(i.revenue.growth)}`);
+    lines.push(`    paid to holders  ${usd(i.holders.annualized)}  payout ${pct(i.payoutRatio)}  growth ${g(i.holders.growth)}`);
+    if (i.costs.annualized !== null && i.costs.annualized !== 0) lines.push(`    costs            ${usd(i.costs.annualized)}`);
+    lines.push(`    protocol income  ${usd(i.protocol.annualized)}  margin ${pct(i.protocolMargin)}  growth ${g(i.protocol.growth)}`);
+    for (const l of i.lines) lines.push(`      ${l.to.padEnd(8)} ${l.id.padEnd(22)} ${usd(l.annualized)}${l.basis !== 'measured' ? ` (${l.basis})` : ''}`);
+    for (const c of i.checks) lines.push(`    check: ${c.parts.join(' + ')} = ${usd(c.sumOfParts)} vs measured ${usd(c.measured)}${c.gapPct === null ? '' : ` (gap ${c.gapPct.toFixed(1)}%)`}`);
+    for (const o of i.outsideRevenue) lines.push(`    outside revenue: ${o.id} ${usd(o.annualized)} to holders${o.note ? ` (${o.note})` : ''}`);
+  }
   if (r.volume) lines.push(`  gross volume ${usd(r.volume.annualized)}  growth ${g(r.volume.growth)}`);
   if (r.revenueDisclosed) {
     const d = r.revenueDisclosed;
