@@ -111,8 +111,8 @@ describe('assets/uni.yaml', () => {
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // DefiLlama only for the gross swap fees (Mike, 2026-10-11): the one series with no on-chain source.
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama' || d.cross_checks?.some((c) => c.source.type === 'defillama')).map(([k]) => k)).toEqual(['flow_usd.swap_fees']);
-    // Pinned on 2026-10-11. A deliberate edit of assets/uni.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('a5ad2d72c0d37249be4638772de5ea326318d40a50cfffbfab1c44293e3a71e9');
+    // Pinned on 2026-10-11 (burned_tokens added). A deliberate edit of assets/uni.yaml moves it; update the pin on purpose.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('c4482f7f73a0c9a3394cbc3242ae823109e821526fcdd1777253b0637552f91a');
   });
 
   it('plans one any-sender scan of burns, the chain levels with the Chainlink cross-check, the constants and the fees feed', () => {
@@ -182,6 +182,9 @@ describe('assets/uni.yaml', () => {
     expect(rep.yields.dilutionLines).toEqual([{ id: 'labs_vest', tokensPerYear: 20_000_000, yield: expect.closeTo(20_000_000 / 887_216_419, 6) }]);
     expect(rep.yields.netShareholder).toBeCloseTo((64_000 * 365 - 20_000_000) / 887_216_419, 6);
     expect(rep.volume!.annualized).toBeCloseTo(4_600_000 * 365, 0);
+    // In tokens: 64,000 a day burned (23.36M a year) against 20M vested: supply shrinks 3.36M a year.
+    expect(rep.supply).toMatchObject({ burnedPerYear: expect.closeTo(23_360_000, 0), addedPerYear: 20_000_000, netPerYear: expect.closeTo(-3_360_000, 0) });
+    expect(rep.supply!.netPct).toBeCloseTo(-3_360_000 / 887_216_419, 6);
     expect(rep.income!.payoutRatio).toBeCloseTo(1);
   });
 

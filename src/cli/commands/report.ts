@@ -23,6 +23,11 @@ export function reportLines(r: HolderYieldReport): string[] {
     ...(y.dilutionLines ?? []).map((d) => `    dilution: ${d.id} ${d.tokensPerYear === null ? 'n/a' : `${(d.tokensPerYear / 1e6).toFixed(2)}M tokens/yr`} (${pct(d.yield, 2)} of supply)`),
     `  multiple ${y.multiple === null ? 'n/a' : `${y.multiple.toFixed(1)}x`}  holder-flow growth ${g(r.holderFlowGrowth)}  trailing PEG ${y.pegTrailing === null ? 'n/m' : y.pegTrailing.toFixed(2)}`,
   ];
+  if (r.supply) {
+    const s = r.supply;
+    const m = (x: number | null) => (x === null ? 'n/a' : `${(x / 1e6).toFixed(2)}M`);
+    lines.push(`  supply (tokens/yr, ${r.windowDays}d): burned ${m(s.burnedPerYear)}  added ${m(s.addedPerYear)}  net ${m(s.netPerYear)} (${pct(s.netPct, 2)} of supply; negative shrinks)`);
+  }
   if (r.income) {
     const i = r.income;
     lines.push(`  income statement (annualized, ${r.windowDays}d):`);

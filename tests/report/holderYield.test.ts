@@ -77,9 +77,24 @@ describe('holderYieldReport', () => {
     // Only 40 approved: the cap binds.
     expect(at(100, 40).dilution).toBeCloseTo(0.09);
     expect(at(100, 40).netShareholder).toBeCloseTo(365 / 2000 - 0.09);
+    // Without burned_tokens there is no token supply line.
+    expect(holderYieldReport({ asset, day: '2026-01-20', daily, levels: { ...levels, dilution: { vest: { rate: 100, cap: 300 } } } }).supply).toBeNull();
     // An unread line leaves the dilution unknown rather than understated.
     expect(at(null, 40).dilution).toBeNull();
     expect(() => parseAssetYaml(`${hypeYaml}\nreporting: { window_days: 10, haircuts: { buyback: 0 }, dilution: [ { id: vest, metric: nope } ] }\n`)).toThrow(/dilution "vest" metric "nope" is not a level metric/);
+  });
+
+  it('sets the tokens burned against the tokens added in one unit (reporting.burned_tokens)', () => {
+    const yaml = hypeYaml.replace('metrics:\n', 'metrics:\n  flow_tokens.b: { type: flow, unit: tokens, staleness_days: 4, monitor_only: true }\n  vest_rate: { type: level, unit: tokens_per_year, staleness_days: 7, monitor_only: true }\n');
+    const asset = parseAssetYaml(`${yaml}\nreporting: { window_days: 10, haircuts: { buyback: 0 }, burned_tokens: [ flow_tokens.b ], dilution: [ { id: vest, metric: vest_rate } ] }\n`).config;
+    // 0.2 tokens a day burned = 73 a year; added: emission 50 + vest 10 = 60. Net -13 on 1000: supply shrinks 1.3 percent.
+    const daily = new Map([[asset.holder_flows[0].metric, flat('2026-01-01', 20, 1)], ['flow_tokens.b', flat('2026-01-01', 20, 0.2)]]);
+    const s = holderYieldReport({ asset, day: '2026-01-20', daily, levels: { ...levels, dilution: { vest: { rate: 10, cap: null } } } }).supply!;
+    expect(s.burnedPerYear).toBeCloseTo(73);
+    expect(s.addedPerYear).toBeCloseTo(60);
+    expect(s.netPerYear).toBeCloseTo(-13);
+    expect(s.netPct).toBeCloseTo(-0.013);
+    expect(() => parseAssetYaml(`${hypeYaml}\nreporting: { window_days: 10, haircuts: { buyback: 0 }, burned_tokens: [ ${asset.holder_flows[0].metric} ] }\n`)).toThrow(/is not a flow metric in tokens/);
   });
 
   it('nets a haircut out of the yield and the growth, and reports the PEG when growth is positive', () => {

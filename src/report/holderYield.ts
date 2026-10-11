@@ -98,6 +98,11 @@ export interface HolderYieldReport {
     pegTrailing: number | null;
   };
   holderFlowGrowth: Growth;
+  /**
+   * Supply in tokens a year over the window (reporting.burned_tokens): removed by the holder flows, added by emissions and
+   * releases; net = added - removed, and as a share of effective supply (negative: supply shrinks). Null without the block.
+   */
+  supply: { burnedPerYear: number | null; addedPerYear: number | null; netPerYear: number | null; netPct: number | null } | null;
   income: IncomeStatement | null;
   volume: { annualized: number | null; growth: Growth; metrics: string[] } | null;
   revenueDisclosed: { latest: number | null; latestAt: string | null; previous: number | null; previousAt: string | null; annualizedGrowth: number | null } | null;
@@ -256,6 +261,14 @@ export function holderYieldReport(input: ReportInput): HolderYieldReport {
 
   const income = r.income ? incomeStatement(r.income, daily, day, W) : null;
 
+  let supply: HolderYieldReport['supply'] = null;
+  if (r.burned_tokens) {
+    const burnedPerYear = annualize(windowSum(daily, r.burned_tokens, day, W));
+    const addedPerYear = finite(lv.emissionRateAnnual) && (r.dilution === undefined || released !== null) ? lv.emissionRateAnnual + (released ?? 0) : null;
+    const netPerYear = finite(burnedPerYear) && finite(addedPerYear) ? addedPerYear - burnedPerYear : null;
+    supply = { burnedPerYear, addedPerYear, netPerYear, netPct: finite(netPerYear) && finite(eff) && eff > 0 ? netPerYear / eff : null };
+  }
+
   const series2 = (metrics: string[] | undefined) =>
     metrics === undefined ? null : { metrics, annualized: annualize(windowSum(daily, metrics, day, W)), growth: growthOf(daily, metrics, day, W) };
 
@@ -279,6 +292,7 @@ export function holderYieldReport(input: ReportInput): HolderYieldReport {
     flows, buckets,
     yields: { cash, buyback, shareholder, dilution, netShareholder, multiple, pegTrailing, ...(r.dilution ? { dilutionLines } : {}) },
     holderFlowGrowth,
+    supply,
     income, volume: series2(r.volume), revenueDisclosed, notes,
   };
 }

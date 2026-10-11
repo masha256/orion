@@ -79,6 +79,12 @@ const ReportingSchema = z.strictObject({
     .array(z.strictObject({ id: z.string().regex(/^[a-z0-9_]+$/), metric: z.string(), cap_metric: z.string().optional(), note: z.string().optional() }))
     .min(1)
     .optional(),
+  /**
+   * Flow metrics in tokens whose sum is the supply the holder flows remove (UNI's burn in UNI). With it the report sets the
+   * tokens removed against the tokens added (emissions + dilution) in one unit, so a price move between the days burned
+   * and today cannot flip the sign of the net. Optional with no default (hashes).
+   */
+  burned_tokens: z.array(z.string()).min(1).optional(),
   /** A level metric entered from disclosures (VVV's revenue run rate): its growth between disclosures. */
   revenue_disclosed: z.string().optional(),
   /**
@@ -322,6 +328,9 @@ export const AssetConfigSchema = z
       for (const x of r.extra_cash ?? []) {
         if (a.metrics[x.metric]?.type !== 'level') issue(`reporting: extra_cash "${x.id}" must reference a level metric`);
         if (a.holder_flows.some((f) => f.id === x.id)) issue(`reporting: extra_cash id "${x.id}" is also a holder flow id`);
+      }
+      for (const m of r.burned_tokens ?? []) {
+        if (a.metrics[m]?.type !== 'flow' || a.metrics[m]?.unit !== 'tokens') issue(`reporting: burned_tokens "${m}" is not a flow metric in tokens`);
       }
       for (const d of r.dilution ?? []) {
         for (const m of [d.metric, ...(d.cap_metric ? [d.cap_metric] : [])]) {

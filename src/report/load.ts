@@ -18,7 +18,7 @@ export function reportFlowMetrics(asset: AssetConfig): string[] {
         ...(inc.outside_revenue ?? []).map((o) => o.metric),
       ]
     : [];
-  return [...new Set([...asset.holder_flows.map((f) => f.metric), ...income, ...(r?.volume ?? [])])];
+  return [...new Set([...asset.holder_flows.map((f) => f.metric), ...income, ...(r?.volume ?? []), ...(r?.burned_tokens ?? [])])];
 }
 
 /** A flow metric's stored daily rows (confirmed, active), keyed by the UTC day each covers. */

@@ -157,5 +157,8 @@ reporting:
     lines:
       - { id: burn, to: holders, metric: flow_usd.burn, note: "every protocol fee burns UNI" }
   volume: [ flow_usd.swap_fees ]
+  # The burn in UNI against the vest in UNI (Mike, 2026-10-11): the USD net shareholder yield values the burn at each day's
+  # price and the vest at spot, so a rally alone can turn it negative; the token line cannot.
+  burned_tokens: [ flow_tokens.burn ]
   dilution:
     - { id: labs_vest, metric: labs_vest_rate, cap_metric: labs_vest_approved, note: "Timelock to Uniswap Labs via UNIVesting" }
