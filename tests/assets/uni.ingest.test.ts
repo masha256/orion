@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { updateAsset } from '../../src/app/update.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
@@ -88,13 +89,10 @@ function world() {
   return { db: openDb(':memory:'), deps, http, rpc };
 }
 
-/** A flat, plausible set for the wiring test; the real one comes from the user's calibration. */
+/** The user's calibration (central package, 2026-10-11). */
+const calibrated = parseYaml(readFileSync(`${ROOT}/calibration/uni-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
 function assumptions(): AssumptionValues {
-  const one = {
-    rev_growth_y1: 0.2, growth_fade_years: 5, terminal_growth: 0.02, 'capture_rate_terminal.burn': 1, 'capture_ramp_years.burn': 0,
-    discount_rate_base: 0.18, discount_premium_programmatic: 0.02, 'multiple.fm_holder_flow': 30, regime_multiplier: 1, staked_ratio_horizon: 0.1,
-  };
-  return { bear: { ...one }, base: { ...one }, bull: { ...one } };
+  return calibrated as unknown as AssumptionValues;
 }
 
 describe('assets/uni.yaml', () => {
@@ -111,8 +109,8 @@ describe('assets/uni.yaml', () => {
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // DefiLlama only for the gross swap fees (Mike, 2026-10-11): the one series with no on-chain source.
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama' || d.cross_checks?.some((c) => c.source.type === 'defillama')).map(([k]) => k)).toEqual(['flow_usd.swap_fees']);
-    // Pinned on 2026-10-11 (burned_tokens added). A deliberate edit of assets/uni.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('c4482f7f73a0c9a3394cbc3242ae823109e821526fcdd1777253b0637552f91a');
+    // Pinned on 2026-10-11 (agent bands from the calibration). A deliberate edit of assets/uni.yaml moves it; update the pin on purpose.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('99714ff3224f5ebb0067d8ce4c99adaab9af1a8fec24aedefa0a2e8d62341813');
   });
 
   it('plans one any-sender scan of burns, the chain levels with the Chainlink cross-check, the constants and the fees feed', () => {
@@ -199,5 +197,19 @@ describe('the UNI persona', () => {
     const persona = loadPersona(ROOT, 'onchain-dex-analyst');
     expect(persona.body).toContain('A fee-switch burn (UNI)');
     expect(/^[\x00-\x7F]*$/.test(persona.body)).toBe(true);
+  });
+});
+
+describe('calibration/uni-assumptions.yaml', () => {
+  it('is complete and sits inside the agent bands of assets/uni.yaml', () => {
+    for (const s of ['bear', 'base', 'bull'] as const) {
+      expect(Object.keys(calibrated[s]).sort()).toEqual(requiredAssumptionKeys(config));
+      for (const [key, value] of Object.entries(calibrated[s])) {
+        const b = config.assumptions[key];
+        const band = b[s] ?? b;
+        expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
+        expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
+      }
+    }
   });
 });
