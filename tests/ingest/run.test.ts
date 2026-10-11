@@ -29,6 +29,16 @@ describe('validateReading', () => {
     expect(validateReading(def('schedule', 'x'), 0)).toBeNull();
     expect(validateReading(def('flow', 'x'), -1)).toMatch(/negative/);
   });
+
+  it('lets a constant source state a structural zero in tokens, and nothing else', () => {
+    const lvl = (unit: string, source: unknown) => ({ ...def('level', 'usd'), unit, source }) as Parameters<typeof validateReading>[0];
+    const constant = { type: 'constant', value: 0, note: 'no staking' };
+    expect(validateReading(lvl('tokens', constant), 0)).toBeNull();
+    expect(validateReading(lvl('tokens_per_year', constant), 0)).toBeNull();
+    expect(validateReading(lvl('tokens', constant), -1)).toMatch(/not positive/);
+    expect(validateReading(lvl('usd', constant), 0)).toMatch(/not positive/);
+    expect(validateReading(lvl('tokens', { type: 'erc20_supply', token: 't', subtract_balances: [] }), 0)).toMatch(/not positive/);
+  });
 });
 
 describe('fetchAsset: levels', () => {

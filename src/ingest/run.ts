@@ -60,12 +60,14 @@ export interface FetchResult {
 
 /**
  * Null when a fetched value may be stored. A reading that is not finite, or a supply or price that
- * is not positive, is a source failure, never an observation.
+ * is not positive, is a source failure, never an observation. One exception: a `constant` source may state a structural
+ * zero in tokens (UNI has no staking: staked supply 0), since it is written in the asset file, not read from a source.
  */
 export function validateReading(def: MetricDef, value: number): string | null {
   if (!Number.isFinite(value)) return `${value} is not a finite number`;
   if (def.type === 'level') {
     if (def.unit === 'ratio') return value >= 0 && value <= 1 ? null : `ratio ${value} is outside [0, 1]`;
+    if (value === 0 && def.source?.type === 'constant' && (def.unit === 'tokens' || def.unit === 'tokens_per_year')) return null;
     return value > 0 ? null : `${value} is not positive`;
   }
   return value >= 0 ? null : `${value} is negative`;
