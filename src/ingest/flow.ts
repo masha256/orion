@@ -120,6 +120,17 @@ export interface FlowScanResult {
   daily: Map<string, DailyPoint[]>;
 }
 
+/** EIP-1167 minimal proxy: prefix, 20-byte implementation, suffix. Clones with immutable args append bytes after it. */
+const CLONE_PREFIX = '363d3d373d3d3d363d73';
+const CLONE_SUFFIX = '5af43d82803e903d91602b57fd5bf3';
+
+/** The implementation an EIP-1167 clone delegates to, lowercased, or null when the code is not such a clone. */
+export function cloneImplementation(code: string): string | null {
+  const c = code.toLowerCase().replace(/^0x/, '');
+  if (!c.startsWith(CLONE_PREFIX) || c.slice(CLONE_PREFIX.length + 40, CLONE_PREFIX.length + 40 + CLONE_SUFFIX.length) !== CLONE_SUFFIX) return null;
+  return `0x${c.slice(CLONE_PREFIX.length, CLONE_PREFIX.length + 40)}`;
+}
+
 export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult> {
   const { db, asset, group, rpc, latest, dryRun } = args;
   const outcome = emptySourceOutcome(group.sourceId);
@@ -175,6 +186,18 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
 
     // 4. One day at a time, oldest first. Each day commits on its own, so an interrupted backfill resumes.
     const allow = new Map(group.allowlist.map((a) => [a.address, a.name]));
+    const ignore = new Set(group.ignore ?? []);
+    const cloneImpls = new Set(group.ignoreClonesOf ?? []);
+    if (cloneImpls.size > 0 && !rpc.getCode) throw new Error('from_ignore_clones_of needs an RPC transport that reads contract code');
+    // Code does not change for a clone, so one read per sender per scan.
+    const cloneOf = new Map<string, string | null>();
+    const isIgnoredClone = async (sender: string): Promise<boolean> => {
+      if (cloneImpls.size === 0) return false;
+      if (!cloneOf.has(sender)) cloneOf.set(sender, cloneImplementation(await rpc.getCode!(sender)));
+      const impl = cloneOf.get(sender)!;
+      return impl !== null && cloneImpls.has(impl);
+    };
+    const ignored = { zero: 0, listed: 0, clones: 0 };
     const retired = new Set<number>();
     const wroteAny = new Set<string>();
     let from = await firstBlockAtOrAfter(rpc, rangeStartMs / 1000, latest, latest);
@@ -209,6 +232,20 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
           const tokens = unitsToNumber(log.value, decimals);
           const name = allow.get(sender);
           if (name === undefined) {
+            // Not this flow, and known to be so: a zero-amount transfer (it moves nothing), a listed sender, or a clone of a
+            // listed implementation. None is counted (an unlisted sender never is); they are only kept out of the report.
+            if (log.value === 0n) {
+              ignored.zero++;
+              continue;
+            }
+            if (ignore.has(sender)) {
+              ignored.listed++;
+              continue;
+            }
+            if (await isIgnoredClone(sender)) {
+              ignored.clones++;
+              continue;
+            }
             result.unlisted.push({ txHash: log.txHash, logIndex: log.logIndex, blockNumber: Number(log.blockNumber), from: sender, tokens, day });
             unlistedToday++;
             continue;
@@ -274,6 +311,12 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
     }
 
     outcome.metricsWritten = group.members.map((m) => m.metricKey).filter((k) => wroteAny.has(k));
+    const parts = [
+      ignored.zero > 0 ? `${ignored.zero} zero-amount` : '',
+      ignored.listed > 0 ? `${ignored.listed} from from_ignore senders` : '',
+      ignored.clones > 0 ? `${ignored.clones} from ignored clones` : '',
+    ].filter((p) => p !== '');
+    if (parts.length > 0) outcome.notes.push(`not counted, as configured: ${parts.join(', ')}`);
     if (dryRun && conflicts.length > 0) outcome.notes.push(`--adopt would reject ${conflicts.map((c) => `#${c.observationId}`).join(', ')}`);
   } catch (err) {
     if (err instanceof OrionError) throw err;

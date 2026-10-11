@@ -91,7 +91,7 @@ const sd = loadAsset(ROOT, 'sdcrv').config.contracts;
 const CASES: Case[] = [
   {
     id: 'cvxcrv',
-    hash: 'efca414ec5491dde48a3096b22cd41bc50f9f75e24d9cc967e9db693b851d7b0',
+    hash: 'd82530f85f70f9e6271be920809e06b15499c71ebc89428ef4a01954fa37f6eb',
     coingecko: 'convex-crv',
     price: 0.1392,
     llamaPrice: 0.1391,
@@ -108,7 +108,7 @@ const CASES: Case[] = [
   },
   {
     id: 'sdcrv',
-    hash: '0602cb8ca960265c4d77ed799a2979e947987fd0e6fdcc9f4e4028c154a86fcd',
+    hash: '92e2828c3567b29e2a9c03be51f27cc662737300556c8ec349a9fdba83b63793',
     coingecko: 'stake-dao-crv',
     price: 0.1884,
     llamaPrice: 0.1832,

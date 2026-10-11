@@ -41,6 +41,8 @@ export interface RpcTransport {
   multicall(calls: ContractCall[], blockNumber: bigint): Promise<CallResult[]>;
   /** One range of at most `maxLogRange` blocks. */
   getTransferLogs(q: LogQuery): Promise<TransferLog[]>;
+  /** Runtime bytecode at an address ('0x' for none), for clone detection. Optional: only from_ignore_clones_of needs it. */
+  getCode?(address: string): Promise<string>;
   /** Blocks one eth_getLogs call may span on this chain. Default MAX_LOG_RANGE (Base's cap). */
   readonly maxLogRange?: bigint;
   /** Nominal seconds per block, for the block search's first estimate. Default 2 (Base). */

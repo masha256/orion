@@ -30,6 +30,10 @@ export interface FlowGroup {
   token: string;
   sink: string;
   allowlist: { name: string; address: string }[];
+  /** Senders never counted and never reported as unlisted (from_ignore, all members). Not part of the scan key. */
+  ignore: string[];
+  /** Implementations whose EIP-1167 clones are ignored (from_ignore_clones_of, all members). Not part of the scan key. */
+  ignoreClonesOf: string[];
   members: FlowMember[];
 }
 
@@ -110,7 +114,10 @@ export function buildPlan(asset: AssetConfig, opts: { metrics?: string[] } = {})
       const token = address(s.token);
       const sink = address(s.to);
       const scanKey = flowScanKey(s, address);
-      const group = groups.get(scanKey) ?? { scanKey, sourceId: sourceId(s), token, sink, allowlist, members: [] };
+      const group = groups.get(scanKey) ?? { scanKey, sourceId: sourceId(s), token, sink, allowlist, ignore: [], ignoreClonesOf: [], members: [] };
+      const union = (a: string[], b: string[] | undefined) => [...new Set([...a, ...(b ?? []).map(address)])].sort();
+      group.ignore = union(group.ignore, s.from_ignore);
+      group.ignoreClonesOf = union(group.ignoreClonesOf, s.from_ignore_clones_of);
       group.members.push({
         metricKey,
         unit: s.unit,

@@ -61,6 +61,8 @@ export function harness(
     routes?: Record<string, Route>;
     calls?: Record<string, bigint | Error>;
     logs?: Omit<TransferLog, 'timestamp'>[];
+    /** Runtime code by lowercased address, for clone detection. */
+    code?: Record<string, string>;
     env?: Record<string, string | undefined>;
     now?: Date;
     /** Compute the RPC's latest block from this time instead of `now`, so a test can put the chain head ahead of (or behind) the fetch's `now` independently of `deps.now()`. */
@@ -75,6 +77,7 @@ export function harness(
     latest: BigInt(Math.floor((rpcNow.getTime() / 1000 - GENESIS_TS) / 2)),
     calls: { ...defaultCalls(), ...over.calls },
     logs: over.logs ?? [],
+    code: over.code,
   });
   const deps: FetchDeps = {
     http,

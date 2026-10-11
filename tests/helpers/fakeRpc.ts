@@ -12,10 +12,12 @@ export interface FakeRpcOptions {
   logs?: Omit<TransferLog, 'timestamp'>[];
   /** Exposed as the transport's maxLogRange; the fake refuses wider queries. Default 2000 (Base), left unexposed. */
   maxLogRange?: bigint;
+  /** Runtime code by lowercased address, for getCode; anything else has none ('0x'). */
+  code?: Record<string, string>;
 }
 
 export interface FakeRpc extends RpcTransport {
-  stats: { getBlock: number; multicall: number; logRanges: [bigint, bigint][] };
+  stats: { getBlock: number; multicall: number; logRanges: [bigint, bigint][]; getCode: number };
   failNextLogCalls(n: number): void;
   timestampOf(n: bigint): number;
   /** First block whose timestamp is at or after `ts`. Regular chains only. */
@@ -29,7 +31,7 @@ export function callKey(address: string, functionName: string, args: readonly un
 export function fakeRpc(o: FakeRpcOptions): FakeRpc {
   const blockTime = o.blockTimeSec ?? 2;
   const timestampOf = o.timestampOf ?? ((n: bigint) => o.genesisTs + Number(n) * blockTime);
-  const stats: FakeRpc['stats'] = { getBlock: 0, multicall: 0, logRanges: [] };
+  const stats: FakeRpc['stats'] = { getBlock: 0, multicall: 0, logRanges: [], getCode: 0 };
   let failures = 0;
 
   const block = (n: bigint): BlockRef => {
@@ -61,6 +63,10 @@ export function fakeRpc(o: FakeRpcOptions): FakeRpc {
         if (hit === undefined) return { ok: false, error: `no fake result for ${callKey(c.address, c.functionName, c.args)}` };
         return hit instanceof Error ? { ok: false, error: hit.message } : { ok: true, value: hit };
       });
+    },
+    async getCode(address: string): Promise<string> {
+      stats.getCode++;
+      return o.code?.[address.toLowerCase()] ?? '0x';
     },
     async getTransferLogs(q: LogQuery): Promise<TransferLog[]> {
       stats.logRanges.push([q.fromBlock, q.toBlock]);

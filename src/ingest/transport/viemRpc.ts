@@ -89,6 +89,7 @@ export const createViemRpc: RpcFactory = (url, chainId) => {
           return pickValue(r.result, calls[i].pick);
         });
       }),
+    getCode: (address) => clean(async () => (await client.getCode({ address: address as Address })) ?? '0x'),
     getTransferLogs: (q) =>
       clean(async () => {
         const logs = await client.getLogs({

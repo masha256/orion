@@ -30,6 +30,11 @@ contracts:
   voter_proxy: "0x989AEb4d175e16225E39E87d0D97A3360524AD80" # Convex's veCRV (reference; not read)
   cvx_reward_pool: "0xCF50b810E57Ac33B91dCF525C6ddd9881B139332" # cvxRewardPool: CVX stakers' 4.5 percent of the Booster's CRV
   convex_treasury: "0x1389388d01708118b497f59521f6943be2541bb7" # TreasuryFunds: the Booster's platformFee (2 percent)
+  # Convex fee forwarders (owner: Convex multisig 0xa3c5a1e09150b75ff251c1a7815a07182c3de2fb). They send CRV (and FXS/CVX)
+  # from Convex's other products to the treasury; not the Booster's Curve cut, so ignored on convex_rev_treasury.
+  cvx_fee_fwd_1: "0x04dd97255ddee29c941d85f5b5cde6ace8bd207f"
+  cvx_fee_fwd_2: "0x9d464b601f74c8d3d42379921106b907f1055f80"
+  cvx_fee_fwd_3: "0xa25b17d7deee59f9e326e45cc3c0c1b158e74316"
 
 ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
 
@@ -137,7 +142,8 @@ metrics:
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: crv, to: convex_treasury, from_allowlist: [ booster ], unit: usd, price_coingecko_id: curve-dao-token }
+    # from_ignore: the three Convex fee forwarders (contracts above): other Convex products' fees, not Curve revenue.
+    source: { type: transfer_flow, token: crv, to: convex_treasury, from_allowlist: [ booster ], from_ignore: [ cvx_fee_fwd_1, cvx_fee_fwd_2, cvx_fee_fwd_3 ], unit: usd, price_coingecko_id: curve-dao-token }
 
 holder_flows:
   # All three are paid only to stakers, so each is valued per staked token. CVX is a treasury program Convex can end,

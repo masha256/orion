@@ -58,6 +58,21 @@ export const SourceSchema = z.discriminatedUnion('type', [
     share_price: z
       .strictObject({ contract: name, function: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), decimals: z.number().int().min(0).max(36) })
       .optional(),
+    /**
+     * Known senders that are not this flow (another product's fees, a distributor's dust): never counted, never reported
+     * as unlisted. Names from `contracts`; give each a why-comment in the YAML. Optional with no default (hashes).
+     */
+    from_ignore: z.array(name).min(1).optional(),
+    /**
+     * Implementations whose EIP-1167 minimal-proxy clones are ignored like `from_ignore` (a factory's per-pool sidecars,
+     * too many to list). Matched on the sender's runtime code; trailing immutable-arg bytes after the proxy are allowed.
+     */
+    from_ignore_clones_of: z.array(name).min(1).optional(),
+  }).superRefine((s, ctx) => {
+    const allow = new Set(s.from_allowlist);
+    for (const n of [...(s.from_ignore ?? []), ...(s.from_ignore_clones_of ?? [])]) {
+      if (allow.has(n)) ctx.addIssue({ code: 'custom', message: `${n} is on from_allowlist and on an ignore list; a sender is one or the other` });
+    }
   }),
   z.strictObject({ type: z.literal('adapter'), name, params }),
   /**
@@ -93,7 +108,10 @@ export function contractNames(s: SourceConfig): string[] {
     case 'contract_read':
       return [s.contract, ...(s.args ?? [])];
     case 'transfer_flow':
-      return [s.token, s.to, ...s.from_allowlist, ...(s.count_from ?? []), ...(s.share_price ? [s.share_price.contract] : [])];
+      return [
+        s.token, s.to, ...s.from_allowlist, ...(s.count_from ?? []), ...(s.share_price ? [s.share_price.contract] : []),
+        ...(s.from_ignore ?? []), ...(s.from_ignore_clones_of ?? []),
+      ];
     default:
       return [];
   }

@@ -30,6 +30,11 @@ contracts:
   sd_fee_receiver: "0x60136fefe23d269af41ab72de483d186dc4318d6" # FeeReceiver: splits the fee to veSDT, treasury, and sdCRV (accumulator)
   sd_liquidity_fee: "0x576d7ad8eae92d9a972104aac56c15255ddbe080" # LiquidityFeeRecipient: 10 percent of the crvUSD fees
   sd_treasury: "0x9ebbb3d59d53d6ad3fa5464f36c2e84abb7cf5c1" # TreasuryRecipient: 5 percent of the crvUSD fees (and part of the CRV fee)
+  # StakeDAO strategy sidecar implementations: ~90 EIP-1167 clones of these send their pools' CRV to the Accountant. They are
+  # strategy CRV the Accountant fees on, not the locker's own CRV (gross volume is the locker's; Accountant->FeeReceiver is
+  # 16.6 percent of the locker's CRV alone), so their clones are ignored on sd_gross_crv.
+  sd_sidecar_impl_a: "0xef7cffdef21538b63cc541bf206bb382d922a216"
+  sd_sidecar_impl_b: "0x66c3ce4718a39d44ce2430eb3e8b8d43c18ba1fa"
 
 ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
 
@@ -119,7 +124,8 @@ metrics:
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: crv, to: sd_accountant, from_allowlist: [ locker ], unit: usd, price_coingecko_id: curve-dao-token }
+    # from_ignore_clones_of: the sidecar clones (implementations above): other strategies' CRV, not the locker's.
+    source: { type: transfer_flow, token: crv, to: sd_accountant, from_allowlist: [ locker ], from_ignore_clones_of: [ sd_sidecar_impl_a, sd_sidecar_impl_b ], unit: usd, price_coingecko_id: curve-dao-token }
   flow_usd.sd_rev_crv:
     type: flow
     unit: usd
