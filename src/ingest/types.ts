@@ -32,7 +32,29 @@ export type SourceValue =
   | { kind: 'level'; value: number; observedAt: string; source: 'onchain' | 'api'; detail: string }
   | { kind: 'schedule_steps'; steps: ScheduleStepReading[]; source: 'onchain' | 'api'; detail: string }
   | { kind: 'daily_series'; points: DailyPoint[]; detail: string }
-  | { kind: 'monthly_series'; points: MonthlyPoint[]; detail: string };
+  | { kind: 'monthly_series'; points: MonthlyPoint[]; detail: string }
+  | { kind: 'periodic_payments'; payments: PeriodicPayment[]; due: PeriodDue[]; payers: string[]; expectedPayers: string[]; detail: string };
+
+/**
+ * One lump payment for a known coverage period (HYPE's USDC reserve yield: 30 days, paid 8 days after the period ends).
+ * Stored as one flow row covering [from, to]; the report spreads it evenly over those days.
+ */
+export interface PeriodicPayment {
+  /** First and last UTC day the payment covers (inclusive). */
+  from: string;
+  to: string;
+  value: number;
+  /** When it was paid (ISO), and the day it was due. */
+  paidAt: string;
+  dueDay: string;
+}
+
+/** A completed coverage period with no payment yet, and the day it falls due. */
+export interface PeriodDue {
+  from: string;
+  to: string;
+  dueDay: string;
+}
 
 export type ReadingResult = { ok: true; value: SourceValue } | { ok: false; error: string };
 

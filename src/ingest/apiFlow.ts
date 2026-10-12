@@ -17,6 +17,11 @@ import type { DailyPoint, WrittenObservation } from './types.js';
 export const DEFAULT_API_FLOW_BACKFILL_DAYS = 90;
 /** Days already written that every run reads again: a revised value supersedes the day's row. */
 export const REVISION_DAYS = 3;
+/**
+ * DefiLlama revises its daily series weeks back (AERO's and HYPE's revenue history was raised after the fact; Mike,
+ * 2026-10-12), so a DefiLlama series is read again over the last 30 written days on every run.
+ */
+export const DEFILLAMA_REVISION_DAYS = 30;
 
 export interface ApiFlowArgs {
   db: Db;
@@ -29,6 +34,8 @@ export interface ApiFlowArgs {
   detail: string;
   now: Date;
   backfillDays: number;
+  /** Written days read again on every run; REVISION_DAYS when absent. */
+  revisionDays?: number;
   /** Ignore the cursor and read `backfillDays` back again. Unchanged days are left alone; changed ones are superseded. */
   rescan: boolean;
   adopt: boolean;
@@ -78,11 +85,11 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
   const cursor = getCursor(db, asset.id, args.scanKey);
   const byDay = new Map(args.points.map((p) => [p.day, p.value]));
   const stored = storedApiDays(db, asset.id, metricKey);
-  // The days to read: with a cursor, the last REVISION_DAYS written days (a revised value supersedes the day's row) plus
+  // The days to read: with a cursor, the last revisionDays written days (a revised value supersedes the day's row) plus
   // any GAP day inside the backfill window, one by one: a day the series had not aggregated when the cursor passed it
   // and that no active row covers yet. A gap is retried on every run until it appears; the days between a gap and the
   // revision window are not read again, so an old gap never widens the revision limit. Without a cursor: the window.
-  const startDay = cursor && !args.rescan ? addDays(cursor.lastDay, 1 - REVISION_DAYS) : windowStart;
+  const startDay = cursor && !args.rescan ? addDays(cursor.lastDay, 1 - (args.revisionDays ?? REVISION_DAYS)) : windowStart;
   const gapDays: string[] = [];
   if (cursor && !args.rescan) {
     const covered = coveredDays(db, asset.id, metricKey);
@@ -104,8 +111,19 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
   const rangeStartMs = dayStartMs(startDay);
   const rangeEndMs = dayStartMs(lastCompleteDay) + MS_PER_DAY;
 
-  // 2. Conflicts with rows from other sources decide whether anything is written at all.
-  const conflicts = findFlowConflicts(db, asset.id, metricKey, rangeStartMs, rangeEndMs, 'api');
+  // 2. Conflicts with rows from other sources decide whether anything is written at all. On a routine run (not a rescan)
+  //    a manual row inside the revision window is a decision already taken (AERO's 2026-09-09 artifact, replaced by hand):
+  //    its days are left alone, so a 30-day revision window does not refuse the whole series over it. A rescan still
+  //    refuses it unless --adopt.
+  const allConflicts = findFlowConflicts(db, asset.id, metricKey, rangeStartMs, rangeEndMs, 'api');
+  const honoured = cursor && !args.rescan && !args.adopt ? allConflicts.filter((c) => c.adoptable) : [];
+  const conflicts = allConflicts.filter((c) => !honoured.includes(c));
+  const manualDays = new Set<string>();
+  for (const c of honoured) {
+    const endMs = new Date(c.observedAt).getTime();
+    for (let ms = dayStartMs(utcDay(endMs - (c.periodDays ?? 1) * MS_PER_DAY)); ms < endMs; ms += MS_PER_DAY) manualDays.add(utcDay(ms));
+  }
+  if (manualDays.size > 0) outcome.notes.push(`${metricKey}: left as entered by hand: ${[...manualDays].sort().join(', ')} (${honoured.map((c) => `#${c.observationId}`).join(', ')})`);
   outcome.conflicts.push(...conflicts);
   const stuck = conflicts.filter((c) => !c.adoptable);
   if (conflicts.length > 0 && (!args.adopt || stuck.length > 0)) {
@@ -140,6 +158,7 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
       }
     }
     for (const day of days) {
+      if (manualDays.has(day)) continue;
       const value = byDay.get(day);
       if (value === undefined) {
         skipped.push(day);

@@ -163,6 +163,10 @@ reporting:
   income:
     lines:
       - { id: burn, to: holders, metric: flow_usd.burn, note: "every protocol fee burns UNI" }
+  # Revenue (Mike, 2026-10-12): the burns are the protocol fees switched on, v2 plus selected v3 pools (and a small
+  # Unichain sequencer share); v4 and the other v3 pools are upside, not revenue.
+  revenue:
+    - { id: protocol_fees, label: "protocol fees (v2 + selected v3)", metric: flow_usd.burn, settlement: daily }
   volume: [ flow_usd.swap_fees ]
   # The burn in UNI against the vest in UNI (Mike, 2026-10-11): the USD net shareholder yield values the burn at each day's
   # price and the vest at spot, so a rally alone can turn it negative; the token line cannot.

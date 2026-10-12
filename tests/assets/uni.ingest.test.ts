@@ -109,8 +109,8 @@ describe('assets/uni.yaml', () => {
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // DefiLlama only for the gross swap fees (Mike, 2026-10-11): the one series with no on-chain source.
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama' || d.cross_checks?.some((c) => c.source.type === 'defillama')).map(([k]) => k)).toEqual(['flow_usd.swap_fees']);
-    // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check. A deliberate edit of assets/uni.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('384a206f0f018b3aa288ebe97d1e487d17e24c7933302b80a30e8dcab97dd3cd');
+    // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check; then the revenue label (protocol fees, v2 + selected v3). A deliberate edit of assets/uni.yaml moves it; update the pin on purpose.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('f4541201fbae2cfe6772dbbdea9b2965a15c1b20211b107bda04ab186a60d4a1');
   });
 
   it('plans one any-sender scan of burns, the chain levels with the Chainlink cross-check, the constants and the fees feed', () => {

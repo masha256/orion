@@ -9,7 +9,8 @@ import { latestLevel } from '../drivers/select.js';
 import { MS_PER_DAY, OrionError, STD_METRICS } from '../types.js';
 import { getAdapter } from './adapters/registry.js';
 import { checkRevenueStale, type IndexPoint } from './alerts.js';
-import { DEFAULT_API_FLOW_BACKFILL_DAYS, writeApiFlow } from './apiFlow.js';
+import { DEFAULT_API_FLOW_BACKFILL_DAYS, DEFILLAMA_REVISION_DAYS, writeApiFlow } from './apiFlow.js';
+import { writePeriodicPayments } from './periodic.js';
 import { compareLevel, compareMonthly } from './crosscheck.js';
 import { derivedFunction, type DerivedName } from './derived.js';
 import { scanFlowGroup } from './flow.js';
@@ -211,10 +212,31 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
           const flow = writeApiFlow({
             db, asset, metricKey: r.metricKey, scanKey: `${batch.sourceId}>${r.metricKey}`, points: result.value.points, detail: result.value.detail, now,
             backfillDays: opts.backfillDays ?? (r.source.type === 'defillama' ? r.source.backfill_days : undefined) ?? DEFAULT_API_FLOW_BACKFILL_DAYS, rescan: opts.backfillDays !== undefined,
+            revisionDays: r.source.type === 'defillama' ? (r.source.revision_days ?? DEFILLAMA_REVISION_DAYS) : undefined,
             adopt: opts.adopt ?? false, dryRun, outcome, validate: (value) => validateReading(def, value),
           });
           written.push(...flow.written);
           scannedDaily.set(r.metricKey, flow.daily);
+        } catch (err) {
+          if (err instanceof OrionError) throw err;
+          markFailed(outcome, `${r.metricKey}: ${message(err)}`);
+        }
+        continue;
+      }
+      if (result.value.kind === 'periodic_payments') {
+        const def = asset.metrics[r.metricKey];
+        if (def.type !== 'flow') {
+          markFailed(outcome, `${r.metricKey}: periodic payments can only be stored on a flow metric, not a ${def.type} one`);
+          continue;
+        }
+        try {
+          const v = result.value;
+          written.push(
+            ...writePeriodicPayments({
+              db, asset, metricKey: r.metricKey, payments: v.payments, due: v.due, payers: v.payers, expectedPayers: v.expectedPayers, detail: v.detail,
+              now, dryRun, outcome, validate: (value) => validateReading(def, value), raise,
+            }),
+          );
         } catch (err) {
           if (err instanceof OrionError) throw err;
           markFailed(outcome, `${r.metricKey}: ${message(err)}`);
@@ -355,8 +377,8 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
         markFailed(outcome, `${r.metricKey}: ${result.error}`);
         continue;
       }
-      if (result.value.kind === 'level' || result.value.kind === 'schedule_steps') {
-        markFailed(outcome, `${r.metricKey}: expected a daily or monthly series, got a ${result.value.kind === 'level' ? 'level' : 'schedule'}`);
+      if (result.value.kind === 'level' || result.value.kind === 'schedule_steps' || result.value.kind === 'periodic_payments') {
+        markFailed(outcome, `${r.metricKey}: expected a daily or monthly series, got ${result.value.kind === 'level' ? 'a level' : result.value.kind === 'schedule_steps' ? 'a schedule' : 'periodic payments'}`);
         continue;
       }
       const days = storedDailyFlow(db, asset.id, r.metricKey);

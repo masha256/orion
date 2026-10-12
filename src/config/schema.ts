@@ -88,6 +88,35 @@ const ReportingSchema = z.strictObject({
   /** A level metric entered from disclosures (VVV's revenue run rate): its growth between disclosures. */
   revenue_disclosed: z.string().optional(),
   /**
+   * Revenue as a list of streams (Mike, 2026-10-12): revenue = the sum of the streams, and a new revenue type is config
+   * only. Without the list, revenue is the income statement's total as before (the sum of its lines, or remainder_of).
+   * Each stream has one source:
+   * - `metric` (a flow) with `settlement`: `daily`, a daily series; or `periodic`, lump payments stored one row per
+   *   coverage period, spread evenly over the days covered. The unpaid days since the last covered period run at that
+   *   period's daily rate, provisional, and are replaced when the payment lands.
+   * - `disclosed` (a level, the asset's revenue_disclosed): the company's own figure. When an asset has disclosures, they
+   *   are its revenue, and `cross_check` names the daily series kept beside them (VVV: DefiLlama's dailyRevenue).
+   * `started` dates a stream; one younger than the two growth windows is left out of the second revenue growth figure.
+   * `holder_flow` also counts the stream in the report's holder flow, in that bucket (never in the valuation).
+   */
+  revenue: z
+    .array(
+      z
+        .strictObject({
+          id: z.string().regex(/^[a-z0-9_]+$/),
+          label: z.string().optional(),
+          metric: z.string().optional(),
+          settlement: z.enum(['daily', 'periodic']).optional(),
+          disclosed: z.string().optional(),
+          cross_check: z.string().optional(),
+          started: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+          holder_flow: z.enum(['burn', 'hold', 'cash']).optional(),
+        })
+        .refine((s) => (s.metric === undefined) !== (s.disclosed === undefined), { message: 'a revenue stream has a metric or a disclosed level, not both' }),
+    )
+    .min(1)
+    .optional(),
+  /**
    * Cash to holders that the valuation keeps outside holder_flows (CRV's vote incentives, a component): an annual run-rate
    * level metric, its haircut, and whose tokens receive it.
    */
@@ -293,10 +322,12 @@ export const AssetConfigSchema = z
     if (a.reporting) {
       const r = a.reporting;
       for (const f of a.holder_flows) if (r.haircuts[f.id] === undefined) issue(`reporting: haircuts has no entry for holder flow "${f.id}"`);
+      const reportFlows = (r.revenue ?? []).filter((s) => s.holder_flow !== undefined);
       for (const id of Object.keys(r.haircuts)) {
         const f = a.holder_flows.find((x) => x.id === id);
-        if (!f) issue(`reporting: haircuts names "${id}", which is not a holder flow`);
-        else if (f.kind === 'burn' && r.haircuts[id] !== 0) issue(`reporting: "${id}" is a burn, whose haircut is 0`);
+        const s = reportFlows.find((x) => x.id === id);
+        if (!f && !s) issue(`reporting: haircuts names "${id}", which is not a holder flow`);
+        else if ((f?.kind ?? s?.holder_flow) === 'burn' && r.haircuts[id] !== 0) issue(`reporting: "${id}" is a burn, whose haircut is 0`);
       }
       const inc = r.income;
       if (inc) {
@@ -339,6 +370,34 @@ export const AssetConfigSchema = z
       }
       if (r.revenue_disclosed !== undefined && a.metrics[r.revenue_disclosed]?.type !== 'level') {
         issue(`reporting: revenue_disclosed "${r.revenue_disclosed}" is not a level metric`);
+      }
+      if (r.revenue) {
+        const ids = new Set<string>();
+        for (const s of r.revenue) {
+          if (ids.has(s.id)) issue(`reporting.revenue: stream id "${s.id}" is used twice`);
+          ids.add(s.id);
+          if (s.metric !== undefined && a.metrics[s.metric]?.type !== 'flow') issue(`reporting.revenue: stream "${s.id}" metric "${s.metric}" is not a flow metric`);
+          if (s.disclosed !== undefined) {
+            if (s.disclosed !== r.revenue_disclosed) issue(`reporting.revenue: stream "${s.id}" disclosed "${s.disclosed}" must be the asset's revenue_disclosed`);
+            if (s.settlement !== undefined || s.holder_flow !== undefined) issue(`reporting.revenue: disclosed stream "${s.id}" takes no settlement or holder_flow`);
+          }
+          if (s.cross_check !== undefined) {
+            if (s.disclosed === undefined) issue(`reporting.revenue: only a disclosed stream takes a cross_check ("${s.id}")`);
+            if (a.metrics[s.cross_check]?.type !== 'flow') issue(`reporting.revenue: stream "${s.id}" cross_check "${s.cross_check}" is not a flow metric`);
+          }
+          if (s.holder_flow !== undefined && (a.holder_flows.some((f) => f.id === s.id) || (r.extra_cash ?? []).some((x) => x.id === s.id))) {
+            issue(`reporting.revenue: stream id "${s.id}" is also a holder flow id`);
+          }
+          if (s.settlement === 'periodic' && s.started === undefined) issue(`reporting.revenue: periodic stream "${s.id}" needs started (its first covered day)`);
+        }
+        if (r.revenue.filter((s) => s.disclosed !== undefined).length > 1) issue('reporting.revenue: at most one disclosed stream');
+        if (r.revenue.some((s) => s.disclosed !== undefined) && r.revenue.length > 1) issue('reporting.revenue: a disclosed stream is the whole revenue; list no other stream');
+        if (r.income?.remainder_of) issue('reporting: with revenue streams, protocol income is revenue less holders and costs; drop income.remainder_of');
+        if (r.income?.lines.some((l) => l.to === 'protocol')) issue('reporting.income: with revenue streams, protocol income is the remainder; list no protocol line');
+      }
+      // Mike, 2026-10-12: an asset that discloses its revenue reports that as revenue, not a third-party proxy.
+      if (r.revenue_disclosed !== undefined && !(r.revenue ?? []).some((s) => s.disclosed === r.revenue_disclosed)) {
+        issue(`reporting: revenue_disclosed "${r.revenue_disclosed}" is the asset's revenue: list it as a disclosed revenue stream`);
       }
     }
 

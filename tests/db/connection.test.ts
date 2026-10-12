@@ -42,7 +42,7 @@ describe('openDb', () => {
     const db = openDb(':memory:');
     migrate(db);
     const row = db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number };
-    expect(row.n).toBe(6);
+    expect(row.n).toBe(7);
   });
 
   it('migration 6 renames effective_supply to total_supply wherever the code reads it back, and nothing else', () => {
@@ -105,7 +105,7 @@ describe('openDb', () => {
 
     migrate(db);
 
-    expect((db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number }).n).toBe(6);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number }).n).toBe(7);
     expect(db.prepare('SELECT id, run_type FROM agent_runs ORDER BY id').all()).toEqual([{ id: 1, run_type: 'deep' }]);
     expect(db.prepare('SELECT agent_run_id FROM proposals').all()).toEqual([{ agent_run_id: 1 }]);
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_agent_runs_asset'").all()).toHaveLength(1);
@@ -113,5 +113,27 @@ describe('openDb', () => {
     insertRun('bootstrap');
     expect(db.prepare('SELECT MAX(id) AS id FROM agent_runs').get()).toEqual({ id: 3 }); // the sequence carried over the rebuild
     expect(() => db.prepare("INSERT INTO agent_transcripts (run_id, messages_json) VALUES (99, '[]')").run()).toThrow(/FOREIGN KEY constraint failed/);
+  });
+
+  it('migration 7 rebuilds anomalies for the revenue_payment kind, keeping rows, ids, the id sequence and both indexes', () => {
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)');
+    for (const m of MIGRATIONS.filter((m) => m.id <= 6)) {
+      db.exec(m.sql);
+      db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(m.id, '2026-10-01T00:00:00.000Z');
+    }
+    db.pragma('foreign_keys = ON');
+    const add = (kind: string, status = 'open', key = 'k') =>
+      db.prepare("INSERT INTO anomalies (asset_id, kind, metric_key, dedupe_key, severity, status, detail_json, first_seen_at, last_seen_at, decided_by) VALUES ('hype', ?, 'm', ?, 'advisory', ?, '{}', 't', 't', 'u')").run(kind, key, status);
+    add('cross_check_mismatch', 'resolved', 'a');
+    add('unlisted_sender', 'open', 'b');
+    db.prepare('DELETE FROM anomalies WHERE id = 2').run(); // the sequence runs ahead of the surviving max id
+    expect(() => add('revenue_payment')).toThrow(/CHECK constraint failed/);
+    migrate(db);
+    expect((db.prepare('SELECT MAX(id) AS n FROM schema_migrations').get() as { n: number }).n).toBe(7);
+    expect(db.prepare('SELECT id, kind, status, decided_by FROM anomalies').all()).toEqual([{ id: 1, kind: 'cross_check_mismatch', status: 'resolved', decided_by: 'u' }]);
+    expect(Number(add('revenue_payment').lastInsertRowid)).toBe(3);
+    expect(() => add('revenue_payment')).toThrow(/UNIQUE constraint failed/); // one open per key, as before
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'anomalies' ORDER BY name").all()).toEqual([{ name: 'idx_anomalies_asset' }, { name: 'idx_anomalies_one_open' }]);
   });
 });

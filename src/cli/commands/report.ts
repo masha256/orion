@@ -10,6 +10,7 @@ const pct = (x: number | null, d = 1) => (x === null ? 'n/a' : `${(x * 100).toFi
 /** Growth: the annualized change, or why there is none (too little history vs. a zero or negative window). */
 const g = (x: Growth) => {
   if (x.annualized !== null) return `${pct(x.annualized)} ann. (${pct(x.change)} per window)`;
+  if (x.note?.startsWith('a disclosed')) return `n/a (${x.note})`;
   if (x.current === null || x.prior === null) return 'pending (needs 2 windows of daily history)';
   return `n/m${x.change !== null ? ` (per window ${pct(x.change)})` : ''}`;
 };
@@ -28,6 +29,25 @@ export function reportLines(r: HolderYieldReport): string[] {
     const m = (x: number | null) => (x === null ? 'n/a' : `${(x / 1e6).toFixed(2)}M`);
     lines.push(`  supply (tokens/yr, ${r.windowDays}d): burned ${m(s.burnedPerYear)}  added ${m(s.addedPerYear)}  net ${m(s.netPerYear)} (${pct(s.netPct, 2)} of supply; negative shrinks)`);
   }
+  if (r.revenue && r.revenue.basis !== 'income') {
+    const v = r.revenue;
+    lines.push(`  revenue ${usd(v.annualized)}${v.provisional ? ' (part provisional)' : ''}  growth ${g(v.growth)}${v.growthExNew ? `  ex new streams (${v.excludedFromExNew.join(', ')}) ${g(v.growthExNew)}` : ''}`);
+    for (const s of v.streams) {
+      const tags = [
+        s.basis,
+        s.daysInWindow !== null ? `run rate over ${s.daysInWindow}d` : null,
+        s.provisionalDays > 0 ? `${s.provisionalDays}d provisional` : null,
+        s.isNew ? `new since ${s.started}` : null,
+        s.holderFlow ? `also holder flow (${s.holderFlow})` : null,
+      ].filter((x) => x !== null);
+      lines.push(`    stream ${s.id.padEnd(16)} ${usd(s.annualized)}  ${s.label ? `${s.label}  ` : ''}[${tags.join(', ')}]  growth ${g(s.growth)}`);
+    }
+    if (v.disclosedGrowth) {
+      const d = v.disclosedGrowth;
+      lines.push(`    disclosed growth ${d.annualized === null ? 'n/m' : `${pct(d.annualized)} ann.`}${d.gapDays !== null ? ` over ${d.gapDays}d` : ''}${d.flags.length ? `  flags: ${d.flags.join('; ')}` : ''}`);
+    }
+    if (v.crossCheck) lines.push(`    cross-check ${v.crossCheck.metric} ${usd(v.crossCheck.annualized)} (third-party proxy; not revenue)`);
+  }
   if (r.income) {
     const i = r.income;
     lines.push(`  income statement (annualized, ${r.windowDays}d):`);
@@ -40,7 +60,7 @@ export function reportLines(r: HolderYieldReport): string[] {
     for (const o of i.outsideRevenue) lines.push(`    outside revenue: ${o.id} ${usd(o.annualized)} to holders${o.note ? ` (${o.note})` : ''}`);
   }
   if (r.volume) lines.push(`  gross volume ${usd(r.volume.annualized)}  growth ${g(r.volume.growth)}`);
-  if (r.revenueDisclosed) {
+  if (r.revenueDisclosed && !(r.revenue && r.revenue.basis === 'disclosed')) {
     const d = r.revenueDisclosed;
     lines.push(`  disclosed revenue ${usd(d.latest)} (${d.latestAt ?? 'none'})  growth ${d.annualizedGrowth === null ? 'n/m' : pct(d.annualizedGrowth)}`);
   }

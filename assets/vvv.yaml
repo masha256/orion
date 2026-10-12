@@ -171,8 +171,8 @@ metrics:
     staleness_days: 90
     source: { type: contract_read, contract: staking, function: veniceEmissionsPercentageWhenLocked, decimals: 18, scale: -1, offset: 1 }
 
-  # Report-only (monitor_only, never a driver). Venice discloses revenue only now and then (revenue_run_rate_usd);
-  # DefiLlama's daily series is the labelled proxy between disclosures (Mike, 2026-10-10).
+  # Report-only (monitor_only, never a driver). Venice's revenue is its disclosures (revenue_run_rate_usd); DefiLlama's
+  # daily series (the on-chain burns) is a cross-check only (Mike, 2026-10-12).
   flow_usd.revenue_proxy:
     type: flow
     unit: usd
@@ -245,9 +245,12 @@ reporting:
   window_days: 90
   haircuts: { burn: 0 }
   revenue_disclosed: revenue_run_rate_usd
-  # Income statement (Mike, 2026-10-11): revenue = DefiLlama dailyRevenue (labelled proxy; disclosures below); paid to
-  # holders = the burns; protocol income = the rest.
+  # Revenue (Mike, 2026-10-12) = Venice's disclosed business revenue (the latest annual run rate). DefiLlama's dailyRevenue
+  # (the on-chain burns, about 10x smaller) is a cross-check only. Growth is between the two latest disclosures, flagged
+  # when they are < 90 days apart or the latest is > 90 days old. Holder flow stays = the burns.
+  revenue:
+    - { id: business, label: "disclosed business revenue (annual run rate)", disclosed: revenue_run_rate_usd, cross_check: flow_usd.revenue_proxy }
+  # Income statement (Mike, 2026-10-11): paid to holders = the burns; protocol income = revenue less the burns.
   income:
     lines:
       - { id: burn, to: holders, metric: flow_usd.burn }
-    remainder_of: [ flow_usd.revenue_proxy ]

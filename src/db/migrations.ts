@@ -283,4 +283,37 @@ UPDATE config_versions SET content_json = REPLACE(REPLACE(content_json, '"effect
   WHERE content_json LIKE '%effective%supply%';
 `,
   },
+  {
+    id: 7,
+    rebuildsTables: true,
+    // anomalies.kind gains 'revenue_payment' (a periodic revenue stream's payment is late, off its accrual, or comes from a
+    // new payer; Mike, 2026-10-12). SQLite cannot alter a CHECK constraint, so the table is rebuilt as in migration 5:
+    // same columns in the same order (decided_by last, as migration 3 added it), rows copied by position, the
+    // AUTOINCREMENT counter carried over, then both indexes.
+    sql: `
+CREATE TABLE anomalies_new (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('cross_check_mismatch','unlisted_sender','source_failure_streak','revenue_disclosure_stale','revenue_payment')),
+  metric_key TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK (severity IN ('degrading','advisory')),
+  status TEXT NOT NULL CHECK (status IN ('open','resolved','acknowledged')),
+  detail_json TEXT NOT NULL,
+  occurrences INTEGER NOT NULL DEFAULT 1,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  note TEXT,
+  decided_at TEXT,
+  decided_by TEXT
+);
+INSERT INTO anomalies_new SELECT * FROM anomalies;
+DELETE FROM sqlite_sequence WHERE name = 'anomalies_new';
+INSERT INTO sqlite_sequence (name, seq) SELECT 'anomalies_new', seq FROM sqlite_sequence WHERE name = 'anomalies';
+DROP TABLE anomalies;
+ALTER TABLE anomalies_new RENAME TO anomalies;
+CREATE INDEX idx_anomalies_asset ON anomalies (asset_id, status);
+CREATE UNIQUE INDEX idx_anomalies_one_open ON anomalies (asset_id, kind, metric_key, dedupe_key) WHERE status = 'open';
+`,
+  },
 ];

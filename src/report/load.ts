@@ -18,7 +18,40 @@ export function reportFlowMetrics(asset: AssetConfig): string[] {
         ...(inc.outside_revenue ?? []).map((o) => o.metric),
       ]
     : [];
-  return [...new Set([...asset.holder_flows.map((f) => f.metric), ...income, ...(r?.volume ?? []), ...(r?.burned_tokens ?? [])])];
+  const streams = (r?.revenue ?? []).flatMap((s) => [s.metric, s.cross_check].filter((m): m is string => m !== undefined));
+  return [...new Set([...asset.holder_flows.map((f) => f.metric), ...income, ...streams, ...(r?.volume ?? []), ...(r?.burned_tokens ?? [])])];
+}
+
+/** The metrics of periodic revenue streams: paid weeks after the days they cover, so they never hold back the report day. */
+function periodicMetrics(asset: AssetConfig): Set<string> {
+  return new Set((asset.reporting?.revenue ?? []).filter((s) => s.settlement === 'periodic').map((s) => s.metric!));
+}
+
+/**
+ * A periodic stream's payments spread evenly over the days each covers, then the unpaid days after the last covered one,
+ * through `through`, at the last period's daily rate: provisional, and replaced when the payment lands (the payment row
+ * is the only thing stored). Before the first payment there is no rate, so the unpaid days stay missing.
+ */
+export function periodicDaily(db: Db, assetId: string, metricKey: string, through: string): { days: Map<string, number>; provisional: Set<string> } {
+  const days = new Map<string, number>();
+  const provisional = new Set<string>();
+  const rows = listActiveObservations(db, assetId, metricKey)
+    .filter((o) => o.status === 'confirmed' && (o.periodDays ?? 1) >= 1)
+    .sort((a, b) => (a.observedAt < b.observedAt ? -1 : 1));
+  let last: { end: string; rate: number } | null = null;
+  for (const o of rows) {
+    const n = o.periodDays ?? 1;
+    const end = utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY);
+    for (let i = 0; i < n; i++) days.set(addDays(end, -i), o.value / n);
+    if (last === null || end > last.end) last = { end, rate: o.value / n };
+  }
+  if (last) {
+    for (let d = addDays(last.end, 1); d <= through; d = addDays(d, 1)) {
+      days.set(d, last.rate);
+      provisional.add(d);
+    }
+  }
+  return { days, provisional };
 }
 
 /** A flow metric's stored daily rows (confirmed, active), keyed by the UTC day each covers. */
@@ -38,7 +71,9 @@ function dailyOf(db: Db, assetId: string, metricKey: string): Map<string, number
  */
 export function lastCompleteReportDay(db: Db, asset: AssetConfig): string | null {
   let last: string | null = null;
+  const periodic = periodicMetrics(asset);
   for (const metric of reportFlowMetrics(asset)) {
+    if (periodic.has(metric)) continue;
     const days = [...dailyOf(db, asset.id, metric).keys()].sort();
     const d = days.at(-1);
     if (d === undefined) return null;
@@ -76,6 +111,15 @@ export function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: string):
     ...(r.dilution ? { dilution: Object.fromEntries(r.dilution.map((d) => [d.id, { rate: level(d.metric), cap: d.cap_metric ? level(d.cap_metric) : null }])) } : {}),
     disclosed,
   };
-  const daily = new Map(reportFlowMetrics(asset).map((m) => [m, dailyOf(db, asset.id, m)] as const));
-  return holderYieldReport({ asset, day: target, daily, levels });
+  const periodic = periodicMetrics(asset);
+  const provisional = new Map<string, Set<string>>();
+  const daily = new Map(
+    reportFlowMetrics(asset).map((m) => {
+      if (!periodic.has(m)) return [m, dailyOf(db, asset.id, m)] as const;
+      const p = periodicDaily(db, asset.id, m, target);
+      provisional.set(m, p.provisional);
+      return [m, p.days] as const;
+    }),
+  );
+  return holderYieldReport({ asset, day: target, daily, provisional, levels });
 }

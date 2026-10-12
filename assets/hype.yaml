@@ -10,6 +10,10 @@ contracts:
   unvested: "0x43e9abea1910387c4292bca4b94de81462f8a251" # unvested contributor and foundation tokens (attribution unconfirmed); inside the total supply; read by nothing, documentation only
   zero: "0x0000000000000000000000000000000000000000"
   dead: "0x000000000000000000000000000000000000dead"
+  # USDC reserve yield (AQAv2): the system interest address for USDC (0x50..00 + token index 0) pays the Assistance Fund each
+  # 30-day interval; the treasury funds it. Read from Hyperliquid's ledger (Mike, 2026-10-12, option A).
+  system_interest: "0x5000000000000000000000000000000000000000"
+  aqa_treasury: "0x8536a52900b5e7b23b08d6dcc50fd5689b5e270c"
 
 external_ids:
   coingecko: hyperliquid
@@ -115,6 +119,23 @@ metrics:
     monitor_only: true
     source: { type: defillama, slug: hyperliquid, data_type: dailyRevenue, backfill_days: 365 }
 
+  # The USDC reserve yield (AQAv2), from 2026-08-26 (Mike, 2026-10-12, option A): Hyperliquid no longer publishes the daily
+  # AQA rate or balance (alignedQuoteTokenInfo was removed), so the truth is each 30-day payment from the system interest
+  # address to the Assistance Fund, due 8 days after the interval, read from Hyperliquid's ledger. One row per paid
+  # period; the report spreads it over the 30 days and runs the unpaid days at the last period's daily rate (provisional).
+  # Alerts (revenue_payment, advisory): > 10 days late, > 2% off the previous period's daily rate, a payer other than
+  # aqa_treasury. Report-only: it funds the Fund's buybacks, so the report counts it in holder flow; the valuation does not.
+  flow_usd.reserve_yield:
+    type: flow
+    unit: usd
+    cadence: monthly
+    staleness_days: 45
+    monitor_only: true
+    source:
+      type: adapter
+      name: hype.reserve_yield_payments
+      params: { interest: system_interest, fund: assistance_fund, treasury: [ aqa_treasury ], token: USDC, started: "2026-08-26", interval_days: 30, lag_days: 8 }
+
 holder_flows:
   - { id: af_buyback, kind: burn, capture_rule: programmatic, recipient_base: all, metric: flow_usd.af_buyback, window_days: 90 }
 
@@ -159,10 +180,15 @@ peer_set: []
 # valuation (Mike, 2026-10-10: keep the two layers in sync), so no haircut.
 reporting:
   window_days: 90
-  haircuts: { af_buyback: 0 }
-  # Income statement (Mike, 2026-10-11): revenue = DefiLlama dailyRevenue (labelled proxy); paid to holders = the
-  # Assistance Fund's buybacks; protocol income = the rest.
+  haircuts: { af_buyback: 0, reserve_yield: 0 }
+  # Revenue (Mike, 2026-10-12) = trading fees (DefiLlama dailyRevenue, a labelled proxy) + the USDC reserve yield (paid
+  # every 30 days). The reserve yield is new (2026-08-26): growth is shown with and without it. It funds the Fund's
+  # buybacks, so the report also counts it as holder flow (burn bucket); the valuation keeps af_buyback only.
+  revenue:
+    - { id: trading, label: "trading fees (DefiLlama dailyRevenue)", metric: flow_usd.revenue_proxy, settlement: daily }
+    - { id: reserve_yield, label: "USDC reserve yield (AQAv2)", metric: flow_usd.reserve_yield, settlement: periodic, started: "2026-08-26", holder_flow: burn }
+  # Income statement (Mike, 2026-10-11): paid to holders = the Assistance Fund's buybacks (and the reserve yield, which
+  # funds them); protocol income = revenue less both.
   income:
     lines:
       - { id: af_buyback, to: holders, metric: flow_usd.af_buyback }
-    remainder_of: [ flow_usd.revenue_proxy ]

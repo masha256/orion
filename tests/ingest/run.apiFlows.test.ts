@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { parseAssetYaml } from '../../src/config/load.js';
 import { getCursor } from '../../src/db/fetchCursors.js';
 import { insertObservation, listActiveObservations, listObservations } from '../../src/db/observations.js';
-import { REVISION_DAYS } from '../../src/ingest/apiFlow.js';
+import { DEFILLAMA_REVISION_DAYS, REVISION_DAYS } from '../../src/ingest/apiFlow.js';
 import { fetchAsset, type FetchResult } from '../../src/ingest/run.js';
 import { harness, type Harness } from '../helpers/fetchHarness.js';
 
@@ -16,10 +16,15 @@ const chart = (points: Record<string, number>) => ({ totalDataChart: Object.entr
 /** NOW is 2026-09-19T12:00Z, so 2026-09-18 is the last complete day. 09-16 is not aggregated yet; 09-19 is today and never written. */
 const SERIES = { '2026-09-14': 100, '2026-09-15': 110, '2026-09-17': 130, '2026-09-18': 140, '2026-09-19': 999 };
 
-/** The HYPE fixture: a non-EVM asset whose only source is its buyback flow on DefiLlama. */
-function world(points: Record<string, number>, over: Parameters<typeof harness>[0] = {}): Harness {
-  const loaded = parseAssetYaml(readFileSync(fileURLToPath(new URL('../fixtures/hype.yaml', import.meta.url)), 'utf8'));
-  return harness({ loaded, routes: { [LLAMA_HYPE]: chart(points) }, ...over });
+/**
+ * The HYPE fixture: a non-EVM asset whose only source is its buyback flow on DefiLlama. These tests pin the window
+ * mechanics on a short window (revision_days: REVISION_DAYS); a DefiLlama source without it reads 30 days back.
+ */
+const FIXTURE = readFileSync(fileURLToPath(new URL('../fixtures/hype.yaml', import.meta.url)), 'utf8');
+function world(points: Record<string, number>, over: Parameters<typeof harness>[0] = {}, revisionDays: number | null = REVISION_DAYS): Harness {
+  const yaml = revisionDays === null ? FIXTURE : FIXTURE.replace('data_type: dailyHoldersRevenue }', `data_type: dailyHoldersRevenue, revision_days: ${revisionDays} }`);
+  if (revisionDays !== null && yaml === FIXTURE) throw new Error('the fixture no longer has the DefiLlama source this test edits');
+  return harness({ loaded: parseAssetYaml(yaml), routes: { [LLAMA_HYPE]: chart(points) }, ...over });
 }
 const fetch = (h: Harness, opts: Parameters<typeof fetchAsset>[4] = {}) => fetchAsset(h.db, h.loaded, h.deps.now(), h.deps, opts);
 const source = (r: FetchResult) => r.sources.find((s) => s.sourceId === SOURCE)!;
@@ -100,7 +105,13 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     const h = world(SERIES);
     await fetch(h);
     const manual = insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-18T06:00:00Z', periodDays: 1, value: 777, source: 'manual', fetchedAt: '2026-09-18T06:00:00Z' });
-    const refused = await fetch(h);
+    // A routine run leaves a manual row in the revision window alone (a decision already taken), days it covers included.
+    const routine = await fetch(h);
+    expect(source(routine)).toMatchObject({ status: 'ok', conflicts: [] });
+    expect(source(routine).notes.join('\n')).toMatch(new RegExp(`left as entered by hand: 2026-09-17, 2026-09-18 \\(#${manual.id}\\)`));
+    expect(listActiveObservations(h.db, 'hype', METRIC).find((o) => o.id === manual.id)).toBeDefined();
+    // A rescan still refuses it.
+    const refused = await fetch(h, { backfillDays: 10 });
     expect(source(refused)).toMatchObject({ status: 'skipped', metricsWritten: [] });
     const adopted = await fetch(h, { adopt: true });
     expect(source(adopted)).toMatchObject({ status: 'ok', retiredObservationIds: [manual.id] });
@@ -193,5 +204,36 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     const r = await fetch(h);
     expect(source(r).status).toBe('failed');
     expect(source(r).error).toMatch(/no days/);
+  });
+});
+
+describe('fetchAsset: a DefiLlama series is read again 30 days back on every run (Mike, 2026-10-12)', () => {
+  const NOW = new Date('2026-10-12T12:00:00.000Z');
+  const days = (from: string, n: number, v: (i: number) => number) =>
+    Object.fromEntries(Array.from({ length: n }, (_, i) => [new Date(Date.parse(`${from}T00:00:00Z`) + i * 86_400_000).toISOString().slice(0, 10), v(i)]));
+  const BASE = days('2026-08-01', 72, (i) => 100 + i); // 2026-08-01 .. 2026-10-11
+
+  it(`supersedes a day the source revised ${DEFILLAMA_REVISION_DAYS - 1} days back, and leaves one ${DEFILLAMA_REVISION_DAYS + 1} days back for --backfill-days`, async () => {
+    expect(DEFILLAMA_REVISION_DAYS).toBe(30);
+    const h = world(BASE, { now: NOW }, null);
+    await fetch(h);
+    // The cursor is 2026-10-11: the window is 2026-09-12 .. 2026-10-11.
+    const revised = await fetch(world({ ...BASE, '2026-09-12': 5000, '2026-09-11': 6000 }, { db: h.db, now: NOW }, null));
+    expect(revised.written.map((w) => [w.observedAt.slice(0, 10), w.value])).toEqual([['2026-09-13', 5000]]);
+    expect(source(revised).notes.join('\n')).toMatch(/revised by the source, superseded: 2026-09-12/);
+    expect(byDay(h)['2026-09-12']).toBe(BASE['2026-09-11']); // outside the window: unchanged
+  });
+
+  it('leaves a manual row inside the 30 days alone and writes every other revised day', async () => {
+    const h = world(BASE, { now: NOW }, null);
+    await fetch(h);
+    const manual = insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-10T00:00:00Z', periodDays: 1, value: 1, source: 'manual', fetchedAt: '2026-09-24T00:00:00Z' });
+    // The source still has its artifact on 09-09 (outside) and revises 09-20 (inside); a 09-15 manual row is inside.
+    const fix = insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-16T00:00:00Z', periodDays: 1, value: 2, source: 'manual', fetchedAt: '2026-09-24T00:00:00Z' });
+    const r = await fetch(world({ ...BASE, '2026-09-15': 9999, '2026-09-20': 7777 }, { db: h.db, now: NOW }, null));
+    expect(source(r)).toMatchObject({ status: 'ok', conflicts: [] });
+    expect(r.written.map((w) => [w.observedAt.slice(0, 10), w.value])).toEqual([['2026-09-21', 7777]]);
+    expect(byDay(h)['2026-09-16']).toBe(2);
+    expect(listActiveObservations(h.db, 'hype', METRIC).filter((o) => o.source === 'manual').map((o) => o.id).sort()).toEqual([manual.id, fix.id].sort());
   });
 });

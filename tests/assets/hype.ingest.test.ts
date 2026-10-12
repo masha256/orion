@@ -22,6 +22,19 @@ const recorded = (name: string): unknown => JSON.parse(readFileSync(`${ROOT}/tes
 
 const { config } = loadAsset(ROOT, 'hype');
 
+const SYS = '0x5000000000000000000000000000000000000000';
+const AF = '0xfefefefefefefefefefefefefefefefefefefefe';
+const TREASURY = '0x8536a52900b5e7b23b08d6dcc50fd5689b5e270c';
+const send = (iso: string, user: string, destination: string, amount: string, token = 'USDC') => ({ time: Date.parse(iso), hash: '0x', delta: { type: 'send', user, destination, token, amount, usdcValue: amount, fee: '0.0', nativeTokenFee: '0.0', nonce: null, feeToken: '' } });
+const INTEREST_LEDGER = [
+  send('2026-08-27T18:34:04.307Z', TREASURY, SYS, '1.0'),
+  send('2026-10-02T17:05:38.677Z', TREASURY, SYS, '1.0'),
+  send('2026-10-03T00:00:00.106Z', SYS, AF, '2.0'),
+  send('2026-10-03T02:43:10.017Z', TREASURY, SYS, '14580777.2100000009'),
+  send('2026-10-03T11:46:32.531Z', '0x20e6648f8c6c4c62b32be4ac373b79cae190b601', SYS, '1.0', 'LIQD'),
+  send('2026-10-04T00:00:00.002Z', SYS, AF, '14580774.6853202805'),
+];
+
 /** 100 days of holders revenue ending on the last complete day, about 1.55M USD a day (139.5M over any 90 days; DefiLlama's real 90-day sum was 140.5M on 2026-09-24). */
 function chart(): { totalDataChart: [number, number][] } {
   const points: [number, number][] = [];
@@ -32,7 +45,7 @@ function chart(): { totalDataChart: [number, number][] } {
   return { totalDataChart: points };
 }
 
-function world() {
+function world(now: Date = NOW) {
   const fixtures: Record<string, unknown> = { spotMetaAndAssetCtxs: recorded('spotMetaAndAssetCtxs'), validatorSummaries: recorded('validatorSummaries') };
   for (const name of ['assistance_fund', 'zero', 'dead']) fixtures[`spotClearinghouseState:${config.contracts[name]}`] = recorded(`spotClearinghouseState-${config.contracts[name]}`);
   const http = fakeHttp({
@@ -53,12 +66,15 @@ function world() {
           { coin: '@1', side: 'B', px: '1', sz: '99', time: startTime! + 4000 },
         ];
       }
+      // The system interest address's ledger, as read on 2026-10-12: the treasury's 1 USDC tests, the first period's due
+      // day (2026-10-03, 2 USDC on hand), the treasury's funding that afternoon, and the payment to the fund on 10-04.
+      if (type === 'userNonFundingLedgerUpdates') return structuredClone(INTEREST_LEDGER).filter((e) => e.time >= startTime!);
       const reply = fixtures[user === undefined ? type : `${type}:${user}`];
       if (reply === undefined) throw new Error(`no fixture for ${type} ${user ?? ''}`);
       return structuredClone(reply);
     },
   });
-  const deps: FetchDeps = { http, rpcFactory: () => { throw new Error('HYPE reads no chain'); }, env: {}, sleep: async () => undefined, now: () => NOW };
+  const deps: FetchDeps = { http, rpcFactory: () => { throw new Error('HYPE reads no chain'); }, env: {}, sleep: async () => undefined, now: () => now };
   return { db: openDb(':memory:'), deps, http };
 }
 
@@ -84,8 +100,8 @@ describe('assets/hype.yaml', () => {
     // One manual metric: the staker share, 1.0 by construction, which the bootstrap researches and the user confirms.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual(['staker_emission_share']);
     expect(validateAssetModules(config)).toEqual([]);
-    // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/hype.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('19138fbccc6e1fee879840a6ddde8b33a8440867f7ecdc151c31d15bbabb9280');
+    // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply); then revenue streams (trading + the USDC reserve yield). A deliberate edit of assets/hype.yaml moves it; update the pin on purpose.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('b64e5b54cdc8c08ad660d2176a90fe94c8cd4c407a4ef22ef101511b6ba472f2');
   });
 
   it('plans the source map of the spec: no chain, three adapters, one API-series flow, one derived level', () => {
@@ -99,6 +115,7 @@ describe('assets/hype.yaml', () => {
       ['defillama:hyperliquid:dailyHoldersRevenue', ['primary:flow_usd.af_buyback']],
       ['adapter:hype.fund_buys_daily', ['primary:flow_usd.af_buys_direct']],
       ['defillama:hyperliquid:dailyRevenue', ['primary:flow_usd.revenue_proxy']],
+      ['adapter:hype.reserve_yield_payments', ['primary:flow_usd.reserve_yield']],
     ]);
     expect(plan.flowGroups).toEqual([]);
     expect(plan.derived.map((r) => r.metricKey)).toEqual(['revenue_run_rate_usd']);
@@ -134,7 +151,9 @@ describe('assets/hype.yaml', () => {
     // Five posts: the spot meta, one clearinghouse state per subtracted address, and the validators once (the stake and emission
     // adapters share the cached reply); plus the report-only fills, one per day of the 14.
     const posts = w.http.calls.filter((c) => c.url === INFO).map((c) => (c.body as { type: string }).type);
-    expect(posts.filter((t) => t !== 'userFillsByTime').sort()).toEqual(['spotClearinghouseState', 'spotClearinghouseState', 'spotClearinghouseState', 'spotMetaAndAssetCtxs', 'validatorSummaries']);
+    expect(posts.filter((t) => t !== 'userFillsByTime').sort()).toEqual(['spotClearinghouseState', 'spotClearinghouseState', 'spotClearinghouseState', 'spotMetaAndAssetCtxs', 'userNonFundingLedgerUpdates', 'validatorSummaries']);
+    // The reserve yield's first period (2026-08-26 .. 09-24) is not over on 09-24: nothing stored, nothing due.
+    expect(listActiveObservations(w.db, 'hype', 'flow_usd.reserve_yield')).toEqual([]);
     expect(posts.filter((t) => t === 'userFillsByTime')).toHaveLength(14);
     // The direct series: 1,500 USD of buys a day (30 HYPE at 50) from 2026-09-14, the first day the fills reach, to the last
     // complete day; the sell and the other pair are left out, and the days before the API's memory are not written as zero.
@@ -163,6 +182,36 @@ describe('assets/hype.yaml', () => {
     const hc = signal.horizons!['12m'].modules.hc.breakdown as { supply_at_horizon: number };
     expect(hc.supply_at_horizon).toBeLessThan(noBurn - 12e6);
     expect(hc.supply_at_horizon).toBeGreaterThan(noBurn - 20e6);
+  });
+});
+
+describe('assets/hype.yaml: the USDC reserve yield (AQAv2), read from the ledger (Mike, 2026-10-12)', () => {
+  const ry = (db: ReturnType<typeof world>['db']) => listActiveObservations(db, 'hype', 'flow_usd.reserve_yield');
+  const fetchAt = async (now: Date) => {
+    const w = world(now);
+    const r = await fetchAsset(w.db, { config, hash: 'test' }, now, w.deps, { metrics: ['flow_usd.reserve_yield'] });
+    return { w, r };
+  };
+
+  it('stores the first payment as one row covering its 30 days, from the treasury, on time, and only once', async () => {
+    const { w, r } = await fetchAt(new Date('2026-10-12T12:00:00.000Z'));
+    expect(r.sources.map((s) => [s.sourceId, s.status])).toEqual([['adapter:hype.reserve_yield_payments', 'ok']]);
+    expect(r.anomalies).toEqual([]); // paid on 10-04, a day after the 10-03 due day; funded by the configured treasury
+    // The 2-USDC sweep on the due day and the 14.58M payment the next day are one period's payment.
+    expect(ry(w.db).map((o) => [o.observedAt, o.periodDays, o.value, o.source])).toEqual([['2026-09-25T00:00:00.000Z', 30, 14580776.6853202805, 'api']]);
+    expect(ry(w.db)[0].sourceDetail).toMatch(/covers 2026-08-26 to 2026-09-24, paid 2026-10-04T00:00:00.002Z/);
+    const again = await fetchAsset(w.db, { config, hash: 'test' }, new Date('2026-10-12T12:00:00.000Z'), w.deps, { metrics: ['flow_usd.reserve_yield'] });
+    expect(again.written).toEqual([]);
+    expect(ry(w.db)).toHaveLength(1);
+  });
+
+  it('raises a late alert when a period is unpaid more than 10 days after it is due, and a payer alert for a new treasury', async () => {
+    // The second period (09-25 .. 10-24) is due 11-02; on 11-13 it is 11 days late and unpaid.
+    const { r } = await fetchAt(new Date('2026-11-13T12:00:00.000Z'));
+    expect(r.anomalies.map((a) => [a.kind, a.dedupeKey, a.severity])).toEqual([['revenue_payment', 'late:2026-09-25', 'advisory']]);
+    expect(r.anomalies[0].detail).toMatchObject({ due_day: '2026-11-02', days_late: 11, paid: false });
+    const before = await fetchAt(new Date('2026-11-12T12:00:00.000Z'));
+    expect(before.r.anomalies).toEqual([]); // 10 days late: not yet
   });
 });
 

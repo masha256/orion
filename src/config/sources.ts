@@ -22,6 +22,8 @@ export const SourceSchema = z.discriminatedUnion('type', [
     compare: z.literal('monthly_sum').optional(),
     /** Primary role only: how far back the first fetch writes. Optional with no default; the writer applies 90. */
     backfill_days: z.number().int().positive().optional(),
+    /** Primary role only: written days read again on every run. Optional with no default; the writer applies 30. */
+    revision_days: z.number().int().positive().optional(),
   }),
   z.strictObject({ type: z.literal('erc20_supply'), token: name, subtract_balances: z.array(name).default([]) }),
   z.strictObject({

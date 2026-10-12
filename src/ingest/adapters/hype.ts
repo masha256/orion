@@ -191,4 +191,92 @@ const fundBuysDaily: AdapterDef = {
   },
 };
 
-export const hypeAdapters: AdapterDef[] = [totalSupplyLessHeld, stakedSupply, emissionRateAnnual, fundBuysDaily];
+/**
+ * The USDC reserve yield (AQAv2), read from Hyperliquid's own ledger (Mike, 2026-10-12, option A). The protocol accrues
+ * it daily (USDC balance at 0 UTC x the validators' AQA rate) in 30-day periods from activation and pays each period from
+ * the system interest address (0x50..00 + token index) to the Assistance Fund 8 days after it ends. The info API no
+ * longer exposes the rate or the daily amount owed (`alignedQuoteTokenInfo` was removed about 2026-06), so the payments
+ * are the series: each one covers its period, and the report spreads it over those days.
+ *
+ * - A period's payment is every USDC send from the interest address to the fund on or after its due day and before the
+ *   next period's (the first: $2 at the due time, short of balance, then $14.58M the next day). It counts once a full
+ *   UTC day has passed since the last of those sends, so a run never stores a payment still arriving.
+ * - Payers: every address that sent USDC into the interest address (the treasury deployer funds it), so a change of
+ *   treasury shows up.
+ */
+const LEDGER_PAGE = 2000;
+const reserveYieldPayments: AdapterDef = {
+  name: 'hype.reserve_yield_payments',
+  needsRpc: false,
+  async run(ctx, params) {
+    const interest = ctx.contract(text(params, 'interest', 'system_interest')).toLowerCase();
+    const fund = ctx.contract(text(params, 'fund', 'assistance_fund')).toLowerCase();
+    const treasuries = (Array.isArray(params.treasury) ? params.treasury : [text(params, 'treasury', '')])
+      .filter((n): n is string => typeof n === 'string' && n !== '')
+      .map((n) => ctx.contract(n).toLowerCase());
+    const token = text(params, 'token', 'USDC');
+    const started = text(params, 'started', '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(started)) throw new Error('params.started (the activation day, YYYY-MM-DD) is required');
+    const interval = number(params, 'interval_days', 30);
+    const lag = number(params, 'lag_days', 8);
+    const DAY = 86_400_000;
+    const startMs = Date.parse(`${started}T00:00:00Z`);
+    const nowMs = Date.parse(ctx.nowIso);
+    const today = new Date(Math.floor(nowMs / DAY) * DAY).toISOString().slice(0, 10);
+    const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+    const entries: Record<string, unknown>[] = [];
+    let from = startMs;
+    for (let page = 0; page < 50; page++) {
+      const reply = await ctx.http.postJson(infoUrl(ctx, params), { type: 'userNonFundingLedgerUpdates', user: interest, startTime: from, endTime: nowMs });
+      if (!Array.isArray(reply)) throw new Error("userNonFundingLedgerUpdates: the info API's reply is not a list");
+      let last = from;
+      for (const e of reply as Record<string, unknown>[]) {
+        const t = amount(e.time, 'a ledger time');
+        last = Math.max(last, t);
+        entries.push(e);
+      }
+      if (reply.length < LEDGER_PAGE) break;
+      from = last + 1;
+    }
+
+    const periodOf = (k: number) => {
+      const fromMs = startMs + k * interval * DAY;
+      const toMs = fromMs + (interval - 1) * DAY;
+      return { from: dayOf(fromMs), to: dayOf(toMs), dueMs: toMs + (1 + lag) * DAY };
+    };
+    const sums = new Map<number, { value: number; lastMs: number }>();
+    const payers = new Set<string>();
+    for (const e of entries) {
+      const d = e.delta as Record<string, unknown> | undefined;
+      if (!d || d.type !== 'send' || d.token !== token) continue;
+      const src = String(d.user ?? '').toLowerCase();
+      const dst = String(d.destination ?? '').toLowerCase();
+      const t = amount(e.time, 'a ledger time');
+      const value = amount(d.amount, 'a send amount');
+      if (dst === interest && src !== fund && value > 0) payers.add(src);
+      if (src !== interest || dst !== fund) continue;
+      const k = Math.floor((t - periodOf(0).dueMs) / (interval * DAY));
+      if (k < 0) continue; // before the first due day: not a period payment
+      const s = sums.get(k) ?? { value: 0, lastMs: 0 };
+      sums.set(k, { value: s.value + value, lastMs: Math.max(s.lastMs, t) });
+    }
+
+    const payments: { from: string; to: string; value: number; paidAt: string; dueDay: string }[] = [];
+    const due: { from: string; to: string; dueDay: string }[] = [];
+    for (let k = 0; ; k++) {
+      const p = periodOf(k);
+      if (p.to >= today) break; // the period is not over yet
+      const s = sums.get(k);
+      const settled = s !== undefined && dayOf(s.lastMs) < today;
+      if (settled) payments.push({ from: p.from, to: p.to, value: s.value, paidAt: new Date(s.lastMs).toISOString(), dueDay: dayOf(p.dueMs) });
+      else due.push({ from: p.from, to: p.to, dueDay: dayOf(p.dueMs) });
+    }
+    return {
+      kind: 'periodic_payments', payments, due, payers: [...payers].sort(), expectedPayers: treasuries.sort(),
+      detail: `hyperliquid userNonFundingLedgerUpdates ${interest} -> ${fund} ${token}, ${interval}-day periods from ${started}, paid ${lag} days after`,
+    };
+  },
+};
+
+export const hypeAdapters: AdapterDef[] = [totalSupplyLessHeld, stakedSupply, emissionRateAnnual, fundBuysDaily, reserveYieldPayments];
