@@ -33,7 +33,7 @@ metrics:
     staleness_days: 14
     source: { type: coingecko, id: mini-token, field: circulating_supply }
   revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 60, critical: true }
-  effective_supply:
+  total_supply:
     type: level
     unit: tokens
     staleness_days: 7

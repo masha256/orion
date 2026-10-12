@@ -1,5 +1,5 @@
 # UNI calibrated assumptions: the "central" package the user chose on 2026-10-11, after a one-at-a-time sweep and three priced
-# packages (conservative / central / constructive) on the 91-day window. Anchors at the time: spot 7.56 USD, effective supply
+# packages (conservative / central / constructive) on the 91-day window. Anchors at the time: spot 7.56 USD, total supply
 # 887.2M (6.71B USD), 91-day burn run rate 131.7M USD (5.88M UNI; the market pays about 51 times it), no staking, no
 # emission; the Labs vest (20M UNI a year, approved to 2027-10) is report-only dilution. The burn in tokens was flat at
 # about 23.6M a year from July to September, then about 14M a year in early October.

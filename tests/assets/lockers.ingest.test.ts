@@ -91,7 +91,7 @@ const sd = loadAsset(ROOT, 'sdcrv').config.contracts;
 const CASES: Case[] = [
   {
     id: 'cvxcrv',
-    hash: 'a17e2669ea9ca8e16b146dace5c60be5a5eb25c9d5f651d371ef706f20d7ca3d',
+    hash: '27662c18da85ea74d23c4f7a6fa8624857e9b983aaf95e09bfdd38e2d5a9764c',
     coingecko: 'convex-crv',
     price: 0.1392,
     llamaPrice: 0.1391,
@@ -108,7 +108,7 @@ const CASES: Case[] = [
   },
   {
     id: 'sdcrv',
-    hash: 'd6ea789885a6f31f6f0eaf1def80ccfe069e0f51dd729d7ef2701f21415592df',
+    hash: '8ae8d16c41dc77659d499a32578eec9c66122bb31cfda8a55c211d169d6078b0',
     coingecko: 'stake-dao-crv',
     price: 0.1884,
     llamaPrice: 0.1832,
@@ -160,6 +160,12 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     expect(Object.keys(flat(oneSet(flowIds, c.extraKeys)).base).sort()).toEqual(requiredAssumptionKeys(config));
     expect(parseAssetYaml(readFileSync(`${ROOT}/assets/${c.id}.yaml`, 'utf8')).hash).toBe(c.hash);
+    // Supply definitions (Mike, 2026-10-12): CoinGecko has no circulating supply for the wrappers, so it is the on-chain total;
+    // CoinGecko's total_supply checks cvxCRV only (sdCRV's figure there is a stale 2022 snapshot).
+    expect(config.metrics.circulating_supply?.source).toEqual(config.metrics.total_supply.source);
+    expect(config.metrics.total_supply.cross_checks?.map((x) => x.source)).toEqual(
+      c.id === 'cvxcrv' ? [{ type: 'coingecko', id: 'convex-crv', field: 'total_supply' }] : undefined,
+    );
   });
 
   it('plans one transfer scan per stream and a summed run rate', () => {
@@ -184,7 +190,7 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     expect(r.anomalies).toEqual([]);
     const rows = (metric: string) => listActiveObservations(w.db, c.id, metric);
     expect(rows('price_usd').at(-1)!.value).toBe(c.price);
-    expect(rows('effective_supply').at(-1)!.value).toBe(Number(c.supply));
+    expect(rows('total_supply').at(-1)!.value).toBe(Number(c.supply));
     expect(rows('staked_supply').at(-1)!.value).toBe(Number(c.staked));
 
     // The run rate is the three streams' 91 days to 2026-10-08, summed and scaled to a year.

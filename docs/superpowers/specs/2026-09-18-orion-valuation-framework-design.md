@@ -73,7 +73,7 @@ Every driver value carries provenance: `onchain`, `api`, `manual`, `provisional`
 | Capture | `holder_flows[]` | List of revenue-funded value flows reaching token holders. Each has `id`, `kind` (`burn`, `buy_and_hold`, `fee_share`), trailing annualized USD (trailing 90 days of reported data, ending at the newest reported period, by default, window configurable per flow), `capture_rule`, and `recipient_base` |
 | Capture | `capture_rate` | Sum of holder flows divided by `revenue_run_rate` |
 | Capture | `capture_rule` | `contractual`, `programmatic`, or `discretionary`, per flow |
-| Supply | `effective_supply` | Total supply net of burned tokens |
+| Supply | `total_supply` | Total supply net of burned tokens |
 | Supply | `circulating_supply` | Informational, plus available as an alternative supply basis |
 | Supply | `emission_schedule` | Step function of gross emissions per year, including announced future changes |
 | Supply | `scheduled_unlocks` | Dated token unlocks (vesting, warrants) |
@@ -115,7 +115,7 @@ Revenue path: revenue grows at `rev_growth_y1` over the first 12 months from now
 ### 3.4 Supply forecast
 
 ```
-S(H) = effective_supply_now
+S(H) = total_supply_now
      + emissions over [now, H] from emission_schedule
      + scheduled_unlocks falling in [now, H]   (only when supply_basis = circulating)
      - tokens burned over [now, H]

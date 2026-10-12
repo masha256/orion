@@ -39,7 +39,7 @@ function row(metricKey: string, value: number, observedAt: string, opts: Partial
 function seedObservations(): Observation[] {
   return [
     row('price_usd', 27.46, '2026-09-18'),
-    row('effective_supply', 81003579, '2026-09-18'),
+    row('total_supply', 81003579, '2026-09-18'),
     row('circulating_supply', 48350000, '2026-09-18'),
     row('staked_supply', 33964988, '2026-09-18'),
     row('locked_supply', 8969695, '2026-09-18'),

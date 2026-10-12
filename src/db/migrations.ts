@@ -263,4 +263,24 @@ ALTER TABLE agent_runs_new RENAME TO agent_runs;
 CREATE INDEX idx_agent_runs_asset ON agent_runs (asset_id, id);
 `,
   },
+  {
+    id: 6,
+    // effective_supply is renamed total_supply (Mike, 2026-10-12): the same per-asset sources and values, a new name. Every
+    // row the code reads back by metric or source id follows: observations and anomalies by metric key, staleness firings
+    // by key, fetch_runs' per-source detail (the failure streak looks a source up by id, and HYPE's adapter is renamed
+    // hype.total_supply), and the stored config of every valuation run (replay re-reads it against the renamed
+    // observations). In JSON only the quoted name is replaced, so no other text can match. A config_versions row keeps its
+    // hash: the hash is the run's id for the config it used, which is the same config under the new name.
+    // Model-written prose (journal, transcripts, agent summaries) is history and stays as written.
+    sql: `
+UPDATE observations SET metric_key = 'total_supply' WHERE metric_key = 'effective_supply';
+UPDATE anomalies SET metric_key = 'total_supply' WHERE metric_key = 'effective_supply';
+UPDATE trigger_firings SET key = 'total_supply' WHERE kind = 'staleness' AND key = 'effective_supply';
+UPDATE fetch_runs SET detail_json = REPLACE(REPLACE(detail_json, '"effective_supply"', '"total_supply"'), 'adapter:hype.effective_supply', 'adapter:hype.total_supply')
+  WHERE detail_json LIKE '%effective%supply%';
+UPDATE anomalies SET dedupe_key = 'adapter:hype.total_supply' WHERE dedupe_key = 'adapter:hype.effective_supply';
+UPDATE config_versions SET content_json = REPLACE(REPLACE(content_json, '"effective_supply"', '"total_supply"'), '"hype.effective_supply"', '"hype.total_supply"')
+  WHERE content_json LIKE '%effective%supply%';
+`,
+  },
 ];

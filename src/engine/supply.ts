@@ -11,7 +11,7 @@ export interface SupplyArgs {
   assumptions: ScenarioAssumptions;
   horizonYears: number;
   targetPrice: number;
-  /** Forecast on this basis instead of the asset's own. Used for figures defined on effective supply. */
+  /** Forecast on this basis instead of the asset's own. Used for figures defined on total supply. */
   basis?: AssetConfig['supply_basis'];
 }
 
@@ -40,7 +40,7 @@ export function forecastSupply(args: SupplyArgs): number {
     if (!drivers.circulatingSupply) throw new EngineError('circulating supply is required for the circulating basis');
     supply = drivers.circulatingSupply.value;
   } else {
-    supply = drivers.effectiveSupply.value;
+    supply = drivers.totalSupply.value;
   }
 
   supply += emissionsBetween(drivers.emissionSchedule, drivers.asOf, 0, H);

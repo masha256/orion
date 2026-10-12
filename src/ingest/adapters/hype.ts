@@ -87,8 +87,8 @@ async function balanceAt(ctx: SourceContext, params: Record<string, unknown>, na
 }
 
 /** Total supply less the token held at the named addresses: the fund and the dead addresses. Four small requests, cached per run. */
-const effectiveSupply: AdapterDef = {
-  name: 'hype.effective_supply',
+const totalSupplyLessHeld: AdapterDef = {
+  name: 'hype.total_supply',
   needsRpc: false,
   async run(ctx, params) {
     const tokenId = text(params, 'token_id', ctx.asset.external_ids.hyperliquid_token ?? '');
@@ -107,7 +107,7 @@ const effectiveSupply: AdapterDef = {
       if (balance > 0) found.push(name);
     }
     const value = total - subtracted;
-    if (!(value > 0)) throw new Error(`effective supply ${value} is not positive (total ${total}, subtracted ${subtracted})`);
+    if (!(value > 0)) throw new Error(`total supply ${value} is not positive (total ${total}, subtracted ${subtracted})`);
     return api(ctx, value, `spotMetaAndAssetCtxs ${pair}: total ${total} less ${subtracted} at ${found.length > 0 ? found.join(', ') : 'none of ' + names.join(', ')}`);
   },
 };
@@ -191,4 +191,4 @@ const fundBuysDaily: AdapterDef = {
   },
 };
 
-export const hypeAdapters: AdapterDef[] = [effectiveSupply, stakedSupply, emissionRateAnnual, fundBuysDaily];
+export const hypeAdapters: AdapterDef[] = [totalSupplyLessHeld, stakedSupply, emissionRateAnnual, fundBuysDaily];

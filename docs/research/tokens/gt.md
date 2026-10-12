@@ -30,7 +30,7 @@ Capture rate today: about $94M burn / Gate net profit (unpublished). It is 20% b
 
 ## Supply
 
-Initial 300M. Burned 189.95M, so the effective supply is about 110.05M. CoinGecko: total 118.89M, circulating 106.64M, max 142.62M. The CoinGecko max and total appear to include the 21.25M unmined staking pool. The Ethereum ERC-20 totalSupply is a fixed 300M, so it is not usable for supply. Emissions: GateChain staking rewards from the unmined pool (rate not found). The burn is about 9.4M GT a year, about 8.5% of supply. supply_basis: effective_total (about 110M), with the unmined pool as a dilution risk.
+Initial 300M. Burned 189.95M, so the total supply is about 110.05M. CoinGecko: total 118.89M, circulating 106.64M, max 142.62M. The CoinGecko max and total appear to include the 21.25M unmined staking pool. The Ethereum ERC-20 totalSupply is a fixed 300M, so it is not usable for supply. Emissions: GateChain staking rewards from the unmined pool (rate not found). The burn is about 9.4M GT a year, about 8.5% of supply. supply_basis: effective_total (about 110M), with the unmined pool as a dilution risk.
 
 ## Data availability for Orion
 

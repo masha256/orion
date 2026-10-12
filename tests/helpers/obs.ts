@@ -35,7 +35,7 @@ export function miniObservations(o: MiniOverrides = {}): Observation[] {
   return [
     obs('price_usd', o.price ?? 10, '2026-06-29'),
     obs('revenue_run_rate_usd', o.revenue ?? 1000, '2026-06-15'),
-    obs('effective_supply', o.supply ?? 100, '2026-06-29'),
+    obs('total_supply', o.supply ?? 100, '2026-06-29'),
     obs('staked_supply', o.staked ?? 50, '2026-06-29'),
     obs('staker_emission_share', o.share ?? 1, '2026-06-29'),
     obs('emission_rate_annual', o.emission ?? 0, '2026-01-01', { fetchedAt: '2026-06-29T00:00:00.000Z' }),

@@ -164,7 +164,7 @@ export const STD_METRICS = {
   price: 'price_usd',
   revenue: 'revenue_run_rate_usd',
   usageIndex: 'usage_index',
-  effectiveSupply: 'effective_supply',
+  totalSupply: 'total_supply',
   circulatingSupply: 'circulating_supply',
   stakedSupply: 'staked_supply',
   lockedSupply: 'locked_supply',
@@ -370,7 +370,7 @@ name: Mini Test Asset
 metrics:
   price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }
   revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 60, critical: true }
-  effective_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
+  total_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
   staked_supply: { type: level, unit: tokens, staleness_days: 7 }
   staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }
   emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400 }
@@ -539,7 +539,7 @@ export const AssetConfigSchema = z
     const required = [
       STD_METRICS.price,
       STD_METRICS.revenue,
-      STD_METRICS.effectiveSupply,
+      STD_METRICS.totalSupply,
       STD_METRICS.stakedSupply,
       STD_METRICS.stakerEmissionShare,
       STD_METRICS.emissionRate,
@@ -1170,7 +1170,7 @@ export interface UnlockEvent { at: string; tokens: number }
 export interface Drivers {
   asOf: string;
   price: DriverValue; revenueRunRate: DriverValue; usageIndex: DriverValue | null;
-  effectiveSupply: DriverValue; circulatingSupply: DriverValue | null;
+  totalSupply: DriverValue; circulatingSupply: DriverValue | null;
   stakedSupply: DriverValue; stakedRatio: DriverValue; lockedRatio: DriverValue | null;
   stakerEmissionShare: DriverValue; emissionSchedule: ScheduleStep[]; emissionRateNow: DriverValue;
   realStakingYield: DriverValue; scheduledUnlocks: UnlockEvent[];
@@ -1192,7 +1192,7 @@ Rules:
 - Staleness is measured on `observedAt` for `level` and `flow` metrics, and on the newest `fetchedAt` for `schedule` and `event` metrics.
 - Every `level` metric that is not a standard metric lands in `drivers.extra`.
 - Derived values take the worst provenance and the oldest `observedAt` of their inputs.
-- `realStakingYield = emissionRateNow * stakerEmissionShare / stakedSupply - emissionRateNow / effectiveSupply`.
+- `realStakingYield = emissionRateNow * stakerEmissionShare / stakedSupply - emissionRateNow / totalSupply`.
 
 - [ ] **Step 1: Extend the test helper** (append to `tests/helpers/obs.ts`)
 
@@ -1208,7 +1208,7 @@ export function miniObservations(o: MiniOverrides = {}): Observation[] {
   return [
     obs('price_usd', o.price ?? 10, '2026-06-29'),
     obs('revenue_run_rate_usd', o.revenue ?? 1000, '2026-06-15'),
-    obs('effective_supply', o.supply ?? 100, '2026-06-29'),
+    obs('total_supply', o.supply ?? 100, '2026-06-29'),
     obs('staked_supply', o.staked ?? 50, '2026-06-29'),
     obs('staker_emission_share', o.share ?? 1, '2026-06-29'),
     obs('emission_rate_annual', o.emission ?? 0, '2026-01-01', { fetchedAt: '2026-06-29T00:00:00.000Z' }),
@@ -1321,7 +1321,7 @@ export interface Drivers {
   price: DriverValue;
   revenueRunRate: DriverValue;
   usageIndex: DriverValue | null;
-  effectiveSupply: DriverValue;
+  totalSupply: DriverValue;
   circulatingSupply: DriverValue | null;
   stakedSupply: DriverValue;
   stakedRatio: DriverValue;
@@ -1402,7 +1402,7 @@ export function computeDrivers(
   const price = level(STD_METRICS.price, true);
   const revenue = level(STD_METRICS.revenue, true);
   const usageIndex = level(STD_METRICS.usageIndex, false);
-  const effective = level(STD_METRICS.effectiveSupply, true);
+  const effective = level(STD_METRICS.totalSupply, true);
   const circulating = level(STD_METRICS.circulatingSupply, asset.supply_basis === 'circulating');
   const staked = level(STD_METRICS.stakedSupply, true);
   const locked = level(STD_METRICS.lockedSupply, false);
@@ -1488,7 +1488,7 @@ export function computeDrivers(
     price,
     revenueRunRate: revenue,
     usageIndex,
-    effectiveSupply: effective,
+    totalSupply: effective,
     circulatingSupply: circulating,
     stakedSupply: staked,
     stakedRatio: derive(effective.value > 0 ? staked.value / effective.value : 0, [staked, effective]),
@@ -1666,7 +1666,7 @@ describe('forecastSupply', () => {
   it('counts scheduled unlocks only on the circulating basis', () => {
     const asset = miniAsset();
     const list = [...miniObservations(), obs('circulating_supply', 40, '2026-06-29'), obs('scheduled_unlock_tokens', 5, '2026-09-01')];
-    asset.metrics.circulating_supply = { ...asset.metrics.effective_supply };
+    asset.metrics.circulating_supply = { ...asset.metrics.total_supply };
     asset.metrics.scheduled_unlock_tokens = { ...asset.metrics.emission_rate_annual, type: 'event' };
     const total = computeDrivers(asset, list, AS_OF).drivers!;
     expect(forecastSupply({ asset, drivers: total, assumptions: a, horizonYears: 0.5, targetPrice: 10 })).toBeCloseTo(100, 9);
@@ -1793,7 +1793,7 @@ export function forecastSupply(args: SupplyArgs): number {
     if (!drivers.circulatingSupply) throw new EngineError('circulating supply is required for the circulating basis');
     supply = drivers.circulatingSupply.value;
   } else {
-    supply = drivers.effectiveSupply.value;
+    supply = drivers.totalSupply.value;
   }
 
   supply += emissionsBetween(drivers.emissionSchedule, drivers.asOf, 0, H);
@@ -3099,7 +3099,7 @@ supply_basis: circulating
 metrics:
   price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }
   revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 7, critical: true }
-  effective_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
+  total_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
   circulating_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
   staked_supply: { type: level, unit: tokens, staleness_days: 7 }
   staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }
@@ -3133,7 +3133,7 @@ name: Aerodrome (synthetic fixture)
 metrics:
   price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }
   revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 7, critical: true }
-  effective_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
+  total_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
   staked_supply: { type: level, unit: tokens, staleness_days: 7 }
   locked_supply: { type: level, unit: tokens, staleness_days: 7 }
   staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }
@@ -3182,7 +3182,7 @@ export function hypeObservations(unlockTokens = 100): Observation[] {
   return [
     at('hype', 'price_usd', 10),
     at('hype', 'revenue_run_rate_usd', 1000),
-    at('hype', 'effective_supply', 1000),
+    at('hype', 'total_supply', 1000),
     at('hype', 'circulating_supply', 300),
     at('hype', 'staked_supply', 400),
     at('hype', 'staker_emission_share', 1),
@@ -3197,7 +3197,7 @@ export function aeroObservations(emission = 200): Observation[] {
   return [
     at('aero', 'price_usd', 5),
     at('aero', 'revenue_run_rate_usd', 1000),
-    at('aero', 'effective_supply', 1000),
+    at('aero', 'total_supply', 1000),
     at('aero', 'staked_supply', 500),
     at('aero', 'locked_supply', 500),
     at('aero', 'staker_emission_share', 1),
@@ -3398,10 +3398,10 @@ describe('buildSignal', () => {
   });
 
   it('emits a blocked signal without horizons when a driver is missing', () => {
-    const s = buildSignal(input(miniObservations().filter((o) => o.metricKey !== 'effective_supply')));
+    const s = buildSignal(input(miniObservations().filter((o) => o.metricKey !== 'total_supply')));
     expect(s.status).toBe('blocked');
     expect(s.horizons).toBeUndefined();
-    expect(s.status_reasons).toEqual(['missing_metric:effective_supply']);
+    expect(s.status_reasons).toEqual(['missing_metric:total_supply']);
     expect(s.spot).not.toBeNull();
   });
 
@@ -3732,7 +3732,7 @@ describe('runValuation', () => {
     seedObservations();
     seedAssumptions();
     runValuation(db, loaded, NOW);
-    insertObservation(db, { assetId: 'mini', metricKey: 'effective_supply', observedAt: '2026-06-29T12:00:00Z', value: 200, source: 'onchain', fetchedAt: AS_OF });
+    insertObservation(db, { assetId: 'mini', metricKey: 'total_supply', observedAt: '2026-06-29T12:00:00Z', value: 200, source: 'onchain', fetchedAt: AS_OF });
     expect(runValuation(db, loaded, NOW).signal.change.cause).toBe('data');
   });
 
@@ -4154,7 +4154,7 @@ bull:
 async function seedData() {
   await orion('data', 'set', 'mini', 'price_usd', '10', '--at', '2026-06-29', '--source', 'onchain');
   await orion('data', 'set', 'mini', 'revenue_run_rate_usd', '1000', '--at', '2026-06-15', '--source', 'onchain');
-  await orion('data', 'set', 'mini', 'effective_supply', '100', '--at', '2026-06-29', '--source', 'onchain');
+  await orion('data', 'set', 'mini', 'total_supply', '100', '--at', '2026-06-29', '--source', 'onchain');
   await orion('data', 'set', 'mini', 'staked_supply', '50', '--at', '2026-06-29', '--source', 'onchain');
   await orion('data', 'set', 'mini', 'staker_emission_share', '1', '--at', '2026-06-29', '--source', 'onchain');
   await orion('data', 'set', 'mini', 'emission_rate_annual', '0', '--at', '2026-01-01', '--source', 'onchain');
@@ -4803,7 +4803,7 @@ external_ids:
 metrics:
   price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }
   revenue_run_rate_usd: { type: level, unit: usd, cadence: event, staleness_days: 60, critical: true, allow_provisional: true }
-  effective_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
+  total_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
   circulating_supply: { type: level, unit: tokens, staleness_days: 14 }
   staked_supply: { type: level, unit: tokens, staleness_days: 7 }
   locked_supply: { type: level, unit: tokens, staleness_days: 14 }
@@ -4948,7 +4948,7 @@ O="node dist/cli/index.js"
 D="research pass 2026-09-18"
 
 $O data set vvv price_usd 27.46 --at 2026-09-18 --detail "$D: CoinGecko and Venice API"
-$O data set vvv effective_supply 81003579 --at 2026-09-18 --detail "$D: totalSupply minus balanceOf(0x0)"
+$O data set vvv total_supply 81003579 --at 2026-09-18 --detail "$D: totalSupply minus balanceOf(0x0)"
 $O data set vvv circulating_supply 48350000 --at 2026-09-18 --detail "$D: Venice API vvv_stats"
 $O data set vvv staked_supply 33964988 --at 2026-09-18 --detail "$D: staking totalSupply()"
 $O data set vvv locked_supply 8969695 --at 2026-09-18 --detail "$D: totalLockedStakedVVV()"

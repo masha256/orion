@@ -30,7 +30,7 @@ export interface Drivers {
   price: DriverValue;
   revenueRunRate: DriverValue;
   usageIndex: DriverValue | null;
-  effectiveSupply: DriverValue;
+  totalSupply: DriverValue;
   circulatingSupply: DriverValue | null;
   stakedSupply: DriverValue;
   stakedRatio: DriverValue;
@@ -136,7 +136,7 @@ export function computeDrivers(
   const price = level(STD_METRICS.price, true);
   const revenue = level(STD_METRICS.revenue, true);
   const usageIndex = level(STD_METRICS.usageIndex, false);
-  const effective = level(STD_METRICS.effectiveSupply, true);
+  const effective = level(STD_METRICS.totalSupply, true);
   const circulating = level(STD_METRICS.circulatingSupply, asset.supply_basis === 'circulating');
   const staked = level(STD_METRICS.stakedSupply, true);
   const locked = level(STD_METRICS.lockedSupply, false);
@@ -228,7 +228,7 @@ export function computeDrivers(
     price,
     revenueRunRate: revenue,
     usageIndex,
-    effectiveSupply: effective,
+    totalSupply: effective,
     circulatingSupply: circulating,
     stakedSupply: staked,
     stakedRatio: derive(effective.value > 0 ? staked.value / effective.value : 0, [staked, effective]),

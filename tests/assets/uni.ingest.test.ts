@@ -109,15 +109,15 @@ describe('assets/uni.yaml', () => {
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // DefiLlama only for the gross swap fees (Mike, 2026-10-11): the one series with no on-chain source.
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama' || d.cross_checks?.some((c) => c.source.type === 'defillama')).map(([k]) => k)).toEqual(['flow_usd.swap_fees']);
-    // Pinned on 2026-10-11 (agent bands from the calibration). A deliberate edit of assets/uni.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('99714ff3224f5ebb0067d8ce4c99adaab9af1a8fec24aedefa0a2e8d62341813');
+    // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check. A deliberate edit of assets/uni.yaml moves it; update the pin on purpose.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('384a206f0f018b3aa288ebe97d1e487d17e24c7933302b80a30e8dcab97dd3cd');
   });
 
   it('plans one any-sender scan of burns, the chain levels with the Chainlink cross-check, the constants and the fees feed', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
-      ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
-      ['chain_levels', ['cross_check:price_usd', 'primary:effective_supply', 'primary:labs_vest_rate', 'primary:labs_vest_approved', 'primary:treasury_uni']],
+      ['coingecko', ['primary:price_usd', 'cross_check:total_supply', 'primary:circulating_supply']],
+      ['chain_levels', ['cross_check:price_usd', 'primary:total_supply', 'primary:labs_vest_rate', 'primary:labs_vest_approved', 'primary:treasury_uni']],
       ['constant', ['primary:staked_supply', 'primary:staker_emission_share', 'primary:emission_rate_annual']],
       ['defillama:uniswap:dailyFees', ['primary:flow_usd.swap_fees']],
     ]);
@@ -141,13 +141,13 @@ describe('assets/uni.yaml', () => {
     const rows = (metric: string) => listActiveObservations(w.db, 'uni', metric);
     const value = (metric: string) => rows(metric).at(-1)!.value;
     expect(value('price_usd')).toBe(PRICE);
-    expect(value('effective_supply')).toBe(887_216_419);
+    expect(value('total_supply')).toBe(887_216_419);
     expect(value('staked_supply')).toBe(0);
     expect(value('emission_rate_annual')).toBe(0);
     expect(value('labs_vest_rate')).toBe(20_000_000);
     expect(value('labs_vest_approved')).toBe(20_000_000);
     expect(value('treasury_uni')).toBe(262_247_996);
-    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
+    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]);
 
     // 100 days, 64,000 UNI each (the Timelock's 100M left out), at 7.5 USD.
     const burns = rows('flow_tokens.burn');
@@ -175,7 +175,7 @@ describe('assets/uni.yaml', () => {
     expect(rep.day).toBe('2026-10-10');
     const mcap = 887_216_419 * PRICE;
     expect(rep.yields.buyback).toBeCloseTo((64_000 * 365 * PRICE) / mcap, 6);
-    // 20M a year vesting (capped by the 20M approved) on 887.2M effective supply: 2.25 percent.
+    // 20M a year vesting (capped by the 20M approved) on 887.2M total supply: 2.25 percent.
     expect(rep.yields.dilution).toBeCloseTo(20_000_000 / 887_216_419, 6);
     expect(rep.yields.dilutionLines).toEqual([{ id: 'labs_vest', tokensPerYear: 20_000_000, yield: expect.closeTo(20_000_000 / 887_216_419, 6) }]);
     expect(rep.yields.netShareholder).toBeCloseTo((64_000 * 365 - 20_000_000) / 887_216_419, 6);

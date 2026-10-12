@@ -28,13 +28,15 @@ metrics:
     cross_checks:
       - { tolerance_pct: 2, source: { type: http_json, url: "https://coins.llama.fi/prices/current/base:0x940181a94a35a4569e4529a3cdfb74e38fd98631", path: "coins.base:0x940181a94a35a4569e4529a3cdfb74e38fd98631.price" } }
 
-  # No burn sink: the ERC-20 total is the effective supply. Locked AERO stays inside it (supply_basis effective_total).
-  effective_supply:
+  # No burn sink: the ERC-20 total is the total supply. Locked AERO stays inside it (supply_basis effective_total).
+  total_supply:
     type: level
     unit: tokens
     staleness_days: 7
     critical: true
     source: { type: erc20_supply, token: token }
+    cross_checks:
+      - { tolerance_pct: 2, source: { type: coingecko, id: aerodrome-finance, field: total_supply } }
 
   # CoinGecko's own definition (about 0.99B against 0.93B unlocked on chain); informational under effective_total.
   circulating_supply:

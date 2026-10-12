@@ -55,9 +55,9 @@ describe('cadence config', () => {
   });
 
   it('leaves the config hashes where they were: no schema default was added', () => {
-    // Pinned on main 3e1d547 before sub-project 4. A schema change that adds a default moves these; a deliberate edit of assets/vvv.yaml moves the second, and then this pin is updated on purpose.
-    expect(parseAssetYaml(MINI_ASSET_YAML).hash).toBe('6db2927f57c7349c1bcf199b769c3b5f4fee8dea4fb6ae4492f12b866f7b5395');
-    expect(parseAssetYaml(readFileSync(join(process.cwd(), 'assets', 'vvv.yaml'), 'utf8')).hash).toBe('95a1035d9f1d747e00a424a528251fed05245d85bcf388c39205385d53da1d75');
+    // Pinned on main 3e1d547 before sub-project 4; re-pinned 2026-10-12 for the effective_supply -> total_supply rename. A schema change that adds a default moves these; a deliberate edit of assets/vvv.yaml moves the second, and then this pin is updated on purpose.
+    expect(parseAssetYaml(MINI_ASSET_YAML).hash).toBe('9b7c93a3ff62133541f28620f8f5079fc5055c8e2405d2374a9b559d62456f30');
+    expect(parseAssetYaml(readFileSync(join(process.cwd(), 'assets', 'vvv.yaml'), 'utf8')).hash).toBe('0307e7dcaec01a715cdc3c21445b057d10a21b2484c3cbdbefaf51eacf3e159d');
     expect(asset.agent).toBeUndefined();
     expect(asset.review_triggers).toEqual({});
   });

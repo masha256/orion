@@ -53,7 +53,7 @@ Capture rate today: trailing 1y revenue-funded burn about $1.45M / USD1 revenue 
 | revenue (USD1 yield) | defillama | `world-liberty-financial` dailyRevenue | company revenue, not token revenue |
 | holder flow: POL buyback burn | contract_read / derived | Ethereum `totalSupply()` on `0xda5e...bef6`, differenced; or transfer_flow of Transfer(to=0x0) | must exclude vesting-election burns (from `0x74b4f6a2...9583`, method `electVestingUpdate`) and admin burns; BSC and Solana legs were bridged to Ethereum before burning in 2025 |
 | holder flow: staking rewards (pending) | transfer_flow | public rewards address (not yet published) | discretionary top-ups; revenue-funded share unknown |
-| effective supply | erc20_supply | Ethereum `totalSupply()` | reflects burns (burns go to 0x0) |
+| total supply | erc20_supply | Ethereum `totalSupply()` | reflects burns (burns go to 0x0) |
 | unlocks | manual | governance post 53266 / Snapshot `worldlibertyfinancial.com` | cliffs from about May 2028 |
 | governance status | http_json | `https://hub.snapshot.org/graphql` (space `worldlibertyfinancial.com`); Discourse `governance.worldlibertyfinancial.com/t/<id>.json` | |
 

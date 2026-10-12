@@ -1,7 +1,7 @@
 # AERO calibrated assumptions: the "central" package the user chose on 2026-09-24 after a sensitivity sweep and three priced
 # packages (conservative / central / constructive), with the 2026-09-10 DefiLlama fee artifact replaced (see the follow-ups
 # note). Anchors at the time: price $0.672, 90-day fee run rate to lockers $61.9M, emissions 254M AERO a year (about $171M),
-# locked 1.05B of 1.99B effective supply. Base growth of 25 percent follows the bootstrap's reading that daily fees moved
+# locked 1.05B of 1.99B total supply. Base growth of 25 percent follows the bootstrap's reading that daily fees moved
 # from $100-150K in July to $200-300K since late August. The market at $0.672 prices roughly the constructive package's base
 # case; this set's 12m expected target was $0.38, with the bull scenario carrying most of it (dispersion 0.85).
 # Import: orion model assumptions import aero calibration/aero-assumptions.yaml --rationale "..."

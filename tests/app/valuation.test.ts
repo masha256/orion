@@ -76,7 +76,7 @@ describe('runValuation', () => {
     seedObservations();
     seedAssumptions();
     runValuation(db, loaded, NOW);
-    insertObservation(db, { assetId: 'mini', metricKey: 'effective_supply', observedAt: '2026-06-29T12:00:00Z', value: 200, source: 'onchain', fetchedAt: AS_OF });
+    insertObservation(db, { assetId: 'mini', metricKey: 'total_supply', observedAt: '2026-06-29T12:00:00Z', value: 200, source: 'onchain', fetchedAt: AS_OF });
     expect(runValuation(db, loaded, NOW).signal.change.cause).toBe('data');
   });
 

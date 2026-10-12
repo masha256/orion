@@ -50,16 +50,16 @@ describe('fetchAsset: levels', () => {
     expect(obs.price_usd).toMatchObject({ value: 10, source: 'api', observedAt: NOW.toISOString(), fetchedAt: NOW.toISOString(), status: 'confirmed' });
     expect(obs.circulating_supply.value).toBe(60);
     const blockTime = new Date((GENESIS_TS + Number(LATEST) * 2) * 1000).toISOString();
-    expect(obs.effective_supply).toMatchObject({ value: 100, source: 'onchain', observedAt: blockTime, sourceDetail: `block ${LATEST}` });
+    expect(obs.total_supply).toMatchObject({ value: 100, source: 'onchain', observedAt: blockTime, sourceDetail: `block ${LATEST}` });
     expect(obs.staked_supply.value).toBe(50);
     expect(obs.emission_rate_annual.value).toBe(0);
     expect(h.rpc.stats.multicall).toBeGreaterThanOrEqual(1);
 
     expect(source(r, 'coingecko')).toMatchObject({ status: 'ok', metricsWritten: ['price_usd', 'circulating_supply'] });
-    expect(source(r, 'chain_levels').metricsWritten).toEqual(['effective_supply', 'staked_supply', 'emission_rate_annual']);
+    expect(source(r, 'chain_levels').metricsWritten).toEqual(['total_supply', 'staked_supply', 'emission_rate_annual']);
     expect(source(r, STATS_ID).crossChecks).toEqual([
       { metricKey: 'price_usd', sourceId: STATS_ID, label: 'level', primary: 10, check: 10.1, diffPct: expect.closeTo(1, 9), tolerancePct: 2, ok: true },
-      { metricKey: 'effective_supply', sourceId: STATS_ID, label: 'level', primary: 100, check: 100, diffPct: 0, tolerancePct: 0.1, ok: true },
+      { metricKey: 'total_supply', sourceId: STATS_ID, label: 'level', primary: 100, check: 100, diffPct: 0, tolerancePct: 0.1, ok: true },
     ]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
@@ -118,7 +118,7 @@ describe('fetchAsset: levels', () => {
     expect(source(r, 'coingecko').error).toMatch(/price_usd: HTTP 429/);
     expect(source(r, 'chain_levels').status).toBe('ok');
     expect(listActiveObservations(h.db, 'mini', 'price_usd')).toEqual([]);
-    expect(listActiveObservations(h.db, 'mini', 'effective_supply')).toHaveLength(1);
+    expect(listActiveObservations(h.db, 'mini', 'total_supply')).toHaveLength(1);
     expect(source(r, STATS_ID).notes).toContain('price_usd: cross-check skipped, the primary source gave no reading this run');
     expect(r.outcome).toBe('partial');
     expect(r.anomalies).toEqual([]);

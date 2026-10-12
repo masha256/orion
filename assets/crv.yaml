@@ -35,13 +35,15 @@ metrics:
     cross_checks:
       - { tolerance_pct: 2, source: { type: http_json, url: "https://coins.llama.fi/prices/current/ethereum:0xD533a949740bb3306d119CC777fa900bA034cd52", path: "coins.ethereum:0xD533a949740bb3306d119CC777fa900bA034cd52.price" } }
 
-  # No burn: the ERC-20 total is the effective supply. Locked CRV stays inside it (supply_basis effective_total).
-  effective_supply:
+  # No burn: the ERC-20 total is the total supply. Locked CRV stays inside it (supply_basis effective_total).
+  total_supply:
     type: level
     unit: tokens
     staleness_days: 7
     critical: true
     source: { type: erc20_supply, token: token }
+    cross_checks:
+      - { tolerance_pct: 2, source: { type: coingecko, id: curve-dao-token, field: total_supply } }
 
   # CoinGecko's own definition; informational under effective_total.
   circulating_supply:

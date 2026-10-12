@@ -24,7 +24,7 @@ const levelOf = (r: ReadingResult): number => {
 
 describe('chain level sources', () => {
   const requests = [
-    req('effective_supply', { type: 'erc20_supply', token: 'token', subtract_balances: ['burn_sink'] }),
+    req('total_supply', { type: 'erc20_supply', token: 'token', subtract_balances: ['burn_sink'] }),
     req('staked_supply', read('totalSupply')),
     req('emission_rate_annual', read('emissionRatePerSecond', { scale: 31_536_000 })),
     req('diem_locked_yield_share', read('veniceEmissionsPercentageWhenLocked', { scale: -1, offset: 1 })),

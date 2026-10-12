@@ -104,19 +104,19 @@ describe('assets/crv.yaml', () => {
     expect(requiredExtraMetrics(config)).toEqual(['vote_incentive_run_rate_usd']);
     // Every metric has a source, and none is manual: a bootstrap run has nothing to research and the grade can be A.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
-    // Pinned on 2026-10-10 with the report-only block (protocol revenue, reporting). A deliberate edit of assets/crv.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('fdbe75702c6737ca3bbbad782f10961558bbf8717ca9ea44ce6ffbed2be3d227');
+    // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/crv.yaml moves it; update the pin on purpose.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('8365897910ed75922a5641e723b8373df363d425b74fa855d0f3b6c4a6bdc30f');
   });
 
   it('plans the source map of the spec: one transfer scan, a constant, an adapter, the bribes feed', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
-      ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
+      ['coingecko', ['primary:price_usd', 'cross_check:total_supply', 'primary:circulating_supply']],
       [`http_json:${LLAMA}`, ['cross_check:price_usd']],
       [
         'chain_levels',
         [
-          'primary:effective_supply', 'primary:staked_supply', 'primary:locked_supply', 'primary:ve_power_total',
+          'primary:total_supply', 'primary:staked_supply', 'primary:locked_supply', 'primary:ve_power_total',
           'primary:ve_power.convex', 'primary:ve_power.stakedao', 'primary:ve_power.yearn',
           'primary:ve_locked.convex', 'primary:ve_locked.stakedao', 'primary:ve_locked.yearn',
         ],
@@ -140,7 +140,7 @@ describe('assets/crv.yaml', () => {
     const rows = (metric: string) => listActiveObservations(w.db, 'crv', metric);
     const value = (metric: string) => rows(metric).filter((o) => o.observedAt <= NOW.toISOString()).at(-1)!.value;
     expect(value('price_usd')).toBe(0.3933);
-    expect(value('effective_supply')).toBe(2_424_321_556);
+    expect(value('total_supply')).toBe(2_424_321_556);
     expect(value('staked_supply')).toBe(840_614_647);
     expect(value('locked_supply')).toBe(840_614_647);
     expect(value('staker_emission_share')).toBe(0);
@@ -163,7 +163,7 @@ describe('assets/crv.yaml', () => {
     expect(revenue).toMatchObject({ source: 'onchain', sourceDetail: 'derived flow_annualized(flow_usd.fees, 91d)' }); // from an on-chain flow
 
     const checked = r.sources.flatMap((s) => s.crossChecks);
-    expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true], ['vote_incentive_run_rate_usd', true]]);
+    expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true], ['vote_incentive_run_rate_usd', true]]);
     expect(w.rpc.stats.logRanges).toHaveLength(300); // three scans (fees, protocol revenue, treasury), 100 days each: the scanner commits a day at a time; a mainnet day (7,200 blocks) fits one call
     expect(w.rpc.stats.logRanges.every(([a, b]) => b - a + 1n <= 10_000n)).toBe(true);
 

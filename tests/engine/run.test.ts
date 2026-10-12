@@ -90,15 +90,15 @@ describe('runEngine', () => {
     expect(hi.modules.hc.breakdown.aggregate_pv_usd).toBeCloseTo(lo.modules.hc.breakdown.aggregate_pv_usd as number, 6);
   });
 
-  it('measures staking yield against effective supply on a circulating-basis asset', () => {
+  it('measures staking yield against total supply on a circulating-basis asset', () => {
     const asset = miniAsset();
     asset.supply_basis = 'circulating';
-    asset.metrics.circulating_supply = { ...asset.metrics.effective_supply };
+    asset.metrics.circulating_supply = { ...asset.metrics.total_supply };
     const list = [...miniObservations({ emission: 10 }), obs('circulating_supply', 40, '2026-06-29')];
     const drivers = computeDrivers(asset, list, AS_OF).drivers!;
     const s = runEngine({ asset, drivers, assumptions: miniAssumptions() }).horizons['12m'].scenarios.base;
     // circulating at H = 40 + 10 emitted = 50; effective at H = 100 + 10 = 110 (a fee_share flow
-    // burns nothing). staked_ratio_horizon is a share of EFFECTIVE supply, so
+    // burns nothing). staked_ratio_horizon is a share of TOTAL supply, so
     // y = 10 emitted * share 1 / (0.5 * 110), not / (0.5 * 50).
     expect(s.supplyAtHorizon).toBeCloseTo(50, 9);
     expect(s.stakingYield).toBeCloseTo(10 / (0.5 * 110), 9);

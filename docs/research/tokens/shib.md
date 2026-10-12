@@ -54,7 +54,7 @@ Capture rate today: revenue-funded burns about $16k/yr over revenue that is abou
 | Shibarium fees | defillama | `shibarium` dailyFees | about $1k/yr |
 | burn flow (all) | transfer_flow | Ethereum SHIB `0x95ad...c4ce`, to `0xdEAD000000000000000042069420694206942069` | includes voluntary burns; must filter by sender |
 | burn flow (revenue-funded) | transfer_flow | same, from `0x1fc39045035e37DA1880d2102c380e8DD8E69A89` and `0x72171144b37F22424803aA92A61cE0d827ADd3e9` | Shibarium burn contract address unconfirmed |
-| effective supply | erc20_supply + contract_read | `totalSupply()` minus `balanceOf(dead addresses)` | |
+| total supply | erc20_supply + contract_read | `totalSupply()` minus `balanceOf(dead addresses)` | |
 | cross-check | http_json | shibburn.com (HTML only) / Blockscout `eth.blockscout.com/api/v2/addresses/<dead>/token-transfers` | Blockscout JSON works without a key |
 
 An EVM RPC can read the burns (Transfer logs into the dead address), but public free RPCs limit `eth_getLogs` ranges severely (drpc refused, 1rpc 50 blocks, blastapi 10 blocks); Blockscout's REST API was the practical path.

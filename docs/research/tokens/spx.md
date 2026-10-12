@@ -26,7 +26,7 @@ Capture rate today: 0 / 0.
 
 ## Supply
 
-Total 1,000,000,000 SPX (Ethereum `totalSupply()`, 2026-09-22). `0x000000000000000000000000000000000000dEaD` holds 69,012,812 SPX, so effective supply is about 930,987,188, which matches CoinGecko's total/circulating 930,987,188 (CoinGecko max 1B). No emissions, staking, vesting or unlocks. supply_basis: `effective_total` if ever needed.
+Total 1,000,000,000 SPX (Ethereum `totalSupply()`, 2026-09-22). `0x000000000000000000000000000000000000dEaD` holds 69,012,812 SPX, so total supply is about 930,987,188, which matches CoinGecko's total/circulating 930,987,188 (CoinGecko max 1B). No emissions, staking, vesting or unlocks. supply_basis: `effective_total` if ever needed.
 
 ## Data availability for Orion
 

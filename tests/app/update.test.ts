@@ -40,8 +40,8 @@ describe('updateAsset', () => {
     seedManual(h);
     const { fetch, signal } = await updateAsset(h.db, h.loaded, NOW, h.deps);
     expect(fetch.outcome).toBe('ok');
-    expect(signal.status).toBe('ok'); // not blocked: effective_supply etc. from this run's (future) block are usable
-    const blockObservedAt = fetch.written.find((w) => w.metricKey === 'effective_supply')!.observedAt;
+    expect(signal.status).toBe('ok'); // not blocked: total_supply etc. from this run's (future) block are usable
+    const blockObservedAt = fetch.written.find((w) => w.metricKey === 'total_supply')!.observedAt;
     expect(Date.parse(blockObservedAt)).toBeGreaterThan(h.deps.now().getTime());
     expect(Date.parse(signal.generated_at)).toBeGreaterThanOrEqual(Date.parse(blockObservedAt));
   });

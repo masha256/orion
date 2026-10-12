@@ -26,7 +26,7 @@ export function hourlyPrices(fromIso: string, toIso: string, priceAt: (ms: numbe
   return { prices };
 }
 
-/** A healthy world: price 10 everywhere, 100 tokens of effective supply, 50 staked, no emissions. */
+/** A healthy world: price 10 everywhere, 100 tokens of total supply, 50 staked, no emissions. */
 export function defaultRoutes(): Record<string, Route> {
   return {
     [CG_MARKETS]: [{ id: 'mini-token', current_price: 10, market_cap: 600, circulating_supply: 60 }],

@@ -51,7 +51,7 @@ no existing output moves.
 
 - Price: CoinGecko `yearn-crv`, cross-checked against DefiLlama coins (2 percent). Live 0.18345 vs 0.18065 (1.53
   percent, inside the tolerance but close: a thin market).
-- `effective_supply`: yCRV `totalSupply()` (72.0M). `staked_supply`: YBS `totalSupply()` (63.3M).
+- `total_supply`: yCRV `totalSupply()` (72.0M). `staked_supply`: YBS `totalSupply()` (63.3M).
 - `staker_emission_share` and `emission_rate_annual`: `constant` 0. yCRV is minted 1:1 against locked CRV; no emissions.
 - No `vote_incentives` component: yCRV's incentives arrive as crvUSD in the same flow. Their link to CRV emissions (a
   97.2M -> 81.7M CRV a year cut on 2027-08-12, the calendar trigger) belongs in the growth assumptions:

@@ -6,7 +6,7 @@ O="node dist/cli/index.js"
 D="research pass 2026-09-18"
 
 $O data set vvv price_usd 27.46 --at 2026-09-18 --detail "$D: CoinGecko and Venice API"
-$O data set vvv effective_supply 81003579 --at 2026-09-18 --detail "$D: totalSupply minus balanceOf(0x0)"
+$O data set vvv total_supply 81003579 --at 2026-09-18 --detail "$D: totalSupply minus balanceOf(0x0)"
 $O data set vvv circulating_supply 48350000 --at 2026-09-18 --detail "$D: Venice API vvv_stats"
 $O data set vvv staked_supply 33964988 --at 2026-09-18 --detail "$D: staking totalSupply()"
 $O data set vvv locked_supply 8969695 --at 2026-09-18 --detail "$D: totalLockedStakedVVV()"

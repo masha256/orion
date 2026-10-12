@@ -131,7 +131,7 @@ describe('a bootstrap run', () => {
     expect(pack).toContain('"assumption_set_version": null');
     expect(pack).toContain('"assumptions": "none yet"');
     const parsed = JSON.parse(pack.slice(pack.indexOf('{')));
-    expect(parsed.asset.manual_metrics).toEqual(['effective_supply', 'emission_rate_annual', 'flow_usd.fees', 'revenue_run_rate_usd', 'staked_supply', 'staker_emission_share']);
+    expect(parsed.asset.manual_metrics).toEqual(['emission_rate_annual', 'flow_usd.fees', 'revenue_run_rate_usd', 'staked_supply', 'staker_emission_share', 'total_supply']);
   });
 
   it('refuses an assumption tool call it was not offered, so a model cannot change what does not exist', async () => {

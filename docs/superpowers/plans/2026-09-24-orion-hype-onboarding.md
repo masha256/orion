@@ -52,7 +52,7 @@ A fence is as long as it needs to be. The HTML comments `<!-- directives: taskN 
 ```
 src/ingest/transport/http.ts          HttpTransport.postJson; one request loop for GET and POST; the run cache keyed by method, URL, body   (modify, Task 1)
 tests/helpers/fakeHttp.ts             postJson on the fake; a function route sees the body; calls record method and body                 (modify, Task 1)
-src/ingest/adapters/hype.ts           hype.effective_supply, hype.staked_supply, hype.emission_rate_annual                             (create, Task 2)
+src/ingest/adapters/hype.ts           hype.total_supply, hype.staked_supply, hype.emission_rate_annual                             (create, Task 2)
 src/ingest/adapters/registry.ts       registers hypeAdapters                                                                           (modify, Task 2)
 tests/fixtures/hype/*.json            recorded info API replies                                                                        (create, Task 2)
 assets/hype.yaml                      the asset file                                                                                   (create, Task 3)
@@ -510,7 +510,7 @@ git commit -m "feat(ingest): postJson on the HTTP transport, the run cache, and 
 
 **Interfaces:**
 - Consumes: `AdapterDef`, `registerAdapter`, `SourceContext` (`http.postJson`, `nowIso`, `asset.external_ids`, `contract(name)`), `toFiniteNumber`, the `text` and `number` param helpers from `adapters/chain.ts`.
-- Produces: `hype.ts` exports `hypeAdapters` with `hype.effective_supply` (params `subtract: string[]` of contract names, `token_id`, `url`), `hype.staked_supply` (params `decimals`, `url`), `hype.emission_rate_annual` (params `anchor_rate`, `anchor_stake`, `decimals`, `url`); all `needsRpc: false`, each an `api` level stamped at `ctx.nowIso` with a detail naming the request type. The URL falls back to `external_ids.hyperliquid_info`, then `https://api.hyperliquid.xyz/info`; the token id to `external_ids.hyperliquid_token`.
+- Produces: `hype.ts` exports `hypeAdapters` with `hype.total_supply` (params `subtract: string[]` of contract names, `token_id`, `url`), `hype.staked_supply` (params `decimals`, `url`), `hype.emission_rate_annual` (params `anchor_rate`, `anchor_stake`, `decimals`, `url`); all `needsRpc: false`, each an `api` level stamped at `ctx.nowIso` with a detail naming the request type. The URL falls back to `external_ids.hyperliquid_info`, then `https://api.hyperliquid.xyz/info`; the token id to `external_ids.hyperliquid_token`.
 
 **What binds, from the spec.** 5: three adapters, no RPC, one POST each; decimal strings and 8-decimal integers parsed with the finite-number guard; refusals by name for a missing field, a non-numeric string, an empty validator list, a zero stake, a non-positive supply; `subtract` names resolved through `ctx.contract` and matched case-insensitively; an absent address subtracts zero; `rate = anchor_rate * sqrt(anchor_stake / stake)`, value `rate * stake`, defaults 0.0237 and 400,000,000. 8: the fixtures' arithmetic pinned, the request bodies posted.
 
@@ -1946,13 +1946,13 @@ const stakeSum = validators.reduce((s, v) => s + v.stake, 0) / 1e8;
 
 describe('HYPE adapters', () => {
   it('are registered and need no chain', () => {
-    expect(adapterNames()).toEqual(expect.arrayContaining(['hype.effective_supply', 'hype.staked_supply', 'hype.emission_rate_annual']));
-    for (const name of ['hype.effective_supply', 'hype.staked_supply', 'hype.emission_rate_annual']) expect(getAdapter(name).needsRpc).toBe(false);
+    expect(adapterNames()).toEqual(expect.arrayContaining(['hype.total_supply', 'hype.staked_supply', 'hype.emission_rate_annual']));
+    for (const name of ['hype.total_supply', 'hype.staked_supply', 'hype.emission_rate_annual']) expect(getAdapter(name).needsRpc).toBe(false);
   });
 
   it('effective supply is the total less the fund and the dead addresses, about 951.4M today, stamped at fetch time as an api level', async () => {
     const { ctx, http } = ctxWith();
-    const v = await getAdapter('hype.effective_supply').run(ctx, SUBTRACT);
+    const v = await getAdapter('hype.total_supply').run(ctx, SUBTRACT);
     const expected = total - listed(FUND) - listed(CONTRACTS.zero) - listed(CONTRACTS.dead);
     expect(v).toMatchObject({ kind: 'level', source: 'api', observedAt: NOW_ISO });
     expect(v.kind === 'level' && v.value).toBeCloseTo(expected, 3);
@@ -1964,11 +1964,11 @@ describe('HYPE adapters', () => {
 
   it('subtracts nothing without a subtract list, and zero for a named address the API no longer lists', async () => {
     const { ctx } = ctxWith();
-    const all = await getAdapter('hype.effective_supply').run(ctx, {});
+    const all = await getAdapter('hype.total_supply').run(ctx, {});
     expect(all.kind === 'level' && all.value).toBeCloseTo(total, 3);
     expect(all.detail).toMatch(/less 0 at none of $/);
     const emptied = { ...tokenDetails, nonCirculatingUserBalances: tokenDetails.nonCirculatingUserBalances.filter(([a]) => a !== FUND) };
-    const v = await getAdapter('hype.effective_supply').run(ctxWith({ tokenDetails: emptied }).ctx, SUBTRACT);
+    const v = await getAdapter('hype.total_supply').run(ctxWith({ tokenDetails: emptied }).ctx, SUBTRACT);
     expect(v.kind === 'level' && v.value).toBeCloseTo(total - listed(CONTRACTS.zero) - listed(CONTRACTS.dead), 3);
     expect(v.detail).toMatch(/at zero, dead$/);
   });
@@ -1976,10 +1976,10 @@ describe('HYPE adapters', () => {
   it('matches addresses case-insensitively and takes the token id and URL from params or the external ids', async () => {
     const upper = { ...tokenDetails, nonCirculatingUserBalances: tokenDetails.nonCirculatingUserBalances.map(([a, b]) => [a.toUpperCase().replace('0X', '0x'), b] as [string, string]) };
     const { ctx, http } = ctxWith({ tokenDetails: upper }, {});
-    const v = await getAdapter('hype.effective_supply').run(ctx, { ...SUBTRACT, token_id: '0xabc', url: 'https://other.test/info' });
+    const v = await getAdapter('hype.total_supply').run(ctx, { ...SUBTRACT, token_id: '0xabc', url: 'https://other.test/info' });
     expect(v.kind === 'level' && v.value).toBeCloseTo(total - listed(FUND) - listed(CONTRACTS.zero) - listed(CONTRACTS.dead), 3);
     expect(http.calls[0]).toMatchObject({ url: 'https://other.test/info', body: { type: 'tokenDetails', tokenId: '0xabc' } });
-    await expect(getAdapter('hype.effective_supply').run(ctxWith({}, {}).ctx, SUBTRACT)).rejects.toThrow(/no token id/);
+    await expect(getAdapter('hype.total_supply').run(ctxWith({}, {}).ctx, SUBTRACT)).rejects.toThrow(/no token id/);
   });
 
   it('staked supply is the validators\' stake summed, in HYPE: about 441M today', async () => {
@@ -2017,12 +2017,12 @@ describe('HYPE adapters', () => {
   });
 
   it('refuses by name a missing field, an empty or zero stake list, a bad anchor, and a supply that is not positive', async () => {
-    await expect(getAdapter('hype.effective_supply').run(ctxWith({ tokenDetails: { name: 'HYPE' } }).ctx, SUBTRACT)).rejects.toThrow(/totalSupply is missing/);
-    await expect(getAdapter('hype.effective_supply').run(ctxWith({ tokenDetails: { totalSupply: '10', nonCirculatingUserBalances: [[FUND, 'lots']] } }).ctx, SUBTRACT)).rejects.toThrow(/balance at assistance_fund is missing/);
-    await expect(getAdapter('hype.effective_supply').run(ctxWith({ tokenDetails: { totalSupply: '10', nonCirculatingUserBalances: [[FUND, '10']] } }).ctx, SUBTRACT)).rejects.toThrow(/effective supply 0 is not positive/);
-    await expect(getAdapter('hype.effective_supply').run(ctxWith({ tokenDetails: [] }).ctx, SUBTRACT)).rejects.toThrow(/not an object/);
-    await expect(getAdapter('hype.effective_supply').run(ctxWith({ tokenDetails: 'nope' }).ctx, SUBTRACT)).rejects.toThrow(/not an object/);
-    await expect(getAdapter('hype.effective_supply').run(ctxWith().ctx, { subtract: ['treasury'] })).rejects.toThrow(/no contract treasury/);
+    await expect(getAdapter('hype.total_supply').run(ctxWith({ tokenDetails: { name: 'HYPE' } }).ctx, SUBTRACT)).rejects.toThrow(/totalSupply is missing/);
+    await expect(getAdapter('hype.total_supply').run(ctxWith({ tokenDetails: { totalSupply: '10', nonCirculatingUserBalances: [[FUND, 'lots']] } }).ctx, SUBTRACT)).rejects.toThrow(/balance at assistance_fund is missing/);
+    await expect(getAdapter('hype.total_supply').run(ctxWith({ tokenDetails: { totalSupply: '10', nonCirculatingUserBalances: [[FUND, '10']] } }).ctx, SUBTRACT)).rejects.toThrow(/effective supply 0 is not positive/);
+    await expect(getAdapter('hype.total_supply').run(ctxWith({ tokenDetails: [] }).ctx, SUBTRACT)).rejects.toThrow(/not an object/);
+    await expect(getAdapter('hype.total_supply').run(ctxWith({ tokenDetails: 'nope' }).ctx, SUBTRACT)).rejects.toThrow(/not an object/);
+    await expect(getAdapter('hype.total_supply').run(ctxWith().ctx, { subtract: ['treasury'] })).rejects.toThrow(/no contract treasury/);
     await expect(getAdapter('hype.staked_supply').run(ctxWith({ validatorSummaries: [] }).ctx, {})).rejects.toThrow(/not a non-empty list/);
     await expect(getAdapter('hype.staked_supply').run(ctxWith({ validatorSummaries: { stake: 1 } }).ctx, {})).rejects.toThrow(/not a non-empty list/);
     await expect(getAdapter('hype.staked_supply').run(ctxWith({ validatorSummaries: [{ stake: 0 }, { stake: 0 }] }).ctx, {})).rejects.toThrow(/total stake is not positive/);
@@ -2036,7 +2036,7 @@ describe('HYPE adapters', () => {
 - [ ] **Step 2: Run the tests and see them fail**
 
 Run: `npx vitest run tests/ingest/adapters.hype.test.ts`
-Expected: 8 failed (`unknown adapter: hype.effective_supply` and the like), 701 passed in the rest of the suite.
+Expected: 8 failed (`unknown adapter: hype.total_supply` and the like), 701 passed in the rest of the suite.
 
 - [ ] **Step 3: Implement the adapters and register them**
 
@@ -2096,8 +2096,8 @@ async function totalStake(ctx: SourceContext, params: Record<string, unknown>): 
 }
 
 /** Total supply less the balances the API lists as non-circulating at the named addresses: the fund and the dead addresses. */
-const effectiveSupply: AdapterDef = {
-  name: 'hype.effective_supply',
+const totalSupply: AdapterDef = {
+  name: 'hype.total_supply',
   needsRpc: false,
   async run(ctx, params) {
     const tokenId = text(params, 'token_id', ctx.asset.external_ids.hyperliquid_token ?? '');
@@ -2146,7 +2146,7 @@ const emissionRateAnnual: AdapterDef = {
   },
 };
 
-export const hypeAdapters: AdapterDef[] = [effectiveSupply, stakedSupply, emissionRateAnnual];
+export const hypeAdapters: AdapterDef[] = [totalSupply, stakedSupply, emissionRateAnnual];
 ```
 
 In `src/ingest/adapters/registry.ts`, replace:
@@ -2329,7 +2329,7 @@ describe('assets/hype.yaml', () => {
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
       ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
       [`http_json:${LLAMA_PRICE}`, ['cross_check:price_usd']],
-      ['adapter:hype.effective_supply', ['primary:effective_supply']],
+      ['adapter:hype.total_supply', ['primary:total_supply']],
       ['adapter:hype.staked_supply', ['primary:staked_supply']],
       ['adapter:hype.emission_rate_annual', ['primary:emission_rate_annual']],
       ['defillama:hyperliquid:dailyHoldersRevenue', ['primary:flow_usd.af_buyback']],
@@ -2348,8 +2348,8 @@ describe('assets/hype.yaml', () => {
     const value = (metric: string) => listActiveObservations(w.db, 'hype', metric).at(-1)!.value;
     expect(value('price_usd')).toBe(92.36);
     expect(value('circulating_supply')).toBeCloseTo(222445714.07414138, 3);
-    expect(value('effective_supply')).toBeGreaterThan(950e6);
-    expect(value('effective_supply')).toBeLessThan(953e6);
+    expect(value('total_supply')).toBeGreaterThan(950e6);
+    expect(value('total_supply')).toBeLessThan(953e6);
     expect(value('staked_supply')).toBeGreaterThan(430e6);
     expect(value('staked_supply')).toBeLessThan(450e6);
     expect(value('emission_rate_annual')).toBeGreaterThan(9.8e6);
@@ -2383,7 +2383,7 @@ describe('assets/hype.yaml', () => {
     expect(signal.horizons!['12m'].expected_target).toBeGreaterThan(0);
     // A burn flow on the effective-total basis: the supply forecast at the horizon is below today's effective supply plus a year of emissions.
     const hc = signal.horizons!['12m'].modules.hc.breakdown as { supply_at_horizon: number };
-    expect(hc.supply_at_horizon).toBeLessThan(value('effective_supply') + value('emission_rate_annual'));
+    expect(hc.supply_at_horizon).toBeLessThan(value('total_supply') + value('emission_rate_annual'));
   });
 });
 
@@ -2491,12 +2491,12 @@ metrics:
 
   # Total supply less the fund and the two dead addresses, from the API's non-circulating list (about 951.4M). The docs call the
   # fund's HYPE burned; the chain still lists it, so it is subtracted here. A fund emptied by a vote shows as a supply jump.
-  effective_supply:
+  total_supply:
     type: level
     unit: tokens
     staleness_days: 7
     critical: true
-    source: { type: adapter, name: hype.effective_supply, params: { subtract: [assistance_fund, zero, dead] } }
+    source: { type: adapter, name: hype.total_supply, params: { subtract: [assistance_fund, zero, dead] } }
 
   # CoinGecko's own definition (222M against the API's 299M); informational under effective_total, no consistent cross-check.
   circulating_supply:

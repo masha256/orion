@@ -43,7 +43,7 @@ Date: 2026-10-11. Branch `feat/uni`. Research note: `docs/research/tokens/uni.md
 | Metric | Source | Notes |
 |---|---|---|
 | `price_usd` | coingecko `uniswap` | cross-check: Chainlink UNI/USD `0x553303d460EE0afB37EdFf9bE42922D8FF63220e` `latestAnswer` (8 dp), on chain |
-| `effective_supply` | erc20_supply token, subtract [dead] | |
+| `total_supply` | erc20_supply token, subtract [dead] | |
 | `circulating_supply` | coingecko | informational |
 | `staked_supply` | constant 0 | needs code 4.1 |
 | `staker_emission_share` | constant 0 | |

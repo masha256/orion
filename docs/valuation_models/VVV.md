@@ -34,7 +34,7 @@ observations ─► drivers ─► for each scenario (bear / base / bull):
 |---|---|---|
 | Spot price | $28.91 | CoinGecko |
 | Revenue run rate | $100M | manual entry, disclosed 2026-08-17 |
-| Effective supply | 81.01M VVV | on-chain, total minus burned |
+| Total supply | 81.01M VVV | on-chain, total minus burned |
 | Emissions | 2.5M/yr now, 2.0M/yr from 2026-10-01 | on-chain, plus the announced cut entered as a schedule row |
 | Burn flow, trailing 90 days annualized | $7.44M/yr | on-chain transfers to the zero address from the two allowlisted senders |
 | Capture rate today | 7.44% | derived: burn ÷ revenue |

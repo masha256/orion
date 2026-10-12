@@ -137,7 +137,7 @@ Design question for the plan: whether to write a new observation every tick (sim
 - Detail: `epoch <mining_epoch>, rate <r> CRV/s, next cut <ISO date> to <r'> CRV/s`.
 - Rows written once a year with a future date are re-written every tick at the same `observedAt`: `insertObservation` supersedes the prior row at the same key, so there is one active future step.
 
-A third adapter is not needed: `locked_supply` and `staked_supply` are `contract_read ve.supply()` (decimals 18), and `effective_supply` is `erc20_supply token`.
+A third adapter is not needed: `locked_supply` and `staked_supply` are `contract_read ve.supply()` (decimals 18), and `total_supply` is `erc20_supply token`.
 
 Tests: against recorded `eth_call` replies (fixtures from block 26,146,581): the step in force 97,161,875 CRV a year (rate × 31,536,000); the next step 81,703,072; the next step dated 2027-08-12T22:17:28Z; each refusal.
 
@@ -177,7 +177,7 @@ Tests: the formula against a hand-computed fixture; zero drift and flat price re
 | Metric | Type, unit | Source | Cross-check | Notes |
 |---|---|---|---|---|
 | `price_usd` | level, usd, critical, staleness 3 | coingecko `curve-dao-token` | http_json DefiLlama coins, 2 percent | |
-| `effective_supply` | level, tokens, critical, staleness 7 | erc20_supply `token` | none | no burn |
+| `total_supply` | level, tokens, critical, staleness 7 | erc20_supply `token` | none | no burn |
 | `circulating_supply` | level, tokens, staleness 14 | coingecko | none | informational |
 | `staked_supply` | level, tokens, staleness 7 | contract_read `ve.supply` decimals 18 | none | staking is locking, as AERO |
 | `locked_supply` | level, tokens, staleness 7 | contract_read `ve.supply` decimals 18 | none | |

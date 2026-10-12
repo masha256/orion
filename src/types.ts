@@ -22,7 +22,7 @@ export const STD_METRICS = {
   price: 'price_usd',
   revenue: 'revenue_run_rate_usd',
   usageIndex: 'usage_index',
-  effectiveSupply: 'effective_supply',
+  totalSupply: 'total_supply',
   circulatingSupply: 'circulating_supply',
   stakedSupply: 'staked_supply',
   lockedSupply: 'locked_supply',

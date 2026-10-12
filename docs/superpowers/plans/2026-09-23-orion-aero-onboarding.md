@@ -782,7 +782,7 @@ git commit -m "feat(ingest): aero adapters: gross annual emissions and the rebas
 
 **What binds, from the spec.** 3: the metric table, the holder flow, the modules and weights, the bounds, the review triggers, `agent.budgets.weekly.input_tokens: 2000000`. 6: the persona's frontmatter and the four sector points plus the working rules. 8: the asset parses, `sourceIssues` is empty, every required key has bounds, the hash is pinned, a full fetch on canned routes writes every metric, and with a synthetic set the valuation is `ok`.
 
-**Risks for the reviewer to attack.** (1) The `http_json` cross-check path `coins.base:0x9401...8631.price`: the dot path splits on dots only, and the key holds a colon; confirm `readPath` treats the key as one segment. (2) `staked_supply` and `locked_supply` read the same function: the engine's staking-yield track uses `staked_ratio_horizon` against `effective_supply`, and the fee flow's recipient base is `locked`; is anything double-counted? (3) `revenue_run_rate_usd` with `staleness_days: 5` and `critical: true`: the derived row is written for each day with a complete window, so a five-day DefiLlama outage makes the signal `degraded` (grade D); is five right, against the flow's four? (4) The bounds are the sweep's room, not views; the reviewer should judge whether any is wide enough to let the sweep find the edges (`multiple.fm_holder_flow` up to 40, `discount_rate_base` up to 0.35). (5) The canned fetch test values the asset at grade A: check the fixture data really exercises every source (the chart has 40 days so the 30-day window completes 11 times; the multicall count bound). (6) The persona: no promise the tool layer does not enforce; ASCII; the model pinned to the default.
+**Risks for the reviewer to attack.** (1) The `http_json` cross-check path `coins.base:0x9401...8631.price`: the dot path splits on dots only, and the key holds a colon; confirm `readPath` treats the key as one segment. (2) `staked_supply` and `locked_supply` read the same function: the engine's staking-yield track uses `staked_ratio_horizon` against `total_supply`, and the fee flow's recipient base is `locked`; is anything double-counted? (3) `revenue_run_rate_usd` with `staleness_days: 5` and `critical: true`: the derived row is written for each day with a complete window, so a five-day DefiLlama outage makes the signal `degraded` (grade D); is five right, against the flow's four? (4) The bounds are the sweep's room, not views; the reviewer should judge whether any is wide enough to let the sweep find the edges (`multiple.fm_holder_flow` up to 40, `discount_rate_base` up to 0.35). (5) The canned fetch test values the asset at grade A: check the fixture data really exercises every source (the chart has 40 days so the 30-day window completes 11 times; the multicall count bound). (6) The persona: no promise the tool layer does not enforce; ASCII; the model pinned to the default.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -878,7 +878,7 @@ describe('assets/aero.yaml', () => {
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
       ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
       [`http_json:${LLAMA}`, ['cross_check:price_usd']],
-      ['chain_levels', ['primary:effective_supply', 'primary:staked_supply', 'primary:locked_supply']],
+      ['chain_levels', ['primary:total_supply', 'primary:staked_supply', 'primary:locked_supply']],
       ['adapter:aero.staker_emission_share', ['primary:staker_emission_share']],
       ['adapter:aero.emission_rate_annual', ['primary:emission_rate_annual']],
       ['defillama:aerodrome:dailyHoldersRevenue', ['primary:flow_usd.fees']],
@@ -897,7 +897,7 @@ describe('assets/aero.yaml', () => {
     const value = (metric: string) => listActiveObservations(w.db, 'aero', metric).at(-1)!.value;
     expect(value('price_usd')).toBe(0.671936);
     expect(value('circulating_supply')).toBeCloseTo(992591965.5968602, 3);
-    expect(value('effective_supply')).toBeCloseTo(1983240735.576791, 3);
+    expect(value('total_supply')).toBeCloseTo(1983240735.576791, 3);
     expect(value('staked_supply')).toBeCloseTo(1051061695.97399, 3);
     expect(value('locked_supply')).toBeCloseTo(1051061695.97399, 3);
     expect(value('staker_emission_share')).toBeGreaterThan(0.09);
@@ -1028,7 +1028,7 @@ metrics:
       - { tolerance_pct: 2, source: { type: http_json, url: "https://coins.llama.fi/prices/current/base:0x940181a94a35a4569e4529a3cdfb74e38fd98631", path: "coins.base:0x940181a94a35a4569e4529a3cdfb74e38fd98631.price" } }
 
   # No burn sink: the ERC-20 total is the effective supply. Locked AERO stays inside it (supply_basis effective_total).
-  effective_supply:
+  total_supply:
     type: level
     unit: tokens
     staleness_days: 7

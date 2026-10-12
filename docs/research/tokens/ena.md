@@ -31,7 +31,7 @@ Capture rate today: $0 / about $237M gross fees (DefiLlama 30d annualized) = 0%.
 
 ## Supply
 
-- Max/total supply 15.0B. Circulating 10.10B (CoinGecko 2026-09-22). No burns, so effective supply = total.
+- Max/total supply 15.0B. Circulating 10.10B (CoinGecko 2026-09-22). No burns, so total supply = total.
 - supply_basis: `circulating` plus the unlock schedule. Vesting is heavy and runs to about April 2028, so total supply overstates what trades today, but unlocks are certain.
 - Unlocks (DefiLlama emissions dataset, Ethena CSV):
   - Next 12 months: about 3.20B (team 1.12B, investors 0.94B, ecosystem 0.66B, foundation 0.49B).

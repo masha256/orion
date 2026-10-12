@@ -94,16 +94,16 @@ describe('assets/ycrv.yaml', () => {
     ]);
     expect(requiredExtraMetrics(config)).toEqual([]);
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
-    // Pinned on 2026-10-10 with the report-only block. A deliberate edit of assets/ycrv.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('75fecc8e8b1902bd5cc87c094d47d1d5dda1a381b5609d2ad1f2132504ea0996');
+    // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/ycrv.yaml moves it; update the pin on purpose.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('5dd6000670d3a75fc0c6fdc2731a1eb02ee3a92fbe0b4fef23b7633bd268b9d9');
   });
 
   it('plans one transfer scan of vault shares, converted at the share price', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
-      ['coingecko', ['primary:price_usd']],
+      ['coingecko', ['primary:price_usd']], // no total_supply check: CoinGecko's yCRV supply is a 2022 snapshot (Mike, 2026-10-12)
       [`http_json:${LLAMA}`, ['cross_check:price_usd']],
-      ['chain_levels', ['primary:effective_supply', 'primary:staked_supply']],
+      ['chain_levels', ['primary:total_supply', 'primary:circulating_supply', 'primary:staked_supply']], // circulating = the on-chain total
       ['constant', ['primary:staker_emission_share', 'primary:emission_rate_annual']],
     ]);
     expect(plan.flowGroups.map((g) => g.members)).toEqual([
@@ -124,7 +124,7 @@ describe('assets/ycrv.yaml', () => {
     const rows = (metric: string) => listActiveObservations(w.db, 'ycrv', metric);
     const value = (metric: string) => rows(metric).at(-1)!.value;
     expect(value('price_usd')).toBe(0.18345);
-    expect(value('effective_supply')).toBe(71_960_697);
+    expect(value('total_supply')).toBe(71_960_697);
     expect(value('staked_supply')).toBe(63_328_341);
     expect(value('staker_emission_share')).toBe(0);
     expect(rows('emission_rate_annual').map((o) => o.value)).toEqual([0]);

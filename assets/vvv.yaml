@@ -42,7 +42,7 @@ metrics:
   # revenue_disclosure_stale anomaly says when usage has moved since the figure was disclosed.
   revenue_run_rate_usd: { type: level, unit: usd, cadence: event, staleness_days: 60, critical: true }
 
-  effective_supply:
+  total_supply:
     type: level
     unit: tokens
     staleness_days: 7
@@ -50,6 +50,7 @@ metrics:
     source: { type: erc20_supply, token: token, subtract_balances: [ burn_sink ] }
     cross_checks:
       - { tolerance_pct: 0.1, source: { type: http_json, url: "https://outerface.venice.ai/api/app/vvv/vvv_stats", path: totalSupplyCryptoBaseUnit, decimals: 18 } }
+      - { tolerance_pct: 2, source: { type: coingecko, id: venice-token, field: total_supply } }
 
   circulating_supply:
     type: level

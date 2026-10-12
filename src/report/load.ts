@@ -67,7 +67,8 @@ export function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: string):
     : [];
   const levels: ReportLevels = {
     price: level(STD_METRICS.price),
-    effectiveSupply: level(STD_METRICS.effectiveSupply),
+    totalSupply: level(STD_METRICS.totalSupply),
+    circulatingSupply: asset.metrics[STD_METRICS.circulatingSupply] ? level(STD_METRICS.circulatingSupply) : null,
     stakedSupply: level(STD_METRICS.stakedSupply),
     lockedSupply: asset.metrics[STD_METRICS.lockedSupply] ? level(STD_METRICS.lockedSupply) : null,
     emissionRateAnnual: level(STD_METRICS.emissionRate),

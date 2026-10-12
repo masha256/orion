@@ -32,7 +32,7 @@ bull:
 async function seedData() {
   await orion('data', 'set', 'mini', 'price_usd', '10', '--at', '2026-06-29', '--source', 'onchain');
   await orion('data', 'set', 'mini', 'revenue_run_rate_usd', '1000', '--at', '2026-06-15', '--source', 'onchain');
-  await orion('data', 'set', 'mini', 'effective_supply', '100', '--at', '2026-06-29', '--source', 'onchain');
+  await orion('data', 'set', 'mini', 'total_supply', '100', '--at', '2026-06-29', '--source', 'onchain');
   await orion('data', 'set', 'mini', 'staked_supply', '50', '--at', '2026-06-29', '--source', 'onchain');
   await orion('data', 'set', 'mini', 'staker_emission_share', '1', '--at', '2026-06-29', '--source', 'onchain');
   await orion('data', 'set', 'mini', 'emission_rate_annual', '0', '--at', '2026-01-01', '--source', 'onchain');

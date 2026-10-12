@@ -21,7 +21,7 @@ export function hypeObservations(unlockTokens = 100): Observation[] {
   return [
     at('hype', 'price_usd', 10),
     at('hype', 'revenue_run_rate_usd', 1000),
-    at('hype', 'effective_supply', 1000),
+    at('hype', 'total_supply', 1000),
     at('hype', 'circulating_supply', 300),
     at('hype', 'staked_supply', 400),
     at('hype', 'staker_emission_share', 1),
@@ -36,7 +36,7 @@ export function aeroObservations(emission = 200): Observation[] {
   return [
     at('aero', 'price_usd', 5),
     at('aero', 'revenue_run_rate_usd', 1000),
-    at('aero', 'effective_supply', 1000),
+    at('aero', 'total_supply', 1000),
     at('aero', 'staked_supply', 500),
     at('aero', 'locked_supply', 500),
     at('aero', 'staker_emission_share', 1),

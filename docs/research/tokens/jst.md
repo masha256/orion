@@ -40,11 +40,11 @@ Capture rate today: not meaningful against DefiLlama revenue ($82.4M burned / $0
 
 ## Supply
 
-- Initial max supply 9.9B JST. The contract totalSupply() is 9,793,336,268 (a contract-level burn of about 106.7M, date unconfirmed). Program burns of 1,604.6M JST sit at the black-hole address. Effective supply = 8,188,743,036 (Tronscan `totalTurnOver`, identical to CoinGecko total and circulating, 2026-09-22).
+- Initial max supply 9.9B JST. The contract totalSupply() is 9,793,336,268 (a contract-level burn of about 106.7M, date unconfirmed). Program burns of 1,604.6M JST sit at the black-hole address. Total supply = 8,188,743,036 (Tronscan `totalTurnOver`, identical to CoinGecko total and circulating, 2026-09-22).
 - supply_basis recommendation: `effective_total` (8.189B), which equals circulating per CoinGecko.
 - Emissions: none. Supply is fully issued, so there is no inflation or staking yield. JST locked for governance voting earns nothing.
 - Unlocks: none known.
-- Round 4 (248M JST) was 3.0% of effective supply. Four rounds removed 16.4% of the pre-program supply.
+- Round 4 (248M JST) was 3.0% of total supply. Four rounds removed 16.4% of the pre-program supply.
 
 ## Data availability for Orion
 
@@ -70,7 +70,7 @@ No EVM RPC can read this flow (TRON). TronGrid is a public JSON API, so an `http
 
 - https://docs.justlend.org/governance/tokenomics: buyback program rules, 30%/70% backlog split, USDD $10M threshold, rounds 1-3 amounts (page updated 2026-06-10; accessed 2026-09-22)
 - https://api.trongrid.io/v1/accounts/T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb/transactions/trc20?contract_address=TCFLL5dx5ZJdKnWuesXxi1VPwjLVmWZZy9&only_to=true: burn transfers and dates, including round 4 on 2026-07-17 (accessed 2026-09-22)
-- https://apilist.tronscanapi.com/api/token_trc20?contract=TCFLL5dx5ZJdKnWuesXxi1VPwjLVmWZZy9: contract totalSupply and effective supply (accessed 2026-09-22)
+- https://apilist.tronscanapi.com/api/token_trc20?contract=TCFLL5dx5ZJdKnWuesXxi1VPwjLVmWZZy9: contract totalSupply and total supply (accessed 2026-09-22)
 - https://api.llama.fi/summary/fees/justlend?dataType=dailyRevenue (and dailyFees, dailyHoldersRevenue, justlend-v1 methodology): JustLend fees and revenue (accessed 2026-09-22)
 - https://api.llama.fi/summary/fees/usdd?dataType=dailyRevenue: USDD revenue (accessed 2026-09-22)
 - https://coins.llama.fi/prices/historical/<ts>/coingecko:just: JST prices on burn dates (accessed 2026-09-22)

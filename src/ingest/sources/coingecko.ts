@@ -8,7 +8,7 @@ export function coingeckoHeaders(env: Record<string, string | undefined>): Recor
   return env.COINGECKO_API_KEY ? { 'x-cg-demo-api-key': env.COINGECKO_API_KEY } : {};
 }
 
-const FIELD = { price: 'current_price', market_cap: 'market_cap', circulating_supply: 'circulating_supply' } as const;
+const FIELD = { price: 'current_price', market_cap: 'market_cap', circulating_supply: 'circulating_supply', total_supply: 'total_supply' } as const;
 
 /** All coingecko metrics of an asset come from one /coins/markets call. */
 export const coingeckoSource: SourceHandler = {

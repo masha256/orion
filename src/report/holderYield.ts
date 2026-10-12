@@ -18,7 +18,10 @@ const BUCKETS: Bucket[] = ['burn', 'hold', 'cash'];
 
 export interface ReportLevels {
   price: number | null;
-  effectiveSupply: number | null;
+  /** total_supply: on-chain supply less what CoinGecko also excludes (burn addresses; HYPE's Assistance Fund). FDV basis. */
+  totalSupply: number | null;
+  /** circulating_supply (CoinGecko's, or the on-chain total for the wrappers CoinGecko has none for): market cap basis. */
+  circulatingSupply?: number | null;
   stakedSupply: number | null;
   lockedSupply: number | null;
   emissionRateAnnual: number | null;
@@ -76,7 +79,10 @@ export interface HolderYieldReport {
   day: string;
   windowDays: number;
   price: number | null;
+  /** price x circulating_supply; null when the asset records no circulating supply. */
   marketCap: number | null;
+  /** price x total_supply. The yields, the multiple and the supply line are on this basis. */
+  fdv: number | null;
   flows: FlowLine[];
   buckets: Record<Bucket, BucketLine | null>;
   yields: {
@@ -88,7 +94,7 @@ export interface HolderYieldReport {
     shareholder: number | null;
     /** Annual supply growth from emissions. */
     dilution: number | null;
-    /** reporting.dilution lines (tokens a year, after the cap, and as a share of effective supply); absent without the block. */
+    /** reporting.dilution lines (tokens a year, after the cap, and as a share of total supply); absent without the block. */
     dilutionLines?: { id: string; tokensPerYear: number | null; yield: number | null }[];
     /** shareholder - dilution. */
     netShareholder: number | null;
@@ -100,7 +106,7 @@ export interface HolderYieldReport {
   holderFlowGrowth: Growth;
   /**
    * Supply in tokens a year over the window (reporting.burned_tokens): removed by the holder flows, added by emissions and
-   * releases; net = added - removed, and as a share of effective supply (negative: supply shrinks). Null without the block.
+   * releases; net = added - removed, and as a share of total supply (negative: supply shrinks). Null without the block.
    */
   supply: { burnedPerYear: number | null; addedPerYear: number | null; netPerYear: number | null; netPct: number | null } | null;
   income: IncomeStatement | null;
@@ -174,7 +180,7 @@ export function growthOf(daily: Map<string, Map<string, number>>, metrics: strin
 }
 
 function recipients(base: RecipientBase, lv: ReportLevels): number | null {
-  if (base === 'all') return lv.effectiveSupply;
+  if (base === 'all') return lv.totalSupply;
   if (base === 'locked') return lv.lockedSupply ?? lv.stakedSupply;
   return lv.stakedSupply;
 }
@@ -233,7 +239,8 @@ export function holderYieldReport(input: ReportInput): HolderYieldReport {
   const bb = [buckets.burn, buckets.hold].filter((x): x is BucketLine => x !== null);
   const buyback = bb.length === 0 ? 0 : sumOrNull(bb.map((x) => x.yield));
   const shareholder = cash === null || buyback === null ? null : cash + buyback;
-  const eff = lv.effectiveSupply;
+  const eff = lv.totalSupply;
+  const circ = lv.circulatingSupply ?? null;
   // Emissions plus any release outside the schedule (reporting.dilution), each capped by what is approved.
   const releases = (r.dilution ?? []).map((d) => {
     const x = lv.dilution?.[d.id];
@@ -288,7 +295,8 @@ export function holderYieldReport(input: ReportInput): HolderYieldReport {
 
   return {
     asset: asset.id, day, windowDays: W, price,
-    marketCap: finite(price) && finite(eff) ? price * eff : null,
+    marketCap: finite(price) && finite(circ) ? price * circ : null,
+    fdv: finite(price) && finite(eff) ? price * eff : null,
     flows, buckets,
     yields: { cash, buyback, shareholder, dilution, netShareholder, multiple, pegTrailing, ...(r.dilution ? { dilutionLines } : {}) },
     holderFlowGrowth,

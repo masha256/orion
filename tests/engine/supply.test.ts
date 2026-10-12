@@ -40,7 +40,7 @@ describe('forecastSupply', () => {
   it('counts scheduled unlocks only on the circulating basis', () => {
     const asset = miniAsset();
     const list = [...miniObservations(), obs('circulating_supply', 40, '2026-06-29'), obs('scheduled_unlock_tokens', 5, '2026-09-01')];
-    asset.metrics.circulating_supply = { ...asset.metrics.effective_supply };
+    asset.metrics.circulating_supply = { ...asset.metrics.total_supply };
     asset.metrics.scheduled_unlock_tokens = { ...asset.metrics.emission_rate_annual, type: 'event' };
     const total = computeDrivers(asset, list, AS_OF).drivers!;
     expect(forecastSupply({ asset, drivers: total, assumptions: a, horizonYears: 0.5, targetPrice: 10 })).toBeCloseTo(100, 9);

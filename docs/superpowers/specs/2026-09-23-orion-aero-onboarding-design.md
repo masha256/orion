@@ -59,7 +59,7 @@ Gathered by a research pass on 2026-09-23. Confidence: **A** read from the chain
 | Metric | Type, unit | Source | Cross-check | Notes |
 |---|---|---|---|---|
 | `price_usd` | level, usd, critical, staleness 3 | coingecko `aerodrome-finance` price | http_json `coins.llama.fi/prices/current/base:0x9401...8631`, path `coins.base:0x9401...8631.price`, 2 percent | |
-| `effective_supply` | level, tokens, critical, staleness 7 | erc20_supply token, subtract nothing | none (DefiLlama's coins endpoint carries no supply) | no burn sink |
+| `total_supply` | level, tokens, critical, staleness 7 | erc20_supply token, subtract nothing | none (DefiLlama's coins endpoint carries no supply) | no burn sink |
 | `circulating_supply` | level, tokens, staleness 14 | coingecko circulating_supply | none | CoinGecko's definition; informational under effective_total |
 | `staked_supply` | level, tokens, staleness 7 | contract_read ve `supply`, decimals 18 | none | AERO locked in veAERO |
 | `locked_supply` | level, tokens, staleness 7 | contract_read ve `supply`, decimals 18 | none | the same read: staking is locking |

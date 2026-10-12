@@ -32,12 +32,14 @@ metrics:
 
   # 1e9 less the burned UNI at dead. The Timelock's treasury stays inside (supply_basis effective_total, Mike 2026-10-11):
   # treasury UNI can be spent, and the burn reaches every token.
-  effective_supply:
+  total_supply:
     type: level
     unit: tokens
     staleness_days: 7
     critical: true
     source: { type: erc20_supply, token: token, subtract_balances: [ dead ] }
+    cross_checks:
+      - { tolerance_pct: 2, source: { type: coingecko, id: uniswap, field: total_supply } }
 
   # CoinGecko's own definition; informational under effective_total.
   circulating_supply:
@@ -60,13 +62,13 @@ metrics:
     source: { type: constant, value: 0, note: "no staking, no staking rewards" }
 
   # The minter (up to 2 percent a year by governance) has never been used. The Labs vest is not an emission here: the
-  # Timelock's UNI is already in effective supply, so it is reported as dilution instead (reporting.dilution).
+  # Timelock's UNI is already in total supply, so it is reported as dilution instead (reporting.dilution).
   emission_rate_annual:
     type: schedule
     unit: tokens_per_year
     staleness_days: 45
     critical: true
-    source: { type: constant, value: 0, note: "UNI minter never used; the Labs vest moves treasury UNI already counted in effective supply" }
+    source: { type: constant, value: 0, note: "UNI minter never used; the Labs vest moves treasury UNI already counted in total supply" }
 
   # The holder flow, read on chain: every UNI transfer to dead, at each day's price. Anyone may burn to release a chain's
   # fee jar (Firepit): 75 percent arrives through five L2 bridge contracts, 25 percent from mainnet searcher contracts that

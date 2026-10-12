@@ -45,7 +45,7 @@ Capture rate today: holder flow / protocol revenue = 100% (all protocol revenue 
 | swap fees (gross) | defillama | `uniswap`, dailyFees | |
 | holder flow (burn) | defillama | `uniswap`, dailyHoldersRevenue | equals revenue |
 | burn in tokens (cross-check) | transfer_flow | UNI Transfer to `0x000...dEaD` on Ethereum | includes the one-off 100M burn (Dec 2025) |
-| effective supply | contract_read | 1e9 - UNI.balanceOf(0xdead) | totalSupply() does not fall |
+| total supply | contract_read | 1e9 - UNI.balanceOf(0xdead) | totalSupply() does not fall |
 | price / circulating | coingecko | `uniswap` | |
 
 An EVM RPC can read the flow (burns to 0xdead on Ethereum).
@@ -55,7 +55,7 @@ An EVM RPC can read the flow (burns to 0xdead on Ethereum).
 - Modules: holder_cashflow 0.6 (burn), forward_multiple on holder_flow 0.2, forward_multiple on revenue 0.2 (swap fees x capture).
 - holder_flows: `[{id: fee_switch_burn, kind: burn, capture_rule: programmatic, recipient_base: all, source: defillama uniswap dailyHoldersRevenue}]`.
 - Assumptions: base revenue should be the 30d run rate (about $190M), not 1y. Growth comes from more chains, v4 families, aggregator hooks and PFDA, minus LP migration risk to venues without the fee. Terminal capture of protocol revenue is 1.0. Fee levels are governance-adjustable (bear case: fees cut to keep LPs).
-- Obstacles: the 1y DefiLlama figure mixes pre- and post-rollout periods, and the effective supply must be computed from the 0xdead balance, not totalSupply().
+- Obstacles: the 1y DefiLlama figure mixes pre- and post-rollout periods, and the total supply must be computed from the 0xdead balance, not totalSupply().
 
 ## Sources
 

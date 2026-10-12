@@ -43,8 +43,18 @@ const hypeYaml = readFileSync(fileURLToPath(new URL('../fixtures/hype.yaml', imp
 
 describe('holderYieldReport', () => {
   const levels: ReportLevels = {
-    price: 2, effectiveSupply: 1000, stakedSupply: 400, lockedSupply: null, emissionRateAnnual: 50, extra: {}, disclosed: [],
+    price: 2, totalSupply: 1000, stakedSupply: 400, lockedSupply: null, emissionRateAnnual: 50, extra: {}, disclosed: [],
   };
+
+  it('reports market cap on circulating supply and FDV on total supply; the yields stay on total supply', () => {
+    const asset = parseAssetYaml(`${hypeYaml}\nreporting: { window_days: 10, haircuts: { buyback: 0 } }\n`).config;
+    const daily = new Map([[asset.holder_flows[0].metric, flat('2026-01-01', 20, 1)]]);
+    const withCirc = holderYieldReport({ asset, day: '2026-01-20', daily, levels: { ...levels, circulatingSupply: 250 } });
+    const without = holderYieldReport({ asset, day: '2026-01-20', daily, levels });
+    expect([withCirc.marketCap, withCirc.fdv]).toEqual([500, 2000]);
+    expect(withCirc.yields).toEqual(without.yields);
+    expect(withCirc.supply).toEqual(without.supply);
+  });
 
   it('puts each holder flow in the bucket its kind names, and derives the yields from them', () => {
     const asset = parseAssetYaml(`${hypeYaml}\nreporting: { window_days: 10, haircuts: { buyback: 0 } }\n`).config;
@@ -53,8 +63,10 @@ describe('holderYieldReport', () => {
     const daily = new Map([[flowMetric, flat('2026-01-01', 20, 1)]]);
     const r = holderYieldReport({ asset, day, daily, levels });
     expect(r.flows[0].bucket).toBe(asset.holder_flows[0].kind === 'burn' ? 'burn' : asset.holder_flows[0].kind === 'buy_and_hold' ? 'hold' : 'cash');
-    // 10 per window of 10 days: 365 a year, on a market cap of 2000.
+    // 10 per window of 10 days: 365 a year, on an FDV of 2000 (price 2 x total supply 1000). No circulating supply: no market cap.
     expect(r.flows[0].gross).toBeCloseTo(365);
+    expect(r.fdv).toBe(2000);
+    expect(r.marketCap).toBeNull();
     const y = r.yields;
     expect(y.shareholder).toBeCloseTo(365 / 2000);
     expect(y.dilution).toBeCloseTo(0.05);
@@ -195,6 +207,6 @@ describe('holderYieldReport', () => {
   });
 
   function recipientsOf(base: string): number {
-    return base === 'all' ? levels.effectiveSupply! : levels.stakedSupply!;
+    return base === 'all' ? levels.totalSupply! : levels.stakedSupply!;
   }
 });

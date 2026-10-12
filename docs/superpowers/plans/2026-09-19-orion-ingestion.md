@@ -1147,7 +1147,7 @@ describe('anomalies', () => {
   it('keeps anomalies apart by asset, kind, metric, and dedupe key', () => {
     raiseAnomaly(db, mismatch());
     raiseAnomaly(db, mismatch({ assetId: 'other' }));
-    raiseAnomaly(db, mismatch({ metricKey: 'effective_supply' }));
+    raiseAnomaly(db, mismatch({ metricKey: 'total_supply' }));
     raiseAnomaly(db, mismatch({ dedupeKey: 'coingecko' }));
     raiseAnomaly(db, mismatch({ kind: 'unlisted_sender', dedupeKey: '0xabc' }));
     expect(listAnomalies(db)).toHaveLength(5);
@@ -1156,7 +1156,7 @@ describe('anomalies', () => {
 
   it('resolves and acknowledges with a note, after which the anomaly is no longer open', () => {
     const a = raiseAnomaly(db, mismatch());
-    const b = raiseAnomaly(db, mismatch({ metricKey: 'effective_supply' }));
+    const b = raiseAnomaly(db, mismatch({ metricKey: 'total_supply' }));
     const resolved = decideAnomaly(db, a.id, 'resolved', 'source fixed upstream', '2026-09-20T00:00:00.000Z');
     expect(resolved).toMatchObject({ status: 'resolved', note: 'source fixed upstream', decidedAt: '2026-09-20T00:00:00.000Z' });
     expect(decideAnomaly(db, b.id, 'acknowledged', 'known lag', '2026-09-20T00:00:00.000Z').status).toBe('acknowledged');
@@ -1184,7 +1184,7 @@ describe('anomalies', () => {
 
   it('lists newest first, and open anomalies oldest first', () => {
     const a = raiseAnomaly(db, mismatch());
-    const b = raiseAnomaly(db, mismatch({ metricKey: 'effective_supply', seenAt: '2026-09-19T00:00:00.000Z' }));
+    const b = raiseAnomaly(db, mismatch({ metricKey: 'total_supply', seenAt: '2026-09-19T00:00:00.000Z' }));
     expect(listAnomalies(db).map((x) => x.id)).toEqual([b.id, a.id]);
     expect(listOpenAnomalies(db, 'mini').map((x) => x.id)).toEqual([a.id, b.id]);
   });
@@ -1415,7 +1415,7 @@ metrics:
     staleness_days: 14
     source: { type: coingecko, id: mini-token, field: circulating_supply }
   revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 60, critical: true }
-  effective_supply:
+  total_supply:
     type: level
     unit: tokens
     staleness_days: 7
@@ -1524,7 +1524,7 @@ describe('declarative sources in the asset config', () => {
 
   it('names the contracts a source needs and tells chain sources apart', () => {
     const { config } = ingestAsset();
-    expect(contractNames(config.metrics.effective_supply.source!)).toEqual(['token', 'burn_sink']);
+    expect(contractNames(config.metrics.total_supply.source!)).toEqual(['token', 'burn_sink']);
     expect(contractNames(config.metrics['flow_usd.fees_programmatic'].source!)).toEqual(['token', 'burn_sink', 'pool', 'safe', 'pool']);
     expect(contractNames(config.metrics.price_usd.source!)).toEqual([]);
     expect(isChainSource(config.metrics.staked_supply.source!)).toBe(true);
@@ -1533,7 +1533,7 @@ describe('declarative sources in the asset config', () => {
 
   it('rejects an unknown contract name', () => {
     expect(bad(INGEST_ASSET_YAML.replace('subtract_balances: [burn_sink]', 'subtract_balances: [nowhere]'))).toMatch(
-      /effective_supply.*unknown contract "nowhere"/,
+      /total_supply.*unknown contract "nowhere"/,
     );
   });
 
@@ -3318,7 +3318,7 @@ const levelOf = (r: ReadingResult): number => {
 
 describe('chain level sources', () => {
   const requests = [
-    req('effective_supply', { type: 'erc20_supply', token: 'token', subtract_balances: ['burn_sink'] }),
+    req('total_supply', { type: 'erc20_supply', token: 'token', subtract_balances: ['burn_sink'] }),
     req('staked_supply', read('totalSupply')),
     req('emission_rate_annual', read('emissionRatePerSecond', { scale: 31_536_000 })),
     req('diem_locked_yield_share', read('veniceEmissionsPercentageWhenLocked', { scale: -1, offset: 1 })),
@@ -3700,8 +3700,8 @@ describe('buildPlan', () => {
   it('batches requests by source, primaries and cross-checks alike, in config order', () => {
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
       ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
-      ['http_json:https://api.example.test/stats', ['cross_check:price_usd', 'cross_check:effective_supply']],
-      ['chain_levels', ['primary:effective_supply', 'primary:staked_supply', 'primary:emission_rate_annual']],
+      ['http_json:https://api.example.test/stats', ['cross_check:price_usd', 'cross_check:total_supply']],
+      ['chain_levels', ['primary:total_supply', 'primary:staked_supply', 'primary:emission_rate_annual']],
       ['defillama:mini:dailyHoldersRevenue', ['cross_check:flow_usd.fees']],
     ]);
     expect(plan.needsRpc).toBe(true);
@@ -3711,7 +3711,7 @@ describe('buildPlan', () => {
   it('uses the cross-check tolerance, falling back to the metric tolerance', () => {
     const checks = plan.batches[1].requests;
     expect(checks[0].tolerancePct).toBe(2);
-    expect(checks[1].tolerancePct).toBe(0.1); // effective_supply.tolerance_pct
+    expect(checks[1].tolerancePct).toBe(0.1); // total_supply.tolerance_pct
   });
 
   it('groups transfer_flow metrics that share token, sink, and allowlist into one scan', () => {
@@ -4088,16 +4088,16 @@ describe('fetchAsset: levels', () => {
     expect(obs.price_usd).toMatchObject({ value: 10, source: 'api', observedAt: NOW.toISOString(), fetchedAt: NOW.toISOString(), status: 'confirmed' });
     expect(obs.circulating_supply.value).toBe(60);
     const blockTime = new Date((GENESIS_TS + Number(LATEST) * 2) * 1000).toISOString();
-    expect(obs.effective_supply).toMatchObject({ value: 100, source: 'onchain', observedAt: blockTime, sourceDetail: `block ${LATEST}` });
+    expect(obs.total_supply).toMatchObject({ value: 100, source: 'onchain', observedAt: blockTime, sourceDetail: `block ${LATEST}` });
     expect(obs.staked_supply.value).toBe(50);
     expect(obs.emission_rate_annual.value).toBe(0);
     expect(h.rpc.stats.multicall).toBeGreaterThanOrEqual(1);
 
     expect(source(r, 'coingecko')).toMatchObject({ status: 'ok', metricsWritten: ['price_usd', 'circulating_supply'] });
-    expect(source(r, 'chain_levels').metricsWritten).toEqual(['effective_supply', 'staked_supply', 'emission_rate_annual']);
+    expect(source(r, 'chain_levels').metricsWritten).toEqual(['total_supply', 'staked_supply', 'emission_rate_annual']);
     expect(source(r, STATS_ID).crossChecks).toEqual([
       { metricKey: 'price_usd', sourceId: STATS_ID, label: 'level', primary: 10, check: 10.1, diffPct: expect.closeTo(1, 9), tolerancePct: 2, ok: true },
-      { metricKey: 'effective_supply', sourceId: STATS_ID, label: 'level', primary: 100, check: 100, diffPct: 0, tolerancePct: 0.1, ok: true },
+      { metricKey: 'total_supply', sourceId: STATS_ID, label: 'level', primary: 100, check: 100, diffPct: 0, tolerancePct: 0.1, ok: true },
     ]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
@@ -4143,7 +4143,7 @@ describe('fetchAsset: levels', () => {
     expect(source(r, 'coingecko').error).toMatch(/price_usd: HTTP 429/);
     expect(source(r, 'chain_levels').status).toBe('ok');
     expect(listActiveObservations(h.db, 'mini', 'price_usd')).toEqual([]);
-    expect(listActiveObservations(h.db, 'mini', 'effective_supply')).toHaveLength(1);
+    expect(listActiveObservations(h.db, 'mini', 'total_supply')).toHaveLength(1);
     expect(source(r, STATS_ID).notes).toContain('price_usd: cross-check skipped, the primary source gave no reading this run');
     expect(r.outcome).toBe('partial');
     expect(r.anomalies).toEqual([]);
@@ -5416,9 +5416,9 @@ describe('buildSignal with open anomalies', () => {
   });
 
   it('keeps a blocked signal blocked with its own reasons, and still reports the anomalies', () => {
-    const s = buildSignal({ ...input(miniObservations().filter((o) => o.metricKey !== 'effective_supply')), openAnomalies: [degrading] });
+    const s = buildSignal({ ...input(miniObservations().filter((o) => o.metricKey !== 'total_supply')), openAnomalies: [degrading] });
     expect(s.status).toBe('blocked');
-    expect(s.status_reasons).toEqual(['missing_metric:effective_supply']);
+    expect(s.status_reasons).toEqual(['missing_metric:total_supply']);
     expect(s.data_quality.grade).toBe('D');
     expect(s.data_quality.open_anomalies).toBe(1);
   });
@@ -7584,7 +7584,7 @@ describe('assets/vvv.yaml ingestion', () => {
     expect(value('price_usd')).toBe(26.03);
     expect(value('diem_price_usd')).toBe(1941.6);
     expect(value('circulating_supply')).toBeCloseTo(48058904.92603289, 4);
-    expect(value('effective_supply')).toBeCloseTo(81009270.24659143, 3);
+    expect(value('total_supply')).toBeCloseTo(81009270.24659143, 3);
     expect(value('staked_supply')).toBeCloseTo(33941208.98799314, 3);
     expect(value('locked_supply')).toBeCloseTo(8954489.934888212, 3);
     expect(value('emission_rate_annual')).toBeCloseTo(2_500_000, 2);
@@ -7597,7 +7597,7 @@ describe('assets/vvv.yaml ingestion', () => {
 
     const checked = r.sources.flatMap((s) => s.crossChecks).map((c) => c.metricKey).sort();
     expect(checked).toEqual([
-      'circulating_supply', 'diem_supply', 'diem_target_supply', 'effective_supply', 'emission_rate_annual', 'locked_supply', 'price_usd',
+      'circulating_supply', 'diem_supply', 'diem_target_supply', 'total_supply', 'emission_rate_annual', 'locked_supply', 'price_usd',
       'staked_supply', 'staker_emission_share',
     ]);
     expect(w.rpc.stats.multicall).toBeLessThanOrEqual(4); // levels, two adapters, token decimals: never one call per read
@@ -7658,7 +7658,7 @@ In `assets/vvv.yaml`, replace:
 metrics:
   price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }
   revenue_run_rate_usd: { type: level, unit: usd, cadence: event, staleness_days: 60, critical: true, allow_provisional: true }
-  effective_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
+  total_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
   circulating_supply: { type: level, unit: tokens, staleness_days: 14 }
   staked_supply: { type: level, unit: tokens, staleness_days: 7 }
   locked_supply: { type: level, unit: tokens, staleness_days: 14 }
@@ -7691,7 +7691,7 @@ metrics:
   # advisory revenue_disclosure_stale anomaly says when usage has moved since the figure was disclosed.
   revenue_run_rate_usd: { type: level, unit: usd, cadence: event, staleness_days: 60, critical: true, allow_provisional: true }
 
-  effective_supply:
+  total_supply:
     type: level
     unit: tokens
     staleness_days: 7
@@ -7932,7 +7932,7 @@ cp orion.db "orion.db.before-ingestion-$(date +%Y%m%d)"
 ORION_HOME="$PWD" node dist/cli/index.js data fetch vvv --dry-run --backfill-days 2
 ```
 
-Expected: every source `ok`; every `check` line `within` its tolerance, except possibly `price_usd` (CoinGecko and Venice can differ by more than 2 percent in a fast market) and the two `--adopt would reject` notes about the hand-entered September rows. Read the values: `effective_supply` near 81.0M, `emission_rate_annual` 2,500,000 (2,000,000 after 2026-10-01), `staker_emission_share` near 0.947, `diem_target_supply` 40,000, `diem_locked_yield_share` 0.8. If a source fails here, stop and debug it with the user before writing anything.
+Expected: every source `ok`; every `check` line `within` its tolerance, except possibly `price_usd` (CoinGecko and Venice can differ by more than 2 percent in a fast market) and the two `--adopt would reject` notes about the hand-entered September rows. Read the values: `total_supply` near 81.0M, `emission_rate_annual` 2,500,000 (2,000,000 after 2026-10-01), `staker_emission_share` near 0.947, `diem_target_supply` 40,000, `diem_locked_yield_share` 0.8. If a source fails here, stop and debug it with the user before writing anything.
 
 - [ ] **Step 3: The real backfill, adopting over the hand-entered burn rows**
 

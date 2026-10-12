@@ -9,7 +9,7 @@ name: Mini Test Asset
 metrics:
   price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }
   revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 60, critical: true }
-  effective_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
+  total_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
   staked_supply: { type: level, unit: tokens, staleness_days: 7 }
   staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }
   emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400 }

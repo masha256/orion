@@ -220,7 +220,7 @@ export const AssetConfigSchema = z
     const required: string[] = [
       STD_METRICS.price,
       STD_METRICS.revenue,
-      STD_METRICS.effectiveSupply,
+      STD_METRICS.totalSupply,
       STD_METRICS.stakedSupply,
       STD_METRICS.stakerEmissionShare,
       STD_METRICS.emissionRate,

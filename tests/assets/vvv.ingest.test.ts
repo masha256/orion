@@ -102,7 +102,7 @@ describe('assets/vvv.yaml ingestion', () => {
     expect(value('price_usd')).toBe(26.03);
     expect(value('diem_price_usd')).toBe(1941.6);
     expect(value('circulating_supply')).toBeCloseTo(48058904.92603289, 4);
-    expect(value('effective_supply')).toBeCloseTo(81009270.24659143, 3);
+    expect(value('total_supply')).toBeCloseTo(81009270.24659143, 3);
     expect(value('staked_supply')).toBeCloseTo(33941208.98799314, 3);
     expect(value('locked_supply')).toBeCloseTo(8954489.934888212, 3);
     expect(value('emission_rate_annual')).toBeCloseTo(2_500_000, 2);
@@ -115,8 +115,8 @@ describe('assets/vvv.yaml ingestion', () => {
 
     const checked = r.sources.flatMap((s) => s.crossChecks).map((c) => c.metricKey).sort();
     expect(checked).toEqual([
-      'circulating_supply', 'diem_supply', 'diem_target_supply', 'effective_supply', 'emission_rate_annual', 'locked_supply', 'price_usd',
-      'staked_supply', 'staker_emission_share',
+      'circulating_supply', 'diem_supply', 'diem_target_supply', 'emission_rate_annual', 'locked_supply', 'price_usd',
+      'staked_supply', 'staker_emission_share', 'total_supply', 'total_supply',
     ]);
     expect(w.rpc.stats.multicall).toBeLessThanOrEqual(4); // levels, two adapters, token decimals: never one call per read
   });

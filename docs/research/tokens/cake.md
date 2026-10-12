@@ -38,7 +38,7 @@ Capture rate today: holders revenue / protocol revenue = $56.9M / $86.8M = 65.5%
 
 ## Supply
 
-- Minted totalSupply() 5,387,735,435 CAKE. The burn address holds 5,051,176,395, so effective supply = 336,559,040 CAKE (BNB Chain RPC, 2026-09-22). CoinGecko total is 330,627,632 and circulating 318,995,589; the difference is CAKE locked forever in the legacy pool, which PancakeSwap counts as burned. Max supply 400M (hard cap).
+- Minted totalSupply() 5,387,735,435 CAKE. The burn address holds 5,051,176,395, so total supply = 336,559,040 CAKE (BNB Chain RPC, 2026-09-22). CoinGecko total is 330,627,632 and circulating 318,995,589; the difference is CAKE locked forever in the legacy pool, which PancakeSwap counts as burned. Max supply 400M (hard cap).
 - supply_basis recommendation: `effective_total` (about 330.6M, the CoinGecko total, which already nets out burns and the legacy lock). Circulating differs by only 3.5%.
 - Gross emissions: about 14,500 CAKE/day, or about 5.3M CAKE/year (1.6% of supply), after the Tokenomics 3.0 phase 2 cut (PancakeSwap blog, 2025-04). Emissions go to farms, lottery and ecosystem growth. Later changes are unconfirmed.
 - Burn: $56.9M over 1y at an average price of about $2 is roughly 25-30M CAKE burned, against about 5.3M emitted, so net deflation is about 6-7% a year (derived and unconfirmed; the Dune dashboard has the exact net figure).
@@ -53,7 +53,7 @@ Capture rate today: holders revenue / protocol revenue = $56.9M / $86.8M = 65.5%
 | gross fees | defillama | `pancakeswap` dailyFees | |
 | holder flow (burn) | defillama | `pancakeswap` dailyHoldersRevenue | methodology per child adapter |
 | burn in tokens | transfer_flow | CAKE `0x0E09...cE82` Transfer to `0x...dEaD`, BNB Chain | public BNB RPCs cap eth_getLogs at 50 blocks; needs a better RPC or chunking |
-| effective supply | contract_read / erc20_supply | totalSupply() - balanceOf(0xdead) | legacy locked pool also counts as burned |
+| total supply | contract_read / erc20_supply | totalSupply() - balanceOf(0xdead) | legacy locked pool also counts as burned |
 | emissions | manual | docs + blog (14,500/day) | no API |
 | price / circulating | coingecko | `pancakeswap-token` | |
 

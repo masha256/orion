@@ -51,13 +51,13 @@ const stakeSum = validators.reduce((s, v) => s + v.stake, 0) / 1e8;
 
 describe('HYPE adapters', () => {
   it('are registered and need no chain', () => {
-    expect(adapterNames()).toEqual(expect.arrayContaining(['hype.effective_supply', 'hype.staked_supply', 'hype.emission_rate_annual']));
-    for (const name of ['hype.effective_supply', 'hype.staked_supply', 'hype.emission_rate_annual']) expect(getAdapter(name).needsRpc).toBe(false);
+    expect(adapterNames()).toEqual(expect.arrayContaining(['hype.total_supply', 'hype.staked_supply', 'hype.emission_rate_annual']));
+    for (const name of ['hype.total_supply', 'hype.staked_supply', 'hype.emission_rate_annual']) expect(getAdapter(name).needsRpc).toBe(false);
   });
 
-  it('effective supply is the total less the fund and the dead addresses, about 951.3M today, stamped at fetch time as an api level', async () => {
+  it('total supply is the total less the fund and the dead addresses, about 951.3M today, stamped at fetch time as an api level', async () => {
     const { ctx, http } = ctxWith();
-    const v = await getAdapter('hype.effective_supply').run(ctx, SUBTRACT);
+    const v = await getAdapter('hype.total_supply').run(ctx, SUBTRACT);
     const expected = total - held(FUND) - held(ZERO) - held(DEAD);
     expect(v).toMatchObject({ kind: 'level', source: 'api', observedAt: NOW_ISO });
     expect(v.kind === 'level' && v.value).toBeCloseTo(expected, 3);
@@ -74,26 +74,26 @@ describe('HYPE adapters', () => {
 
   it('subtracts nothing without a subtract list, and zero for a named address that holds no HYPE', async () => {
     const { ctx, http } = ctxWith();
-    const all = await getAdapter('hype.effective_supply').run(ctx, {});
+    const all = await getAdapter('hype.total_supply').run(ctx, {});
     expect(all.kind === 'level' && all.value).toBeCloseTo(total, 3);
     expect(all.detail).toMatch(/less 0 at none of $/);
     expect(http.calls).toHaveLength(1);
     const emptied: State = { balances: states[FUND].balances.filter((b) => b.coin !== 'HYPE') };
-    const v = await getAdapter('hype.effective_supply').run(ctxWith({ [`spotClearinghouseState:${FUND}`]: emptied }).ctx, SUBTRACT);
+    const v = await getAdapter('hype.total_supply').run(ctxWith({ [`spotClearinghouseState:${FUND}`]: emptied }).ctx, SUBTRACT);
     expect(v.kind === 'level' && v.value).toBeCloseTo(total - held(ZERO) - held(DEAD), 3);
     expect(v.detail).toMatch(/at zero, dead$/);
   });
 
   it('matches the token id case-insensitively, finds the pair against the configured quote, and takes the token id and URL from params or the external ids', async () => {
     const { ctx, http } = ctxWith({}, {});
-    const v = await getAdapter('hype.effective_supply').run(ctx, { ...SUBTRACT, token_id: TOKEN_ID.toUpperCase().replace('0X', '0x'), url: 'https://other.test/info' });
+    const v = await getAdapter('hype.total_supply').run(ctx, { ...SUBTRACT, token_id: TOKEN_ID.toUpperCase().replace('0X', '0x'), url: 'https://other.test/info' });
     expect(v.kind === 'level' && v.value).toBeCloseTo(total - held(FUND) - held(ZERO) - held(DEAD), 3);
     expect(http.calls[0]).toMatchObject({ url: 'https://other.test/info', body: { type: 'spotMetaAndAssetCtxs' } });
     // The HYPE pair against token 268 (the fixture's second HYPE pair) carries the same total.
-    const other = await getAdapter('hype.effective_supply').run(ctxWith().ctx, { quote_index: 268 });
+    const other = await getAdapter('hype.total_supply').run(ctxWith().ctx, { quote_index: 268 });
     expect(other.kind === 'level' && other.value).toBeCloseTo(total, 3);
     expect(other.detail).toMatch(/^spotMetaAndAssetCtxs @207: /);
-    await expect(getAdapter('hype.effective_supply').run(ctxWith({}, {}).ctx, SUBTRACT)).rejects.toThrow(/no token id/);
+    await expect(getAdapter('hype.total_supply').run(ctxWith({}, {}).ctx, SUBTRACT)).rejects.toThrow(/no token id/);
   });
 
   it('staked supply is the validators\' stake summed, in HYPE: about 441M today', async () => {
@@ -131,7 +131,7 @@ describe('HYPE adapters', () => {
   });
 
   it('refuses by name a malformed spot meta, a missing token, pair or context, a bad balance, and a supply that is not positive', async () => {
-    const run = (over: Record<string, Route>, params: Record<string, unknown> = SUBTRACT) => getAdapter('hype.effective_supply').run(ctxWith(over).ctx, params);
+    const run = (over: Record<string, Route>, params: Record<string, unknown> = SUBTRACT) => getAdapter('hype.total_supply').run(ctxWith(over).ctx, params);
     await expect(run({ spotMetaAndAssetCtxs: { tokens: [] } })).rejects.toThrow(/not a \[meta, contexts\] pair/);
     await expect(run({ spotMetaAndAssetCtxs: [{ tokens: [], universe: [] }, []] })).rejects.toThrow(/no token with id 0x0d01/);
     await expect(run({ spotMetaAndAssetCtxs: [{ tokens: spotMeta[0].tokens, universe: [] }, []] })).rejects.toThrow(/no pair of HYPE \(token 150\) against quote token 0/);
@@ -139,7 +139,7 @@ describe('HYPE adapters', () => {
     await expect(run({ spotMetaAndAssetCtxs: [spotMeta[0], [{ coin: '@107' }]] })).rejects.toThrow(/@107 totalSupply is missing/);
     await expect(run({ [`spotClearinghouseState:${FUND}`]: { balances: 'nope' } })).rejects.toThrow(/spotClearinghouseState assistance_fund: balances is missing/);
     await expect(run({ [`spotClearinghouseState:${FUND}`]: { balances: [{ coin: 'HYPE', total: 'lots' }] } })).rejects.toThrow(/the HYPE balance at assistance_fund is missing/);
-    await expect(run({ [`spotClearinghouseState:${FUND}`]: { balances: [{ coin: 'HYPE', total: '998891801.4858174324' }] } })).rejects.toThrow(/effective supply .* is not positive/);
+    await expect(run({ [`spotClearinghouseState:${FUND}`]: { balances: [{ coin: 'HYPE', total: '998891801.4858174324' }] } })).rejects.toThrow(/total supply .* is not positive/);
     await expect(run({ [`spotClearinghouseState:${FUND}`]: [] })).rejects.toThrow(/not an object/);
     await expect(run({ [`spotClearinghouseState:${FUND}`]: 'nope' })).rejects.toThrow(/not an object/);
     await expect(run({}, { subtract: ['treasury'] })).rejects.toThrow(/no contract treasury/);
@@ -149,12 +149,12 @@ describe('HYPE adapters', () => {
     await expect(getAdapter('hype.staked_supply').run(ctxWith({ validatorSummaries: [{ stake: 1 }, {}] }).ctx, {})).rejects.toThrow(/validator 1's stake is missing/);
     await expect(getAdapter('hype.emission_rate_annual').run(ctxWith().ctx, { anchor_rate: 1.5 })).rejects.toThrow(/anchor_rate 1.5/);
     await expect(getAdapter('hype.emission_rate_annual').run(ctxWith({ validatorSummaries: new Error('HTTP 503') }).ctx, {})).rejects.toThrow(/HTTP 503/);
-    await expect(getAdapter('hype.effective_supply').run(ctxWith({ spotMetaAndAssetCtxs: new Error('The operation was aborted due to timeout') }).ctx, SUBTRACT)).rejects.toThrow(/timeout/);
+    await expect(getAdapter('hype.total_supply').run(ctxWith({ spotMetaAndAssetCtxs: new Error('The operation was aborted due to timeout') }).ctx, SUBTRACT)).rejects.toThrow(/timeout/);
   });
 
   it('refuses a malformed subtract param and negative stake', async () => {
-    await expect(getAdapter('hype.effective_supply').run(ctxWith().ctx, { subtract: 'assistance_fund' })).rejects.toThrow(/params.subtract must be an array/);
-    await expect(getAdapter('hype.effective_supply').run(ctxWith().ctx, { subtract: ['assistance_fund', 123] })).rejects.toThrow(/params.subtract must contain only strings/);
+    await expect(getAdapter('hype.total_supply').run(ctxWith().ctx, { subtract: 'assistance_fund' })).rejects.toThrow(/params.subtract must be an array/);
+    await expect(getAdapter('hype.total_supply').run(ctxWith().ctx, { subtract: ['assistance_fund', 123] })).rejects.toThrow(/params.subtract must contain only strings/);
     await expect(getAdapter('hype.staked_supply').run(ctxWith({ validatorSummaries: [{ stake: -1 }] }).ctx, {})).rejects.toThrow(/validator 0's stake is negative/);
   });
 

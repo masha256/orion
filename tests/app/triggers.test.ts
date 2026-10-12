@@ -53,7 +53,7 @@ describe('trigger conditions', () => {
     expect(instances(daysLater(4))).toEqual(['staleness:price_usd']);
     const e = evaluate(daysLater(4));
     expect(e.fired[0].detail).toEqual({ staleness_days: 3, newest_observed_at: '2026-06-29T00:00:00.000Z' });
-    expect(instances(daysLater(8)).sort()).toEqual(['staleness:effective_supply', 'staleness:price_usd']);
+    expect(instances(daysLater(8)).sort()).toEqual(['staleness:price_usd', 'staleness:total_supply']);
   });
 
   it('staleness detail uses eligible observations, ignoring provisional and future-dated rows', () => {

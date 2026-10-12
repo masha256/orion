@@ -77,16 +77,16 @@ describe('assets/aero.yaml', () => {
     ]);
     // Every metric has a source: a bootstrap run has nothing to research on this asset.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
-    // Pinned on 2026-10-10 with the report-only block. A deliberate edit of assets/aero.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/aero.yaml`, 'utf8')).hash).toBe('06c97c7302371702e9c8d1ed376d01c260bbb04d2d5a7dd529927c2542901083');
+    // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/aero.yaml moves it; update the pin on purpose.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/aero.yaml`, 'utf8')).hash).toBe('858d97b82cf92e0ed26fdb302b3cf958968beb483b68f8d8594d328691853d71');
   });
 
   it('plans the source map of the spec: no transfer scan, one API-series flow, one derived level, two adapters', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
-      ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
+      ['coingecko', ['primary:price_usd', 'cross_check:total_supply', 'primary:circulating_supply']],
       [`http_json:${LLAMA}`, ['cross_check:price_usd']],
-      ['chain_levels', ['primary:effective_supply', 'primary:staked_supply', 'primary:locked_supply']],
+      ['chain_levels', ['primary:total_supply', 'primary:staked_supply', 'primary:locked_supply']],
       ['adapter:aero.staker_emission_share', ['primary:staker_emission_share']],
       ['adapter:aero.emission_rate_annual', ['primary:emission_rate_annual']],
       ['defillama:aerodrome:dailyHoldersRevenue', ['primary:flow_usd.fees']],
@@ -105,7 +105,7 @@ describe('assets/aero.yaml', () => {
     const value = (metric: string) => listActiveObservations(w.db, 'aero', metric).at(-1)!.value;
     expect(value('price_usd')).toBe(0.671936);
     expect(value('circulating_supply')).toBeCloseTo(992591965.5968602, 3);
-    expect(value('effective_supply')).toBeCloseTo(1983240735.576791, 3);
+    expect(value('total_supply')).toBeCloseTo(1983240735.576791, 3);
     expect(value('staked_supply')).toBeCloseTo(1051061695.97399, 3);
     expect(value('locked_supply')).toBeCloseTo(1051061695.97399, 3);
     expect(value('staker_emission_share')).toBeGreaterThan(0.09);
@@ -121,8 +121,7 @@ describe('assets/aero.yaml', () => {
     expect(revenue.at(-1)!.value).toBeLessThan(180e6);
     expect(revenue.at(-1)).toMatchObject({ source: 'api', sourceDetail: 'derived flow_annualized(flow_usd.fees, 90d)' });
     const checked = r.sources.flatMap((s) => s.crossChecks);
-    expect(checked).toHaveLength(1);
-    expect(checked[0]).toMatchObject({ metricKey: 'price_usd', ok: true });
+    expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]); // total: CoinGecko's, 2 percent
     expect(w.rpc.stats.multicall).toBeLessThanOrEqual(5); // levels, and two per adapter (the epoch, then the voting power at its start)
 
     createAssumptionSet(w.db, { assetId: 'aero', author: 'user', rationale: 'wiring', values: assumptions(), createdAt: NOW.toISOString() });

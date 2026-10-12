@@ -23,8 +23,8 @@ describe('buildPlan', () => {
   it('batches requests by source, primaries and cross-checks alike, in config order', () => {
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
       ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
-      ['http_json:https://api.example.test/stats', ['cross_check:price_usd', 'cross_check:effective_supply']],
-      ['chain_levels', ['primary:effective_supply', 'primary:staked_supply', 'primary:emission_rate_annual']],
+      ['http_json:https://api.example.test/stats', ['cross_check:price_usd', 'cross_check:total_supply']],
+      ['chain_levels', ['primary:total_supply', 'primary:staked_supply', 'primary:emission_rate_annual']],
       ['defillama:mini:dailyHoldersRevenue', ['cross_check:flow_usd.fees']],
     ]);
     expect(plan.needsRpc).toBe(true);
@@ -34,7 +34,7 @@ describe('buildPlan', () => {
   it('uses the cross-check tolerance, falling back to the metric tolerance', () => {
     const checks = plan.batches[1].requests;
     expect(checks[0].tolerancePct).toBe(2);
-    expect(checks[1].tolerancePct).toBe(0.1); // effective_supply.tolerance_pct
+    expect(checks[1].tolerancePct).toBe(0.1); // total_supply.tolerance_pct
   });
 
   it('groups transfer_flow metrics that share token, sink, and allowlist into one scan', () => {

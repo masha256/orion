@@ -62,10 +62,10 @@ describe('buildSignal', () => {
   });
 
   it('emits a blocked signal without horizons when a driver is missing', () => {
-    const s = buildSignal(input(miniObservations().filter((o) => o.metricKey !== 'effective_supply')));
+    const s = buildSignal(input(miniObservations().filter((o) => o.metricKey !== 'total_supply')));
     expect(s.status).toBe('blocked');
     expect(s.horizons).toBeUndefined();
-    expect(s.status_reasons).toEqual(['missing_metric:effective_supply']);
+    expect(s.status_reasons).toEqual(['missing_metric:total_supply']);
     expect(s.spot).not.toBeNull();
   });
 
@@ -125,9 +125,9 @@ describe('buildSignal with open anomalies', () => {
   });
 
   it('keeps a blocked signal blocked with its own reasons, and still reports the anomalies', () => {
-    const s = buildSignal({ ...input(miniObservations().filter((o) => o.metricKey !== 'effective_supply')), openAnomalies: [degrading] });
+    const s = buildSignal({ ...input(miniObservations().filter((o) => o.metricKey !== 'total_supply')), openAnomalies: [degrading] });
     expect(s.status).toBe('blocked');
-    expect(s.status_reasons).toEqual(['missing_metric:effective_supply']);
+    expect(s.status_reasons).toEqual(['missing_metric:total_supply']);
     expect(s.data_quality.grade).toBe('D');
     expect(s.data_quality.open_anomalies).toBe(1);
   });

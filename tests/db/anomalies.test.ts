@@ -48,7 +48,7 @@ describe('anomalies', () => {
   it('keeps anomalies apart by asset, kind, metric, and dedupe key', () => {
     raiseAnomaly(db, mismatch());
     raiseAnomaly(db, mismatch({ assetId: 'other' }));
-    raiseAnomaly(db, mismatch({ metricKey: 'effective_supply' }));
+    raiseAnomaly(db, mismatch({ metricKey: 'total_supply' }));
     raiseAnomaly(db, mismatch({ dedupeKey: 'coingecko' }));
     raiseAnomaly(db, mismatch({ kind: 'unlisted_sender', dedupeKey: '0xabc' }));
     expect(listAnomalies(db)).toHaveLength(5);
@@ -57,7 +57,7 @@ describe('anomalies', () => {
 
   it('resolves and acknowledges with a note, after which the anomaly is no longer open', () => {
     const a = raiseAnomaly(db, mismatch());
-    const b = raiseAnomaly(db, mismatch({ metricKey: 'effective_supply' }));
+    const b = raiseAnomaly(db, mismatch({ metricKey: 'total_supply' }));
     const resolved = decideAnomaly(db, a.id, 'resolved', 'source fixed upstream', '2026-09-20T00:00:00.000Z');
     expect(resolved).toMatchObject({ status: 'resolved', note: 'source fixed upstream', decidedAt: '2026-09-20T00:00:00.000Z' });
     expect(decideAnomaly(db, b.id, 'acknowledged', 'known lag', '2026-09-20T00:00:00.000Z').status).toBe('acknowledged');
@@ -103,7 +103,7 @@ describe('anomalies', () => {
   it('keeps acknowledgements apart by key: another metric still opens', () => {
     const first = raiseAnomaly(db, mismatch());
     decideAnomaly(db, first.id, 'acknowledged', 'accepted', '2026-09-20T00:00:00.000Z');
-    expect(raiseAnomaly(db, mismatch({ metricKey: 'effective_supply' })).status).toBe('open');
+    expect(raiseAnomaly(db, mismatch({ metricKey: 'total_supply' })).status).toBe('open');
   });
 
   it('refuses a blank note, an unknown id, and deciding a closed anomaly again', () => {
@@ -129,7 +129,7 @@ describe('anomalies', () => {
 
   it('lists newest first, and open anomalies oldest first', () => {
     const a = raiseAnomaly(db, mismatch());
-    const b = raiseAnomaly(db, mismatch({ metricKey: 'effective_supply', seenAt: '2026-09-19T00:00:00.000Z' }));
+    const b = raiseAnomaly(db, mismatch({ metricKey: 'total_supply', seenAt: '2026-09-19T00:00:00.000Z' }));
     expect(listAnomalies(db).map((x) => x.id)).toEqual([b.id, a.id]);
     expect(listOpenAnomalies(db, 'mini').map((x) => x.id)).toEqual([a.id, b.id]);
   });

@@ -31,7 +31,7 @@ export interface StakedCash {
  * staked total return adds them. Counted: holder flows of kind fee_share (cash paid out; burns and buybacks act
  * through the price and supply, and counting them would double-count), and vote incentives where the asset opts in
  * (`params.staked_return`: who collects them). Each stream follows the same growth path the valuation uses, summed at
- * monthly midpoints, and is divided by its recipients at that time: effective supply ("all"), staked supply (the share
+ * monthly midpoints, and is divided by its recipients at that time: total supply ("all"), staked supply (the share
  * now for a flow valued per recipients, else moving from today's ratio to staked_ratio_horizon), or locked supply now.
  */
 export function stakedCashDuringHorizon(input: {
@@ -39,7 +39,7 @@ export function stakedCashDuringHorizon(input: {
   drivers: Drivers;
   assumptions: ScenarioAssumptions;
   horizonYears: number;
-  /** Effective supply forecast at the horizon. */
+  /** Total supply forecast at the horizon. */
   effectiveAtHorizon: number;
   targetPrice: number;
   instances: ModuleInstanceDef[];
@@ -47,11 +47,11 @@ export function stakedCashDuringHorizon(input: {
   const { drivers, assumptions: a, horizonYears: H } = input;
   const steps = Math.max(1, Math.round(H * STEPS_PER_YEAR));
   const dt = H / steps;
-  const eff0 = drivers.effectiveSupply.value;
+  const eff0 = drivers.totalSupply.value;
   const effAt = (tau: number) => eff0 + (input.effectiveAtHorizon - eff0) * (tau / H);
   const stakedNow = eff0 > 0 ? drivers.stakedSupply.value / eff0 : 0;
   const stakedH = need(a, 'staked_ratio_horizon');
-  // Locked supply now (the locked ratio of effective supply), else the staked supply.
+  // Locked supply now (the locked ratio of total supply), else the staked supply.
   const lockedNow = drivers.lockedRatio ? drivers.lockedRatio.value * eff0 : drivers.stakedSupply.value;
 
   const recipients = (base: RecipientBase, tau: number, flow?: HolderFlowDriver): number => {

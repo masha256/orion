@@ -47,7 +47,7 @@ describe('declarative sources in the asset config', () => {
 
   it('names the contracts a source needs and tells chain sources apart', () => {
     const { config } = ingestAsset();
-    expect(contractNames(config.metrics.effective_supply.source!)).toEqual(['token', 'burn_sink']);
+    expect(contractNames(config.metrics.total_supply.source!)).toEqual(['token', 'burn_sink']);
     expect(contractNames(config.metrics['flow_usd.fees_programmatic'].source!)).toEqual(['token', 'burn_sink', 'pool', 'safe', 'pool']);
     expect(contractNames(config.metrics.price_usd.source!)).toEqual([]);
     expect(isChainSource(config.metrics.staked_supply.source!)).toBe(true);
@@ -73,7 +73,7 @@ describe('declarative sources in the asset config', () => {
 
   it('rejects an unknown contract name', () => {
     expect(bad(INGEST_ASSET_YAML.replace('subtract_balances: [burn_sink]', 'subtract_balances: [nowhere]'))).toMatch(
-      /effective_supply.*unknown contract "nowhere"/,
+      /total_supply.*unknown contract "nowhere"/,
     );
   });
 

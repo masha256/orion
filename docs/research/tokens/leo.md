@@ -27,7 +27,7 @@ Capture rate today: $29.7M burn / about $110M implied gross revenue, which is 27
 
 ## Supply
 
-Initially 1B LEO (EOS plus Ethereum), with no minting. On-chain now: EOS supply 307,653,658.9 (get_currency_stats, 2026-09-22) plus Ethereum 660,000,000 (totalSupply). CoinGecko: total 985.24M, circulating 919.86M. The cumulative burn of about 79.9M (Coinpedia, 2026-07-31) matches the circulating figure. Emissions: none. No staking, no unlocks. supply_basis: circulating (about 920M) is the effective supply. The CoinGecko total appears not to net out all burns. The burn shrinks supply by about 0.35% a year.
+Initially 1B LEO (EOS plus Ethereum), with no minting. On-chain now: EOS supply 307,653,658.9 (get_currency_stats, 2026-09-22) plus Ethereum 660,000,000 (totalSupply). CoinGecko: total 985.24M, circulating 919.86M. The cumulative burn of about 79.9M (Coinpedia, 2026-07-31) matches the circulating figure. Emissions: none. No staking, no unlocks. supply_basis: circulating (about 920M) is the total supply. The CoinGecko total appears not to net out all burns. The burn shrinks supply by about 0.35% a year.
 
 ## Data availability for Orion
 

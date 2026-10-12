@@ -32,7 +32,7 @@ export function describeDrivers(report: DriverReport, nowIso: string): Record<st
       price: driver(d.price, nowIso),
       revenue_run_rate: driver(d.revenueRunRate, nowIso),
       usage_index: driver(d.usageIndex, nowIso),
-      effective_supply: driver(d.effectiveSupply, nowIso),
+      total_supply: driver(d.totalSupply, nowIso),
       circulating_supply: driver(d.circulatingSupply, nowIso),
       staked_ratio: driver(d.stakedRatio, nowIso),
       locked_ratio: driver(d.lockedRatio, nowIso),

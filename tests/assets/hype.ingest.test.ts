@@ -84,16 +84,16 @@ describe('assets/hype.yaml', () => {
     // One manual metric: the staker share, 1.0 by construction, which the bootstrap researches and the user confirms.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual(['staker_emission_share']);
     expect(validateAssetModules(config)).toEqual([]);
-    // Pinned on 2026-10-10 with the report-only block. A deliberate edit of assets/hype.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('8abfc116d3c59f750434424e7410a30556273531f723219864b4af51a5814e6d');
+    // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/hype.yaml moves it; update the pin on purpose.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('19138fbccc6e1fee879840a6ddde8b33a8440867f7ecdc151c31d15bbabb9280');
   });
 
   it('plans the source map of the spec: no chain, three adapters, one API-series flow, one derived level', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
-      ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
+      ['coingecko', ['primary:price_usd', 'cross_check:total_supply', 'primary:circulating_supply']],
       [`http_json:${LLAMA_PRICE}`, ['cross_check:price_usd']],
-      ['adapter:hype.effective_supply', ['primary:effective_supply']],
+      ['adapter:hype.total_supply', ['primary:total_supply']],
       ['adapter:hype.staked_supply', ['primary:staked_supply']],
       ['adapter:hype.emission_rate_annual', ['primary:emission_rate_annual']],
       ['defillama:hyperliquid:dailyHoldersRevenue', ['primary:flow_usd.af_buyback']],
@@ -114,8 +114,8 @@ describe('assets/hype.yaml', () => {
     const value = (metric: string) => listActiveObservations(w.db, 'hype', metric).at(-1)!.value;
     expect(value('price_usd')).toBe(92.36);
     expect(value('circulating_supply')).toBeCloseTo(222445714.07414138, 3);
-    expect(value('effective_supply')).toBeGreaterThan(950e6);
-    expect(value('effective_supply')).toBeLessThan(953e6);
+    expect(value('total_supply')).toBeGreaterThan(950e6);
+    expect(value('total_supply')).toBeLessThan(953e6);
     expect(value('staked_supply')).toBeGreaterThan(430e6);
     expect(value('staked_supply')).toBeLessThan(450e6);
     expect(value('emission_rate_annual')).toBeGreaterThan(9.8e6);
@@ -130,8 +130,7 @@ describe('assets/hype.yaml', () => {
     expect(revenue.at(-1)!.value).toBeLessThan(580e6);
     expect(revenue.at(-1)).toMatchObject({ source: 'api', sourceDetail: 'derived flow_annualized(flow_usd.af_buyback, 90d)' });
     const checked = r.sources.flatMap((s) => s.crossChecks);
-    expect(checked).toHaveLength(1);
-    expect(checked[0]).toMatchObject({ metricKey: 'price_usd', ok: true });
+    expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]); // total: CoinGecko's, 2 percent
     // Five posts: the spot meta, one clearinghouse state per subtracted address, and the validators once (the stake and emission
     // adapters share the cached reply); plus the report-only fills, one per day of the 14.
     const posts = w.http.calls.filter((c) => c.url === INFO).map((c) => (c.body as { type: string }).type);
@@ -157,10 +156,10 @@ describe('assets/hype.yaml', () => {
     expect(signal.data_quality.grade).toBe('B'); // a manual row in force (the staker share) caps the grade, as VVV's revenue does
     expect(signal.spot!.price).toBe(92.36);
     expect(signal.horizons!['12m'].expected_target).toBeGreaterThan(0);
-    // A burn flow on the effective-total basis: the horizon supply is today's effective supply plus a year of emissions less the
+    // A burn flow on the effective-total basis: the horizon supply is today's total supply plus a year of emissions less the
     // tokens the buyback dollars buy along the price path. With this wiring set that is about 16M tokens (the flat set solves to a
     // target near 12 USD, so each dollar buys more tokens than at spot); the band fails if the burn is missing or an order out.
-    const noBurn = value('effective_supply') + value('emission_rate_annual');
+    const noBurn = value('total_supply') + value('emission_rate_annual');
     const hc = signal.horizons!['12m'].modules.hc.breakdown as { supply_at_horizon: number };
     expect(hc.supply_at_horizon).toBeLessThan(noBurn - 12e6);
     expect(hc.supply_at_horizon).toBeGreaterThan(noBurn - 20e6);

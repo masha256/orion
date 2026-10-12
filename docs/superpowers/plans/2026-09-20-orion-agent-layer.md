@@ -4487,7 +4487,7 @@ export function describeDrivers(report: DriverReport, nowIso: string): Record<st
       price: driver(d.price, nowIso),
       revenue_run_rate: driver(d.revenueRunRate, nowIso),
       usage_index: driver(d.usageIndex, nowIso),
-      effective_supply: driver(d.effectiveSupply, nowIso),
+      total_supply: driver(d.totalSupply, nowIso),
       circulating_supply: driver(d.circulatingSupply, nowIso),
       staked_ratio: driver(d.stakedRatio, nowIso),
       locked_ratio: driver(d.lockedRatio, nowIso),
@@ -7261,7 +7261,7 @@ const ASSUMPTIONS =
 
 async function seed(skip: string[] = []) {
   const rows: [string, string, string, string[]][] = [
-    ['price_usd', '10', '2026-06-29', []], ['revenue_run_rate_usd', '1000', '2026-06-15', []], ['effective_supply', '100', '2026-06-29', []],
+    ['price_usd', '10', '2026-06-29', []], ['revenue_run_rate_usd', '1000', '2026-06-15', []], ['total_supply', '100', '2026-06-29', []],
     ['staked_supply', '50', '2026-06-29', []], ['staker_emission_share', '1', '2026-06-29', []], ['emission_rate_annual', '0', '2026-01-01', []],
     ['flow_usd.fees', String((100 * 90) / 365), AS_OF, ['--period-days', '90']],
   ];

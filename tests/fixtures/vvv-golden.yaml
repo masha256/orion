@@ -20,7 +20,7 @@ external_ids:
 metrics:
   price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }
   revenue_run_rate_usd: { type: level, unit: usd, cadence: event, staleness_days: 60, critical: true, allow_provisional: true }
-  effective_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
+  total_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
   circulating_supply: { type: level, unit: tokens, staleness_days: 14 }
   staked_supply: { type: level, unit: tokens, staleness_days: 7 }
   locked_supply: { type: level, unit: tokens, staleness_days: 14 }

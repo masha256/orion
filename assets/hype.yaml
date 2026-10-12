@@ -7,7 +7,7 @@ supply_basis: effective_total
 # section 2. Nothing here is read over an RPC (no chain, no ingest block): the fund lives on HyperCore, which no EVM RPC exposes.
 contracts:
   assistance_fund: "0xfefefefefefefefefefefefefefefefefefefefe" # converts about 99 percent of protocol fees to HYPE inside L1 execution; listed as non-circulating
-  unvested: "0x43e9abea1910387c4292bca4b94de81462f8a251" # unvested contributor and foundation tokens (attribution unconfirmed); inside the effective supply; read by nothing, documentation only
+  unvested: "0x43e9abea1910387c4292bca4b94de81462f8a251" # unvested contributor and foundation tokens (attribution unconfirmed); inside the total supply; read by nothing, documentation only
   zero: "0x0000000000000000000000000000000000000000"
   dead: "0x000000000000000000000000000000000000dead"
 
@@ -32,12 +32,14 @@ metrics:
   # Total supply (the HYPE/USDC pair in the spot meta) less the HYPE held at the fund and the two dead addresses (their
   # clearinghouse balances), about 951.3M. The docs call the fund's HYPE burned; the chain still holds it, so it is subtracted
   # here. A fund emptied by a vote shows as a supply jump. Four small requests: the 5 MB tokenDetails reply is avoided.
-  effective_supply:
+  total_supply:
     type: level
     unit: tokens
     staleness_days: 7
     critical: true
-    source: { type: adapter, name: hype.effective_supply, params: { subtract: [assistance_fund, zero, dead] } }
+    source: { type: adapter, name: hype.total_supply, params: { subtract: [assistance_fund, zero, dead] } }
+    cross_checks:
+      - { tolerance_pct: 2, source: { type: coingecko, id: hyperliquid, field: total_supply } }
 
   # CoinGecko's own definition (222M against the API's 299M); informational under effective_total, no consistent cross-check.
   circulating_supply:

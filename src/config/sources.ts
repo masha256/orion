@@ -5,7 +5,7 @@ const params = z.record(z.string(), z.unknown()).default({});
 
 /** The declarative source vocabulary (ingestion spec 4.1). Contract names are keys of the asset's `contracts` map. */
 export const SourceSchema = z.discriminatedUnion('type', [
-  z.strictObject({ type: z.literal('coingecko'), id: name, field: z.enum(['price', 'market_cap', 'circulating_supply']) }),
+  z.strictObject({ type: z.literal('coingecko'), id: name, field: z.enum(['price', 'market_cap', 'circulating_supply', 'total_supply']) }),
   z.strictObject({
     type: z.literal('http_json'),
     url: z.url(),

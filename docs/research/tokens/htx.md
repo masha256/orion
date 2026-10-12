@@ -26,7 +26,7 @@ Capture rate today: 50% of HTX "revenue" by the stated rule, as the burn over im
 
 ## Supply
 
-Total 999.99T minted. Burned 101.76T (on-chain), so the effective supply is 898.23T. CoinGecko shows circulating and total both at 898.23T. No emissions found. The burn is about 3.5% of supply a year at the current pace (press release: an average of about 5.5% a year over two years). supply_basis: effective_total, which here is the same as circulating.
+Total 999.99T minted. Burned 101.76T (on-chain), so the total supply is 898.23T. CoinGecko shows circulating and total both at 898.23T. No emissions found. The burn is about 3.5% of supply a year at the current pace (press release: an average of about 5.5% a year over two years). supply_basis: effective_total, which here is the same as circulating.
 
 ## Data availability for Orion
 
@@ -44,7 +44,7 @@ An EVM RPC works only through TRON's eth_call-compatible endpoint, which needs h
 - Modules: holder_cashflow 0.5, forward_multiple on holder_flow 0.3, forward_multiple on revenue 0.2 (implied revenue).
 - holder_flows: `htx_exchange_buyback_burn` {burn, discretionary, all, trailing ≈ $55-75M/yr}.
 - Assumptions needed: the trend in HTX exchange revenue (it is declining); persistence of the 50% commitment; key-person and governance risk (Justin Sun).
-- Obstacles: the Tron data path; the undefined "revenue"; the TRC-20 contract does not reduce totalSupply, so effective supply is total minus the burn address balance.
+- Obstacles: the Tron data path; the undefined "revenue"; the TRC-20 contract does not reduce totalSupply, so total supply is total minus the burn address balance.
 
 ## Sources
 

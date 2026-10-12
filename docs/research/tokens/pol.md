@@ -44,7 +44,7 @@ Capture rate today: counting the held base fee as a burn, about $10.5M / $28.3M 
   - Half goes to the stake manager (validator and staker rewards) and half to the community treasury. That is about 214M POL a year now.
   - The mint is permissionless on schedule. The rate changes only by contract upgrade through Polygon governance.
 - A 2025-10 forum proposal to cut inflation to 0% and add a treasury buyback got 42 replies and no PIP adoption that I could find.
-- Effective supply: 10.719B. Optionally subtract the 174.7M POL held for burn (effective 10.545B). The MATIC remnant at 0xdead (28.05M MATIC) is legacy.
+- Total supply: 10.719B. Optionally subtract the 174.7M POL held for burn (effective 10.545B). The MATIC remnant at 0xdead (28.05M MATIC) is legacy.
 - Circulating: 10.72B per CoinGecko, which counts the treasury as circulating.
 - supply_basis recommendation: `effective_total`, with the held base-fee POL either left in supply or subtracted with a custody haircut. Staked: about 3.6B POL sits in the stake manager `0x5e3E...D908` (about 34% of supply).
 - Net inflation: +2.0% gross. About +1.1% if the held base fees are counted as burned.
