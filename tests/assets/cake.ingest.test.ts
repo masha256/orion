@@ -102,8 +102,9 @@ function world() {
   return { db: openDb(':memory:'), deps };
 }
 
-/** A wiring placeholder (UNI's calibrated shape: the same keys), not a calibration. */
-const placeholder = parseYaml(readFileSync(`${ROOT}/calibration/uni-assumptions.yaml`, 'utf8')) as AssumptionValues;
+/** The calibration (central package, 2026-10-12). */
+const calibrated = parseYaml(readFileSync(`${ROOT}/calibration/cake-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
+const placeholder = calibrated as unknown as AssumptionValues;
 
 describe('assets/cake.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
@@ -118,7 +119,7 @@ describe('assets/cake.yaml', () => {
     // DefiLlama only for the display series with no on-chain source (fees paid in thousands of pool tokens).
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.fees', 'flow_usd.llama_revenue']);
     // A deliberate edit of assets/cake.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/cake.yaml`, 'utf8')).hash).toBe('5d7e84e495f732d1ea2b702187435a63866f53704b4de5552bea880884a8fad7');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/cake.yaml`, 'utf8')).hash).toBe('dad03af04aa229460abab2b37ee03b1c8153152dceeb33e0e332a594af2c0696');
   });
 
   it('plans one allowlisted scan into the burner (chef ignored, dust floor) and one into the treasury', () => {
@@ -132,7 +133,7 @@ describe('assets/cake.yaml', () => {
 
   it('fetches every metric, counts only the fee-funded burn, and values the asset at grade A through the tick path', async () => {
     const w = world();
-    createAssumptionSet(w.db, { assetId: 'cake', author: 'user', rationale: 'wiring', values: placeholder, createdAt: NOW.toISOString() });
+    createAssumptionSet(w.db, { assetId: 'cake', author: 'user', rationale: 'calibrated', values: placeholder, createdAt: NOW.toISOString() });
     const { fetch: r, signal } = await updateAsset(w.db, loadAsset(ROOT, 'cake'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
     expect(r.anomalies).toEqual([]);
@@ -184,5 +185,26 @@ describe('assets/cake.yaml', () => {
   it('refuses to run without the BNB Chain RPC URL', async () => {
     const w = world();
     await expect(fetchAsset(w.db, { config, hash: 'test' }, NOW, { ...w.deps, env: {} })).rejects.toMatchObject({ code: 'missing_rpc_url' });
+  });
+});
+
+describe('calibration/cake-assumptions.yaml', () => {
+  it('is complete and sits inside the agent bands of assets/cake.yaml', () => {
+    for (const s of ['bear', 'base', 'bull'] as const) {
+      expect(Object.keys(calibrated[s]).sort()).toEqual(requiredAssumptionKeys(config));
+      for (const [key, value] of Object.entries(calibrated[s])) {
+        const b = config.assumptions[key];
+        const band = b[s] ?? b;
+        expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
+        expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
+      }
+    }
+    // Bands exist for every key that moves the value; every band is sorted.
+    for (const key of ['rev_growth_y1', 'multiple.fm_holder_flow', 'discount_rate_base', 'capture_rate_terminal.burn']) {
+      for (const s of ['bear', 'base', 'bull'] as const) {
+        const band = config.assumptions[key][s]!;
+        expect(band.min, `${s} ${key}`).toBeLessThanOrEqual(band.max);
+      }
+    }
   });
 });

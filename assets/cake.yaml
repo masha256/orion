@@ -150,16 +150,23 @@ modules:
 scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }
 
 # Key-wide bounds only until calibration (checkpoint 3) sets the agent bands.
+# Agent bands (2026-10-12), by the mirror rule: each scenario's band is symmetric around its value in
+# calibration/cake-assumptions.yaml, the inner edge halfway to the neighbouring scenario's value and the outer edge as far again,
+# clipped to min/max. Exceptions: the bull rev_growth_y1 band is half width (full width moved the 12m expected value -19 / +24
+# percent, the largest single step; halved -10 / +11); capture_rate_terminal.burn is tied at the 1.0 ceiling in bull, so the
+# base and bull bands run from the bear band's mirror edge up to the ceiling. Keys with no bands (fade, ramp, staked ratio)
+# barely move the value (staked ratio: not at all) and the agent uses min/max. All keys at the edge moved the 12m expected
+# value -45 / +76 percent (2.19 USD calibrated). Recalibrate the bands whenever the calibrated values move.
 assumptions:
-  rev_growth_y1: { min: -0.6, max: 3.0 }
+  rev_growth_y1: { min: -0.6, max: 3.0, bear: { min: -0.5, max: -0.1 }, base: { min: -0.1, max: 0.35 }, bull: { min: 0.475, max: 0.725 } }
   growth_fade_years: { min: 1, max: 10 }
-  terminal_growth: { min: 0, max: 0.05 }
-  capture_rate_terminal.burn: { min: 0.5, max: 1.0 }
+  terminal_growth: { min: 0, max: 0.05, bear: { min: 0, max: 0.01 }, base: { min: 0.01, max: 0.025 }, bull: { min: 0.025, max: 0.035 } }
+  capture_rate_terminal.burn: { min: 0.5, max: 1.0, bear: { min: 0.875, max: 0.925 }, base: { min: 0.925, max: 1.0 }, bull: { min: 0.925, max: 1.0 } }
   capture_ramp_years.burn: { min: 0, max: 4 }
-  discount_rate_base: { min: 0.08, max: 0.35 }
-  discount_premium_programmatic: { min: 0, max: 0.15 }
-  multiple.fm_holder_flow: { min: 3, max: 200 }
-  regime_multiplier: { min: 0.4, max: 1.6 }
+  discount_rate_base: { min: 0.08, max: 0.35, bear: { min: 0.24, max: 0.32 }, base: { min: 0.175, max: 0.24 }, bull: { min: 0.125, max: 0.175 } }
+  discount_premium_programmatic: { min: 0, max: 0.15, bear: { min: 0.025, max: 0.035 }, base: { min: 0.015, max: 0.025 }, bull: { min: 0.005, max: 0.015 } }
+  multiple.fm_holder_flow: { min: 3, max: 200, bear: { min: 4, max: 8 }, base: { min: 8, max: 14 }, bull: { min: 14, max: 22 } }
+  regime_multiplier: { min: 0.4, max: 1.6, bear: { min: 0.55, max: 0.85 }, base: { min: 0.85, max: 1.15 }, bull: { min: 1.15, max: 1.45 } }
   staked_ratio_horizon: { min: 0.01, max: 1 }
 
 agent:

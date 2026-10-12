@@ -1,0 +1,45 @@
+# CAKE calibrated assumptions: the "central" package on the 91-day window, chosen 2026-10-12. Mike's instruction while offline:
+# "do calibration - choose central one, i will adjust if needed". Shapes follow AERO/CRV's central (a DEX flow on one chain,
+# cyclical with memecoin volume): base +10 percent in year one, 10x, discount 20 percent.
+# Anchors (2026-10-12 19:00Z): spot 2.30 USD; total supply 335.47M (totalSupply - dead; 771.6M USD FDV); 91-day burn run rate
+# 55.8M USD (29.0M CAKE/yr; the market pays about 14x it); farm emissions 7.93M CAKE/yr; staked_supply 0 (veCAKE retired).
+# Monthly burn in tokens, Oct-2025..Sep-2026: 2.4(half month) 4.7 2.8 2.9 3.3 3.0 2.5 2.3 2.7 1.6 2.3 3.2M; in USD the window
+# holds a September spike (7.4M vs 2.3-3.7M a month in Apr-Aug). Other windows: 28d 78.6M, 182d 48.6M, 357d 66.4M USD/yr.
+# 12m expected 2.19 USD (bear 0.34 / base 1.36 / bull 5.71, dispersion 0.70; hc 1.58, fm_holder_flow 3.11), 5 percent below
+# spot. Other packages (91d): conservative 1.13, constructive 3.93; central at 28d 2.63, at 357d 2.49. Spot needs a 14.8x
+# multiple in every scenario, or +37 percent first-year burn growth. Sweep on base: y1 growth -9 / +11 percent (-0.1 / 0.3),
+# multiple -5 / +5 (7 / 13x); every other key under 2 percent; staked_ratio_horizon moves nothing (no staking).
+# Import: orion model assumptions import cake calibration/cake-assumptions.yaml --rationale "..."
+bear:
+  rev_growth_y1: -0.3
+  growth_fade_years: 3
+  terminal_growth: 0.0
+  capture_rate_terminal.burn: 0.9
+  capture_ramp_years.burn: 0
+  discount_rate_base: 0.28
+  discount_premium_programmatic: 0.03
+  multiple.fm_holder_flow: 6
+  regime_multiplier: 0.7
+  staked_ratio_horizon: 0.1
+base:
+  rev_growth_y1: 0.1
+  growth_fade_years: 4
+  terminal_growth: 0.02
+  capture_rate_terminal.burn: 0.95
+  capture_ramp_years.burn: 0
+  discount_rate_base: 0.2
+  discount_premium_programmatic: 0.02
+  multiple.fm_holder_flow: 10
+  regime_multiplier: 1.0
+  staked_ratio_horizon: 0.1
+bull:
+  rev_growth_y1: 0.6
+  growth_fade_years: 5
+  terminal_growth: 0.03
+  capture_rate_terminal.burn: 1.0
+  capture_ramp_years.burn: 0
+  discount_rate_base: 0.15
+  discount_premium_programmatic: 0.01
+  multiple.fm_holder_flow: 18
+  regime_multiplier: 1.3
+  staked_ratio_horizon: 0.1
