@@ -1,10 +1,10 @@
 import { createPublicClient, http, parseAbi, parseAbiItem, type Address, type Chain } from 'viem';
-import { base, mainnet } from 'viem/chains';
+import { base, bsc, mainnet } from 'viem/chains';
 import { OrionError } from '../../types.js';
 import { chainInfo, supportedChainIds } from './chains.js';
 import type { CallResult, RpcFactory } from './rpc.js';
 
-const VIEM_CHAINS: Record<number, Chain> = { [base.id]: base, [mainnet.id]: mainnet };
+const VIEM_CHAINS: Record<number, Chain> = { [base.id]: base, [mainnet.id]: mainnet, [bsc.id]: bsc };
 
 const TRANSFER = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');
 

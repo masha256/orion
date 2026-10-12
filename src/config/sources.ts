@@ -72,6 +72,11 @@ export const SourceSchema = z.discriminatedUnion('type', [
      */
     from_ignore: z.array(name).min(1).optional(),
     /**
+     * Transfers below this many tokens are dust (address-poisoning sends from lookalike addresses): never counted, never
+     * reported as unlisted. Optional with no default (hashes).
+     */
+    ignore_below_tokens: z.number().positive().optional(),
+    /**
      * Implementations whose EIP-1167 minimal-proxy clones are ignored like `from_ignore` (a factory's per-pool sidecars,
      * too many to list). Matched on the sender's runtime code; trailing immutable-arg bytes after the proxy are allowed.
      */

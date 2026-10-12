@@ -1,0 +1,185 @@
+id: cake
+symbol: CAKE
+name: PancakeSwap
+chain: bnb
+supply_basis: effective_total
+
+# Read live on 2026-10-12 (BNB Chain, Alchemy); see docs/superpowers/notes/2026-10-12-cake-onboarding.md.
+# The fee route: each fee-converter swaps the protocol's fee tokens to CAKE and sends ~73 percent to the burner (which burns
+# it to dead with the chef's re-burn) and ~27 percent to the treasury. MasterChef v1 mints 40 CAKE a block into v2; v2 sends
+# 99.72 percent of it straight back to the burner, which burns it in the same weekly transaction, so dead's inflow is ~99
+# percent minted-and-reburned CAKE that never circulated. Only the converters' CAKE into the burner is the holder flow.
+contracts:
+  token: "0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82" # CAKE (BEP-20); totalSupply() never falls, burns go to dead
+  dead: "0x000000000000000000000000000000000000dEaD"
+  burner: "0xceba60280fb0ecd9a5a26a1552b90944770a4a0e" # the weekly burn (Mondays): receives the converters' and chef's CAKE, sends it all to dead
+  masterchef_v2: "0xa5f8c5dbd5f286960b9d90548680ae5ebff07652" # MasterChef v2: the emission rates; returns its burn share to the burner
+  treasury: "0x5ebc62b5c6d92cf6e6d0f9166cb3ac60e9c4ac84" # the converters' treasury share (~27 percent): an EOA that forwards it on
+  # Fee converters (owner 0x21835332…): swap fee tokens to CAKE and split burner / treasury. Senders of every fee-funded burn.
+  converter_a: "0x518d9643160cfd6fe469bfbd3ba66fc8035a68a3" # 4.1M CAKE to the burner over 100 days
+  converter_b: "0x0ed943ce24baebf257488771759f9bf482c39706" # 3.7M
+  converter_c: "0x75a915273ff14b1f114d3bd8e5bf06ede2f46f8e" # 0.28M
+  converter_owner: "0x21835332cbdf1b3530fae9f6cd66feb9477dfc02" # the converters' owner; sent burner CAKE directly until 2026-06-22
+  # Small product fee routes (prediction, lottery and the like): swap to CAKE and split burner / treasury as the converters.
+  product_a: "0x5f17c37f56cba00f1399630b750d7211465a683f"
+  product_b: "0x01305c4e50dd76e929dcdbebbefa3be9dc7d570c"
+  product_c: "0x292cfa2eeed03922df4501e79a51ad2c79699940"
+  product_d: "0xba65cd7154105e1b1fe7aab38c7f9ccbca81283b" # a product route that sends the treasury its share monthly (funded by 0x8066…4424)
+  zero: "0x0000000000000000000000000000000000000000" # mints: MasterChef v1's dev share (10 percent of each mint) goes straight to the burner
+  chainlink_cake_usd: "0xB6064eD41d4f67e353768aA239cA86f4F73665a1" # Chainlink CAKE / USD on BNB Chain, 8 decimals
+
+ingest: { chain_id: 56, rpc_url_env: ORION_BNB_RPC_URL, backfill_days: 100 }
+
+external_ids:
+  coingecko: pancakeswap-token
+  defillama: pancakeswap
+
+# Every metric is fetched: no manual metric, so a bootstrap run finds nothing to research and writes only its journal.
+# DefiLlama only for the gross fees and revenue, which have no on-chain source (the fees are paid in thousands of pool tokens).
+metrics:
+  price_usd:
+    type: level
+    unit: usd
+    staleness_days: 3
+    critical: true
+    source: { type: coingecko, id: pancakeswap-token, field: price }
+    cross_checks:
+      - { tolerance_pct: 2, source: { type: contract_read, contract: chainlink_cake_usd, function: latestAnswer, decimals: 8 } }
+
+  # totalSupply() less dead's balance: 335.47M on 2026-10-12. CoinGecko's total (329.54M) also nets 5.93M CAKE that
+  # PancakeSwap counts as burned without sending it to dead (locked in the legacy pools), so the cross-check is 2.5 percent.
+  total_supply:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    critical: true
+    source: { type: erc20_supply, token: token, subtract_balances: [ dead ] }
+    cross_checks:
+      - { tolerance_pct: 2.5, source: { type: coingecko, id: pancakeswap-token, field: total_supply } }
+
+  # CoinGecko's own definition; informational under effective_total.
+  circulating_supply:
+    type: level
+    unit: tokens
+    staleness_days: 14
+    source: { type: coingecko, id: pancakeswap-token, field: circulating_supply }
+
+  # No fee-funded staking since the veCAKE sunset (Tokenomics 3.0, 2025-05-07): pool stakers earn emissions, not fees.
+  staked_supply:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    source: { type: constant, value: 0, note: "no fee-funded staking since the veCAKE sunset (2025-05-07); the burn reaches every holder" }
+
+  staker_emission_share:
+    type: level
+    unit: ratio
+    staleness_days: 7
+    source: { type: constant, value: 0, note: "emissions go to farms, not to a staking base the model values" }
+
+  # Gross farm emissions: MasterChef v2's farm rates per block, times the chain's own measured blocks a year.
+  emission_rate_annual:
+    type: schedule
+    unit: tokens_per_year
+    staleness_days: 45
+    critical: true
+    source: { type: adapter, name: cake.emission_rate_annual }
+
+  # The holder flow: fee-funded CAKE into the burner, at each day's price. The chef's re-burn (MasterChef v2) and the dev
+  # share minted straight to the burner (from zero, on each harvest) are minted-and-burned CAKE, ignored; any other sender raises an unlisted anomaly. Weekly (Mondays), so staleness 10.
+  # Transfers under 1 CAKE are dust from lookalike addresses (address poisoning: 0x0000c35b…dead sent 6e-6 CAKE on 09-09).
+  flow_usd.burn:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    critical: true
+    source: { type: transfer_flow, token: token, to: burner, from_allowlist: [ converter_a, converter_b, converter_c, converter_owner, product_a, product_b, product_c ], from_ignore: [ masterchef_v2, zero ], ignore_below_tokens: 1, unit: usd, price_coingecko_id: pancakeswap-token }
+
+  # The same burn in CAKE.
+  flow_tokens.burn:
+    type: flow
+    unit: tokens
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: token, to: burner, from_allowlist: [ converter_a, converter_b, converter_c, converter_owner, product_a, product_b, product_c ], from_ignore: [ masterchef_v2, zero ], ignore_below_tokens: 1, unit: tokens }
+
+  # Report-only: the converters' treasury share, the protocol's own income line.
+  flow_usd.treasury:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: token, to: treasury, from_allowlist: [ converter_a, converter_b, converter_c, product_a, product_b, product_c, product_d ], ignore_below_tokens: 1, unit: usd, price_coingecko_id: pancakeswap-token }
+
+  # The last 91 days (13 Monday burns) of the burn, scaled to a year.
+  revenue_run_rate_usd:
+    type: level
+    unit: usd
+    staleness_days: 10
+    critical: true
+    source: { type: derived, name: flow_annualized, params: { metric: flow_usd.burn, days: 91 } }
+
+  # Display only, no on-chain source: DefiLlama's gross fees (LPs included) and its revenue (protocol + burn).
+  flow_usd.fees:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 5
+    monitor_only: true
+    source: { type: defillama, slug: pancakeswap, data_type: dailyFees, backfill_days: 100 }
+  flow_usd.llama_revenue:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 5
+    monitor_only: true
+    source: { type: defillama, slug: pancakeswap, data_type: dailyRevenue, backfill_days: 100 }
+
+holder_flows:
+  - { id: burn, kind: burn, capture_rule: programmatic, recipient_base: all, metric: flow_usd.burn, window_days: 91 }
+
+# UNI's shape (a programmatic burn): the discounted burn carries most of the weight, the market's multiple on it the rest.
+# Structural: the agent may only propose.
+modules:
+  - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.6 }
+  - { id: fm_holder_flow, type: forward_multiple, kind: estimate, weight: 0.4, params: { basis: holder_flow } }
+
+scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }
+
+# Key-wide bounds only until calibration (checkpoint 3) sets the agent bands.
+assumptions:
+  rev_growth_y1: { min: -0.6, max: 3.0 }
+  growth_fade_years: { min: 1, max: 10 }
+  terminal_growth: { min: 0, max: 0.05 }
+  capture_rate_terminal.burn: { min: 0.5, max: 1.0 }
+  capture_ramp_years.burn: { min: 0, max: 4 }
+  discount_rate_base: { min: 0.08, max: 0.35 }
+  discount_premium_programmatic: { min: 0, max: 0.15 }
+  multiple.fm_holder_flow: { min: 3, max: 200 }
+  regime_multiplier: { min: 0.4, max: 1.6 }
+  staked_ratio_horizon: { min: 0.01, max: 1 }
+
+agent:
+  budgets:
+    weekly: { input_tokens: 2000000 }
+
+review_triggers:
+  driver_deviation_pct: 25
+  provisional_move_pct: 25
+
+peer_set: []
+
+# Report-only holder yield and growth. A burn: no haircut. Revenue = the burn plus the treasury share (the converters'
+# whole output); DefiLlama's revenue is the cross-check.
+reporting:
+  window_days: 91
+  haircuts: { burn: 0 }
+  income:
+    lines:
+      - { id: burn, to: holders, metric: flow_usd.burn, note: "fee-funded CAKE burned (weekly)" }
+      - { id: treasury, to: protocol, metric: flow_usd.treasury, note: "the converters' treasury share" }
+  volume: [ flow_usd.fees ]
+  burned_tokens: [ flow_tokens.burn ]

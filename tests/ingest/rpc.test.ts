@@ -82,9 +82,10 @@ describe('firstBlockAtOrAfter', () => {
 });
 
 describe('createViemRpc', () => {
-  it('supports Base and Ethereum, each with its own log range and block time', () => {
+  it('supports Base, Ethereum and BNB Chain, each with its own log range and block time', () => {
     expect(createViemRpc('http://localhost:1', 8453)).toMatchObject({ maxLogRange: 2000n, blockTimeSec: 2 });
     expect(createViemRpc('http://localhost:1', 1)).toMatchObject({ maxLogRange: 10_000n, blockTimeSec: 12 });
+    expect(createViemRpc('http://localhost:1', 56)).toMatchObject({ maxLogRange: 50_000n, blockTimeSec: 0.45 });
     let err: OrionError | undefined;
     try {
       createViemRpc('http://localhost:1', 10);
@@ -92,14 +93,15 @@ describe('createViemRpc', () => {
       err = e as OrionError;
     }
     expect(err?.code).toBe('unsupported_chain');
-    expect(err?.message).toMatch(/supported: 1, 8453/);
+    expect(err?.message).toMatch(/supported: 1, 56, 8453/);
   });
 });
 
 describe('the chain table', () => {
-  it('gives Base a keyless default RPC and Ethereum none', () => {
+  it('gives Base a keyless default RPC and Ethereum and BNB Chain none', () => {
     expect(CHAINS[8453]).toMatchObject({ name: 'Base', maxLogRange: 2000n, blockTimeSec: 2, defaultRpcUrl: 'https://mainnet.base.org' });
     expect(CHAINS[1]).toMatchObject({ name: 'Ethereum', maxLogRange: 10_000n, blockTimeSec: 12, defaultRpcUrl: null });
+    expect(CHAINS[56]).toMatchObject({ name: 'BNB Chain', maxLogRange: 50_000n, blockTimeSec: 0.45, defaultRpcUrl: null });
     expect(DEFAULT_RPC_URLS).toEqual({ 8453: 'https://mainnet.base.org' });
   });
 });

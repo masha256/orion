@@ -35,6 +35,8 @@ export interface FlowGroup {
   ignore: string[];
   /** Implementations whose EIP-1167 clones are ignored (from_ignore_clones_of, all members). Not part of the scan key. */
   ignoreClonesOf: string[];
+  /** Transfers below this many tokens are ignored as dust (ignore_below_tokens; the largest of the members). Set only when given. */
+  ignoreBelowTokens?: number;
   /** Every sender not ignored is the flow (from_any): none is unlisted. Set only when true, so plan fixtures keep their shape. */
   anySender?: true;
   /** How a mint's sender is read (mint_sender on any member). Not part of the scan key. */
@@ -125,6 +127,7 @@ export function buildPlan(asset: AssetConfig, opts: { metrics?: string[] } = {})
       group.ignoreClonesOf = union(group.ignoreClonesOf, s.from_ignore_clones_of);
       if (s.mint_sender) group.mintSender = s.mint_sender;
       if (s.from_any) group.anySender = true;
+      if (s.ignore_below_tokens !== undefined) group.ignoreBelowTokens = Math.max(group.ignoreBelowTokens ?? 0, s.ignore_below_tokens);
       group.members.push({
         metricKey,
         unit: s.unit,

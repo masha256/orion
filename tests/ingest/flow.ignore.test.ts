@@ -19,10 +19,11 @@ const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENE
 const clone = (impl: string, tail = '') => `0x363d3d373d3d3d363d73${impl.slice(2)}5af43d82803e903d91602b57fd5bf3${tail}`;
 
 /** The mini asset with ignore lists on its one transfer_flow scan (fees, fees_programmatic and flow_tokens share it). */
-function withIgnore(lines: { ignore?: string[]; clones?: string[] }): string {
+function withIgnore(lines: { ignore?: string[]; clones?: string[]; dust?: number }): string {
   const extra = [
     lines.ignore ? `from_ignore: [${lines.ignore.join(', ')}]` : '',
     lines.clones ? `from_ignore_clones_of: [${lines.clones.join(', ')}]` : '',
+    lines.dust !== undefined ? `ignore_below_tokens: ${lines.dust}` : '',
   ].filter((x) => x !== '').join(', ');
   return INGEST_ASSET_YAML
     .replace(`  safe: "${SAFE}"\n`, `  safe: "${SAFE}"\n  forwarder: "${FORWARDER}"\n  sidecar_impl: "${IMPL}"\n`)
@@ -84,6 +85,21 @@ describe('transfer_flow ignore rules', () => {
     expect(scan(r).notes).toContain('not counted, as configured: 2 from ignored clones');
     expect(fees(r)).toEqual([0, 20, 0]);
     expect(h.rpc.stats.getCode).toBe(2); // once per distinct unlisted sender, not per transfer
+  });
+
+  it('rule 4: dust below ignore_below_tokens is neither counted nor reported (address poisoning); larger stranger sends still are', async () => {
+    // CAKE, 2026-09-09: a lookalike of dead (0x0000c35b…dead) sent 6e-6 CAKE to the burner.
+    const POISON = '0x0000c35b2ca02a14a01af31b070e88d8bc10dead';
+    const logs = [log(POISON, 6_010_000_000_000n, 0), log(POOL, 2n * E18, 1), log(STRANGER, 3n * E18, 2), log(SAFE, E18 / 2n, 3)];
+    const h = harness({ loaded: parseAssetYaml(withIgnore({ dust: 1 })), logs });
+    const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
+    expect(scan(r).unlistedTransfers.map((t) => t.from)).toEqual([STRANGER]);
+    expect(scan(r).notes).toContain('not counted, as configured: 1 dust (below 1 tokens)');
+    // A listed sender is counted whatever its size: the floor applies to strangers only (the SAFE's half token counts).
+    expect(fees(r)).toEqual([0, 25, 0]);
+    const without = harness({ loaded: parseAssetYaml(INGEST_ASSET_YAML), logs });
+    const r0 = await fetchAsset(without.db, without.loaded, without.deps.now(), without.deps);
+    expect(scan(r0).unlistedTransfers.map((t) => t.from).sort()).toEqual([POISON, STRANGER].sort());
   });
 
   it('no rule changes a stored value: the same logs give the same rows with and without the lists', async () => {

@@ -217,7 +217,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
       const impl = cloneOf.get(sender)!;
       return impl !== null && cloneImpls.has(impl);
     };
-    const ignored = { zero: 0, listed: 0, clones: 0 };
+    const ignored = { zero: 0, listed: 0, clones: 0, dust: 0 };
     if (group.mintSender && !rpc.getReceiptLogs) throw new Error('mint_sender needs an RPC transport that reads receipts');
     let mintsAttributed = 0;
     const retired = new Set<number>();
@@ -269,6 +269,10 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
             }
             if (ignore.has(sender)) {
               ignored.listed++;
+              continue;
+            }
+            if (group.ignoreBelowTokens !== undefined && tokens < group.ignoreBelowTokens) {
+              ignored.dust++;
               continue;
             }
             if (await isIgnoredClone(sender)) {
@@ -347,6 +351,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
       ignored.zero > 0 ? `${ignored.zero} zero-amount` : '',
       ignored.listed > 0 ? `${ignored.listed} from from_ignore senders` : '',
       ignored.clones > 0 ? `${ignored.clones} from ignored clones` : '',
+      ignored.dust > 0 ? `${ignored.dust} dust (below ${group.ignoreBelowTokens} tokens)` : '',
     ].filter((p) => p !== '');
     if (parts.length > 0) outcome.notes.push(`not counted, as configured: ${parts.join(', ')}`);
     if (mintsAttributed > 0) outcome.notes.push(`${mintsAttributed} mint(s) attributed to their ERC-4626 depositor`);
