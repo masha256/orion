@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { updateAsset } from '../../src/app/update.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
@@ -103,16 +104,8 @@ const STAKERS_USD = 91 * 50_000;
 const BUYBACK_USD = 91 * 1_000_000 * PRICE;
 const RUN_RATE = ((STAKERS_USD + BUYBACK_USD) * 365) / 91;
 
-/** A flat wiring package, inside the placeholder bands; each capture key holds its flow's share of the run rate. */
-function assumptions(): AssumptionValues {
-  const share = STAKERS_USD / (STAKERS_USD + BUYBACK_USD);
-  const s = {
-    rev_growth_y1: 0.1, growth_fade_years: 5, terminal_growth: 0.02, 'capture_rate_terminal.stakers': share, 'capture_ramp_years.stakers': 0,
-    'capture_rate_terminal.buyback': 1 - share, 'capture_ramp_years.buyback': 0, discount_rate_base: 0.2, discount_premium_programmatic: 0.02,
-    'multiple.fm_holder_flow': 10, regime_multiplier: 1, staked_ratio_horizon: 0.74,
-  };
-  return { bear: s, base: s, bull: s } as unknown as AssumptionValues;
-}
+/** The calibrated package (UNI's central, Mike 2026-10-16); the flat placeholder no longer fits the agent bands. */
+const calibrated = parseYaml(readFileSync(`${ROOT}/calibration/sky-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
 
 describe('assets/sky.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
@@ -134,7 +127,7 @@ describe('assets/sky.yaml', () => {
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama' || d.cross_checks?.some((c) => c.source.type === 'defillama')).map(([k]) => k)).toEqual([]);
     expect(config.reporting!.dilution).toEqual([expect.objectContaining({ id: 'treasury_net', metric: 'treasury_net_payout' })]);
     // A deliberate edit of assets/sky.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/sky.yaml`, 'utf8')).hash).toBe('ea4f56e27e4fb61555ecbe71141bd3c55dcf26a8f1c57d62e6f51727ae9af836');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/sky.yaml`, 'utf8')).hash).toBe('533eedb07b160556ccb7b38a894d45e60b228bdbd0816512d90a1597afe6053e');
   });
 
   it('plans the two holder-flow scans, the treasury scans, the chain levels and the DefiLlama price cross-check', () => {
@@ -156,7 +149,7 @@ describe('assets/sky.yaml', () => {
 
   it('fetches every metric, counts the mints and the pair, ignores the top-up, flags the stranger, and values through the tick path', async () => {
     const w = world();
-    createAssumptionSet(w.db, { assetId: 'sky', author: 'user', rationale: 'wiring', values: assumptions(), createdAt: NOW.toISOString() });
+    createAssumptionSet(w.db, { assetId: 'sky', author: 'user', rationale: 'calibrated', values: calibrated as unknown as AssumptionValues, createdAt: NOW.toISOString() });
     // The year of treasury flows first (live does this as the onboarding backfill); then the routine tick reads 100 days.
     await fetchAsset(w.db, { config, hash: 'backfill' }, NOW, w.deps, { backfillDays: 362, metrics: ['flow_tokens.rewards_staker', 'flow_tokens.rewards_usds', 'flow_tokens.buyback', 'treasury_net_payout'] });
     const { fetch: r, signal } = await updateAsset(w.db, loadAsset(ROOT, 'sky'), NOW, w.deps);
@@ -214,5 +207,25 @@ describe('the SKY persona', () => {
     expect(persona.body).toContain('Surplus splits by governance vote (SKY)');
     expect(persona.body).toContain('"Smart Burn" burns nothing');
     expect(/^[\x00-\x7F]*$/.test(persona.body)).toBe(true);
+  });
+});
+
+describe('calibration/sky-assumptions.yaml', () => {
+  it('is complete, sits inside the agent bands of assets/sky.yaml, and its capture shares sum to at most 1', () => {
+    for (const s of ['bear', 'base', 'bull'] as const) {
+      expect(Object.keys(calibrated[s]).sort()).toEqual(requiredAssumptionKeys(config));
+      for (const [key, value] of Object.entries(calibrated[s])) {
+        const b = config.assumptions[key];
+        const band = b[s] ?? b;
+        expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
+        expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
+      }
+      expect(calibrated[s]['capture_rate_terminal.stakers'] + calibrated[s]['capture_rate_terminal.buyback'], s).toBeLessThanOrEqual(1);
+      // The agent can move the split, but the two flows' band maxima cannot count much more than the whole run rate.
+      expect(config.assumptions['capture_rate_terminal.stakers'][s]!.max + config.assumptions['capture_rate_terminal.buyback'][s]!.max, s).toBeLessThanOrEqual(1.1);
+    }
+    for (const key of ['rev_growth_y1', 'multiple.fm_holder_flow', 'discount_rate_base', 'capture_rate_terminal.stakers', 'capture_rate_terminal.buyback', 'discount_premium_programmatic']) {
+      for (const s of ['bear', 'base', 'bull'] as const) expect(config.assumptions[key][s], `${s} ${key}`).toBeDefined();
+    }
   });
 });

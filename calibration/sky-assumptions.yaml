@@ -1,0 +1,50 @@
+# SKY calibrated assumptions: UNI's "central" package (programmatic, base +25 percent in year one, 30x), chosen by Mike on
+# 2026-10-16 over the CAKE/LIT/LINK central (10x, +10 percent: 12m 0.025 USD, 65 percent below spot). Capture: UNI's
+# 0.90 / 0.95 / 1.00, split between the two flows at their 91-day shares (stakers 40 percent, buyback 60 percent; 45/55
+# since the 2026-08-17 reset). Staked ratio at today's 0.74.
+# Anchors (2026-10-16): spot 0.0706 USD; total supply 23.45B (1.66B USD FDV); 74 percent staked; 91-day run rate 44.1M USD
+# (17.8M USDS to stakers, 26.4M buyback; the market pays about 38x it). The rate since 2026-09-14 is about 70M USD a year
+# (more frequent Splitter kicks), so year-one growth of +25 percent is below today's rate; whether the higher cadence only
+# spends the surplus buffer faster is not yet measured. Treasury SKY paid beyond the buys: 546M a year trailing
+# (report-only dilution; the 500M top-up of 2025-11-03), about zero under the vest from 2026-10-12.
+# 12m preview on a scratch copy: 0.073 USD (bear 0.009 / base 0.041 / bull 0.20), 3 percent above spot.
+# Import: orion model assumptions import sky calibration/sky-assumptions.yaml --rationale "..."
+bear:
+  rev_growth_y1: -0.2
+  growth_fade_years: 3
+  terminal_growth: 0.0
+  capture_rate_terminal.stakers: 0.36
+  capture_ramp_years.stakers: 0
+  capture_rate_terminal.buyback: 0.54
+  capture_ramp_years.buyback: 0
+  discount_rate_base: 0.22
+  discount_premium_programmatic: 0.03
+  multiple.fm_holder_flow: 15
+  regime_multiplier: 0.8
+  staked_ratio_horizon: 0.74
+base:
+  rev_growth_y1: 0.25
+  growth_fade_years: 5
+  terminal_growth: 0.02
+  capture_rate_terminal.stakers: 0.38
+  capture_ramp_years.stakers: 0
+  capture_rate_terminal.buyback: 0.57
+  capture_ramp_years.buyback: 0
+  discount_rate_base: 0.17
+  discount_premium_programmatic: 0.02
+  multiple.fm_holder_flow: 30
+  regime_multiplier: 1.0
+  staked_ratio_horizon: 0.74
+bull:
+  rev_growth_y1: 0.8
+  growth_fade_years: 7
+  terminal_growth: 0.035
+  capture_rate_terminal.stakers: 0.4
+  capture_ramp_years.stakers: 0
+  capture_rate_terminal.buyback: 0.6
+  capture_ramp_years.buyback: 0
+  discount_rate_base: 0.13
+  discount_premium_programmatic: 0.01
+  multiple.fm_holder_flow: 55
+  regime_multiplier: 1.2
+  staked_ratio_horizon: 0.74
