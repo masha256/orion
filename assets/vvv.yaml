@@ -40,7 +40,8 @@ metrics:
   # disclosure as a provisional row; nothing reaches the signal until `orion data confirm` (the user's rule of
   # 2026-09-22: no researched figure goes live unconfirmed, so allow_provisional stays off). The advisory
   # revenue_disclosure_stale anomaly says when usage has moved since the figure was disclosed.
-  revenue_run_rate_usd: { type: level, unit: usd, cadence: event, staleness_days: 60, critical: true }
+  # staleness_days 90 (Mike, 2026-10-16): Venice discloses irregularly (2026-07-01, 2026-08-17); 60 days graded D between disclosures.
+  revenue_run_rate_usd: { type: level, unit: usd, cadence: event, staleness_days: 90, critical: true }
 
   total_supply:
     type: level
