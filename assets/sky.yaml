@@ -1,0 +1,196 @@
+id: sky
+symbol: SKY
+name: Sky (formerly Maker)
+chain: ethereum
+supply_basis: effective_total
+
+# Read live on 2026-10-16; see docs/superpowers/notes/2026-10-16-sky-onboarding.md.
+# The surplus route: the Vow kicks surplus to the Splitter every hop (2,693 s). The Splitter sends `burn()` of each kick to
+# the flapper, which buys SKY on the Uniswap v2 SKY/USDS pair for the Pause Proxy, and the rest as USDS (minted) to the
+# USDS staking farm of staked SKY (lsSKY). The Pause Proxy pays the bought SKY on, through VestedRewardsDistribution, to
+# the SKY staking farm of the same lsSKY. So both halves reach staked SKY (Mike, 2026-10-16: both are holder flow, cash,
+# programmatic, valued per token on total supply). Nothing is burned despite the "Smart Burn Engine" name.
+contracts:
+  token: "0x56072C95FAA701256059aa122697B133aDEd9279" # SKY (23.45B; 24,000 per MKR, about 2.07B still in the MKR converter)
+  usds: "0xdC035D45d973E3EC169d2276DDab16f1e407384F" # USDS
+  zero: "0x0000000000000000000000000000000000000000" # USDS is minted straight into the farm (the Splitter's kick)
+  splitter: "0xBF7111F13386d23cb2Fba5A538107A73f6872bCF" # Splitter: burn() 0.55 since 2026-08-17 (1.0 from 2025-11-03)
+  flapper: "0x374D9c3d5134052Bc558F432Afa1df6575f07407" # FlapperUniV2SwapOnly: USDS -> SKY, receiver the Pause Proxy
+  sky_usds_pair: "0x2621CC0B3F3c079c1Db0E80794AA24976F0b9e3c" # Uniswap v2 SKY/USDS: the flapper's swaps pay SKY out of it
+  pause_proxy: "0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB" # Sky governance treasury (MCD_PAUSE_PROXY)
+  treasury_safe: "0xca5183fb9997046fbd9ba8113139bf5a5af122a0" # Safe: 500M SKY top-up to the Pause Proxy on 2025-11-03
+  lssky: "0xf9A9cfD3229E985B91F99Bc866d42938044FFa1C" # LockstakeSky (lsSKY): staked SKY, 17.4B on 2026-10-16
+  usds_farm: "0x38E4254bD82ED5Ee97CD1C4278FAae748d998865" # StakingRewards: lsSKY staked, USDS rewards (8.6B staked)
+  sky_farm: "0xB44C2Fb4181D7Cb06bdFf34A46FdFe4a259B40Fc" # StakingRewards: lsSKY staked, SKY rewards (8.8B staked)
+  usds_sky_farm: "0x0650CAF159C5A49f711e8169D4336ECB9b950275" # StakingRewards: USDS staked, SKY rewards (paid to non-holders)
+  chronicle_sky_usd: "0xc2ffbbDCCF1466Eb8968a846179191cb881eCdff" # the flapper's pip (Chronicle SKY / USD; whitelisted, reverts via Multicall3)
+
+ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
+
+external_ids:
+  coingecko: sky
+  defillama: sky
+
+# Every metric is read on chain except the price and the circulating supply (CoinGecko): no DefiLlama (Mike, 2026-10-11).
+# DefiLlama's holders revenue (both halves) is reference only: 44.2M USD a year on 91 days vs 44.6M measured here.
+metrics:
+  price_usd:
+    type: level
+    unit: usd
+    staleness_days: 3
+    critical: true
+    source: { type: coingecko, id: sky, field: price }
+    cross_checks:
+      # DefiLlama's coins price (a cross-check only, as for CRV and AERO): the flapper's Chronicle oracle is whitelisted and
+      # reverts when read through Multicall3.
+      - { tolerance_pct: 2, source: { type: http_json, url: "https://coins.llama.fi/prices/current/ethereum:0x56072C95FAA701256059aa122697B133aDEd9279", path: "coins.ethereum:0x56072C95FAA701256059aa122697B133aDEd9279.price" } }
+
+  # 23.45B: every MKR-equivalent, including about 2.07B SKY in the converter for unconverted MKR (fully convertible).
+  # Small burns (about 7M in the month to 2026-10-16) show up here.
+  total_supply:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    critical: true
+    source: { type: erc20_supply, token: token }
+    cross_checks:
+      - { tolerance_pct: 2, source: { type: coingecko, id: sky, field: total_supply } }
+
+  circulating_supply:
+    type: level
+    unit: tokens
+    staleness_days: 14
+    source: { type: coingecko, id: sky, field: circulating_supply }
+
+  # Staked SKY: lsSKY's supply (74 percent of SKY on 2026-10-16). Both holder flows go to lsSKY in the two farms.
+  staked_supply:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    source: { type: contract_read, contract: lssky, function: totalSupply, decimals: 18 }
+
+  staker_emission_share:
+    type: level
+    unit: ratio
+    staleness_days: 7
+    source: { type: constant, value: 0, note: "no minting; SKY rewards come from the treasury (the buyback plus top-ups), reported as dilution" }
+
+  emission_rate_annual:
+    type: schedule
+    unit: tokens_per_year
+    staleness_days: 45
+    critical: true
+    source: { type: constant, value: 0, note: "SKY is not minted; treasury SKY paid beyond the buys is reported as dilution" }
+
+  # Holder flow 1: USDS minted into the USDS farm by each Splitter kick (45 percent of surplus since 2026-08-17; nothing
+  # from 2025-11-03 to 2026-08-17, when burn() was 1.0). Any other sender raises an unlisted-sender alert.
+  flow_usd.stakers:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    critical: true
+    source: { type: transfer_flow, token: usds, to: usds_farm, from_allowlist: [ zero ], unit: usd, price_coingecko_id: usds }
+
+  # Holder flow 2: the SKY the flapper buys, read as SKY paid out of the pair to the Pause Proxy, at each day's SKY price
+  # (55 percent of surplus). The 500M top-up from the Safe is a treasury transfer, not a buy: ignored. Any other sender
+  # raises an unlisted-sender alert.
+  flow_usd.buyback:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    critical: true
+    source: { type: transfer_flow, token: token, to: pause_proxy, from_allowlist: [ sky_usds_pair ], from_ignore: [ treasury_safe ], unit: usd, price_coingecko_id: sky }
+  flow_tokens.buyback:
+    type: flow
+    unit: tokens
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: token, to: pause_proxy, from_allowlist: [ sky_usds_pair ], from_ignore: [ treasury_safe ], unit: tokens }
+
+  # Both halves, the last 91 days (13 weeks), scaled to a year.
+  revenue_run_rate_usd:
+    type: level
+    unit: usd
+    staleness_days: 10
+    critical: true
+    source: { type: derived, name: flow_annualized, params: { metrics: [ flow_usd.stakers, flow_usd.buyback ], days: 91 } }
+
+  # Report-only dilution: SKY the reward farms paid out (to lsSKY stakers and to USDS depositors), less the SKY the treasury
+  # bought, over the last 357 days (51 weeks: the buyback scan is priced, and keyless CoinGecko refuses history past 365
+  # days, so the backfill is 362 days) (Mike, 2026-10-16). 1,322M paid against 799M bought in the year to 2026-10-16, the gap
+  # from the Safe's 500M top-up. The new vest (from 2026-10-12) pays about 404M a year, about the rate of buying, so this
+  # line should fall toward zero; a negative value is a treasury that buys more than it pays out.
+  flow_tokens.rewards_staker:
+    type: flow
+    unit: tokens
+    cadence: daily
+    staleness_days: 30
+    monitor_only: true
+    source: { type: transfer_flow, token: token, to: sky_farm, from_any: true, ignore_below_tokens: 1000, unit: tokens }
+  flow_tokens.rewards_usds:
+    type: flow
+    unit: tokens
+    cadence: daily
+    staleness_days: 30
+    monitor_only: true
+    source: { type: transfer_flow, token: token, to: usds_sky_farm, from_any: true, ignore_below_tokens: 1000, unit: tokens }
+  treasury_net_payout: { type: level, unit: tokens_per_year, staleness_days: 30, monitor_only: true, source: { type: derived, name: flow_annualized, params: { metrics: [ flow_tokens.rewards_staker, flow_tokens.rewards_usds ], minus: [ flow_tokens.buyback ], days: 357 } } }
+
+  # Report-only: the Splitter's share to the buyback (a governance parameter; 0.55 since 2026-08-17).
+  splitter_burn_share: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: splitter, function: burn, decimals: 18 } }
+
+# Both programmatic (the Splitter's share, kick size and hop are executive-vote parameters), paid to staked SKY, valued per
+# token on total supply (Mike, 2026-10-16). The buyback is a fee_share: the bought SKY is paid on to stakers as liquid SKY,
+# which Mike counts as cash; on total supply it does not shrink the supply path (it is not burned).
+holder_flows:
+  - { id: stakers, kind: fee_share, capture_rule: programmatic, recipient_base: staked, metric: flow_usd.stakers, window_days: 91 }
+  - { id: buyback, kind: fee_share, capture_rule: programmatic, recipient_base: staked, metric: flow_usd.buyback, window_days: 91 }
+
+modules:
+  - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.6 }
+  - { id: fm_holder_flow, type: forward_multiple, kind: estimate, weight: 0.4, params: { basis: holder_flow } }
+
+scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }
+
+# Placeholder agent bands until calibration; the capture keys hold each flow's share of the run rate.
+assumptions:
+  rev_growth_y1: { min: -0.6, max: 3.0 }
+  growth_fade_years: { min: 1, max: 10 }
+  terminal_growth: { min: 0, max: 0.05 }
+  capture_rate_terminal.stakers: { min: 0, max: 1.0 }
+  capture_ramp_years.stakers: { min: 0, max: 4 }
+  capture_rate_terminal.buyback: { min: 0, max: 1.0 }
+  capture_ramp_years.buyback: { min: 0, max: 4 }
+  discount_rate_base: { min: 0.08, max: 0.35 }
+  discount_premium_programmatic: { min: 0, max: 0.15 }
+  multiple.fm_holder_flow: { min: 3, max: 200 }
+  regime_multiplier: { min: 0.4, max: 1.6 }
+  staked_ratio_horizon: { min: 0.01, max: 1 }
+
+agent:
+  budgets:
+    weekly: { input_tokens: 2000000 }
+
+review_triggers:
+  driver_deviation_pct: 25
+  provisional_move_pct: 25
+
+peer_set: []
+
+# Report-only. Revenue = the surplus that reaches holders (both halves); Sky's gross revenue (stability fees less the
+# savings rate) is not read on chain here. The treasury's net SKY payout is the dilution.
+reporting:
+  window_days: 91
+  haircuts: { stakers: 0, buyback: 0 }
+  revenue:
+    - { id: surplus_usds, label: "surplus paid to stakers in USDS (Splitter)", metric: flow_usd.stakers, settlement: daily }
+    - { id: surplus_buyback, label: "surplus spent buying SKY (flapper), paid on to stakers", metric: flow_usd.buyback, settlement: daily }
+  income:
+    lines:
+      - { id: stakers, to: holders, metric: flow_usd.stakers, note: "USDS to staked SKY" }
+      - { id: buyback, to: holders, metric: flow_usd.buyback, note: "SKY bought, paid on to staked SKY" }
+  dilution:
+    - { id: treasury_net, metric: treasury_net_payout, note: "SKY rewards paid beyond the SKY bought (trailing 357 days)" }

@@ -236,6 +236,31 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
       expect(rows[0]).toMatchObject({ source: 'onchain', sourceDetail: 'derived flow_annualized(flow_usd.fees+flow_usd.fees_programmatic, 3d)' });
     });
 
+    it('subtracts the minus flows day by day (a net rate, which can be negative), over days every flow has', async () => {
+      const NET = SUMMED.replace('metrics: [flow_usd.fees, flow_usd.fees_programmatic]', 'metric: flow_usd.fees, minus: [flow_usd.fees_programmatic]');
+      expect(NET).not.toBe(SUMMED);
+      const h = harness({ loaded: parseAssetYaml(NET) });
+      seed(h.db, 'flow_usd.fees', '2026-09-10', [10, 20, 30, 40]); // 10..13
+      seed(h.db, 'flow_usd.fees_programmatic', '2026-09-11', [1, 2, 300, 4]); // 11..14: day 10 has no minus row
+      await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['revenue_run_rate_usd'] });
+      const rows = listActiveObservations(h.db, 'mini', 'revenue_run_rate_usd');
+      // Days with both: 11 (20 - 1), 12 (30 - 2), 13 (40 - 300). One full 3-day window, ending on the 13th: -213.
+      expect(rows.map((o) => [o.observedAt.slice(0, 10), o.value])).toEqual([['2026-09-14', (-213 * 365) / 3]]);
+      expect(rows[0]).toMatchObject({ source: 'onchain', sourceDetail: 'derived flow_annualized(flow_usd.fees-flow_usd.fees_programmatic, 3d)' });
+    });
+
+    it('refuses a bad minus list as configuration', async () => {
+      const codeOf = async (yaml: string) => {
+        const h = harness({ loaded: parseAssetYaml(yaml) });
+        return fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['revenue_run_rate_usd'] }).then(() => undefined, (e: unknown) => (e as OrionError).code);
+      };
+      const NET = (minus: string) => SUMMED.replace('metrics: [flow_usd.fees, flow_usd.fees_programmatic]', `metric: flow_usd.fees, minus: ${minus}`);
+      expect(await codeOf(NET('[]'))).toBe('invalid_source_config');
+      expect(await codeOf(NET('[flow_usd.fees]'))).toBe('invalid_source_config'); // subtracts what it sums
+      expect(await codeOf(NET('[price_usd]'))).toBe('invalid_source_config'); // not a flow
+      expect(await codeOf(NET('flow_usd.fees_programmatic'))).toBe('invalid_source_config'); // not a list
+    });
+
     it('refuses a bad list as configuration', async () => {
       const codeOf = async (yaml: string) => {
         const h = harness({ loaded: parseAssetYaml(yaml) });

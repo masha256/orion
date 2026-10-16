@@ -106,6 +106,20 @@ function storedDailyFlow(db: Db, assetId: string, metricKey: string): Map<string
   return days;
 }
 
+/**
+ * The flow metrics flow_annualized subtracts (`minus`, optional): a net rate, e.g. what a treasury pays out less what it
+ * buys back (SKY). The result can be negative. Each must differ from the summed flows.
+ */
+function minusMetricsOf(metricKey: string, name: DerivedName, params: Record<string, unknown>, summed: string[]): string[] {
+  const minus = params.minus;
+  if (minus === undefined) return [];
+  if (name !== 'flow_annualized') throw new OrionError('invalid_source_config', `metrics.${metricKey}: only flow_annualized takes "minus"`);
+  if (!Array.isArray(minus) || minus.length < 1 || !minus.every((m) => typeof m === 'string') || new Set(minus).size !== minus.length || minus.some((m) => summed.includes(m))) {
+    throw new OrionError('invalid_source_config', `metrics.${metricKey}: ${name} "minus" must list one or more different flow metrics, none of them summed`);
+  }
+  return minus as string[];
+}
+
 /** The flow metric(s) a derived level reads: `metric` (one name) or, for flow_annualized, `metrics` (two or more). */
 function flowMetricsOf(metricKey: string, name: DerivedName, params: Record<string, unknown>): string[] {
   const one = params.metric;
@@ -423,9 +437,10 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     // several reward streams, each its own holder flow, has their sum as its revenue. A day counts only when every
     // listed flow has it, so a stream that lags never shows up as a drop in the total.
     const flowMetrics = flowMetricsOf(r.metricKey, name, r.source.params);
-    const flowMetric = flowMetrics.join('+');
+    const minusMetrics = minusMetricsOf(r.metricKey, name, r.source.params, flowMetrics);
+    const flowMetric = flowMetrics.join('+') + minusMetrics.map((m) => `-${m}`).join('');
     const windowDays = r.source.params.days ?? 30;
-    for (const m of flowMetrics) {
+    for (const m of [...flowMetrics, ...minusMetrics]) {
       if (asset.metrics[m]?.type !== 'flow') {
         throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: ${name} needs "metric" to name a flow metric ("${m}" is not one)`);
       }
@@ -434,19 +449,24 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: ${name} "days" must be a positive integer`);
     }
     // A derivation carries the provenance of its input: an API series' flow gives an api level, a transfer scan's an onchain one.
-    const apiInputs = flowMetrics.filter((m) => ['defillama', 'adapter'].includes(asset.metrics[m].source?.type ?? '')).length;
-    if (apiInputs > 0 && apiInputs < flowMetrics.length) {
+    const inputs = [...flowMetrics, ...minusMetrics];
+    const apiInputs = inputs.filter((m) => ['defillama', 'adapter'].includes(asset.metrics[m].source?.type ?? '')).length;
+    if (apiInputs > 0 && apiInputs < inputs.length) {
       throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: ${name} cannot sum API-series and on-chain flows`);
     }
     const provenance: 'onchain' | 'api' = apiInputs > 0 ? 'api' : 'onchain';
-    const perFlow = flowMetrics.map((m) => {
+    const dailyOf = (m: string): Map<string, number> => {
       const d = storedDailyFlow(db, asset.id, m);
       for (const p of scannedDaily.get(m) ?? []) d.set(p.day, p.value);
       return d;
-    });
+    };
+    const perFlow = flowMetrics.map(dailyOf);
+    const perMinus = minusMetrics.map(dailyOf);
     const days = new Map<string, number>();
     for (const [day] of perFlow[0]) {
-      if (perFlow.every((d) => d.has(day))) days.set(day, perFlow.reduce((s, d) => s + d.get(day)!, 0));
+      if ([...perFlow, ...perMinus].every((d) => d.has(day))) {
+        days.set(day, perFlow.reduce((s, d) => s + d.get(day)!, 0) - perMinus.reduce((s, d) => s + d.get(day)!, 0));
+      }
     }
     // Keyed by observedAt: a re-scan (--backfill-days) can change a stored day's value, which changes
     // every index window that covers it. Skip only when the existing row already has this value; a
