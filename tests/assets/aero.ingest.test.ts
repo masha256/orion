@@ -136,7 +136,7 @@ describe('assets/aero.yaml', () => {
 
 describe('the AERO persona', () => {
   it('ships beside the VVV one, on the default model, and loads the shared skills', () => {
-    expect(listPersonaNames(ROOT)).toEqual(['ai-infra-analyst', 'onchain-dex-analyst', 'perp-exchange-analyst']);
+    expect(listPersonaNames(ROOT)).toEqual(['ai-infra-analyst', 'onchain-dex-analyst', 'oracle-network-analyst', 'perp-exchange-analyst']);
     const persona = loadPersona(ROOT, 'onchain-dex-analyst');
     expect(persona).toMatchObject({ model: 'claude-opus-5-5', effort: 'high', sectors: ['dex', 'onchain-fee-share'] });
     expect(persona.body).toContain('Locking is the thesis');

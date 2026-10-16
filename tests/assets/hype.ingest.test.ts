@@ -217,7 +217,7 @@ describe('assets/hype.yaml: the USDC reserve yield (AQAv2), read from the ledger
 
 describe('the HYPE persona', () => {
   it('ships beside the other two, on the default model, and loads the shared skills', () => {
-    expect(listPersonaNames(ROOT)).toEqual(['ai-infra-analyst', 'onchain-dex-analyst', 'perp-exchange-analyst']);
+    expect(listPersonaNames(ROOT)).toEqual(['ai-infra-analyst', 'onchain-dex-analyst', 'oracle-network-analyst', 'perp-exchange-analyst']);
     const persona = loadPersona(ROOT, 'perp-exchange-analyst');
     expect(persona).toMatchObject({ model: 'claude-opus-5-5', effort: 'high', sectors: ['perp-dex', 'exchange-buyback'] });
     expect(persona.body).toContain('The fund is the mechanism and the risk');
