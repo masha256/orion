@@ -85,6 +85,11 @@ export interface SourceContext {
   env: Record<string, string | undefined>;
   /** Address of a named contract from the asset's `contracts` map. */
   contract(name: string): string;
+  /**
+   * How far back an adapter that pages an API's history (LIT's trades) reads: the run's `--backfill-days`, or the asset's
+   * backfill on the first fetch of an adapter flow (no cursor yet). Absent on a routine run, when it reads its own window.
+   */
+  backfillDays?: number;
 }
 
 /**

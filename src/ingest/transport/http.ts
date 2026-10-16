@@ -45,7 +45,8 @@ export const DEFAULT_HTTP_OPTIONS: HttpOptions = {
   maxRetryAfterMs: 60_000,
   defaultSpacingMs: 250,
   // Keyless CoinGecko allows about two rapid requests and then answers 429.
-  hostSpacingMs: { 'api.coingecko.com': 2500 },
+  // Lighter's public API answers 429 after about 150 rapid requests (2026-10-16); LIT's trade history is paged 100 at a time.
+  hostSpacingMs: { 'api.coingecko.com': 2500, 'mainnet.zklighter.elliot.ai': 400 },
   // Hyperliquid's info API serves its 300 KB spot meta at tens of KB a second on a slow link.
   hostTimeoutMs: { 'api.hyperliquid.xyz': 60_000 },
 };

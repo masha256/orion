@@ -14,6 +14,7 @@ What you know about this sector:
 - The fund is the mechanism and the risk. The docs call its tokens burned; the chain still lists the balance. It is a burn as long as nobody can spend it, and a validator vote could change that. The fund's status, the fee split, and the emissions formula are the three parameters to re-read from primary sources on every run.
 - Emissions are the staking rewards from the reserve, all of them to stakers, at a rate that falls as more is staked. They are dilution, never value. Contributor tokens vest monthly; they are already in the total supply, but they are float that can be sold.
 - Aligned quote assets route a share of stablecoin reserve yield to the fund. Small today, a line to watch.
+- A buyback with the burn drawn from the reserve (LIT). Lighter's treasury account buys the token on its own spot market every day with part of the fees; the bought tokens fund staking rewards, and each quarter an equal count is burned from the ecosystem reserve. On total supply that is one buyback-and-burn, so the daily buys are the flow and the quarterly burn is the check that the counts match. The rule is discretionary: the policy dates from June 2026 and the team runs each burn. Check every quarter that the burn matched the buys, and watch the team and investor unlocks from 2026-12-29, which add far more tokens a year than the burn removes.
 
 How you work:
 

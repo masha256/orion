@@ -3,6 +3,7 @@ import { revenueStaleMovePct, type MetricDef } from '../config/schema.js';
 import { isChainSource } from '../config/sources.js';
 import { findStandingAnomaly, raiseAnomaly } from '../db/anomalies.js';
 import type { Db } from '../db/connection.js';
+import { getCursor } from '../db/fetchCursors.js';
 import { emptySourceOutcome, insertFetchRun, recentSourceStatuses, type FetchOutcome, type SourceOutcome } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations } from '../db/observations.js';
 import { latestLevel } from '../drivers/select.js';
@@ -149,8 +150,15 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     }
   }
 
+  // How far back an adapter that pages an API's history reads: --backfill-days, or the asset's backfill on the first fetch
+  // of an adapter flow (no cursor yet), so a new asset's first routine run fills its window instead of its last few days.
+  const firstAdapterFlow = plan.batches.some((b) =>
+    b.requests.some((r) => r.role === 'primary' && r.source.type === 'adapter' && asset.metrics[r.metricKey].type === 'flow' && !getCursor(db, asset.id, `${b.sourceId}>${r.metricKey}`)),
+  );
+  const historyDays = opts.backfillDays ?? (firstAdapterFlow ? (asset.ingest?.backfill_days ?? DEFAULT_API_FLOW_BACKFILL_DAYS) : undefined);
   const ctx: SourceContext = {
     asset, nowIso: startedAt, http: withRunCache(deps.http), rpc, block, env: deps.env, contract: contractResolver(asset),
+    ...(historyDays !== undefined ? { backfillDays: historyDays } : {}),
   };
 
   const outcomes = new Map<string, SourceOutcome>();
@@ -211,7 +219,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
         try {
           const flow = writeApiFlow({
             db, asset, metricKey: r.metricKey, scanKey: `${batch.sourceId}>${r.metricKey}`, points: result.value.points, detail: result.value.detail, now,
-            backfillDays: opts.backfillDays ?? (r.source.type === 'defillama' ? r.source.backfill_days : undefined) ?? DEFAULT_API_FLOW_BACKFILL_DAYS, rescan: opts.backfillDays !== undefined,
+            backfillDays: opts.backfillDays ?? (r.source.type === 'defillama' ? r.source.backfill_days : historyDays) ?? DEFAULT_API_FLOW_BACKFILL_DAYS, rescan: opts.backfillDays !== undefined,
             revisionDays: r.source.type === 'defillama' ? (r.source.revision_days ?? DEFILLAMA_REVISION_DAYS) : undefined,
             adopt: opts.adopt ?? false, dryRun, outcome, validate: (value) => validateReading(def, value),
           });
