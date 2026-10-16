@@ -1,0 +1,44 @@
+# LIT calibrated assumptions: the "central" package on the 91-day window, chosen by Mike on 2026-10-16 ("yes, central package")
+# after four priced packages. Same shape as CAKE's central (base +10 percent in year one, 10x, discount 20 percent), with
+# discretionary capture (0.70 / 0.85 / 1.00 terminal, premium 8 / 6 / 4 percent).
+# Anchors (2026-10-16 14:07Z): spot 3.22 USD; total supply 981.91M (1B less dead; 3.16B USD FDV); circulating 250M (805M USD
+# market cap); 91-day buyback run rate 30.0M USD (the market pays about 105x it on total supply); 28-day 33.5M, 164-day 30.0M.
+# Team and investor unlocks 132.8M LIT over the next year (report-only dilution: already in total supply).
+# 12m expected 0.37 USD (bear 0.04 / base 0.21 / bull 1.03; hc 0.14, fm_holder_flow 0.31 on base), 88 percent below spot.
+# Other packages: conservative 0.19, mid (25x, +30 percent) 1.05, constructive (HYPE's: 80x base, 150x bull) 4.71. Spot needs
+# about a 202x multiple in every scenario, or +243 percent first-year buyback growth. Mike heard this before choosing; do not
+# re-litigate it.
+# Import: orion model assumptions import lit calibration/lit-assumptions.yaml --rationale "..."
+bear:
+  rev_growth_y1: -0.3
+  growth_fade_years: 3
+  terminal_growth: 0.0
+  capture_rate_terminal.buyback: 0.7
+  capture_ramp_years.buyback: 0
+  discount_rate_base: 0.28
+  discount_premium_discretionary: 0.08
+  multiple.fm_holder_flow: 6
+  regime_multiplier: 0.7
+  staked_ratio_horizon: 0.1
+base:
+  rev_growth_y1: 0.1
+  growth_fade_years: 4
+  terminal_growth: 0.02
+  capture_rate_terminal.buyback: 0.85
+  capture_ramp_years.buyback: 0
+  discount_rate_base: 0.2
+  discount_premium_discretionary: 0.06
+  multiple.fm_holder_flow: 10
+  regime_multiplier: 1.0
+  staked_ratio_horizon: 0.1
+bull:
+  rev_growth_y1: 0.6
+  growth_fade_years: 5
+  terminal_growth: 0.03
+  capture_rate_terminal.buyback: 1.0
+  capture_ramp_years.buyback: 0
+  discount_rate_base: 0.15
+  discount_premium_discretionary: 0.04
+  multiple.fm_holder_flow: 18
+  regime_multiplier: 1.3
+  staked_ratio_horizon: 0.1

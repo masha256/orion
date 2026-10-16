@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { updateAsset } from '../../src/app/update.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
@@ -108,7 +109,7 @@ describe('assets/lit.yaml', () => {
     expect(config.metrics['flow_usd.buyback'].source).toMatchObject({ type: 'adapter', name: 'lit.treasury_buys_daily' });
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.fees', 'flow_usd.llama_revenue']);
     // A deliberate edit of assets/lit.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('499763aba8fdd79d21c7cac5cd39eac8bc115d094a72e4bf9f3bea765c22abc1');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('f65fcd6928f851c3dc395415785249da15da585f421561b310d32d0b569282cf');
   });
 
   it('plans one allowlisted scan into dead (the quarterly burns) and the buyback run rate', () => {
@@ -173,5 +174,23 @@ describe('assets/lit.yaml', () => {
     const persona = loadPersona(ROOT, 'perp-exchange-analyst');
     expect(persona.body).toContain('A buyback with the burn drawn from the reserve (LIT)');
     expect(/^[\x00-\x7F]*$/.test(persona.body)).toBe(true);
+  });
+});
+
+describe('calibration/lit-assumptions.yaml', () => {
+  const calibrated = parseYaml(readFileSync(`${ROOT}/calibration/lit-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
+  it('is complete and sits inside the agent bands of assets/lit.yaml', () => {
+    for (const s of ['bear', 'base', 'bull'] as const) {
+      expect(Object.keys(calibrated[s]).sort()).toEqual(requiredAssumptionKeys(config));
+      for (const [key, value] of Object.entries(calibrated[s])) {
+        const b = config.assumptions[key];
+        const band = b[s] ?? b;
+        expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
+        expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
+      }
+    }
+    for (const key of ['rev_growth_y1', 'multiple.fm_holder_flow', 'discount_rate_base', 'capture_rate_terminal.buyback', 'discount_premium_discretionary']) {
+      for (const s of ['bear', 'base', 'bull'] as const) expect(config.assumptions[key][s], `${s} ${key}`).toBeDefined();
+    }
   });
 });
