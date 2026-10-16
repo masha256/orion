@@ -36,7 +36,14 @@ Decisions (Mike, 2026-10-16):
 
 ## Follow-ups
 
-- The trades API held all 150 days asked for (the explorer API's ~60k offset cap had suggested ~150 was the limit), so the
-  history may reach back to the start of the buybacks: a longer backfill would give the 182 days the growth figures need.
+- Live (2026-10-16): the trades API's history ends 2026-05-04 (a 365-day ask returned 164 days, from 05-06), though the buys
+  started in January (DefiLlama from 2026-01-05). Growth figures need 182 days of history: about 2026-11-03.
 - What `0xcd53…` (3M of the bought LIT, spread over hundreds of wallets) is.
 - Whether LIT on Robinhood Chain is bridged supply or separate.
+
+## Live (2026-10-16)
+
+- Merged `5524a90`; backfill 165 days, every source ok, no anomalies. First tick blocked by no_assumption_set (bootstrap).
+- Calibration: central (Mike, 2026-10-16), `f2a4993`. First signal `lit-20261016T140751Z-134`: grade A, 12m 0.37 USD
+  (bear 0.04 / base 0.21 / bull 1.03), 6m 0.33, against 3.21 spot. Constructive (HYPE's) would be 4.71; spot needs ~202x.
+- Daily job `orion-lit` (8d40b91687dc) at 05:50 PT, to orion-ops.
