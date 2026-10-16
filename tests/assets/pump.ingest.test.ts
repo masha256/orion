@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { updateAsset } from '../../src/app/update.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
@@ -67,10 +68,8 @@ function seedReadings(db: ReturnType<typeof openDb>, n: number, supplyNow: numbe
   }
 }
 
-const assumptions = (): AssumptionValues => {
-  const s = { rev_growth_y1: 0.1, growth_fade_years: 4, terminal_growth: 0.02, 'capture_rate_terminal.buyback': 0.85, 'capture_ramp_years.buyback': 0, discount_rate_base: 0.2, discount_premium_discretionary: 0.06, 'multiple.fm_holder_flow': 10, regime_multiplier: 1, staked_ratio_horizon: 0.01 };
-  return { bear: { ...s }, base: { ...s }, bull: { ...s } } as unknown as AssumptionValues;
-};
+/** The calibrated package (the CAKE/LIT/LINK central, Mike 2026-10-16: "Option 1"). */
+const calibrated = parseYaml(readFileSync(`${ROOT}/calibration/pump-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
 
 describe('assets/pump.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
@@ -88,7 +87,7 @@ describe('assets/pump.yaml', () => {
     expect(config.metrics['flow_usd.llama_revenue'].monitor_only).toBe(true);
     expect(config.reporting!.dilution).toEqual([expect.objectContaining({ id: 'unlocks', metric: 'unlocks_next_year' })]);
     // A deliberate edit of assets/pump.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/pump.yaml`, 'utf8')).hash).toBe('bd4182514aac83cb53855010e7da249a5e7738428bc0afad15e1aea1f0a521db');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/pump.yaml`, 'utf8')).hash).toBe('ecfec62a85f86509482c420743d24471a7b74853cb8e87b38c210ad630e9f71c');
   });
 
   it('plans the Solana readers, CoinGecko, the Jupiter price check, the unlocks and the revenue line, and no EVM scan', () => {
@@ -118,7 +117,7 @@ describe('assets/pump.yaml', () => {
   it('values through the tick path from on-chain days, with no anomaly, and reports the burn and the unlocks', async () => {
     const supplyNow = 827.6e9;
     const w = world(supplyNow);
-    createAssumptionSet(w.db, { assetId: 'pump', author: 'user', rationale: 'wiring', values: assumptions(), createdAt: NOW.toISOString() });
+    createAssumptionSet(w.db, { assetId: 'pump', author: 'user', rationale: 'calibrated', values: calibrated as unknown as AssumptionValues, createdAt: NOW.toISOString() });
     // The onboarding backfill eleven days ago (only the flows: its supply reading would be out of line with the seeded ones),
     // then a daily supply reading each morning since.
     await fetchAsset(w.db, { config, hash: 'backfill' }, new Date(NOW.getTime() - 11 * DAY), w.deps, { backfillDays: 362, metrics: ['flow_usd.buyback', 'flow_tokens.buyback', 'revenue_run_rate_usd'] });
@@ -160,5 +159,21 @@ describe('the PUMP persona', () => {
     expect(persona.body).toContain('The company sets the share (PUMP)');
     expect(persona.body).toContain('Insider unlocks outweigh the burn');
     expect(/^[\x00-\x7F]*$/.test(persona.body)).toBe(true);
+  });
+});
+
+describe('calibration/pump-assumptions.yaml', () => {
+  it('is complete, sits inside the agent bands of assets/pump.yaml, and is LIT\'s central unchanged', () => {
+    const lit = parseYaml(readFileSync(`${ROOT}/calibration/lit-assumptions.yaml`, 'utf8')) as typeof calibrated;
+    for (const s of ['bear', 'base', 'bull'] as const) {
+      expect(Object.keys(calibrated[s]).sort()).toEqual(requiredAssumptionKeys(config));
+      for (const [key, value] of Object.entries(calibrated[s])) {
+        const b = config.assumptions[key];
+        const band = b[s] ?? b;
+        expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
+        expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
+      }
+      expect(calibrated[s]).toEqual(lit[s]);
+    }
   });
 });

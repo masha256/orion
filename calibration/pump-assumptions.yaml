@@ -1,0 +1,44 @@
+# PUMP calibrated assumptions: the CAKE/LIT/LINK "central" package on the 91-day window, chosen by Mike on 2026-10-16
+# ("Option 1") over UNI's central (30x, +25 percent: 12m 0.0134 USD, 209 percent above spot). LIT's values unchanged: base
+# +10 percent in year one, 10x, discount 20 percent, discretionary capture 0.70 / 0.85 / 1.00, premium 8 / 6 / 4 percent.
+# Anchors (2026-10-16 20:13Z): spot 0.00435 USD; total supply 827.64B (3.60B USD FDV); circulating 462.8B (2.01B USD market
+# cap); 91-day burn run rate 303.0M USD (the market pays about 11.9x it); 30-day 369.5M. Revenue 663.9M (45.6 percent burned).
+# Team and existing-investor unlocks 82.5B PUMP over the next year (9.97 percent; report-only dilution), so net holder
+# yield is about -1.55 percent.
+# 12m expected 0.00456 USD (bear 0.00056 / base 0.00262 / bull 0.01242), 4.8 percent above spot. Spot needs about 12.8x;
+# year-one revenue -30 percent gives 0.0015, a capture of 0.5 gives 0.0024. Mike heard this before choosing; do not
+# re-litigate it.
+# Import: orion model assumptions import pump calibration/pump-assumptions.yaml --rationale "..."
+bear:
+  rev_growth_y1: -0.3
+  growth_fade_years: 3
+  terminal_growth: 0.0
+  capture_rate_terminal.buyback: 0.7
+  capture_ramp_years.buyback: 0
+  discount_rate_base: 0.28
+  discount_premium_discretionary: 0.08
+  multiple.fm_holder_flow: 6
+  regime_multiplier: 0.7
+  staked_ratio_horizon: 0.1
+base:
+  rev_growth_y1: 0.1
+  growth_fade_years: 4
+  terminal_growth: 0.02
+  capture_rate_terminal.buyback: 0.85
+  capture_ramp_years.buyback: 0
+  discount_rate_base: 0.2
+  discount_premium_discretionary: 0.06
+  multiple.fm_holder_flow: 10
+  regime_multiplier: 1.0
+  staked_ratio_horizon: 0.1
+bull:
+  rev_growth_y1: 0.6
+  growth_fade_years: 5
+  terminal_growth: 0.03
+  capture_rate_terminal.buyback: 1.0
+  capture_ramp_years.buyback: 0
+  discount_rate_base: 0.15
+  discount_premium_discretionary: 0.04
+  multiple.fm_holder_flow: 18
+  regime_multiplier: 1.3
+  staked_ratio_horizon: 0.1
