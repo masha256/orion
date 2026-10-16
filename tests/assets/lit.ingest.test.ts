@@ -83,10 +83,20 @@ function world() {
     { blockNumber: blockAt('2026-07-10T18:00:00Z'), logIndex: 0, txHash: '0xq2', from: lc(C.burn_safe), value: 15_640_000n * E18 },
     { blockNumber: blockAt('2026-10-09T19:00:00Z'), logIndex: 0, txHash: '0xq3', from: lc(C.burn_safe), value: 2_450_000n * E18 },
   ];
+  // September's routing: the buyback wallet sends bought LIT to the Coinbase Prime pass-through; one unrelated sender too.
+  const routed: Omit<TransferLog, 'timestamp'>[] = [
+    { blockNumber: blockAt('2026-09-08T21:44:00Z'), logIndex: 0, txHash: '0xr1', from: lc(C.buyback_wallet), value: 1_400_000n * E18 },
+    { blockNumber: blockAt('2026-09-30T14:27:00Z'), logIndex: 0, txHash: '0xr2', from: lc(C.buyback_wallet), value: 1_500_000n * E18 },
+    { blockNumber: blockAt('2026-09-10T12:00:00Z'), logIndex: 0, txHash: '0xr3', from: '0x7630c870da000000000000000000000000000000', value: 100_000n * E18 },
+  ];
   const rpc: RpcTransport = {
     ...base,
     async getTransferLogs(q) {
-      if (lc(q.token) !== lc(C.token) || lc(q.to) !== lc(C.dead)) return [];
+      if (lc(q.token) !== lc(C.token)) return [];
+      if (lc(q.to) === lc(C.prime_passthrough)) {
+        return routed.filter((l) => l.blockNumber >= q.fromBlock && l.blockNumber <= q.toBlock).map((l) => ({ ...l, timestamp: base.timestampOf(l.blockNumber) }));
+      }
+      if (lc(q.to) !== lc(C.dead)) return [];
       return burns.filter((l) => l.blockNumber >= q.fromBlock && l.blockNumber <= q.toBlock).map((l) => ({ ...l, timestamp: base.timestampOf(l.blockNumber) }));
     },
   };
@@ -109,13 +119,16 @@ describe('assets/lit.yaml', () => {
     expect(config.metrics['flow_usd.buyback'].source).toMatchObject({ type: 'adapter', name: 'lit.treasury_buys_daily' });
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.fees', 'flow_usd.llama_revenue']);
     // A deliberate edit of assets/lit.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('f65fcd6928f851c3dc395415785249da15da585f421561b310d32d0b569282cf');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('9a1967bedf79625bdfb2accc97195c4fc0532f199e37e5298a95bbb8386b412e');
   });
 
   it('plans one allowlisted scan into dead (the quarterly burns) and the buyback run rate', () => {
     const plan = buildPlan(config);
-    expect(plan.flowGroups.map((g) => [g.sourceId, g.members.map((m) => m.metricKey)])).toEqual([[expect.stringMatching(/^transfer_flow:token>dead/), ['flow_tokens.burn']]]);
-    expect(plan.derived.map((r) => r.metricKey)).toEqual(['revenue_run_rate_usd']);
+    expect(plan.flowGroups.map((g) => [g.sourceId, g.members.map((m) => m.metricKey)])).toEqual([
+      [expect.stringMatching(/^transfer_flow:token>dead/), ['flow_tokens.burn']],
+      [expect.stringMatching(/^transfer_flow:token>prime_passthrough/), ['flow_tokens.routed_to_prime']],
+    ]);
+    expect(plan.derived.map((r) => r.metricKey).sort()).toEqual(['revenue_run_rate_usd', 'routed_to_prime_rate']);
   });
 
   it('fetches every metric, reads the buys from Lighter, and values the asset through the tick path', async () => {
@@ -144,6 +157,11 @@ describe('assets/lit.yaml', () => {
     expect(revenue.value).toBeCloseTo(25_000 * PRICE * 365, -3);
     expect(revenue.sourceDetail).toBe('derived flow_annualized(flow_usd.buyback, 91d)');
     expect(rows('flow_tokens.burn').filter((o) => o.value > 0).map((o) => o.value)).toEqual([15_640_000, 2_450_000]);
+    // Routing to Coinbase Prime: only the buyback wallet's sends count; the unrelated sender raises nothing (monitor-only).
+    expect(rows('flow_tokens.routed_to_prime').filter((o) => o.value > 0).map((o) => o.value)).toEqual([1_400_000, 1_500_000]);
+    expect(value('routed_to_prime_rate')).toBeCloseTo((2_900_000 * 365) / 91, 0);
+    // The valuation's inputs are unchanged by it.
+    expect(config.metrics['flow_tokens.routed_to_prime'].monitor_only).toBe(true);
 
     // No assumption set yet: blocked, as every new asset is until calibration.
     expect(signal.status_reasons).toContain('no_assumption_set');

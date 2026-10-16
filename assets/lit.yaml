@@ -15,6 +15,7 @@ contracts:
   burn_safe: "0x3dd7c834eaa70c98e1c224808a3c62163b344dae" # Safe (2 of 3): sends each quarter's burn from the reserve to dead
   ecosystem_reserve: "0xe554dcb002e4f3546d67e6deed84323eed989d62" # 231.8M LIT on 2026-10-16: the burns are drawn from here
   buyback_wallet: "0x1a51016fad47de690d1f48adf2f6407f3cdc160d" # the bought LIT, withdrawn from the L2; funds staking rewards
+  prime_passthrough: "0xab00e8f5f76e0522d9599b8735d4f6cfdc6e5f48" # holds nothing: forwards each transfer to Coinbase Prime 1 (0xcd53…ca7b) within minutes
 
 ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
 
@@ -107,6 +108,19 @@ metrics:
     staleness_days: 120
     monitor_only: true
     source: { type: transfer_flow, token: token, to: dead, from_allowlist: [ burn_safe ], unit: tokens }
+
+  # Report-only (2026-10-16): bought LIT the buyback wallet sends to Coinbase Prime, through the pass-through wallet. 3.0M
+  # in September 2026, about 31 percent of a year's buys; possibly the 11M USD LIT pledge to Robinhood users, possibly sold.
+  # Either way the valuation is unchanged while each quarter's burn matches the buys; it is watched in case it recurs.
+  # Other senders into the pass-through (1.3M in May-June) are not bought LIT; a monitor-only scan raises no anomaly.
+  flow_tokens.routed_to_prime:
+    type: flow
+    unit: tokens
+    cadence: daily
+    staleness_days: 120
+    monitor_only: true
+    source: { type: transfer_flow, token: token, to: prime_passthrough, from_allowlist: [ buyback_wallet ], unit: tokens }
+  routed_to_prime_rate: { type: level, unit: tokens_per_year, staleness_days: 120, monitor_only: true, source: { type: derived, name: flow_annualized, params: { metric: flow_tokens.routed_to_prime, days: 91 } } }
 
   # The last 91 days of buys, scaled to a year (Mike, 2026-10-16: window 91).
   revenue_run_rate_usd:
