@@ -1,0 +1,43 @@
+# LINK calibrated assumptions: the "central" package on the 91-day window, chosen by Mike on 2026-10-16 ("Central") after
+# the scoping and a priced preview. LIT's central with the flow renamed (base +10 percent in year one, 10x, discount 20
+# percent), discretionary capture (0.70 / 0.85 / 1.00 terminal, premium 8 / 6 / 4 percent).
+# Anchors (2026-10-16 15:12Z, scratch copy of live): spot 12.42 USD; total supply 1B (12.42B USD FDV); circulating 767M (9.52B
+# USD market cap); 91-day Reserve run rate 57.7M USD (the market pays about 215x it on total supply). Releases 70.0M LINK a
+# year from Chainlink's Safes (report-only dilution: already in total supply).
+# 12m expected 0.67 USD (bear 0.08 / base 0.37 / bull 1.84), 95 percent below spot.
+# Spot needs about a 439x multiple in every scenario, or +339 percent first-year flow growth. Mike heard this before
+# choosing; do not re-litigate it.
+# Import: orion model assumptions import link calibration/link-assumptions.yaml --rationale "..."
+bear:
+  rev_growth_y1: -0.3
+  growth_fade_years: 3
+  terminal_growth: 0.0
+  capture_rate_terminal.reserve: 0.7
+  capture_ramp_years.reserve: 0
+  discount_rate_base: 0.28
+  discount_premium_discretionary: 0.08
+  multiple.fm_holder_flow: 6
+  regime_multiplier: 0.7
+  staked_ratio_horizon: 0.1
+base:
+  rev_growth_y1: 0.1
+  growth_fade_years: 4
+  terminal_growth: 0.02
+  capture_rate_terminal.reserve: 0.85
+  capture_ramp_years.reserve: 0
+  discount_rate_base: 0.2
+  discount_premium_discretionary: 0.06
+  multiple.fm_holder_flow: 10
+  regime_multiplier: 1.0
+  staked_ratio_horizon: 0.1
+bull:
+  rev_growth_y1: 0.6
+  growth_fade_years: 5
+  terminal_growth: 0.03
+  capture_rate_terminal.reserve: 1.0
+  capture_ramp_years.reserve: 0
+  discount_rate_base: 0.15
+  discount_premium_discretionary: 0.04
+  multiple.fm_holder_flow: 18
+  regime_multiplier: 1.3
+  staked_ratio_horizon: 0.1

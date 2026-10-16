@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { updateAsset } from '../../src/app/update.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
@@ -121,7 +122,7 @@ describe('assets/link.yaml', () => {
     // The hold bucket's overhang haircut (Mike, 2026-10-16: 5 percent).
     expect(config.reporting!.haircuts).toEqual({ reserve: 0.05 });
     // A deliberate edit of assets/link.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/link.yaml`, 'utf8')).hash).toBe('c88ff8c91a65403d9b00678612a1ccba5bac792773f25468ecf7504b346ac157');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/link.yaml`, 'utf8')).hash).toBe('1b561421d5e403957bf5e78895928bf2445dd805c931660d60566bc24d59900a');
   });
 
   it('plans the Reserve scan, the two release scans and the chain levels with the Chainlink cross-check', () => {
@@ -202,5 +203,23 @@ describe('the LINK persona', () => {
     expect(persona.body).toContain('A reserve that buys and holds (LINK)');
     expect(persona.body).toContain('Releases are dilution, not emissions');
     expect(/^[\x00-\x7F]*$/.test(persona.body)).toBe(true);
+  });
+});
+
+describe('calibration/link-assumptions.yaml', () => {
+  const calibrated = parseYaml(readFileSync(`${ROOT}/calibration/link-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
+  it('is complete and sits inside the agent bands of assets/link.yaml', () => {
+    for (const s of ['bear', 'base', 'bull'] as const) {
+      expect(Object.keys(calibrated[s]).sort()).toEqual(requiredAssumptionKeys(config));
+      for (const [key, value] of Object.entries(calibrated[s])) {
+        const b = config.assumptions[key];
+        const band = b[s] ?? b;
+        expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
+        expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
+      }
+    }
+    for (const key of ['rev_growth_y1', 'multiple.fm_holder_flow', 'discount_rate_base', 'capture_rate_terminal.reserve', 'discount_premium_discretionary']) {
+      for (const s of ['bear', 'base', 'bull'] as const) expect(config.assumptions[key][s], `${s} ${key}`).toBeDefined();
+    }
   });
 });
