@@ -4,6 +4,7 @@ import type { AnomalyKind, AnomalySeverity } from '../db/anomalies.js';
 import { OrionError } from '../types.js';
 import type { HttpTransport } from './transport/http.js';
 import type { BlockRef, RpcTransport } from './transport/rpc.js';
+import type { Observation } from '../db/observations.js';
 
 /** `day` is the UTC day ('YYYY-MM-DD') the value covers. */
 export interface DailyPoint {
@@ -90,6 +91,8 @@ export interface SourceContext {
    * backfill on the first fetch of an adapter flow (no cursor yet). Absent on a routine run, when it reads its own window.
    */
   backfillDays?: number;
+  /** The asset's active stored observations of one metric (oldest first): for adapters that work from earlier readings (Solana's supply drop). */
+  observations?: (metricKey: string) => Observation[];
 }
 
 /**

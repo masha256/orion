@@ -5,6 +5,7 @@ import { cakeAdapters } from './cake.js';
 import { crvAdapters } from './crv.js';
 import { hypeAdapters } from './hype.js';
 import { litAdapters } from './lit.js';
+import { solanaAdapters } from './solana.js';
 import { vvvAdapters } from './vvv.js';
 
 /** A named code adapter: the escape hatch for metrics the declarative source types cannot express. */
@@ -32,4 +33,4 @@ export function adapterNames(): string[] {
 }
 
 // Asset-specific adapters register here, exactly as custom valuation modules do in the engine registry.
-for (const adapter of [...vvvAdapters, ...aeroAdapters, ...hypeAdapters, ...crvAdapters, ...cakeAdapters, ...litAdapters]) registerAdapter(adapter);
+for (const adapter of [...vvvAdapters, ...aeroAdapters, ...hypeAdapters, ...crvAdapters, ...cakeAdapters, ...litAdapters, ...solanaAdapters]) registerAdapter(adapter);

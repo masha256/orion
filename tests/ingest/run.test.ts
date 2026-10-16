@@ -39,6 +39,15 @@ describe('validateReading', () => {
     expect(validateReading(lvl('usd', constant), 0)).toMatch(/not positive/);
     expect(validateReading(lvl('tokens', { type: 'erc20_supply', token: 't', subtract_balances: [] }), 0)).toMatch(/not positive/);
   });
+
+  it('lets a monitor-only balance in tokens read zero (an empty burn wallet), but never a driver or a negative', () => {
+    const adapter = { type: 'adapter', name: 'solana.owner_balance', params: {} };
+    const lvl = (unit: string, monitor: boolean) => ({ ...def('level', 'usd'), unit, source: adapter, ...(monitor ? { monitor_only: true } : {}) }) as Parameters<typeof validateReading>[0];
+    expect(validateReading(lvl('tokens', true), 0)).toBeNull();
+    expect(validateReading(lvl('tokens', true), -1)).toMatch(/not positive/);
+    expect(validateReading(lvl('tokens', false), 0)).toMatch(/not positive/);
+    expect(validateReading(lvl('usd', true), 0)).toMatch(/not positive/);
+  });
 });
 
 describe('fetchAsset: levels', () => {

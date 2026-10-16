@@ -1,0 +1,169 @@
+id: pump
+symbol: PUMP
+name: Pump.fun
+chain: solana
+supply_basis: effective_total
+
+# Read live on 2026-10-16; see docs/superpowers/notes/2026-10-16-pump-onboarding.md.
+# The fee route: two pump.fun wallets swap fees into PUMP (Jupiter, PumpSwap) and burn it from the same wallet, ~9k
+# burns a day; neither holds PUMP between burns. The mint authority is revoked (Token-2022, no mint authority), so the
+# supply can only fall and every fall is a burn: the holder flow is read as the daily drop in supply (Mike, 2026-10-16).
+# Nothing is read over an EVM RPC (no ingest block): Solana is read over JSON-RPC by the solana.* adapters, keyed by
+# ORION_SOL_RPC_URL (Alchemy) with the public endpoint as the fallback.
+contracts:
+  token: "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn" # PUMP mint (Token-2022, 6 decimals, mint authority null)
+  burn_wallet_a: "99mRw3EzdJZWEUjgp1nrU4WeHsukUBjbh7gYE7pm4F3c" # buys and burns; 0 PUMP held on 2026-10-16
+  burn_wallet_b: "9jHrTCwpDANHLNQz5cem6XLUBM8KiTWKe766Br6KVCXM" # buys and burns; 3.2k PUMP held on 2026-10-16 (between burns)
+
+external_ids:
+  coingecko: pump-fun
+  defillama: pump
+
+# Every metric is fetched: no manual metric, so a bootstrap run finds nothing to research and writes only its journal.
+# DefiLlama only for the year of burn history before the first on-chain supply reading (Solana has no past-supply read),
+# the unlock schedule (no vesting contract read) and the revenue display line (fees accrue to the company).
+metrics:
+  price_usd:
+    type: level
+    unit: usd
+    staleness_days: 3
+    critical: true
+    source: { type: coingecko, id: pump-fun, field: price }
+    cross_checks:
+      # Jupiter's price API: priced from Solana pools (37M USD of liquidity on 2026-10-16), not DefiLlama.
+      - { tolerance_pct: 2, source: { type: http_json, url: "https://lite-api.jup.ag/price/v3?ids=pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn", path: pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn.usdPrice } }
+
+  # The mint's supply: 827.64B on 2026-10-16 (1T at launch; 172.4B burned). Team and investor tokens stay inside
+  # (effective_total, as for every Orion asset). CoinGecko's total tracks the burns (827.67B), so 2 percent.
+  total_supply:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    critical: true
+    source: { type: adapter, name: solana.token_supply, params: { mint: token } }
+    cross_checks:
+      - { tolerance_pct: 2, source: { type: coingecko, id: pump-fun, field: total_supply } }
+
+  # CoinGecko's own definition (462.8B on 2026-10-16); the report's market cap.
+  circulating_supply:
+    type: level
+    unit: tokens
+    staleness_days: 14
+    source: { type: coingecko, id: pump-fun, field: circulating_supply }
+
+  staked_supply:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    source: { type: constant, value: 0, note: "no staking; the burn reaches every holder" }
+
+  staker_emission_share:
+    type: level
+    unit: ratio
+    staleness_days: 7
+    source: { type: constant, value: 0, note: "no emissions" }
+
+  # No minting can happen: the mint authority is null. The unlocks are tokens already in total supply, so they are
+  # reported as dilution (reporting.dilution), never counted as an emission.
+  emission_rate_annual:
+    type: schedule
+    unit: tokens_per_year
+    staleness_days: 45
+    critical: true
+    source: { type: constant, value: 0, note: "mint authority revoked; unlocks move tokens already in total supply" }
+
+  # The holder flow: PUMP burned each completed UTC day (the fall in supply between daily readings, spread over the time
+  # between them), priced at the day's mean CoinGecko price. Before the first on-chain reading: DefiLlama's daily holders
+  # revenue (its pump adapter sums the same two wallets' burns; 09-22 to 10-15: supply fall 25.4M USD vs DefiLlama 25.5M).
+  flow_usd.buyback:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 4
+    critical: true
+    source: { type: adapter, name: solana.supply_burn_daily, params: { mint: token, unit: usd, supply_metric: total_supply, days: 7, history: { slug: pump, data_type: dailyHoldersRevenue } } }
+
+  # The same burns in PUMP.
+  flow_tokens.buyback:
+    type: flow
+    unit: tokens
+    cadence: daily
+    staleness_days: 4
+    monitor_only: true
+    source: { type: adapter, name: solana.supply_burn_daily, params: { mint: token, unit: tokens, supply_metric: total_supply, days: 7, history: { slug: pump, data_type: dailyHoldersRevenue } } }
+
+  # The last 91 days of burns, scaled to a year.
+  revenue_run_rate_usd:
+    type: level
+    unit: usd
+    staleness_days: 4
+    critical: true
+    source: { type: derived, name: flow_annualized, params: { metric: flow_usd.buyback, days: 91 } }
+
+  # Report-only: PUMP the two burn wallets hold. Near zero while they burn what they buy; a build-up means bought PUMP
+  # is being held rather than burned.
+  burn_wallet_a_pump: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: adapter, name: solana.owner_balance, params: { mint: token, owner: burn_wallet_a } } }
+  burn_wallet_b_pump: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: adapter, name: solana.owner_balance, params: { mint: token, owner: burn_wallet_b } } }
+
+  # Report-only: team and existing-investor tokens unlocking over the next 365 days (82.5B on 2026-10-16: ~6.9B a month
+  # to mid-2029). DefiLlama's emissions dataset, the asset-specific series with no on-chain source.
+  unlocks_next_year: { type: level, unit: tokens_per_year, staleness_days: 14, monitor_only: true, source: { type: adapter, name: lit.unlocks_next_year, params: { url: "https://defillama-datasets.llama.fi/emissions/pump", allocations: [ Team, Existing Investors ] } } }
+
+  # Display only: DefiLlama's revenue (the company's take, all pump products); the burn's share of it is the capture.
+  flow_usd.llama_revenue:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 5
+    monitor_only: true
+    source: { type: defillama, slug: pump, data_type: dailyRevenue, backfill_days: 370 }
+
+# discretionary (Mike, 2026-10-16): the company sets the share (100 percent of its fee slice from 2025-07-14, cut to 50
+# percent on 2026-04-28) and runs the wallets; no contract binds it.
+holder_flows:
+  - { id: buyback, kind: burn, capture_rule: discretionary, recipient_base: all, metric: flow_usd.buyback, window_days: 91 }
+
+# UNI's, CAKE's and LIT's shape: the discounted flow carries most of the weight, the market's multiple on it the rest.
+# Structural: the agent may only propose.
+modules:
+  - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.6 }
+  - { id: fm_holder_flow, type: forward_multiple, kind: estimate, weight: 0.4, params: { basis: holder_flow } }
+
+scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }
+
+# Placeholder agent bands until calibration (LIT's, a discretionary burn): wide min/max only.
+assumptions:
+  rev_growth_y1: { min: -0.6, max: 3.0 }
+  growth_fade_years: { min: 1, max: 10 }
+  terminal_growth: { min: 0, max: 0.05 }
+  capture_rate_terminal.buyback: { min: 0.3, max: 1.0 }
+  capture_ramp_years.buyback: { min: 0, max: 4 }
+  discount_rate_base: { min: 0.08, max: 0.35 }
+  discount_premium_discretionary: { min: 0, max: 0.15 }
+  multiple.fm_holder_flow: { min: 3, max: 200 }
+  regime_multiplier: { min: 0.4, max: 1.6 }
+  staked_ratio_horizon: { min: 0.01, max: 1 }
+
+agent:
+  budgets:
+    weekly: { input_tokens: 2000000 }
+
+review_triggers:
+  driver_deviation_pct: 25
+  provisional_move_pct: 25
+
+peer_set: []
+
+# Report-only holder yield and growth. A burn: no haircut. Revenue = DefiLlama's revenue (the company's take); paid to
+# holders = the burns. The unlocks are the dilution, the burns in PUMP the tokens removed.
+reporting:
+  window_days: 91
+  haircuts: { buyback: 0 }
+  revenue:
+    - { id: protocol, label: "pump.fun revenue (DefiLlama dailyRevenue)", metric: flow_usd.llama_revenue, settlement: daily }
+  income:
+    lines:
+      - { id: buyback, to: holders, metric: flow_usd.buyback, note: "company wallets buy PUMP daily and burn it (supply drop)" }
+  burned_tokens: [ flow_tokens.buyback ]
+  dilution:
+    - { id: unlocks, metric: unlocks_next_year, note: "team and existing-investor vesting to mid-2029 (DefiLlama emissions)" }

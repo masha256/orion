@@ -55,9 +55,9 @@ describe('cadence config', () => {
   });
 
   it('leaves the config hashes where they were: no schema default was added', () => {
-    // Pinned on main 3e1d547 before sub-project 4; re-pinned 2026-10-12 for the effective_supply -> total_supply rename, and again for the revenue streams (VVV's revenue is its disclosures). A schema change that adds a default moves these; a deliberate edit of assets/vvv.yaml moves the second, and then this pin is updated on purpose.
+    // Pinned on main 3e1d547 before sub-project 4; re-pinned 2026-10-12 for the effective_supply -> total_supply rename, and again for the revenue streams (VVV's revenue is its disclosures), and for 73464de (VVV revenue_run_rate_usd staleness 60 -> 90). A schema change that adds a default moves these; a deliberate edit of assets/vvv.yaml moves the second, and then this pin is updated on purpose.
     expect(parseAssetYaml(MINI_ASSET_YAML).hash).toBe('9b7c93a3ff62133541f28620f8f5079fc5055c8e2405d2374a9b559d62456f30');
-    expect(parseAssetYaml(readFileSync(join(process.cwd(), 'assets', 'vvv.yaml'), 'utf8')).hash).toBe('71a89bdb12109c79e46f97b1fd373cdf30dd9240d66afa94ede1daf654adbb18');
+    expect(parseAssetYaml(readFileSync(join(process.cwd(), 'assets', 'vvv.yaml'), 'utf8')).hash).toBe('979829372427f0f8ad9aedc21d8dd15ac178143ede8c9d8cc8f44d17e48775c4');
     expect(asset.agent).toBeUndefined();
     expect(asset.review_triggers).toEqual({});
   });
