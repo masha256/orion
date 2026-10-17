@@ -1,6 +1,8 @@
 # Orion: category dominance as an input to the assumptions (design, 2026-10-17)
 
-Status: draft for Mike's review. Nothing built yet.
+Status: approved by Mike, 2026-10-17 ("All your recommendations are good"): chain-local share for AERO (Base) and CAKE
+(BSC); LINK manual quarterly, no DefiLlama Pro; all 8 assets rolled out at once. Plan:
+`docs/superpowers/plans/2026-10-17-orion-dominance.md`.
 
 ## Why
 
