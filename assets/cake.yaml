@@ -138,6 +138,13 @@ metrics:
     monitor_only: true
     source: { type: defillama, slug: pancakeswap, data_type: dailyRevenue, backfill_days: 100 }
 
+  # Category share from DefiLlama's free overview, grouped by parentProtocol (Mike, 2026-10-17): monitor_only, never a
+  # driver, never in the grade; the analyst reads it as a durability input.
+  # share of DEX volume on BSC, 30 days
+  dominance_share: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: defillama_share, parent: "parent#pancakeswap", category: Dexs, overview: dexs, chain: BSC, window: 30d } }
+  # share of DEX volume on BSC, 1 year
+  dominance_share_1y: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: defillama_share, parent: "parent#pancakeswap", category: Dexs, overview: dexs, chain: BSC, window: 1y } }
+
 holder_flows:
   - { id: burn, kind: burn, capture_rule: programmatic, recipient_base: all, metric: flow_usd.burn, window_days: 91 }
 

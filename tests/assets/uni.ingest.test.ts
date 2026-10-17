@@ -15,6 +15,7 @@ import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import type { AssumptionValues } from '../../src/types.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { llamaOverview } from '../helpers/llamaOverview.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -64,6 +65,7 @@ function burnLogs() {
 
 function world() {
   const http = fakeHttp({
+    'https://api.llama.fi/overview/dexs': llamaOverview('parent#uniswap', 'Dexs'),
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'uniswap', symbol: 'uni', current_price: PRICE, market_cap: 4.7e9, circulating_supply: 624_978_422, total_supply: 887_216_418 }],
     'https://api.coingecko.com/api/v3/coins/uniswap/market_chart': uniChart,
     'https://api.llama.fi/summary/fees/uniswap': feesChart(),
@@ -109,8 +111,13 @@ describe('assets/uni.yaml', () => {
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // DefiLlama only for the gross swap fees (Mike, 2026-10-11): the one series with no on-chain source.
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama' || d.cross_checks?.some((c) => c.source.type === 'defillama')).map(([k]) => k)).toEqual(['flow_usd.swap_fees']);
+    // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
+    for (const key of ['dominance_share', 'dominance_share_1y']) expect(config.metrics[key]).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true, staleness_days: 7 });
+    expect(config.metrics.dominance_share.source).toEqual({ type: 'defillama_share', parent: 'parent#uniswap', category: 'Dexs', overview: 'dexs', window: '30d' });
+    expect(config.metrics.dominance_share_1y.source).toEqual({ type: 'defillama_share', parent: 'parent#uniswap', category: 'Dexs', overview: 'dexs', window: '1y' });
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check; then the revenue label (protocol fees, v2 + selected v3). A deliberate edit of assets/uni.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('f4541201fbae2cfe6772dbbdea9b2965a15c1b20211b107bda04ab186a60d4a1');
+    // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('de53c5930057c340b192b67311dcb41c0bd0b4b296402fc6b5193385c4bda04d');
   });
 
   it('plans one any-sender scan of burns, the chain levels with the Chainlink cross-check, the constants and the fees feed', () => {
@@ -120,6 +127,8 @@ describe('assets/uni.yaml', () => {
       ['chain_levels', ['cross_check:price_usd', 'primary:total_supply', 'primary:labs_vest_rate', 'primary:labs_vest_approved', 'primary:treasury_uni']],
       ['constant', ['primary:staked_supply', 'primary:staker_emission_share', 'primary:emission_rate_annual']],
       ['defillama:uniswap:dailyFees', ['primary:flow_usd.swap_fees']],
+      ['defillama_share:dexs:Dexs:parent#uniswap:30d', ['primary:dominance_share']],
+      ['defillama_share:dexs:Dexs:parent#uniswap:1y', ['primary:dominance_share_1y']],
     ]);
     expect(plan.flowGroups).toHaveLength(1);
     expect(plan.flowGroups[0]).toMatchObject({ sourceId: 'transfer_flow:token>dead[*]', anySender: true, allowlist: [], ignore: [C.timelock.toLowerCase()] });
@@ -132,6 +141,8 @@ describe('assets/uni.yaml', () => {
     createAssumptionSet(w.db, { assetId: 'uni', author: 'user', rationale: 'wiring', values: assumptions(), createdAt: NOW.toISOString() });
     const { fetch: r, signal } = await updateAsset(w.db, loadAsset(ROOT, 'uni'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
+    // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
+    expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'uni', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
     const scan = r.sources.find((s) => s.sourceId === 'transfer_flow:token>dead[*]')!;

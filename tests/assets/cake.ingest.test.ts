@@ -16,6 +16,7 @@ import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.j
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import type { AssumptionValues } from '../../src/types.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { llamaOverview } from '../helpers/llamaOverview.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -69,6 +70,7 @@ function logsBySink(): Record<string, Omit<TransferLog, 'timestamp'>[]> {
 
 function world() {
   const http = fakeHttp({
+    'https://api.llama.fi/overview/dexs/BSC': llamaOverview('parent#pancakeswap', 'Dexs'),
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'pancakeswap-token', symbol: 'cake', current_price: PRICE, market_cap: 7.3e8, circulating_supply: 317_949_435, total_supply: 329_536_890 }],
     'https://api.coingecko.com/api/v3/coins/pancakeswap-token/market_chart': cakeChart,
     'https://api.llama.fi/summary/fees/pancakeswap?dataType=dailyFees': llamaChart(560_000),
@@ -118,8 +120,13 @@ describe('assets/cake.yaml', () => {
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // DefiLlama only for the display series with no on-chain source (fees paid in thousands of pool tokens).
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.fees', 'flow_usd.llama_revenue']);
+    // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
+    for (const key of ['dominance_share', 'dominance_share_1y']) expect(config.metrics[key]).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true, staleness_days: 7 });
+    expect(config.metrics.dominance_share.source).toEqual({ type: 'defillama_share', parent: 'parent#pancakeswap', category: 'Dexs', overview: 'dexs', chain: 'BSC', window: '30d' });
+    expect(config.metrics.dominance_share_1y.source).toEqual({ type: 'defillama_share', parent: 'parent#pancakeswap', category: 'Dexs', overview: 'dexs', chain: 'BSC', window: '1y' });
     // A deliberate edit of assets/cake.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/cake.yaml`, 'utf8')).hash).toBe('dad03af04aa229460abab2b37ee03b1c8153152dceeb33e0e332a594af2c0696');
+    // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/cake.yaml`, 'utf8')).hash).toBe('da47929086a9e95edfa1266c808b174583de672bc47369c8d7d788fd0f07e554');
   });
 
   it('plans one allowlisted scan into the burner (chef ignored, dust floor) and one into the treasury', () => {
@@ -136,6 +143,8 @@ describe('assets/cake.yaml', () => {
     createAssumptionSet(w.db, { assetId: 'cake', author: 'user', rationale: 'calibrated', values: placeholder, createdAt: NOW.toISOString() });
     const { fetch: r, signal } = await updateAsset(w.db, loadAsset(ROOT, 'cake'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
+    // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
+    expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'cake', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
     const burnScan = r.sources.find((s) => s.sourceId.startsWith('transfer_flow:token>burner'))!;

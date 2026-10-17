@@ -14,6 +14,7 @@ import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { llamaOverview } from '../helpers/llamaOverview.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -52,6 +53,7 @@ function world() {
   const t0 = Date.parse('2026-12-29T00:00:00Z') / 1000;
   const linear = (perWeek: number) => Array.from({ length: 1200 }, (_, i) => ({ timestamp: t0 + (i - 80) * 86_400, unlocked: Math.max(0, ((i - 80) * perWeek) / 7) }));
   const http = fakeHttp({
+    'https://api.llama.fi/overview/fees': llamaOverview('parent#lighter', 'Derivatives'),
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'lighter', symbol: 'lit', current_price: PRICE, market_cap: 7.6e8, circulating_supply: 250_000_000, total_supply: 1_000_000_000 }],
     'https://mainnet.zklighter.elliot.ai/api/v1/orderBookDetails?market_id=2049': { code: 200, order_book_details: [], spot_order_book_details: [{ market_id: 2049, last_trade_price: 3.05 }] },
     'https://mainnet.zklighter.elliot.ai/api/v1/trades': (url: string) => {
@@ -118,8 +120,13 @@ describe('assets/lit.yaml', () => {
     // Lighter's own data for the holder flow (Mike, 2026-10-16); DefiLlama only for display series and the unlock schedule.
     expect(config.metrics['flow_usd.buyback'].source).toMatchObject({ type: 'adapter', name: 'lit.treasury_buys_daily' });
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.fees', 'flow_usd.llama_revenue']);
+    // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
+    for (const key of ['dominance_share', 'dominance_share_1y']) expect(config.metrics[key]).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true, staleness_days: 7 });
+    expect(config.metrics.dominance_share.source).toEqual({ type: 'defillama_share', parent: 'parent#lighter', category: 'Derivatives', overview: 'fees', window: '30d' });
+    expect(config.metrics.dominance_share_1y.source).toEqual({ type: 'defillama_share', parent: 'parent#lighter', category: 'Derivatives', overview: 'fees', window: '1y' });
     // A deliberate edit of assets/lit.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('9a1967bedf79625bdfb2accc97195c4fc0532f199e37e5298a95bbb8386b412e');
+    // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('ad683e198b9b97af4d0067e339b89323b1711fe3e689fbb7f9fd404353f926a5');
   });
 
   it('plans one allowlisted scan into dead (the quarterly burns) and the buyback run rate', () => {
@@ -135,6 +142,8 @@ describe('assets/lit.yaml', () => {
     const w = world();
     const { fetch: r, signal } = await updateAsset(w.db, loadAsset(ROOT, 'lit'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
+    // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
+    expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'lit', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
 

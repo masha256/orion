@@ -127,6 +127,10 @@ metrics:
     source: { type: transfer_flow, token: token, to: release_rewards, from_any: true, ignore_below_tokens: 1000, unit: tokens }
   released_rate: { type: level, unit: tokens_per_year, staleness_days: 120, monitor_only: true, source: { type: derived, name: flow_annualized, params: { metrics: [ flow_tokens.released_hub, flow_tokens.released_rewards ], days: 365 } } }
 
+  # Category share (Mike, 2026-10-17): monitor_only, never a driver, never in the grade. No source, so it is a manual metric.
+  # share of oracle total value secured, DefiLlama-derived, recorded quarterly by research with a citation; DefiLlama's oracle API is paywalled
+  dominance_share: { type: level, unit: ratio, staleness_days: 7, monitor_only: true }
+
 # buy_and_hold, discretionary (Mike, 2026-10-16): Chainlink chooses which revenue is routed on chain and controls the
 # Reserve's timelock. Held, not burned: on total supply the flow does not shrink the supply path.
 holder_flows:

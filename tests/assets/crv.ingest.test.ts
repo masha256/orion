@@ -13,6 +13,7 @@ import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import type { AssumptionValues } from '../../src/types.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { llamaOverview } from '../helpers/llamaOverview.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -48,6 +49,7 @@ const PAYOUT = 98_566n;
 
 function world() {
   const http = fakeHttp({
+    'https://api.llama.fi/overview/dexs': llamaOverview('parent#curve-finance', 'Dexs'),
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'curve-dao-token', symbol: 'crv', current_price: 0.3933, market_cap: 619e6, circulating_supply: 1_574_000_000, total_supply: 2_424_321_556 }],
     'https://api.coingecko.com/api/v3/coins/crvusd/market_chart': crvusdChart,
     [LLAMA]: { coins: { 'ethereum:0xD533a949740bb3306d119CC777fa900bA034cd52': { decimals: 18, symbol: 'CRV', price: 0.3897, timestamp: 1791440000, confidence: 0.99 } } },
@@ -104,8 +106,13 @@ describe('assets/crv.yaml', () => {
     expect(requiredExtraMetrics(config)).toEqual(['vote_incentive_run_rate_usd']);
     // Every metric has a source, and none is manual: a bootstrap run has nothing to research and the grade can be A.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
+    // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
+    for (const key of ['dominance_share', 'dominance_share_1y']) expect(config.metrics[key]).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true, staleness_days: 7 });
+    expect(config.metrics.dominance_share.source).toEqual({ type: 'defillama_share', parent: 'parent#curve-finance', category: 'Dexs', overview: 'dexs', window: '30d' });
+    expect(config.metrics.dominance_share_1y.source).toEqual({ type: 'defillama_share', parent: 'parent#curve-finance', category: 'Dexs', overview: 'dexs', window: '1y' });
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/crv.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('8365897910ed75922a5641e723b8373df363d425b74fa855d0f3b6c4a6bdc30f');
+    // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('40b3b34594a1bb5df19c3d377034614b91511251179a218b2b669a0d369d2dde');
   });
 
   it('plans the source map of the spec: one transfer scan, a constant, an adapter, the bribes feed', () => {
@@ -124,6 +131,8 @@ describe('assets/crv.yaml', () => {
       ['constant', ['primary:staker_emission_share']],
       ['adapter:crv.emission_rate_annual', ['primary:emission_rate_annual']],
       [`http_json:${BRIBES}`, ['primary:vote_incentive_run_rate_usd', 'cross_check:vote_incentive_run_rate_usd']],
+      ['defillama_share:dexs:Dexs:parent#curve-finance:30d', ['primary:dominance_share']],
+      ['defillama_share:dexs:Dexs:parent#curve-finance:1y', ['primary:dominance_share_1y']],
     ]);
     // The holder flow, then the report-only income lines: Curve's 10 percent (Treasury) and every fee into the FeeAllocator.
     expect(plan.flowGroups.map((g) => g.members.map((m) => [m.metricKey, m.unit]))).toEqual([[['flow_usd.fees', 'usd']], [['flow_usd.curve_treasury', 'usd']], [['flow_usd.protocol_revenue', 'usd']]]);
@@ -135,6 +144,8 @@ describe('assets/crv.yaml', () => {
     const w = world();
     const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
+    // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
+    expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'crv', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
     const rows = (metric: string) => listActiveObservations(w.db, 'crv', metric);

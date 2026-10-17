@@ -14,6 +14,7 @@ import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import type { AssumptionValues } from '../../src/types.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { llamaOverview } from '../helpers/llamaOverview.js';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-10-16T06:00:00.000Z');
@@ -38,6 +39,7 @@ function world(supplyNow: number) {
     return { totalDataChart };
   };
   const http = fakeHttp({
+    'https://api.llama.fi/overview/fees': llamaOverview('parent#pump', 'Launchpad'),
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'pump-fun', symbol: 'pump', current_price: PRICE, market_cap: 2.3e9, circulating_supply: 462.8e9, total_supply: supplyNow }],
     'https://api.coingecko.com/api/v3/coins/pump-fun/market_chart': (url: string) => ({ prices: prices(Number(new URL(url).searchParams.get('days'))) }),
     'https://lite-api.jup.ag/price/v3': { [MINT]: { usdPrice: PRICE * 1.001 } },
@@ -86,8 +88,13 @@ describe('assets/pump.yaml', () => {
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.llama_revenue']);
     expect(config.metrics['flow_usd.llama_revenue'].monitor_only).toBe(true);
     expect(config.reporting!.dilution).toEqual([expect.objectContaining({ id: 'unlocks', metric: 'unlocks_next_year' })]);
+    // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
+    for (const key of ['dominance_share', 'dominance_share_1y']) expect(config.metrics[key]).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true, staleness_days: 7 });
+    expect(config.metrics.dominance_share.source).toEqual({ type: 'defillama_share', parent: 'parent#pump', category: 'Launchpad', overview: 'fees', window: '30d' });
+    expect(config.metrics.dominance_share_1y.source).toEqual({ type: 'defillama_share', parent: 'parent#pump', category: 'Launchpad', overview: 'fees', window: '1y' });
     // A deliberate edit of assets/pump.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/pump.yaml`, 'utf8')).hash).toBe('ecfec62a85f86509482c420743d24471a7b74853cb8e87b38c210ad630e9f71c');
+    // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/pump.yaml`, 'utf8')).hash).toBe('f98a4954af424e8a750f8731954bf2d7db2448d697ddec0381503d6779a38ddc');
   });
 
   it('plans the Solana readers, CoinGecko, the Jupiter price check, the unlocks and the revenue line, and no EVM scan', () => {
@@ -124,6 +131,8 @@ describe('assets/pump.yaml', () => {
     seedReadings(w.db, 10, supplyNow);
     const { fetch: r, signal } = await updateAsset(w.db, loadAsset(ROOT, 'pump'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error])).toEqual([]);
+    // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
+    expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'pump', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
     expect(r.anomalies).toEqual([]);
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual(expect.arrayContaining([['total_supply', true], ['price_usd', true]]));
     const rows = (m: string) => listActiveObservations(w.db, 'pump', m);

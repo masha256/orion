@@ -118,6 +118,13 @@ metrics:
     monitor_only: true
     source: { type: defillama, slug: pump, data_type: dailyRevenue, backfill_days: 370 }
 
+  # Category share from DefiLlama's free overview, grouped by parentProtocol (Mike, 2026-10-17): monitor_only, never a
+  # driver, never in the grade; the analyst reads it as a durability input.
+  # share of Launchpad fees, all chains, 30 days
+  dominance_share: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: defillama_share, parent: "parent#pump", category: Launchpad, overview: fees, window: 30d } }
+  # share of Launchpad fees, all chains, 1 year
+  dominance_share_1y: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: defillama_share, parent: "parent#pump", category: Launchpad, overview: fees, window: 1y } }
+
 # discretionary (Mike, 2026-10-16): the company sets the share (100 percent of its fee slice from 2025-07-14, cut to 50
 # percent on 2026-04-28) and runs the wallets; no contract binds it.
 holder_flows:

@@ -13,6 +13,7 @@ import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { addDays } from '../../src/ingest/time.js';
 import type { AssumptionValues } from '../../src/types.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { llamaOverview } from '../helpers/llamaOverview.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -35,6 +36,7 @@ function chart(): { totalDataChart: [number, number][] } {
 
 function world() {
   const http = fakeHttp({
+    'https://api.llama.fi/overview/dexs/Base': llamaOverview('parent#aerodrome', 'Dexs'),
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'aerodrome-finance', symbol: 'aero', current_price: 0.671936, market_cap: 668227328, circulating_supply: 992591965.5968602, total_supply: 1983240735.576791 }],
     [LLAMA]: { coins: { 'base:0x940181a94a35a4569e4529a3cdfb74e38fd98631': { decimals: 18, symbol: 'AERO', price: 0.673898492508311, timestamp: 1790197250, confidence: 0.99 } } },
     'https://api.llama.fi/summary/fees/aerodrome': chart(),
@@ -77,8 +79,13 @@ describe('assets/aero.yaml', () => {
     ]);
     // Every metric has a source: a bootstrap run has nothing to research on this asset.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
+    // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
+    for (const key of ['dominance_share', 'dominance_share_1y']) expect(config.metrics[key]).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true, staleness_days: 7 });
+    expect(config.metrics.dominance_share.source).toEqual({ type: 'defillama_share', parent: 'parent#aerodrome', category: 'Dexs', overview: 'dexs', chain: 'Base', window: '30d' });
+    expect(config.metrics.dominance_share_1y.source).toEqual({ type: 'defillama_share', parent: 'parent#aerodrome', category: 'Dexs', overview: 'dexs', chain: 'Base', window: '1y' });
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/aero.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/aero.yaml`, 'utf8')).hash).toBe('858d97b82cf92e0ed26fdb302b3cf958968beb483b68f8d8594d328691853d71');
+    // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/aero.yaml`, 'utf8')).hash).toBe('d13ba5733eceae83d166a79f1ebda277cbb315068be1a3126b3365766341d4c7');
   });
 
   it('plans the source map of the spec: no transfer scan, one API-series flow, one derived level, two adapters', () => {
@@ -90,6 +97,8 @@ describe('assets/aero.yaml', () => {
       ['adapter:aero.staker_emission_share', ['primary:staker_emission_share']],
       ['adapter:aero.emission_rate_annual', ['primary:emission_rate_annual']],
       ['defillama:aerodrome:dailyHoldersRevenue', ['primary:flow_usd.fees']],
+      ['defillama_share:dexs/Base:Dexs:parent#aerodrome:30d', ['primary:dominance_share']],
+      ['defillama_share:dexs/Base:Dexs:parent#aerodrome:1y', ['primary:dominance_share_1y']],
     ]);
     expect(plan.flowGroups).toEqual([]);
     expect(plan.derived.map((r) => r.metricKey)).toEqual(['revenue_run_rate_usd']);
@@ -100,6 +109,8 @@ describe('assets/aero.yaml', () => {
     const w = world();
     const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
+    // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
+    expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'aero', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
     const value = (metric: string) => listActiveObservations(w.db, 'aero', metric).at(-1)!.value;

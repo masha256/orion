@@ -116,13 +116,19 @@ describe('assets/link.yaml', () => {
       'multiple.fm_holder_flow', 'regime_multiplier', 'rev_growth_y1', 'staked_ratio_horizon', 'terminal_growth',
     ]);
     expect(requiredExtraMetrics(config)).toEqual([]);
-    expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
+    // One manual metric, monitor-only so it never touches the grade: the category share, recorded by research (2026-10-17).
+    expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual(['dominance_share']);
     // No DefiLlama at all (Mike, 2026-10-11): the Reserve flow and the releases are read on chain.
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama' || d.cross_checks?.some((c) => c.source.type === 'defillama')).map(([k]) => k)).toEqual([]);
     // The hold bucket's overhang haircut (Mike, 2026-10-16: 5 percent).
     expect(config.reporting!.haircuts).toEqual({ reserve: 0.05 });
+    // Category share (Mike, 2026-10-17): manual, recorded quarterly by research; DefiLlama's oracle API is paywalled. No 1y twin.
+    expect(config.metrics.dominance_share).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true });
+    expect(config.metrics.dominance_share.source).toBeUndefined();
+    expect(config.metrics.dominance_share_1y).toBeUndefined();
     // A deliberate edit of assets/link.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/link.yaml`, 'utf8')).hash).toBe('1b561421d5e403957bf5e78895928bf2445dd805c931660d60566bc24d59900a');
+    // Re-pinned 2026-10-17: dominance_share (monitor-only category share).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/link.yaml`, 'utf8')).hash).toBe('73f51cadca195a60c4e6ce3df33ea7d38b20cd33e9ad62e483da58568a7a91fe');
   });
 
   it('plans the Reserve scan, the two release scans and the chain levels with the Chainlink cross-check', () => {
