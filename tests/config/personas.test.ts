@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -111,5 +112,23 @@ describe('skills', () => {
 
   it('returns nothing when the directory does not exist', () => {
     expect(loadSkills(join(home, 'nowhere'))).toEqual([]);
+  });
+});
+
+describe('dominance rule in the sector personas (2026-10-17)', () => {
+  const ROOT_DIR = fileURLToPath(new URL('../..', import.meta.url));
+  const SECTOR = ['onchain-dex-analyst', 'perp-exchange-analyst', 'consumer-launchpad-analyst', 'stablecoin-protocol-analyst', 'oracle-network-analyst'];
+  for (const name of SECTOR) {
+    it(`${name} carries the durability rule`, () => {
+      const p = loadPersona(ROOT_DIR, name);
+      expect(p.body).toContain('Dominance sets durability, not growth.');
+      expect(p.body).toContain('`dominance_share`');
+      expect(p.body).toContain('Never use it to move `rev_growth_y1` or a multiple');
+    });
+  }
+  it('only the oracle persona carries the manual-research sentence', () => {
+    for (const name of SECTOR) {
+      expect(loadPersona(ROOT_DIR, name).body.includes('is manual: when the latest is more than 90 days old')).toBe(name === 'oracle-network-analyst');
+    }
   });
 });
