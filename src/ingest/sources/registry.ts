@@ -6,6 +6,7 @@ import { chainLevelsSource } from './chainLevels.js';
 import { coingeckoSource } from './coingecko.js';
 import { constantSource } from './constant.js';
 import { defillamaSource } from './defillama.js';
+import { defillamaShareSource } from './defillamaShare.js';
 import { httpJsonSource } from './httpJson.js';
 
 /** Batch handlers by source type. transfer_flow and derived are not batch handlers: fetchAsset runs them itself. */
@@ -13,6 +14,7 @@ const HANDLERS: Partial<Record<SourceConfig['type'], SourceHandler>> = {
   coingecko: coingeckoSource,
   http_json: httpJsonSource,
   defillama: defillamaSource,
+  defillama_share: defillamaShareSource,
   erc20_supply: chainLevelsSource,
   contract_read: chainLevelsSource,
   adapter: adapterSource,

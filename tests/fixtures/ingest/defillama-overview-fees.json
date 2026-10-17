@@ -1,0 +1,149 @@
+{
+  "protocols": [
+    {
+      "name": "Uniswap V3",
+      "displayName": "Uniswap V3",
+      "slug": "uniswap-v3",
+      "category": "Dexs",
+      "parentProtocol": "parent#uniswap",
+      "total24h": 3,
+      "total7d": 25,
+      "total30d": 100,
+      "total1y": 1000,
+      "chains": [
+        "Ethereum"
+      ]
+    },
+    {
+      "name": "Uniswap V2",
+      "displayName": "Uniswap V2",
+      "slug": "uniswap-v2",
+      "category": "Dexs",
+      "parentProtocol": "parent#uniswap",
+      "total24h": 2,
+      "total7d": 12,
+      "total30d": 50,
+      "total1y": 400,
+      "chains": [
+        "Ethereum"
+      ]
+    },
+    {
+      "name": "Aerodrome Slipstream",
+      "displayName": "Aerodrome Slipstream",
+      "slug": "aerodrome-slipstream",
+      "category": "Dexs",
+      "parentProtocol": "parent#aerodrome",
+      "total24h": 1,
+      "total7d": 7,
+      "total30d": 30,
+      "total1y": 300,
+      "chains": [
+        "Ethereum"
+      ]
+    },
+    {
+      "name": "Hyperliquid Spot Orderbook",
+      "displayName": "Hyperliquid Spot Orderbook",
+      "slug": "hyperliquid-spot-orderbook",
+      "category": "Dexs",
+      "parentProtocol": "parent#hyperliquid",
+      "total24h": 1,
+      "total7d": 5,
+      "total30d": 20,
+      "total1y": 150,
+      "chains": [
+        "Ethereum"
+      ]
+    },
+    {
+      "name": "Hyperliquid Perps",
+      "displayName": "Hyperliquid Perps",
+      "slug": "hyperliquid-perps",
+      "category": "Derivatives",
+      "parentProtocol": "parent#hyperliquid",
+      "total24h": 7,
+      "total7d": 50,
+      "total30d": 200,
+      "total1y": 2000,
+      "chains": [
+        "Ethereum"
+      ]
+    },
+    {
+      "name": "Hyperliquid HIP-3",
+      "displayName": "Hyperliquid HIP-3",
+      "slug": "hyperliquid-hip3",
+      "category": "Derivatives",
+      "parentProtocol": "parent#hyperliquid",
+      "total24h": 0.3,
+      "total7d": 2,
+      "total30d": 10,
+      "total1y": 40,
+      "chains": [
+        "Ethereum"
+      ]
+    },
+    {
+      "name": "Lighter",
+      "displayName": "Lighter",
+      "slug": "lighter",
+      "category": "Derivatives",
+      "total24h": 3,
+      "total7d": 20,
+      "total30d": 90,
+      "total1y": 900,
+      "chains": [
+        "Ethereum"
+      ]
+    },
+    {
+      "name": "Curve DEX",
+      "displayName": "Curve DEX",
+      "slug": "curve-dex",
+      "category": "Dexs",
+      "parentProtocol": "parent#curve-finance",
+      "total24h": null,
+      "total7d": null,
+      "total30d": null,
+      "total1y": 60,
+      "chains": [
+        "Ethereum"
+      ]
+    },
+    {
+      "name": "PancakeSwap AMM V3",
+      "displayName": "PancakeSwap AMM V3",
+      "slug": "pancakeswap-amm-v3",
+      "category": "Dexs",
+      "parentProtocol": "parent#pancakeswap",
+      "total24h": 1,
+      "total7d": 10,
+      "total30d": 40,
+      "chains": [
+        "Ethereum"
+      ]
+    },
+    {
+      "name": "pump.fun",
+      "displayName": "pump.fun",
+      "slug": "pump.fun",
+      "category": "Launchpad",
+      "parentProtocol": "parent#pump",
+      "total24h": 2,
+      "total7d": 18,
+      "total30d": 70,
+      "total1y": 700,
+      "chains": [
+        "Ethereum"
+      ]
+    }
+  ],
+  "allChains": [
+    "Ethereum",
+    "Base",
+    "BSC"
+  ],
+  "total24h": 20.3,
+  "total30d": 610
+}

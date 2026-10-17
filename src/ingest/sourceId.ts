@@ -13,6 +13,8 @@ export function sourceId(s: SourceConfig): string {
       return `http_json:${s.url}`;
     case 'defillama':
       return `defillama:${s.slug}:${s.data_type}`;
+    case 'defillama_share':
+      return `defillama_share:${s.overview}${s.chain ? '/' + s.chain : ''}:${s.category}:${s.parent}:${s.window}`;
     case 'erc20_supply':
     case 'contract_read':
       return 'chain_levels';

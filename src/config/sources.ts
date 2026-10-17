@@ -25,6 +25,19 @@ export const SourceSchema = z.discriminatedUnion('type', [
     /** Primary role only: written days read again on every run. Optional with no default; the writer applies 30. */
     revision_days: z.number().int().positive().optional(),
   }),
+  /**
+   * A parent protocol's share of a DefiLlama category (Dexs, Derivatives, ...) over a window, from the free overview
+   * endpoints, grouping child protocols by `parentProtocol` (or a bare slug for a protocol without one). Level primary only.
+   * `chain` is optional with no default (hashes): absent reads the all-chain overview.
+   */
+  z.strictObject({
+    type: z.literal('defillama_share'),
+    parent: name,
+    category: name,
+    overview: z.enum(['fees', 'dexs']),
+    chain: name.optional(),
+    window: z.enum(['30d', '1y']),
+  }),
   z.strictObject({ type: z.literal('erc20_supply'), token: name, subtract_balances: z.array(name).default([]) }),
   z.strictObject({
     type: z.literal('contract_read'),
@@ -138,7 +151,7 @@ export function contractNames(s: SourceConfig): string[] {
   }
 }
 
-const LEVEL_PRIMARY: ReadonlySet<string> = new Set(['coingecko', 'http_json', 'erc20_supply', 'contract_read', 'adapter', 'derived', 'constant']);
+const LEVEL_PRIMARY: ReadonlySet<string> = new Set(['coingecko', 'http_json', 'erc20_supply', 'contract_read', 'adapter', 'derived', 'constant', 'defillama_share']);
 const LEVEL_CHECK: ReadonlySet<string> = new Set(['coingecko', 'http_json', 'erc20_supply', 'contract_read', 'adapter']);
 const FLOW_PRIMARY: ReadonlySet<string> = new Set(['transfer_flow', 'defillama', 'adapter']);
 const FLOW_CHECK: ReadonlySet<string> = new Set(['defillama', 'adapter']);
