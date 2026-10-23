@@ -141,4 +141,107 @@ describe('LIT unlocks over the next year, from DefiLlama emissions', () => {
     await expect(read(['Advisors'])).rejects.toThrow(/no allocation "Advisors"/);
     await expect(read([])).rejects.toThrow(/params.allocations/);
   });
+
+  it('without tranches the value is unchanged (golden: the existing fixture result, byte for byte)', async () => {
+    // Captured from the adapter before tranches existed (HEAD 6cd6caf).
+    expect(await read(['Team', 'Investors'])).toEqual({
+      kind: 'level', value: 132779142.85714285, observedAt: NOW, source: 'api',
+      detail: 'https://defillama-datasets.llama.fi/emissions/lighter unlocks over the next 365 days: Team 69.05M, Investors 63.73M',
+    });
+  });
+});
+
+describe("LIT unlocks over the next year, on the issuer's own tranche schedule", () => {
+  const URL_ = 'https://defillama-datasets.llama.fi/emissions/lighter';
+  const sec = (iso: string) => Date.parse(iso) / 1000;
+  const t0 = sec('2026-12-29T00:00:00Z');
+  /** DefiLlama's curve: linear weekly from 2026-12-29 over three years to `total`, daily points, flat after. */
+  const linearTo = (total: number) => Array.from({ length: 1300 }, (_, i) => ({ timestamp: t0 + (i - 80) * 86_400, unlocked: Math.min(total, Math.max(0, ((i - 80) * total) / 1095)) }));
+  const linearBody = { documentedData: { data: [{ label: 'Team', data: linearTo(300_000_000) }, { label: 'Investors', data: linearTo(198_000_000) }] } };
+  const read = (nowIso: string, params: Record<string, unknown>, body: unknown = linearBody) =>
+    getAdapter('lit.unlocks_next_year').run(sourceCtx({ nowIso, http: fakeHttp({ [URL_]: body }) }), params);
+  const level = async (p: Promise<unknown>) => {
+    const v = (await p) as { kind: string; value: number; detail: string };
+    if (v.kind !== 'level') throw new Error('expected a level');
+    return v;
+  };
+
+  it('tranches: 36 monthly from 2027-01-29 counts 9 tranches at 2026-10-23', async () => {
+    const v = await level(read('2026-10-23T12:00:00.000Z', { allocations: ['Team', 'Investors'], tranches: { first: '2027-01-29', every_months: 1, count: 36 } }));
+    // The schedule starts 2026-12-29 (nothing unlocked yet), so A is the final cumulative: 300M and 198M, over 36 tranches;
+    // 2027-01-29 .. 2027-09-29 fall in (now, now + 365d].
+    expect(v.value).toBeCloseTo((9 / 36) * 498_000_000, 0);
+    expect(v.value).toBeCloseTo(124_500_000, 0);
+    expect(v.detail).toBe(`${URL_} unlocks over the next 365 days: Team 75.00M, Investors 49.50M; tranches 36 x 1mo from 2027-01-29`);
+  });
+
+  it('A is the final cumulative minus the cumulative at the schedule start (first minus every_months)', async () => {
+    const params = { allocations: ['Team'], tranches: { first: '2028-03-27', every_months: 3, count: 3 } };
+    // Start 2027-12-27, 363 days into the curve: 300M x 363/1095 is already out, the rest is split over 2028-03-27, -06-27, -09-27.
+    const a = 300_000_000 - (300_000_000 * 363) / 1095;
+    expect((await level(read('2027-12-01T00:00:00.000Z', params))).value).toBeCloseTo(a, 0);
+    // A year that ends before the first tranche counts none of it.
+    expect((await level(read('2027-01-01T00:00:00.000Z', params))).value).toBe(0);
+  });
+
+  it('clamps the day to month end (first 2027-01-31 -> 2027-02-28)', async () => {
+    const step = { documentedData: { data: [{ label: 'Team', data: [
+      { timestamp: sec('2026-12-31T00:00:00Z'), unlocked: 100 },
+      { timestamp: sec('2027-01-02T00:00:00Z'), unlocked: 150 },
+      { timestamp: sec('2027-02-28T00:00:00Z'), unlocked: 200 },
+      { timestamp: sec('2027-03-03T00:00:00Z'), unlocked: 300 },
+      { timestamp: sec('2030-01-01T00:00:00Z'), unlocked: 1300 },
+    ] }] } };
+    const tr = (first: string, count: number) => ({ allocations: ['Team'], tranches: { first, every_months: 1, count } });
+    // Tranche 1 of 2027-01-31 falls on 2027-02-28: at exactly that instant it is not in (now, now + 365d], one ms earlier it is.
+    // Start 2026-12-31 (cumulative 100): A = 1200, two tranches of 600.
+    expect((await level(read('2027-02-28T00:00:00.000Z', tr('2027-01-31', 2), step))).value).toBe(0);
+    expect((await level(read('2027-02-27T23:59:59.999Z', tr('2027-01-31', 2), step))).value).toBe(600);
+    // The start clamps too: first 2027-03-31 starts 2027-02-28 (cumulative 200), not 2027-03-03: A = 1100, four of 275.
+    const v = await level(read('2027-03-01T00:00:00.000Z', tr('2027-03-31', 4), step));
+    expect(v.value).toBe(1100);
+    expect(v.detail).toMatch(/; tranches 4 x 1mo from 2027-03-31$/);
+  });
+
+  it('counts a tranche at now + 365d and not one at now', async () => {
+    const params = { allocations: ['Team', 'Investors'], tranches: { first: '2028-01-29', every_months: 1, count: 1 } };
+    // The schedule starts 2027-12-29, a year into the curve: A = 498M less the year already out.
+    const a = 498_000_000 - (498_000_000 * 365) / 1095;
+    expect((await level(read('2028-01-29T00:00:00.000Z', params))).value).toBe(0);
+    expect((await level(read('2027-01-29T00:00:00.000Z', params))).value).toBeCloseTo(a, 0);
+    expect((await level(read('2027-01-28T23:59:59.999Z', params))).value).toBe(0);
+  });
+
+  it('validateParams refuses a bad date, every_months 0 or 13, count 0 or 121, non-integers, unknown keys in tranches', () => {
+    const def = getAdapter('lit.unlocks_next_year');
+    const v = (params: Record<string, unknown>) => def.validateParams!(params);
+    const ok = { first: '2027-01-29', every_months: 1, count: 36 };
+    const t = (over: Record<string, unknown>) => v({ allocations: ['Team'], tranches: { ...ok, ...over } });
+    expect(v({ allocations: ['Team', 'Investors'] })).toEqual([]);
+    expect(v({ allocations: ['Team'], tranches: ok })).toEqual([]);
+    expect(t({ every_months: 12, count: 120, first: '2028-02-29' })).toEqual([]);
+    for (const first of ['2027-02-30', '2027-1-29', '29/01/2027', '2027-01-29T00:00:00Z', 20270129, null]) expect(t({ first }), String(first)).toEqual([expect.stringMatching(/^tranches\.first/)]);
+    for (const every_months of [0, 13, 1.5, '1']) expect(t({ every_months }), String(every_months)).toEqual([expect.stringMatching(/^tranches\.every_months/)]);
+    for (const count of [0, 121, 2.5, '36']) expect(t({ count }), String(count)).toEqual([expect.stringMatching(/^tranches\.count/)]);
+    expect(t({ cadence: 'monthly' })).toEqual(['tranches: unknown key "cadence" (first, every_months, count)']);
+    expect(v({ allocations: ['Team'], tranches: { first: '2027-01-29' } })).toEqual([
+      expect.stringMatching(/^tranches\.every_months/), expect.stringMatching(/^tranches\.count/),
+    ]);
+    for (const tranches of [null, [], 'monthly']) expect(v({ allocations: ['Team'], tranches }), String(tranches)).toEqual([expect.stringMatching(/^tranches: /)]);
+    for (const allocations of [undefined, [], 'Team', ['Team', 3]]) expect(v({ allocations }), String(allocations)).toEqual([expect.stringMatching(/^allocations: /)]);
+    expect(v({ allocations: ['Team'], tranche: ok })).toEqual(['unknown key "tranche" (url, allocations, tranches)']);
+    expect(v({ allocations: ['Team'], url: 5 })).toEqual(['url: a string']);
+  });
+
+  it('documents its params; the treasury buys adapter does not', () => {
+    expect(getAdapter('lit.unlocks_next_year').paramsDoc).toBe(
+      "allocations: string[] (DefiLlama allocation labels, required); tranches?: { first: YYYY-MM-DD, every_months: 1..12, count: 1..120 }: the issuer's own tranche schedule; each allocation's remaining amount from the schedule start is split evenly over the tranches",
+    );
+    expect(getAdapter('lit.treasury_buys_daily').paramsDoc).toBeUndefined();
+    expect(getAdapter('lit.treasury_buys_daily').validateParams).toBeUndefined();
+  });
+
+  it('refuses malformed tranches at run time too', async () => {
+    await expect(read('2026-10-23T12:00:00.000Z', { allocations: ['Team'], tranches: { first: '2027-01-29', every_months: 0, count: 36 } })).rejects.toThrow(/tranches\.every_months/);
+  });
 });

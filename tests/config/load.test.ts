@@ -1,5 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { parseAssetYaml } from '../../src/config/load.js';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { parseAssetObject, parseAssetYaml } from '../../src/config/load.js';
+import { registerAdapter } from '../../src/ingest/adapters/registry.js';
 import { canonicalJson } from '../../src/util/canonical.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
 
@@ -39,5 +43,41 @@ describe('parseAssetYaml', () => {
 
   it('requires circulating_supply when supply_basis is circulating', () => {
     expect(() => parseAssetYaml(MINI_ASSET_YAML + '\nsupply_basis: circulating\n')).toThrow(/circulating_supply/);
+  });
+});
+
+describe('adapter params validation', () => {
+  const ROOT = fileURLToPath(new URL('../..', import.meta.url));
+  const litYaml = readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8');
+  const withTranches = (tranches: unknown) => {
+    const obj = parseYaml(litYaml) as { metrics: Record<string, { source: { params: Record<string, unknown> } }> };
+    obj.metrics.unlocks_next_year.source.params.tranches = tranches;
+    return obj;
+  };
+  // A stand-in adapter whose validateParams refuses everything but { ok: true }, used as a cross-check.
+  registerAdapter({ name: 'test_checked', needsRpc: false, validateParams: (p) => (p.ok === true ? [] : ['ok: must be true']), run: () => Promise.reject(new Error('not run')) });
+
+  it('parseAssetObject surfaces the refusal with the metric path; assets/lit.yaml still loads and keeps its hash', () => {
+    expect(parseAssetYaml(litYaml).hash).toBe('ad683e198b9b97af4d0067e339b89323b1711fe3e689fbb7f9fd404353f926a5');
+    expect(parseAssetObject(parseYaml(litYaml)).hash).toBe('ad683e198b9b97af4d0067e339b89323b1711fe3e689fbb7f9fd404353f926a5');
+    // A valid schedule loads (and is a different config).
+    const good = parseAssetObject(withTranches({ first: '2027-01-29', every_months: 1, count: 36 }));
+    expect(good.config.metrics.unlocks_next_year.source).toMatchObject({ params: { tranches: { first: '2027-01-29', every_months: 1, count: 36 } } });
+    expect(good.hash).not.toBe('ad683e198b9b97af4d0067e339b89323b1711fe3e689fbb7f9fd404353f926a5');
+    // A malformed one is refused with the metric path, through the object path (filing) and the YAML path (approve).
+    const bad = withTranches({ first: '2027-01-29', every_months: 13, count: 36 });
+    expect(() => parseAssetObject(bad)).toThrow(expect.objectContaining({ code: 'invalid_asset_config', message: expect.stringContaining('metrics.unlocks_next_year.source.params: tranches.every_months') }));
+    expect(() => parseAssetYaml(stringifyYaml(bad))).toThrow(/metrics\.unlocks_next_year\.source\.params: tranches\.every_months/);
+  });
+
+  it('checks cross-check adapter sources too, and leaves adapters without validateParams alone', () => {
+    const yaml = (ok: boolean) =>
+      MINI_ASSET_YAML.replace(
+        'staked_supply: { type: level, unit: tokens, staleness_days: 7 }',
+        `staked_supply: { type: level, unit: tokens, staleness_days: 7, source: { type: adapter, name: lit.treasury_buys_daily, params: { anything: 1 } }, cross_checks: [ { source: { type: adapter, name: test_checked, params: { ok: ${ok} } } } ] }`,
+      );
+    expect(yaml(true)).toContain('test_checked');
+    expect(() => parseAssetYaml(yaml(true))).not.toThrow();
+    expect(() => parseAssetYaml(yaml(false))).toThrow(/metrics\.staked_supply\.cross_checks\.0\.source\.params: ok: must be true/);
   });
 });

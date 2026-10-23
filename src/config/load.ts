@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { ZodError } from 'zod';
+import { findAdapter } from '../ingest/adapters/registry.js';
 import { OrionError } from '../types.js';
 import { canonicalJson, sha256 } from '../util/canonical.js';
 import { AssetConfigSchema, type AssetConfig } from './schema.js';
@@ -19,9 +20,9 @@ export function rawConfig(loaded: LoadedAsset): unknown {
 }
 
 export function parseAssetObject(obj: unknown): LoadedAsset {
+  let config: AssetConfig;
   try {
-    const config = AssetConfigSchema.parse(obj);
-    return { config, hash: sha256(canonicalJson(config)), raw: obj };
+    config = AssetConfigSchema.parse(obj);
   } catch (err) {
     if (err instanceof ZodError) {
       const lines = err.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`);
@@ -29,6 +30,23 @@ export function parseAssetObject(obj: unknown): LoadedAsset {
     }
     throw err;
   }
+  const paramIssues = adapterParamIssues(config);
+  if (paramIssues.length > 0) throw new OrionError('invalid_asset_config', paramIssues.join('\n'));
+  return { config, hash: sha256(canonicalJson(config)), raw: obj };
+}
+
+/** Every adapter source (primary and cross-check) whose adapter validates its params, checked. Unknown names are left to ingest. */
+function adapterParamIssues(config: AssetConfig): string[] {
+  const issues: string[] = [];
+  for (const [key, def] of Object.entries(config.metrics)) {
+    const sources = [{ where: `metrics.${key}.source`, source: def.source }, ...(def.cross_checks ?? []).map((c, i) => ({ where: `metrics.${key}.cross_checks.${i}.source`, source: c.source }))];
+    for (const { where, source } of sources) {
+      if (source?.type !== 'adapter') continue;
+      const validate = findAdapter(source.name)?.validateParams;
+      if (validate) for (const e of validate(source.params)) issues.push(`${where}.params: ${e}`);
+    }
+  }
+  return issues;
 }
 
 export function parseAssetYaml(text: string): LoadedAsset {

@@ -15,6 +15,8 @@ export interface AdapterDef {
   needsRpc: boolean;
   /** What the adapter's params mean, for the analyst writing a config proposal (a disclosure run's pack shows it). */
   paramsDoc?: string;
+  /** Problems with `params`, one message each (empty when valid). The asset loader runs it, so a config proposal and its approve refuse bad params. */
+  validateParams?(params: Record<string, unknown>): string[];
   run(ctx: SourceContext, params: Record<string, unknown>): Promise<SourceValue>;
 }
 
@@ -28,6 +30,11 @@ export function getAdapter(name: string): AdapterDef {
   const def = ADAPTERS.get(name);
   if (!def) throw new OrionError('unknown_adapter', `unknown adapter: ${name}`);
   return def;
+}
+
+/** The adapter of that name, or undefined: for callers that leave unknown names to someone else. */
+export function findAdapter(name: string): AdapterDef | undefined {
+  return ADAPTERS.get(name);
 }
 
 export function adapterNames(): string[] {

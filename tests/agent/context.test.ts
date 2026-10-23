@@ -1,8 +1,10 @@
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildContextPack, renderContextPack } from '../../src/agent/context.js';
 import { buildSystemPrompt, OPERATING_RULES } from '../../src/agent/prompt.js';
 import { runValuation } from '../../src/app/valuation.js';
 import { DEFAULT_BUDGETS } from '../../src/config/agentPolicy.js';
+import { loadAsset } from '../../src/config/load.js';
 import { parsePersona, parseSkill } from '../../src/config/personas.js';
 import { finishAgentRun, startAgentRun, ZERO_USAGE } from '../../src/db/agentRuns.js';
 import { decideAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
@@ -197,6 +199,18 @@ describe('the disclosure pack', () => {
     const doc = storeDoc();
     const p = buildContextPack(w.db, w.loaded, w.ledger, { runType: 'disclosure', budgets: DEFAULT_BUDGETS.disclosure, now: new Date(AS_OF), trigger: {}, document: doc, assetYaml: AGENT_ASSET_YAML });
     expect(p.adapter_params).toEqual([]);
+  });
+
+  it('the LIT disclosure pack lists adapter_params for unlocks_next_year with the paramsDoc text', () => {
+    const doc = storeDoc();
+    const lit = loadAsset(fileURLToPath(new URL('../..', import.meta.url)), 'lit');
+    const p: Record<string, any> = buildContextPack(w.db, lit, w.ledger, { runType: 'disclosure', budgets: DEFAULT_BUDGETS.disclosure, now: new Date(AS_OF), trigger: {}, document: doc, assetYaml: 'lit' });
+    expect(p.adapter_params).toEqual([
+      {
+        metric: 'unlocks_next_year', adapter: 'lit.unlocks_next_year',
+        params_doc: "allocations: string[] (DefiLlama allocation labels, required); tranches?: { first: YYYY-MM-DD, every_months: 1..12, count: 1..120 }: the issuer's own tranche schedule; each allocation's remaining amount from the schedule start is split evenly over the tranches",
+      },
+    ]);
   });
 
   it('a weekly pack has none of the three', () => {
