@@ -97,6 +97,7 @@ describe('the agent bands in assets/vvv.yaml', () => {
     // The first live dry run (2026-09-21) read a ~96k-token prefix per request and used 542k of the 600k default in 5 requests.
     expect(budgetsFor(config, 'weekly')).toEqual({ ...DEFAULT_BUDGETS.weekly, inputTokens: 2_000_000 });
     expect(budgetsFor(config, 'triage')).toEqual(DEFAULT_BUDGETS.triage);
+    expect(budgetsFor(config, 'disclosure')).toEqual({ requests: 25, inputTokens: 1_200_000, outputTokens: 40_000, webSearches: 3, webFetches: 5, proposals: 5 });
     expect(provisionalMovePct(config)).toBe(25);
     // The user's rule (2026-09-22): no researched figure goes live unconfirmed, so allow_provisional stays off.
     expect(config.metrics.revenue_run_rate_usd).toMatchObject({ critical: true, allow_provisional: false });

@@ -42,7 +42,7 @@ describe('openDb', () => {
     const db = openDb(':memory:');
     migrate(db);
     const row = db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number };
-    expect(row.n).toBe(7);
+    expect(row.n).toBe(8);
   });
 
   it('migration 6 renames effective_supply to total_supply wherever the code reads it back, and nothing else', () => {
@@ -105,7 +105,7 @@ describe('openDb', () => {
 
     migrate(db);
 
-    expect((db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number }).n).toBe(7);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number }).n).toBe(8);
     expect(db.prepare('SELECT id, run_type FROM agent_runs ORDER BY id').all()).toEqual([{ id: 1, run_type: 'deep' }]);
     expect(db.prepare('SELECT agent_run_id FROM proposals').all()).toEqual([{ agent_run_id: 1 }]);
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_agent_runs_asset'").all()).toHaveLength(1);
@@ -130,10 +130,55 @@ describe('openDb', () => {
     db.prepare('DELETE FROM anomalies WHERE id = 2').run(); // the sequence runs ahead of the surviving max id
     expect(() => add('revenue_payment')).toThrow(/CHECK constraint failed/);
     migrate(db);
-    expect((db.prepare('SELECT MAX(id) AS n FROM schema_migrations').get() as { n: number }).n).toBe(7);
+    expect((db.prepare('SELECT MAX(id) AS n FROM schema_migrations').get() as { n: number }).n).toBe(8);
     expect(db.prepare('SELECT id, kind, status, decided_by FROM anomalies').all()).toEqual([{ id: 1, kind: 'cross_check_mismatch', status: 'resolved', decided_by: 'u' }]);
     expect(Number(add('revenue_payment').lastInsertRowid)).toBe(3);
     expect(() => add('revenue_payment')).toThrow(/UNIQUE constraint failed/); // one open per key, as before
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'anomalies' ORDER BY name").all()).toEqual([{ name: 'idx_anomalies_asset' }, { name: 'idx_anomalies_one_open' }]);
+  });
+
+  it('migration 8 rebuilds agent_runs for the disclosure run type and adds documents, proposals.citations_json and journal.catalysts_json', () => {
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)');
+    for (const m of MIGRATIONS.filter((m) => m.id <= 7)) {
+      db.exec(m.sql);
+      db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(m.id, '2026-10-20T00:00:00.000Z');
+    }
+    db.pragma('foreign_keys = ON');
+    const insertRun = (runType: string) =>
+      db.prepare("INSERT INTO agent_runs (asset_id, persona, run_type, trigger_kind, trigger_detail_json, outcome, config_hash, model, started_at, summary_json) VALUES ('lit', 'p', ?, 'schedule', '{}', 'completed', 'h', 'm', '2026-10-20T00:00:00Z', ?)").run(runType, `{"runType":"${runType}"}`);
+    insertRun('weekly');
+    insertRun('triage');
+    insertRun('bootstrap');
+    db.prepare('DELETE FROM agent_runs WHERE id = 2').run(); // ids 1 and 3 survive
+    db.prepare("INSERT INTO journal (asset_id, persona, agent_run_id, created_at, thesis, open_questions_json, summary) VALUES ('lit', 'p', 3, 'x', 't', '[]', 's')").run();
+    db.prepare("INSERT INTO trigger_firings (asset_id, kind, key, fired_at, agent_run_id, detail_json) VALUES ('lit', 'calendar', 'k', 'x', 3, '{}')").run();
+    db.prepare("INSERT INTO proposals (asset_id, persona, agent_run_id, kind, change_json, filed_against_json, rationale, evidence_json, status, created_at) VALUES ('lit', 'p', 1, 'config', '{}', '{}', 'r', '[]', 'pending', 'x')").run();
+    expect(() => insertRun('disclosure')).toThrow(/CHECK constraint failed/);
+    const runsBefore = db.prepare('SELECT * FROM agent_runs ORDER BY id').all();
+
+    migrate(db);
+
+    expect((db.prepare('SELECT MAX(id) AS n FROM schema_migrations').get() as { n: number }).n).toBe(8);
+    expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
+    expect(db.prepare('SELECT * FROM agent_runs ORDER BY id').all()).toEqual(runsBefore);
+    expect(db.prepare('SELECT id FROM agent_runs ORDER BY id').all()).toEqual([{ id: 1 }, { id: 3 }]);
+    expect(db.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'agent_runs'").get()).toEqual({ seq: 3 });
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'agent_runs' ORDER BY name").all()).toEqual([{ name: 'idx_agent_runs_asset' }]);
+    expect(db.prepare('SELECT agent_run_id, catalysts_json FROM journal').all()).toEqual([{ agent_run_id: 3, catalysts_json: null }]);
+    expect(db.prepare('SELECT agent_run_id FROM trigger_firings').all()).toEqual([{ agent_run_id: 3 }]);
+    expect(db.prepare('SELECT agent_run_id, citations_json FROM proposals').all()).toEqual([{ agent_run_id: 1, citations_json: null }]);
+    expect(db.pragma('foreign_key_check')).toEqual([]);
+    expect(Number(insertRun('disclosure').lastInsertRowid)).toBe(4); // the sequence carried over the rebuild
+    expect(() => insertRun('bogus')).toThrow(/CHECK constraint failed/);
+    expect(() => db.prepare("INSERT INTO journal (asset_id, persona, agent_run_id, created_at, thesis, open_questions_json, summary) VALUES ('lit', 'p', 99, 'x', 't', '[]', 's')").run()).toThrow(/FOREIGN KEY constraint failed/);
+    const columns = (db.prepare('PRAGMA table_info(documents)').all() as { name: string }[]).map((c) => c.name);
+    expect(columns).toEqual(['id', 'asset_id', 'kind', 'source_url', 'source_id', 'title', 'published_at', 'added_at', 'sha256', 'bytes', 'text', 'meta_json']);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'documents' ORDER BY name").all()).toEqual([{ name: 'idx_documents_asset' }, { name: 'idx_documents_hash' }]);
+    const doc = db.prepare("INSERT INTO documents (asset_id, kind, source_url, added_at, sha256, bytes, text) VALUES ('lit', ?, 'u', 'x', 'h', 1, 't')");
+    expect(() => doc.run('podcast')).toThrow(/CHECK constraint failed/);
+    doc.run('machine_transcript');
+    expect(() => doc.run('post')).toThrow(/UNIQUE constraint failed/); // one row per (asset, sha256)
+    expect(db.prepare('SELECT meta_json FROM documents').get()).toEqual({ meta_json: '{}' });
   });
 });

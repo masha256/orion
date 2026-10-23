@@ -316,4 +316,63 @@ CREATE INDEX idx_anomalies_asset ON anomalies (asset_id, status);
 CREATE UNIQUE INDEX idx_anomalies_one_open ON anomalies (asset_id, kind, metric_key, dedupe_key) WHERE status = 'open';
 `,
   },
+  {
+    id: 8,
+    rebuildsTables: true,
+    // The disclosure watcher (spec 2026-10-23, section 4.2). agent_runs.run_type gains 'disclosure': the table is rebuilt as
+    // in migration 5 (same columns in the same order, rows copied by position, the AUTOINCREMENT counter carried over, then
+    // the index). Then the document store, and the two nullable columns: proposals.citations_json (null on every existing
+    // row) and journal.catalysts_json (null on every existing row, read as []).
+    sql: `
+CREATE TABLE agent_runs_new (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_id TEXT NOT NULL,
+  persona TEXT NOT NULL,
+  run_type TEXT NOT NULL CHECK (run_type IN ('weekly','triage','deep','bootstrap','disclosure')),
+  trigger_kind TEXT NOT NULL,
+  trigger_detail_json TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('running','completed','budget_exhausted','refused','no_journal','conflict','error')),
+  dry_run INTEGER NOT NULL DEFAULT 0,
+  config_hash TEXT NOT NULL,
+  model TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  requests INTEGER NOT NULL DEFAULT 0,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  web_searches INTEGER NOT NULL DEFAULT 0,
+  web_fetches INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  summary_json TEXT
+);
+INSERT INTO agent_runs_new SELECT * FROM agent_runs;
+DELETE FROM sqlite_sequence WHERE name = 'agent_runs_new';
+INSERT INTO sqlite_sequence (name, seq) SELECT 'agent_runs_new', seq FROM sqlite_sequence WHERE name = 'agent_runs';
+DROP TABLE agent_runs;
+ALTER TABLE agent_runs_new RENAME TO agent_runs;
+CREATE INDEX idx_agent_runs_asset ON agent_runs (asset_id, id);
+
+CREATE TABLE documents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('machine_transcript','transcript','post','filing','article')),
+  source_url TEXT NOT NULL,
+  source_id TEXT,                 -- e.g. 'x:2113065839352336774': the watcher's dedupe key, stored for display
+  title TEXT,
+  published_at TEXT,
+  added_at TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  bytes INTEGER NOT NULL,
+  text TEXT NOT NULL,
+  meta_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE UNIQUE INDEX idx_documents_hash ON documents (asset_id, sha256);
+CREATE INDEX idx_documents_asset ON documents (asset_id, id);
+
+ALTER TABLE proposals ADD COLUMN citations_json TEXT;
+ALTER TABLE journal ADD COLUMN catalysts_json TEXT;
+`,
+  },
 ];

@@ -43,6 +43,8 @@ export const DEFAULT_BUDGETS: Record<RunType, RunBudgets> = {
   deep: { requests: 40, inputTokens: 2_000_000, outputTokens: 80_000, webSearches: 15, webFetches: 15, proposals: 10 },
   /** Populates a new asset's manual metrics from research: more searches and fetches than a deep, almost no proposals. About $8 to $12 at list price. */
   bootstrap: { requests: 60, inputTokens: 3_000_000, outputTokens: 100_000, webSearches: 30, webFetches: 30, proposals: 2 },
+  /** Reviews one stored document (an issuer's call or post) against Orion's numbers. Expected $1 to $3, about $7 worst case with no cache hits. */
+  disclosure: { requests: 25, inputTokens: 1_200_000, outputTokens: 40_000, webSearches: 3, webFetches: 5, proposals: 5 },
 };
 
 /** Null when the asset defines no bounds for the key. */
