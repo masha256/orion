@@ -1,8 +1,10 @@
 # Orion: disclosure watcher, LIT pilot (design, 2026-10-23)
 
-Status: draft for Mike's review. Nothing is built. The plan (`docs/superpowers/plans/<date>-orion-disclosure-watcher.md`,
-dated the day it is written) comes only after this spec is approved, and it follows the options this spec recommends unless Mike picks otherwise
-(section 13 lists what changes for each alternative).
+Status: approved by Mike, 2026-10-23, every recommendation of section 13: (1) a new `disclosure` run type; (2) the
+analyst runs automatically when a call is found; (3) the `tranches` adapter option is built in this plan; (4) the Q3 2026
+call is seeded as reviewed; (5) one paid level-3 dry run once the build is green; (6) model-written titles and catalyst
+text in the digest. Plan: `docs/superpowers/plans/2026-10-23-orion-disclosure-watcher.md`. Section 6.1's alternatives and
+section 13's "if A / if C" notes are kept as the record of what was not chosen.
 
 Extends the agent-layer spec (`2026-09-20-orion-agent-layer-design.md`, sections 4, 5, 7, 9, 11) and the research-first
 spec (`2026-09-22-orion-research-first-design.md`, sections 3, 7). Where this document and those differ, this one wins for
@@ -419,8 +421,8 @@ on Mike's go after the merge.
 ### 8.5 Post-run step: dev queue and digest
 
 Inputs, from the `agent run --json` result only: run id, outcome, usage, `committed.proposalIds`, `devFindings`, and
-`journal.catalysts`; the cost estimate from `agent runs show <id> --json` (Orion's price table; if that JSON does not
-carry the estimate yet, the plan adds it as an additive field). Proposal effects come from `node dist/cli/index.js inbox <asset> --json` (numbers only).
+`journal.catalysts`; the cost estimate is `estimated_cost_usd` from `agent runs show <id> --json` (Orion's price table;
+the field exists today). Proposal effects come from `node dist/cli/index.js inbox <asset> --json` (numbers only).
 
 **Dev queue.** For each dev finding whose fingerprint is not already in the file (`<!-- dw:fp=<fingerprint> -->`),
 append to `workspace/orion/dev-queue-revenue.md`:
