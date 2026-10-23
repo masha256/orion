@@ -36,6 +36,11 @@ function stagedLines(staged: RunAgentResult['staged'], verb: string): string[] {
       lines.push(`  ${verb} catalyst ${when} ${c.kind}: ${c.event} [${where}]`);
     }
   }
+  // `?? []`: run summaries stored before dev findings existed have none.
+  for (const f of staged.devFindings ?? []) {
+    const where = f.citations.map((x) => (x.locator === null ? x.source : `${x.source}@${x.locator}`)).join(', ');
+    lines.push(`  ${verb} dev finding ${f.category} [${f.metricKeys.join(', ')}]: ${f.title} [${where}]`);
+  }
   return lines.length > 0 ? lines : ['  nothing staged'];
 }
 

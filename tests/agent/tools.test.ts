@@ -6,6 +6,7 @@ import { TRANSCRIPT_WINDOW } from '../../src/agent/guardrails.js';
 import { confirmObservation, insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { insertProposal } from '../../src/db/proposals.js';
 import { AGENT_ASSET_YAML, agentWorld, PAGE_URL, QUOTE, type AgentWorld } from '../helpers/agentWorld.js';
+import { sha256 } from '../../src/util/canonical.js';
 import { AS_OF } from '../helpers/obs.js';
 
 let w: AgentWorld;
@@ -29,11 +30,11 @@ const research = (over: Record<string, unknown> = {}) =>
   });
 
 describe('the tool list', () => {
-  it('has twelve uniquely named tools whose API schemas are plain objects generated from zod', () => {
+  it('has fourteen uniquely named tools whose API schemas are plain objects generated from zod', () => {
     const api = toApiTools(AGENT_TOOLS);
     expect(api.map((t) => t.name)).toEqual([
-      'get_drivers', 'get_observations', 'get_anomalies', 'get_assumptions', 'get_signal_history', 'get_journal', 'run_whatif',
-      'apply_assumption_change', 'propose_change', 'resolve_anomaly', 'record_provisional_observation', 'write_journal',
+      'get_drivers', 'get_observations', 'get_anomalies', 'get_assumptions', 'get_signal_history', 'get_journal', 'get_flow_total', 'run_whatif',
+      'apply_assumption_change', 'propose_change', 'resolve_anomaly', 'record_provisional_observation', 'write_journal', 'record_dev_finding',
     ]);
     for (const t of api) {
       expect(t.input_schema.type).toBe('object');
@@ -658,5 +659,152 @@ describe('write_journal', () => {
       const { journalId } = w.ledger.commit(w.db, w.loaded.config, { agentRunId: null, now: new Date(AS_OF) });
       expect((w.db.prepare('SELECT catalysts_json FROM journal WHERE id = ?').get(journalId) as { catalysts_json: string | null }).catalysts_json).toBeNull();
     });
+  });
+});
+
+describe('get_flow_total', () => {
+  const FEES = 'flow_usd.fees';
+  const DAY = 86_400_000;
+  const Q3_START = Date.parse('2026-07-01T00:00:00Z');
+  const dayOf = (i: number): string => new Date(Q3_START + i * DAY).toISOString().slice(0, 10);
+  /** One daily row per Q3 day (92), observed at the end of its day, valued i + 1; `skip` leaves days out. */
+  const seedQ3 = (skip: string[] = []): number[] => {
+    const ids: number[] = [];
+    for (let i = 0; i < 92; i++) {
+      if (skip.includes(dayOf(i))) continue;
+      ids.push(insertObservation(w.db, {
+        assetId: 'mini', metricKey: FEES, observedAt: new Date(Q3_START + (i + 1) * DAY).toISOString(), periodDays: 1, value: i + 1, source: 'onchain', fetchedAt: AS_OF,
+      }).id);
+    }
+    return ids;
+  };
+  const total = (over: Record<string, unknown> = {}) => w.call('get_flow_total', { metric: FEES, from: '2026-07-01', to: '2026-09-30', ...over });
+
+  it('get_flow_total sums Q3 daily rows, reports missing days, and marks them shown', () => {
+    const ids = seedQ3();
+    const { isError, result } = total();
+    expect(isError).toBe(false);
+    expect(result).toEqual({
+      metric: FEES, from: '2026-07-01', to: '2026-09-30', total: (92 * 93) / 2, unit: 'usd', days_covered: 92, days_missing: [], rows: 92,
+      first_id: Math.min(...ids), last_id: Math.max(...ids),
+    });
+    for (const id of ids) expect(w.ledger.shown.has(id)).toBe(true);
+    // The seeded 90-day row ends at 2026-06-30 and lies wholly before the range: not summed, not shown.
+    expect(w.ledger.shown.has(w.ids[FEES])).toBe(false);
+    // A sub-range counts whole days only.
+    expect(total({ from: '2026-07-01', to: '2026-07-03' }).result).toMatchObject({ total: 1 + 2 + 3, days_covered: 3, rows: 3 });
+  });
+
+  it('reports a dropped day as missing, and counts a row staged in this run', () => {
+    seedQ3(['2026-08-15']); // day index 45, value 46
+    expect(total().result).toMatchObject({ total: (92 * 93) / 2 - 46, days_covered: 91, days_missing: ['2026-08-15'], rows: 91 });
+    const staged = w.ledger.stageObservation({
+      metricKey: FEES, value: 46, observedAt: '2026-08-16T00:00:00Z', periodDays: 1, citationUrl: PAGE_URL, quotedText: QUOTE, live: true,
+    });
+    expect(total().result).toMatchObject({ total: (92 * 93) / 2, days_covered: 92, days_missing: [], rows: 92, first_id: staged.tempId });
+  });
+
+  it('leaves out superseded and rejected rows, and a row that straddles the edge of the range', () => {
+    seedQ3();
+    const rejected = insertObservation(w.db, {
+      assetId: 'mini', metricKey: FEES, observedAt: '2026-07-02T12:00:00Z', periodDays: 1, value: 1000, source: 'manual', fetchedAt: AS_OF,
+    });
+    w.db.prepare("UPDATE observations SET status = 'rejected' WHERE id = ?").run(rejected.id);
+    // Noon to noon: covers 2026-06-30 and 2026-07-01, half outside July, so July leaves it out.
+    insertObservation(w.db, { assetId: 'mini', metricKey: FEES, observedAt: '2026-07-01T12:00:00Z', periodDays: 1, value: 500, source: 'manual', fetchedAt: AS_OF });
+    expect(total({ from: '2026-07-01', to: '2026-07-31' }).result).toMatchObject({ total: (31 * 32) / 2, days_covered: 31, rows: 31 });
+    expect(total({ from: '2026-06-30', to: '2026-07-31' }).result).toMatchObject({ total: (31 * 32) / 2 + 500, days_covered: 32, rows: 32, days_missing: [] });
+  });
+
+  it('get_flow_total refuses a level metric and from > to', () => {
+    expect(total({ metric: 'price_usd' })).toMatchObject({ isError: true, result: { refused: 'not_a_flow' } });
+    expect(total({ metric: 'nope' })).toMatchObject({ isError: true, result: { refused: 'unknown_metric' } });
+    expect(total({ from: '2026-09-30', to: '2026-07-01' })).toMatchObject({ isError: true, result: { refused: 'invalid_range' } });
+    expect(total({ from: '2026-02-30' })).toMatchObject({ isError: true, result: { refused: 'invalid_date' } });
+    expect(total({ to: '2026-09-30T00:00:00Z' })).toMatchObject({ isError: true, result: { refused: 'invalid_date' } });
+    expect(total({ from: '2025-01-01', to: '2026-09-30' })).toMatchObject({ isError: true, result: { refused: 'invalid_range' } });
+    expect(w.ledger.shown.size).toBe(0);
+  });
+
+  it('reports a range with no rows as all missing, with null ids', () => {
+    expect(total({ from: '2026-07-01', to: '2026-07-02' }).result).toEqual({
+      metric: FEES, from: '2026-07-01', to: '2026-07-02', total: 0, unit: 'usd', days_covered: 0, days_missing: ['2026-07-01', '2026-07-02'], rows: 0,
+      first_id: null, last_id: null,
+    });
+  });
+});
+
+describe('record_dev_finding', () => {
+  const DOC_TEXT = 'Mini says its holders received $9,000 in fees in the third quarter, all of it paid out on chain.\n';
+  const DOC_QUOTE = 'holders received $9,000 in fees in the third quarter';
+  const DOC = { id: 1, kind: 'post' as const, sha256: 'd'.repeat(64), text: DOC_TEXT };
+  const disclosure = () => {
+    w.ctx.citableDocs = () => [DOC];
+    w.ctx.runType = 'disclosure';
+    w.ctx.targetDoc = DOC;
+  };
+  const finding = (over: Record<string, unknown> = {}) =>
+    w.call('record_dev_finding', {
+      category: 'holder_flow', title: 'Fees paid to holders are under-counted', metric_keys: ['revenue_run_rate_usd', 'flow_usd.fees'],
+      claim: 'The post says holders received $9,000 in Q3.', orion_reading: 'Orion sums $2,466 of fees over Q3.', value_direction: 'up',
+      proposed_fix: 'Add the second fee contract to the transfer scan.', evidence: [w.ids.revenue_run_rate_usd],
+      citations: [{ source: 'doc:1', quoted_text: DOC_QUOTE }], ...over,
+    });
+
+  it('record_dev_finding stages a cited finding with its fingerprint', () => {
+    disclosure();
+    seeRevenue();
+    const r = finding();
+    expect(r).toMatchObject({ isError: false, result: { staged: true, findings_staged: 1 } });
+    const fingerprint = sha256(`mini|holder_flow|flow_usd.fees,revenue_run_rate_usd|${'d'.repeat(64)}`);
+    expect(r.result.fingerprint).toBe(fingerprint);
+    expect(w.ledger.devFindings()).toEqual([{
+      category: 'holder_flow', title: 'Fees paid to holders are under-counted', metricKeys: ['flow_usd.fees', 'revenue_run_rate_usd'],
+      claim: 'The post says holders received $9,000 in Q3.', orionReading: 'Orion sums $2,466 of fees over Q3.', valueDirection: 'up',
+      proposedFix: 'Add the second fee contract to the transfer scan.', evidence: [w.ids.revenue_run_rate_usd],
+      citations: [{ source: 'doc:1', quotedText: DOC_QUOTE, locator: null, docSha256: 'd'.repeat(64), docKind: 'post' }], fingerprint,
+    }]);
+    expect(w.ledger.preview().devFindings).toHaveLength(1);
+  });
+
+  it('refuses an undeclared metric key, unshown evidence, no doc citation, and a sixth finding', () => {
+    disclosure();
+    expect(finding()).toMatchObject({ isError: true, result: { refused: 'evidence_not_shown' } });
+    seeRevenue();
+    expect(finding({ evidence: [] })).toMatchObject({ isError: true, result: { refused: 'evidence_required' } });
+    expect(finding({ metric_keys: ['flow_usd.fees', 'nope'] })).toMatchObject({ isError: true, result: { refused: 'unknown_metric' } });
+    expect(finding({ metric_keys: [] }).result.refused).toBe('invalid_input');
+    expect(finding({ metric_keys: Array(7).fill('flow_usd.fees') }).result.refused).toBe('invalid_input');
+    expect(finding({ citations: [] }).result.refused).toBe('invalid_input');
+    expect(finding({ citations: [{ source: PAGE_URL, quoted_text: QUOTE }] })).toMatchObject({ isError: true, result: { refused: 'citation_required' } });
+    expect(finding({ citations: [{ source: 'doc:1', quoted_text: 'a sentence the post never says at all' }] }).result.refused).toBe('quote_not_found');
+    expect(finding({ title: 'x'.repeat(121) }).result.refused).toBe('invalid_input');
+    expect(finding({ proposed_fix: 'x'.repeat(1501) }).result.refused).toBe('invalid_input');
+    expect(finding({ claim: '  ' }).result.refused).toBe('invalid_input');
+    expect(finding({ category: 'vibes' }).result.refused).toBe('invalid_input');
+    expect(w.ledger.devFindings()).toEqual([]);
+
+    for (const category of ['holder_flow', 'revenue', 'supply', 'unlocks', 'source']) expect(finding({ category }).isError).toBe(false);
+    expect(finding({ category: 'other' })).toMatchObject({ isError: true, result: { refused: 'dev_finding_limit' } });
+    expect(w.ledger.devFindings()).toHaveLength(5);
+  });
+
+  it('refuses defensively outside a disclosure run: there is no target document to cite', () => {
+    w.ctx.citableDocs = () => [DOC];
+    seeRevenue();
+    expect(finding()).toMatchObject({ isError: true, result: { refused: 'citation_required' } });
+    expect(w.ledger.devFindings()).toEqual([]);
+  });
+
+  it('the same category and keys replace the earlier finding', () => {
+    disclosure();
+    seeRevenue();
+    for (const category of ['holder_flow', 'revenue', 'supply', 'unlocks', 'source']) finding({ category });
+    // At the limit, a replacement still goes through: it adds nothing.
+    const r = finding({ metric_keys: ['flow_usd.fees', 'revenue_run_rate_usd'], title: 'A sharper title' });
+    expect(r).toMatchObject({ isError: false, result: { staged: true, replaced: true, findings_staged: 5 } });
+    expect(w.ledger.devFindings().map((f) => f.title)).toEqual(['A sharper title', ...Array(4).fill('Fees paid to holders are under-counted')]);
+    // Other keys under the same category are a different finding.
+    expect(finding({ metric_keys: ['flow_usd.fees'] })).toMatchObject({ isError: true, result: { refused: 'dev_finding_limit' } });
   });
 });

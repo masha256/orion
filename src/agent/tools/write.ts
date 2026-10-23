@@ -8,12 +8,14 @@ import { CATALYST_KINDS, type Catalyst } from '../../db/journal.js';
 import { getObservationsByIds, listActiveObservations, type Observation } from '../../db/observations.js';
 import { findPendingDuplicate, proposalIdentity, type ProposalChange, type ProposalEffect } from '../../db/proposals.js';
 import { requiredAssumptionKeys, validateAssetModules, validateAssumptions } from '../../engine/requirements.js';
+import { isIsoDate } from '../../ingest/time.js';
 import { SCENARIOS, type Scenario } from '../../types.js';
-import { canonicalJson } from '../../util/canonical.js';
+import { canonicalJson, sha256 } from '../../util/canonical.js';
 import {
   allowedRange, blockingAnomalies, checkEvidence, checkStep, cleanText, placeValue, routeObservation, verifyAnyCitation, TRANSCRIPT_WINDOW, type EvidenceRef,
   type StoredCitation,
 } from '../guardrails.js';
+import { DEV_FINDING_CATEGORIES, VALUE_DIRECTIONS } from '../ledger.js';
 import { computeEffect } from './think.js';
 import { defineTool, refuse, ToolRefusal, type AgentTool, type ToolContext } from './types.js';
 
@@ -47,6 +49,12 @@ const MAX_PROPOSAL_CITATIONS = 5;
 export const MAX_CATALYSTS = 8;
 const MAX_CATALYST_EVENT = 200;
 const MAX_CATALYST_CITATIONS = 3;
+export const MAX_DEV_FINDINGS = 5;
+const MAX_FINDING_TITLE = 120;
+const MAX_FINDING_TEXT = 1000;
+const MAX_FINDING_FIX = 1500;
+const MAX_FINDING_METRICS = 6;
+const MAX_FINDING_CITATIONS = 5;
 
 function requireText(value: string, field: string): string {
   const text = cleanText(value);
@@ -67,15 +75,18 @@ function verifyCitations(ctx: ToolContext, input: { source: string; quoted_text:
   });
 }
 
+/** Refuses `citation_required` unless at least one verified citation is of the run's target document; with no target document, always. */
+function requireTargetDocCitation(ctx: ToolContext, citations: StoredCitation[], what: string): void {
+  const target = ctx.targetDoc === null ? null : `doc:${ctx.targetDoc.id}`;
+  if (target === null || !citations.some((c) => c.source === target)) {
+    refuse('citation_required', `${what} must cite its document: give at least one citation of ${target ?? 'the target document'}, quoted verbatim`);
+  }
+}
+
 /** A proposal's citations: all verified, and in a disclosure run at least one of the target document (spec 5.4); elsewhere optional. */
 function verifyProposalCitations(ctx: ToolContext, input: { source: string; quoted_text: string }[]): StoredCitation[] {
   const citations = verifyCitations(ctx, input);
-  if (ctx.runType === 'disclosure') {
-    const target = ctx.targetDoc === null ? null : `doc:${ctx.targetDoc.id}`;
-    if (target === null || !citations.some((c) => c.source === target)) {
-      refuse('citation_required', `a disclosure run's proposal must cite its document: give at least one citation of ${target ?? 'the target document'}, quoted verbatim`);
-    }
-  }
+  if (ctx.runType === 'disclosure') requireTargetDocCitation(ctx, citations, "a disclosure run's proposal");
   return citations;
 }
 
@@ -423,15 +434,6 @@ const proposeChange = defineTool({
 
 // ---- write_journal -------------------------------------------------------------------------------------------------
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-/** Exactly `YYYY-MM-DD`, and a real calendar day: `2026-02-30` does not round-trip. */
-function isIsoDate(s: string): boolean {
-  if (!ISO_DATE.test(s)) return false;
-  const at = Date.parse(`${s}T00:00:00Z`);
-  return !Number.isNaN(at) && new Date(at).toISOString().slice(0, 10) === s;
-}
-
 /** Either `by`, or both `from` and `to` with `from <= to`; never both forms, never neither. */
 function catalystDates(c: { event: string; by?: string; from?: string; to?: string }): Pick<Catalyst, 'by' | 'from' | 'to'> {
   const bad = (why: string): never => refuse('invalid_catalyst_dates', `catalyst "${c.event}": ${why}`);
@@ -485,4 +487,60 @@ const writeJournal = defineTool({
   },
 });
 
-export const WRITE_TOOLS: AgentTool[] = [applyAssumptionChange, proposeChange, resolveAnomaly, recordProvisionalObservation, writeJournal];
+// ---- record_dev_finding --------------------------------------------------------------------------------------------
+
+const recordDevFinding = defineTool({
+  name: 'record_dev_finding',
+  description:
+    'Records something the document shows Orion measures wrong or not at all, for the developer: a missing source, a mis-mapped flow, a ' +
+    'supply or unlock figure Orion does not track. Not a proposal: nothing changes, and the user does not decide it. category is holder_flow, ' +
+    'revenue, supply, unlocks, source, or other; metric_keys (1 to 6) are the asset\'s metrics it is about; claim is what the document says, in ' +
+    'your words; orion_reading is what Orion measures for the same thing and period, with numbers (get_flow_total sums a flow); value_direction ' +
+    'is which way a fix would move the asset\'s targets (up, down, none, unknown); proposed_fix is what to change. evidence: at least one ' +
+    `observation id you have seen in this run. citations (1 to ${MAX_FINDING_CITATIONS}): {source, quoted_text} under the same rules as ` +
+    'propose_change, at least one of the target document. Every citation is verified. ' +
+    `At most ${MAX_DEV_FINDINGS} a run; a finding with the same category and metric keys as an earlier one replaces it.`,
+  input: z.strictObject({
+    category: z.enum(DEV_FINDING_CATEGORIES),
+    title: z.string().max(MAX_FINDING_TITLE),
+    metric_keys: z.array(z.string()).min(1).max(MAX_FINDING_METRICS),
+    claim: z.string().max(MAX_FINDING_TEXT),
+    orion_reading: z.string().max(MAX_FINDING_TEXT),
+    value_direction: z.enum(VALUE_DIRECTIONS),
+    proposed_fix: z.string().max(MAX_FINDING_FIX),
+    evidence: z.array(z.number().int()),
+    citations: z.array(z.strictObject({ source: z.string().max(MAX_URL), quoted_text: z.string().max(MAX_QUOTE) })).min(1).max(MAX_FINDING_CITATIONS),
+  }),
+  run(ctx, input) {
+    const asset = ctx.loaded.config;
+    const title = requireText(input.title, 'title');
+    const claim = requireText(input.claim, 'claim');
+    const orionReading = requireText(input.orion_reading, 'orion_reading');
+    const proposedFix = requireText(input.proposed_fix, 'proposed_fix');
+    const undeclared = input.metric_keys.filter((k) => !asset.metrics[k]);
+    if (undeclared.length > 0) {
+      refuse('unknown_metric', `${undeclared.join(', ')} ${undeclared.length === 1 ? 'is not a metric' : 'are not metrics'} of ${asset.id}`, {
+        metrics: Object.keys(asset.metrics).sort(),
+      });
+    }
+    // Sorted and deduplicated: the order the model named them in is not part of what the finding is.
+    const metricKeys = [...new Set(input.metric_keys)].sort();
+    requireEvidence(ctx, input.evidence);
+    const citations = verifyCitations(ctx, input.citations);
+    // Defensive: the tool is offered to disclosure runs only, and only those have a target document.
+    requireTargetDocCitation(ctx, citations, 'a dev finding');
+
+    const replacing = ctx.ledger.hasDevFinding({ category: input.category, metricKeys });
+    if (!replacing && ctx.ledger.devFindings().length >= MAX_DEV_FINDINGS) {
+      refuse('dev_finding_limit', `this run may record at most ${MAX_DEV_FINDINGS} dev findings; a finding with the same category and metric keys replaces one`);
+    }
+    const fingerprint = sha256(`${asset.id}|${input.category}|${metricKeys.join(',')}|${ctx.targetDoc!.sha256}`);
+    const { replaced } = ctx.ledger.stageDevFinding({
+      category: input.category, title, metricKeys, claim, orionReading, valueDirection: input.value_direction, proposedFix, evidence: input.evidence,
+      citations, fingerprint,
+    });
+    return { staged: true, replaced, fingerprint, findings_staged: ctx.ledger.devFindings().length };
+  },
+});
+
+export const WRITE_TOOLS: AgentTool[] = [applyAssumptionChange, proposeChange, resolveAnomaly, recordProvisionalObservation, writeJournal, recordDevFinding];

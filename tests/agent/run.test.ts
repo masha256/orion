@@ -393,7 +393,10 @@ describe('a disclosure run', () => {
     const doc = addDoc();
     await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id });
     expect(toolNames()).not.toContain('apply_assumption_change');
-    expect(toolNames()).toEqual(expect.arrayContaining(['get_assumptions', 'run_whatif', 'propose_change', 'resolve_anomaly', 'record_provisional_observation', 'write_journal', 'web_search', 'web_fetch']));
+    expect(toolNames()).toEqual(expect.arrayContaining([
+      'get_assumptions', 'run_whatif', 'propose_change', 'resolve_anomaly', 'record_provisional_observation', 'write_journal', 'web_search', 'web_fetch',
+      'get_flow_total', 'record_dev_finding',
+    ]));
     expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'unknown_tool' } });
     expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1);
     expect(model.requests[0].system).toContain('This is a disclosure run.');
@@ -413,6 +416,26 @@ describe('a disclosure run', () => {
     expect(model.toolResults(2)[0]).toMatchObject({ is_error: false, result: { recorded: true, in_signal: true } });
     expect(result.run.outcome).toBe('completed');
     expect(listActiveObservations(w.db, 'mini', 'revenue_run_rate_usd').filter((o) => o.citationUrl === `doc:${doc.id}`)).toMatchObject([{ value: 1100, quotedText: QUOTE }]);
+  });
+
+  it('keeps dev findings in the run summary: staged on a dry run, committed too after a commit, and in no table', async () => {
+    const doc = addDoc();
+    const devFinding = toolUse('record_dev_finding', {
+      category: 'revenue', title: 'Revenue claim', metric_keys: ['revenue_run_rate_usd'], claim: 'The post says $1,100.', orion_reading: 'Orion has 1000.',
+      value_direction: 'up', proposed_fix: 'Read the revenue page.', evidence: [w.ids.revenue_run_rate_usd],
+      citations: [{ source: `doc:${doc.id}`, quoted_text: QUOTE }],
+    });
+    const dry = await run([calls(devFinding), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id, dryRun: true });
+    expect(model.toolResults(1)[0]).toMatchObject({ is_error: false, result: { staged: true } });
+    const drySummary = getAgentRun(w.db, dry.run.id)!.summary as { committed: unknown; staged: { devFindings: { category: string; fingerprint: string }[] } };
+    expect(drySummary.committed).toBeNull();
+    expect(drySummary.staged.devFindings).toMatchObject([{ category: 'revenue', metricKeys: ['revenue_run_rate_usd'], fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/) }]);
+
+    const done = await run([calls(devFinding), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id });
+    const summary = getAgentRun(w.db, done.run.id)!.summary as { committed: { devFindings: unknown[] }; staged: { devFindings: unknown[] } };
+    expect(summary.committed.devFindings).toEqual(drySummary.staged.devFindings);
+    expect(summary.staged.devFindings).toEqual(drySummary.staged.devFindings);
+    expect(done.signal).toBeNull();
   });
 
   it('a weekly run can cite no stored document', async () => {
@@ -437,7 +460,7 @@ describe('a disclosure run', () => {
 });
 
 describe('which tools a run is offered', () => {
-  // The disclosure-only tools arrive with a later task; the filter goes by name, so stand-ins with those names test it.
+  // The filter goes by name, so stand-ins with those names test it apart from what the real tools do.
   const stand = (name: string): AgentTool => ({ name, description: name, input: {} as AgentTool['input'], run: () => null });
   const ALL = ['get_assumptions', 'apply_assumption_change', 'write_journal', ...DISCLOSURE_ONLY_TOOLS].map(stand);
   const offered = (runType: Parameters<typeof toolsForRun>[1], hasSet = true) => toolsForRun(ALL, runType, hasSet).map((t) => t.name);

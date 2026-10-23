@@ -63,12 +63,37 @@ export interface StagedJournal {
   catalysts: Catalyst[];
 }
 
+export const DEV_FINDING_CATEGORIES = ['holder_flow', 'revenue', 'supply', 'unlocks', 'source', 'other'] as const;
+export const VALUE_DIRECTIONS = ['up', 'down', 'none', 'unknown'] as const;
+
+/**
+ * Something a disclosure run found wrong or missing in how Orion measures the asset, for the developer, not the user.
+ * Never a database row: it lives in the run summary (`staged.devFindings`, and `committed.devFindings` on a commit).
+ */
+export interface StagedDevFinding {
+  category: (typeof DEV_FINDING_CATEGORIES)[number];
+  title: string;
+  metricKeys: string[];
+  claim: string;
+  orionReading: string;
+  valueDirection: (typeof VALUE_DIRECTIONS)[number];
+  proposedFix: string;
+  evidence: number[];
+  citations: StoredCitation[];
+  /** sha256 of asset, category, sorted metric keys, and the target document's sha256: what the Hermes step dedupes on. */
+  fingerprint: string;
+}
+
+const findingKey = (f: Pick<StagedDevFinding, 'category' | 'metricKeys'>): string => `${f.category}|${[...f.metricKeys].sort().join(',')}`;
+
 export interface CommitSummary {
   setVersion: number | null;
   observationIds: number[];
   resolvedAnomalyIds: number[];
   proposalIds: number[];
   journalId: number | null;
+  /** The staged findings, evidence remapped to real ids. Nothing was written for them: they are carried in the run summary. */
+  devFindings: StagedDevFinding[];
 }
 
 /** The world changed between staging and commit. The run ends as `conflict` and nothing is written. */
@@ -90,6 +115,7 @@ export class Ledger {
   private readonly stagedObservations: StagedObservation[] = [];
   private readonly stagedProposals: StagedProposal[] = [];
   private stagedJournal: StagedJournal | null = null;
+  private readonly stagedDevFindings: StagedDevFinding[] = [];
   private nextTempId = -1;
 
   constructor(
@@ -198,6 +224,24 @@ export class Ledger {
     return this.stagedJournal;
   }
 
+  // ---- dev findings ----
+
+  /** One with the same category and sorted metric keys as a staged one replaces it, in its place. The run's limit is the tool's to enforce. */
+  stageDevFinding(f: StagedDevFinding): { replaced: boolean } {
+    const at = this.stagedDevFindings.findIndex((s) => findingKey(s) === findingKey(f));
+    if (at >= 0) this.stagedDevFindings[at] = f;
+    else this.stagedDevFindings.push(f);
+    return { replaced: at >= 0 };
+  }
+
+  hasDevFinding(f: Pick<StagedDevFinding, 'category' | 'metricKeys'>): boolean {
+    return this.stagedDevFindings.some((s) => findingKey(s) === findingKey(f));
+  }
+
+  devFindings(): StagedDevFinding[] {
+    return [...this.stagedDevFindings];
+  }
+
   /** What a commit would write: shown by `--dry-run`, and kept in the run summary. */
   preview(): {
     assumptionChanges: StagedAssumptionChange[];
@@ -205,10 +249,11 @@ export class Ledger {
     observations: StagedObservation[];
     proposals: StagedProposal[];
     journal: StagedJournal | null;
+    devFindings: StagedDevFinding[];
   } {
     return {
       assumptionChanges: this.assumptionChanges(), resolutions: [...this.resolutions.values()], observations: this.observations(),
-      proposals: this.proposals(), journal: this.stagedJournal,
+      proposals: this.proposals(), journal: this.stagedJournal, devFindings: this.devFindings(),
     };
   }
 
@@ -300,7 +345,10 @@ export class Ledger {
           ? insertJournalEntry(db, { assetId: this.assetId, persona: this.persona, agentRunId: ctx.agentRunId, createdAt: nowIso, ...this.stagedJournal }).id
           : null;
 
-        return { setVersion, observationIds: [...realId.values()], resolvedAnomalyIds, proposalIds, journalId };
+        // Written nowhere: the run summary carries them. Remapped like every other evidence list, so a committed finding cites real rows.
+        const devFindings = this.stagedDevFindings.map((f) => ({ ...f, evidence: remap(f.evidence) }));
+
+        return { setVersion, observationIds: [...realId.values()], resolvedAnomalyIds, proposalIds, journalId, devFindings };
       } catch (err) {
         // A real write function refusing (say invalid_assumptions, because the config changed mid-run) is a conflict too.
         if (err instanceof OrionError) throw new AgentConflict(`${err.code}: ${err.message}`);

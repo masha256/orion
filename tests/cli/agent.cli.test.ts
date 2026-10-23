@@ -209,6 +209,22 @@ describe('orion agent run', () => {
     expect(pack.adapter_params).toEqual([]);
   });
 
+  it('prints each dev finding with its category, metric keys, title, and where each citation points', async () => {
+    const docPath = join(home, 'post.txt');
+    writeFileSync(docPath, 'Mini said its annualized revenue reached $1,100 in September.\n');
+    const added = JSON.parse(await orion('doc', 'add', 'mini', '--file', docPath, '--kind', 'post', '--url', 'https://x.com/mini/status/1', '--json')) as { id: number };
+    const devFinding = toolUse('record_dev_finding', {
+      category: 'revenue', title: 'Revenue claim not measured', metric_keys: ['revenue_run_rate_usd', 'flow_usd.fees'], claim: 'The post says $1,100.',
+      orion_reading: 'Orion has 1000.', value_direction: 'up', proposed_fix: 'Read the revenue page.', evidence: [revenueId()],
+      citations: [{ source: `doc:${added.id}`, quoted_text: 'annualized revenue reached $1,100 in September' }],
+    });
+    script = [calls(devFinding), calls(journalCall()), say('Done.')];
+    const text = await orion('agent', 'run', 'mini', '--type', 'disclosure', '--doc', String(added.id), '--dry-run');
+    const line = `would commit dev finding revenue [flow_usd.fees, revenue_run_rate_usd]: Revenue claim not measured [doc:${added.id}]`;
+    expect(text).toContain(line);
+    expect(await orion('agent', 'runs', 'show', '1')).toContain(line);
+  });
+
   it('exits 1 with run_in_progress while another holder has the asset\'s lock, and releases its own lock afterwards', async () => {
     withDb((db) => acquireRunLock(db, 'mini', 'tick pid 999', AS_OF));
     script = [calls(journalCall()), say('Done.')];

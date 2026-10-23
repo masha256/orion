@@ -153,6 +153,39 @@ describe('commit', () => {
   });
 });
 
+describe('dev findings', () => {
+  const FINDING = {
+    category: 'holder_flow' as const, title: 't', metricKeys: ['flow_usd.fees'], claim: 'c', orionReading: 'o', valueDirection: 'up' as const,
+    proposedFix: 'f', citations: [CITATION], fingerprint: 'f'.repeat(64),
+  };
+  const tableCounts = (): Record<string, number> =>
+    Object.fromEntries(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[]).map((t) => [t.name, count(`"${t.name}"`)]),
+    );
+
+  it('dev findings survive a dry run in staged and appear in committed after a commit; nothing is written to any table', () => {
+    ledger.stageDevFinding({ ...FINDING, evidence: [priceId] });
+    const before = tableCounts();
+    expect(ledger.preview().devFindings).toEqual([{ ...FINDING, evidence: [priceId] }]);
+    const summary = ledger.commit(db, asset, { agentRunId: null, now: NOW });
+    expect(summary.devFindings).toEqual([{ ...FINDING, evidence: [priceId] }]);
+    expect(tableCounts()).toEqual(before);
+    expect(movesSignal(summary)).toBe(false);
+  });
+
+  it('replaces a finding with the same category and sorted keys, and gives committed findings the real ids of rows staged with them', () => {
+    const staged = research();
+    ledger.stageDevFinding({ ...FINDING, metricKeys: ['flow_usd.fees', 'revenue_run_rate_usd'], evidence: [priceId] });
+    ledger.stageDevFinding({ ...FINDING, category: 'revenue', evidence: [priceId] });
+    ledger.stageDevFinding({ ...FINDING, metricKeys: ['revenue_run_rate_usd', 'flow_usd.fees'], title: 'second', evidence: [staged.tempId] });
+    expect(ledger.devFindings().map((f) => [f.category, f.title])).toEqual([['holder_flow', 'second'], ['revenue', 't']]);
+    expect(ledger.preview().devFindings[0].evidence).toEqual([staged.tempId]);
+    const summary = ledger.commit(db, asset, { agentRunId: null, now: NOW });
+    expect(summary.devFindings[0].evidence).toEqual(summary.observationIds);
+    expect(ledger.devFindings()[0].evidence).toEqual([staged.tempId]); // the staged copy is untouched
+  });
+});
+
 describe('the world changes mid-run', () => {
   const stageEverything = () => {
     const staged = research();
