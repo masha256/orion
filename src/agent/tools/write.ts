@@ -66,11 +66,13 @@ function requireText(value: string, field: string): string {
  * Verifies every citation the model gave, cleaned first so the stored quote is the checked one. One that fails refuses
  * the whole call: nothing is ever staged on a subset of its sources.
  */
-function verifyCitations(ctx: ToolContext, input: { source: string; quoted_text: string }[]): StoredCitation[] {
+function verifyCitations(ctx: ToolContext, input: { source: string; quoted_text: string }[], whose?: string): StoredCitation[] {
   const sources = { pages: ctx.fetchedPages(), docs: ctx.citableDocs() };
   return input.map((c) => {
     const verified = verifyAnyCitation(sources, { source: cleanText(c.source), quoted_text: cleanText(c.quoted_text) });
-    if ('refusal' in verified) throw new ToolRefusal(verified.refusal);
+    if ('refusal' in verified) {
+      throw new ToolRefusal(whose === undefined ? verified.refusal : { ...verified.refusal, message: `${whose}: ${verified.refusal.message}` });
+    }
     return verified.citation;
   });
 }
@@ -454,7 +456,8 @@ const writeJournal = defineTool({
     'Your journal entry for this run: the only thing the next run will remember. thesis is your running view of the asset; open_questions ' +
     'is what the next run should look at; summary is what you did in this run and why. Required before you finish. A second call replaces the first. ' +
     `catalysts (at most ${MAX_CATALYSTS}): dated claims a source makes about what will happen, each {event, kind, by} or {event, kind, from, to} ` +
-    `(dates YYYY-MM-DD, from <= to) with 1 to ${MAX_CATALYST_CITATIONS} citations, {source, quoted_text}, under the same rules as propose_change. ` +
+    `(dates YYYY-MM-DD, from <= to) with 1 to ${MAX_CATALYST_CITATIONS} citations, {source, quoted_text}, under the same rules as propose_change; ` +
+    'in a disclosure run each catalyst cites the target document at least once. ' +
     'Every citation is verified; one that fails refuses the whole entry. A catalyst schedules nothing: a later run sees it when its date comes near.',
   input: z.strictObject({
     thesis: z.string().max(MAX_JOURNAL_TEXT),
@@ -477,10 +480,14 @@ const writeJournal = defineTool({
   run(ctx, input) {
     const thesis = requireText(input.thesis, 'thesis');
     const summary = requireText(input.summary, 'summary');
-    // Allowed in every run type with no target-document rule (spec 7.2), but every quote must verify.
+    // Allowed in every run type, and every quote must verify. In a disclosure run each catalyst must also cite the run's
+    // document (spec section 15, Ruling 9): the run reads one document, so a catalyst it records comes from that document.
     const catalysts: Catalyst[] = (input.catalysts ?? []).map((c) => {
       const event = requireText(c.event, 'event');
-      return { event, kind: c.kind, ...catalystDates({ ...c, event }), citations: verifyCitations(ctx, c.citations) };
+      const whose = `catalyst "${event}"`;
+      const citations = verifyCitations(ctx, c.citations, whose);
+      if (ctx.runType === 'disclosure') requireTargetDocCitation(ctx, citations, whose);
+      return { event, kind: c.kind, ...catalystDates({ ...c, event }), citations };
     });
     ctx.ledger.setJournal({ thesis, openQuestions: input.open_questions.map((q) => cleanText(q)).filter((q) => q !== ''), summary, catalysts });
     return { staged: true };

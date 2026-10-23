@@ -14,7 +14,7 @@ import { listActiveObservations } from '../../src/db/observations.js';
 import { listProposals } from '../../src/db/proposals.js';
 import type { OrionError } from '../../src/types.js';
 import { miniAssumptions } from '../helpers/assets.js';
-import { agentHome, agentWorld, PAGE_TEXT, PAGE_URL, QUOTE, type AgentWorld } from '../helpers/agentWorld.js';
+import { AGENT_ASSET_YAML, agentHome, agentWorld, PAGE_TEXT, PAGE_URL, QUOTE, type AgentWorld } from '../helpers/agentWorld.js';
 import { calls, journalCall, say, scriptedModel, toolUse, webFetch, type ScriptedModel, type ScriptStep } from '../helpers/fakeModel.js';
 import { AS_OF } from '../helpers/obs.js';
 
@@ -389,9 +389,16 @@ describe('a disclosure run', () => {
     expect(count('agent_runs')).toBe(0);
   });
 
+  it('a disclosure run without the asset YAML fails at preflight: no model call, no run row', async () => {
+    const doc = addDoc();
+    expect(await codeOf(run([calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id }))).toBe('disclosure_needs_asset_yaml');
+    expect(model.requests).toHaveLength(0);
+    expect(count('agent_runs')).toBe(0);
+  });
+
   it('a disclosure run gets no apply_assumption_change; a weekly run gets no disclosure-only tools', async () => {
     const doc = addDoc();
-    await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id });
+    await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id, assetYaml: AGENT_ASSET_YAML });
     expect(toolNames()).not.toContain('apply_assumption_change');
     expect(toolNames()).toEqual(expect.arrayContaining([
       'get_assumptions', 'run_whatif', 'propose_change', 'resolve_anomaly', 'record_provisional_observation', 'write_journal', 'web_search', 'web_fetch',
@@ -411,7 +418,7 @@ describe('a disclosure run', () => {
     const other = addDoc('mini', 'Mini also said its annualized revenue reached $1,100 in September, per a second post.\n');
     const research = (source: string) =>
       toolUse('record_provisional_observation', { metric: 'revenue_run_rate_usd', value: 1100, observed_at: '2026-06-28', citation_url: source, quoted_text: QUOTE });
-    const result = await run([calls(research(`doc:${other.id}`)), calls(research(`doc:${doc.id}`)), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id });
+    const result = await run([calls(research(`doc:${other.id}`)), calls(research(`doc:${doc.id}`)), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id, assetYaml: AGENT_ASSET_YAML });
     expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'doc_not_in_run', citable_docs: [`doc:${doc.id}`] } });
     expect(model.toolResults(2)[0]).toMatchObject({ is_error: false, result: { recorded: true, in_signal: true } });
     expect(result.run.outcome).toBe('completed');
@@ -425,13 +432,13 @@ describe('a disclosure run', () => {
       value_direction: 'up', proposed_fix: 'Read the revenue page.', evidence: [w.ids.revenue_run_rate_usd],
       citations: [{ source: `doc:${doc.id}`, quoted_text: QUOTE }],
     });
-    const dry = await run([calls(devFinding), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id, dryRun: true });
+    const dry = await run([calls(devFinding), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id, assetYaml: AGENT_ASSET_YAML, dryRun: true });
     expect(model.toolResults(1)[0]).toMatchObject({ is_error: false, result: { staged: true } });
     const drySummary = getAgentRun(w.db, dry.run.id)!.summary as { committed: unknown; staged: { devFindings: { category: string; fingerprint: string }[] } };
     expect(drySummary.committed).toBeNull();
     expect(drySummary.staged.devFindings).toMatchObject([{ category: 'revenue', metricKeys: ['revenue_run_rate_usd'], fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/) }]);
 
-    const done = await run([calls(devFinding), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id });
+    const done = await run([calls(devFinding), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id, assetYaml: AGENT_ASSET_YAML });
     const summary = getAgentRun(w.db, done.run.id)!.summary as { committed: { devFindings: unknown[] }; staged: { devFindings: unknown[] } };
     expect(summary.committed.devFindings).toEqual(drySummary.staged.devFindings);
     expect(summary.staged.devFindings).toEqual(drySummary.staged.devFindings);
@@ -446,7 +453,7 @@ describe('a disclosure run', () => {
 
   it('records docId and docSha256 in trigger_detail and runs under budget disclosure', async () => {
     const doc = addDoc();
-    const result = await run([calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id, note: 'see the post' });
+    const result = await run([calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id, assetYaml: AGENT_ASSET_YAML, note: 'see the post' });
     expect(result.run).toMatchObject({ outcome: 'completed', runType: 'disclosure', trigger: 'manual', triggerDetail: { note: 'see the post', docId: doc.id, docSha256: doc.sha256 } });
     expect(getAgentRun(w.db, result.run.id)!.triggerDetail).toEqual({ note: 'see the post', docId: doc.id, docSha256: doc.sha256 });
     const pack = JSON.parse((model.requests[0].messages[0].content as string).slice((model.requests[0].messages[0].content as string).indexOf('{')));

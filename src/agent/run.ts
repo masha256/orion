@@ -96,6 +96,9 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   // Another asset's document is not found: the run may only ever cite its own asset's document.
   const document = opts.docId === undefined ? null : getDocument(db, opts.docId);
   if (opts.docId !== undefined && (!document || document.assetId !== asset.id)) throw new OrionError('doc_not_found', `no document ${opts.docId} on ${asset.id}`);
+  if (opts.runType === 'disclosure' && opts.assetYaml === undefined) {
+    throw new OrionError('disclosure_needs_asset_yaml', `a disclosure run needs the text of assets/${asset.id}.yaml for its pack`);
+  }
   const targetDoc: CitableDoc | null = document && { id: document.id, kind: document.kind, sha256: document.sha256, text: document.text };
   if (opts.anomalyId !== undefined) {
     const target = getAnomaly(db, opts.anomalyId);

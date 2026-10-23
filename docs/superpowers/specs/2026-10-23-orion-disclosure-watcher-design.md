@@ -659,3 +659,29 @@ million in Q3" [11:31, 2].
   change to 5.1's citable set.
 - Dev findings live in run summaries and the queue file, not in an Orion table with a status; closing them is manual,
   as for the queue today.
+
+## 15. Amendments made during execution (2026-10-23)
+
+Rulings made while the plan was built. Each amends the section named; the earlier text stays as written and this list
+wins where they differ.
+
+- Ruling 6 (amends invariant 3 and 5.4): a figure cited from a machine transcript goes to the user regardless. On a
+  metric with `allow_provisional`, `record_provisional_observation` files it as an `observation` proposal (never
+  signal-eligible until approved); on any other metric it is stored as an inert row.
+- Ruling 8 (amends 7.1): `get_flow_total` sums active, confirmed, committed rows only. Where two summed rows cover the
+  same day it gives no total and refuses `flow_conflict` with their ids and days; the skill treats that refusal as a data
+  finding worth a dev finding.
+- Ruling 9 (enforces invariant 2 for catalysts; amends 7.2 and 5.4): in a disclosure run each catalyst in
+  `write_journal` must carry at least one verified citation of the target document (`doc:<id>`), else the entry is
+  refused `citation_required`, naming the catalyst's event. Other run types only verify every citation. A catalyst
+  citation that fails verification is refused with its message prefixed `catalyst "<event>": `.
+- Ruling 10 (amends invariant 1 and 8.4): invariant 1 reads "A disclosure run makes no direct assumption change: value
+  changes leave it only as proposals, and figures wait for the user; the tool layer does not offer
+  `apply_assumption_change` to it (as for `bootstrap`)." The watcher's `agent run` passes
+  `--out <ORION_HOME>/signals.jsonl`, as every real hand-run agent run does (a dry run passes `--dry-run` and no `--out`).
+- Ruling 7 (amends 5.4 and 7.3): an observation proposal converted from a `record_provisional_observation` call carries
+  that call's own citation in `proposals.citations_json`.
+- The PUMP note (amends 7.4's "no other asset's validation changes"): PUMP's `lit.unlocks_next_year` sources are also
+  validated by `validateParams` now; its config passes, and no PUMP output or pin moves.
+- Ruling 5 (amends 4.1): `normalizeDocText` strips a leading BOM, turns CRLF into LF, and collapses any run of trailing
+  newlines to exactly one (not only "ensures" one). The Hermes script writes that form, so the sha256 values agree.

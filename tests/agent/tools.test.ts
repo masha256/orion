@@ -646,12 +646,37 @@ describe('write_journal', () => {
       expect(w.ledger.journal()!.catalysts).toHaveLength(8);
     });
 
-    it('needs no target-doc citation in a disclosure run, but every citation still verifies', () => {
+    it('in a disclosure run each catalyst must cite the target doc: a URL alone refuses citation_required, naming the event', () => {
       w.ctx.citableDocs = () => [DOC];
       w.ctx.runType = 'disclosure';
       w.ctx.targetDoc = DOC;
+      const r = journal([catalyst(), catalyst({ event: 'revenue milestone', citations: [{ source: PAGE_URL, quoted_text: QUOTE }] })]);
+      expect(r.result.refused).toBe('citation_required');
+      expect(r.result.message).toContain('catalyst "revenue milestone"');
+      expect(r.result.message).toContain('doc:1');
+      expect(w.ledger.journal()).toBeNull();
+    });
+
+    it('in a disclosure run a catalyst citing the target doc stages, alongside a URL citation', () => {
+      w.ctx.citableDocs = () => [DOC];
+      w.ctx.runType = 'disclosure';
+      w.ctx.targetDoc = DOC;
+      const r = journal([catalyst({ citations: [{ source: PAGE_URL, quoted_text: QUOTE }, { source: 'doc:1', quoted_text: DOC_QUOTE }] })]);
+      expect(r.isError).toBe(false);
+      expect(r.result).toEqual({ staged: true });
+      expect(w.ledger.journal()!.catalysts.map((c) => c.citations.map((x) => x.source))).toEqual([[PAGE_URL, 'doc:1']]);
+    });
+
+    it('outside a disclosure run a catalyst needs no stored document: a weekly catalyst citing a URL stages', () => {
+      expect(w.ctx.runType).toBe('weekly');
       expect(journal([catalyst({ citations: [{ source: PAGE_URL, quoted_text: QUOTE }] })]).isError).toBe(false);
-      expect(journal([catalyst({ citations: [{ source: PAGE_URL, quoted_text: 'a sentence the page never said at all' }] })]).result.refused).toBe('quote_not_found');
+      expect(w.ledger.journal()!.catalysts).toHaveLength(1);
+    });
+
+    it('a catalyst citation that fails verification names the catalyst in the refusal', () => {
+      const r = journal([catalyst({ event: 'mainnet launch', citations: [{ source: PAGE_URL, quoted_text: 'a sentence the page never said at all' }] })]);
+      expect(r.result.refused).toBe('quote_not_found');
+      expect(r.result.message).toMatch(/^catalyst "mainnet launch": /);
     });
 
     it('a journal without catalysts stores NULL', () => {

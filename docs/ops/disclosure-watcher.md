@@ -1,15 +1,15 @@
 # Disclosure watcher (Hermes side, LIT pilot)
 
-When an issuer publishes something material (in v1: Lighter's quarterly investor-call recording on X), the watcher finds it, transcribes it, stores it in Orion, and has Orion's analyst read it in a `disclosure` run. What the analyst finds comes back as Orion proposals (the inbox), dev-queue entries (code and data-source work) and dated catalysts in the journal. Nothing changes a value on its own. Design: `docs/superpowers/specs/2026-10-23-orion-disclosure-watcher-design.md`, sections 8 to 10.
+When an issuer publishes something material (in v1: Lighter's quarterly investor-call recording on X), the watcher finds it, transcribes it, stores it in Orion, and has Orion's analyst read it in a `disclosure` run. What the analyst finds comes back as Orion proposals (the inbox), dev-queue entries (code and data-source work) and dated catalysts in the journal. It makes no direct assumption change: value changes are proposals, and figures wait for the user. Design: `docs/superpowers/specs/2026-10-23-orion-disclosure-watcher-design.md`, sections 8 to 10.
 
-Status: this describes the pipeline as designed. The Orion side (`orion doc`, the `disclosure` run type) is in this repo; the Hermes script lives in the Hermes profile, not in git, and its cron job is created paused and enabled only on the owner's go after the merge.
+Status: the Hermes script is not built yet; it is designed in the spec (sections 8 to 10), and this page describes it as designed. The Orion side (`orion doc`, the `disclosure` run type) is built and in this repo. The script will live in the Hermes profile, not in git, and its cron job is created paused and enabled only on the owner's go after the merge.
 
 ## How it runs
 
 1. A deterministic script on the Hermes host (no LLM call anywhere in it) runs once a day from cron. On a scan day it makes one keyless DuckDuckGo HTML search per asset, extracts X post ids, skips every id already in its state file, and classifies each new one by its public `tweet-result` JSON: the author must be the configured `user.id_str` (never the handle, which can change), the post at most 120 days old. A post with a video of at least `min_video_minutes` whose text matches `match_text` is a recording (`queued`); a post matching `announce_text` with no video is an `announcement` (logged only); anything else is `irrelevant`.
 2. It processes at most one `queued` post per run, oldest first: download the audio, decode it to 16 kHz mono WAV, transcribe it with faster-whisper, write `[mm:ss] text` per segment, delete the audio.
 3. It stores the transcript in Orion (`orion doc add ... --kind machine_transcript`) and checks that Orion's sha256 equals its own.
-4. It starts the analyst: `orion agent run <asset> --type disclosure --doc <id> --json`. The tick never starts a `disclosure` run; only the watcher (or you, by hand) does.
+4. It starts the analyst: `orion agent run <asset> --type disclosure --doc <id> --out <ORION_HOME>/signals.jsonl --json`. The tick never starts a `disclosure` run; only the watcher (or you, by hand) does.
 5. The post-run step appends each new dev finding to the dev queue (deduped by fingerprint) and prints a digest, which is the Slack message.
 
 Scan days: daily from the day after a quarter ends to quarter end plus `after_quarter_end_days` (35 for LIT); outside that window, Mondays only. On a day that is not a scan day the script exits 0 and prints nothing.
@@ -64,7 +64,7 @@ ffmpeg -i <audio> -ac 1 -ar 16000 -f wav <id>.wav
 node dist/cli/index.js doc add <asset> --url <post url> --file <txt> --kind machine_transcript --source-id x:<id> \
   --published-at <created_at> --title "<asset> investor update <YYYY>Q<n>" --meta asr_model=... --meta audio_sha256=... \
   --meta duration_s=... --meta transcribed_at=... --json
-node dist/cli/index.js agent run <asset> --type disclosure --doc <doc_id> --json      # plus --dry-run in a dry run
+node dist/cli/index.js agent run <asset> --type disclosure --doc <doc_id> --out <ORION_HOME>/signals.jsonl --json   # a dry run: --dry-run, no --out
 node dist/cli/index.js agent runs show <run_id> --json                                # estimated_cost_usd for the digest
 node dist/cli/index.js inbox <asset> --json                                           # proposal effects (numbers only)
 ```
@@ -83,7 +83,7 @@ orion agent run <asset> --type disclosure --doc <id> [--dry-run] [--json]
 orion agent runs show <id>                      # outcome, dev findings with their citation labels, estimated cost
 ```
 
-Kinds: `machine_transcript | transcript | post | filing | article`. Documents are append-only: the same asset and text (same sha256) is not stored twice, and no command edits or deletes one. `--doc` is required for `disclosure` and refused for other run types (`doc_only_for_disclosure`); the document must belong to the asset (`doc_not_found`). A disclosure run has its own budget (`agent.budgets.disclosure` overrides it; default 25 requests, 1.2M input tokens, 3 web searches, 5 fetches, 5 proposals), about $1 to $3 a call, about $7 at worst. It is never offered `apply_assumption_change`: every value change it wants is a proposal, and every proposal, dev finding and catalyst cites the document.
+Kinds: `machine_transcript | transcript | post | filing | article`. Documents are append-only: the same asset and text (same sha256) is not stored twice, and no command edits or deletes one. `--doc` is required for `disclosure` and refused for other run types (`doc_only_for_disclosure`); the document must belong to the asset (`doc_not_found`). A disclosure run has its own budget (`agent.budgets.disclosure` overrides it; default 25 requests, 1.2M input tokens, 40,000 output tokens, 3 web searches, 5 fetches, 5 proposals), about $1 to $3 a call, about $7 at worst. It is never offered `apply_assumption_change`, so it makes no direct assumption change: every value change it wants is a proposal, figures wait for the user, and every proposal, dev finding and catalyst cites the document.
 
 ## The digest and the dev queue
 
