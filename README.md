@@ -34,6 +34,8 @@ orion model assumptions set vvv rev_growth_y1 0.6 --scenario base --rationale "s
 orion model whatif vvv --set regime_multiplier=0.5       # explore, nothing saved
 orion model run vvv                                      # new signal
 orion model replay 12                                    # prove run 12 reproduces
+orion doc add lit --url <post url> --file call.txt --kind machine_transcript   # store an issuer document an analyst run can cite (append-only)
+orion doc list lit                                       # stored documents; orion doc show <id> [--text]
 ```
 
 Flow rows must not overlap each other: each one covers `[--at minus --period-days, --at]`, and a run is blocked when two periods for the same metric cover any of the same time. So when the full-period figure arrives, `orion data reject <id>` the partial-period (month-to-date) row first, then enter the full one.
@@ -91,6 +93,7 @@ orion agent run vvv --type triage --anomaly 7 --out signals.jsonl    # look into
 orion agent run vvv --type triage --note "https://..." --out signals.jsonl   # a lead to verify; never evidence by itself
 orion agent run vvv --type deep --out signals.jsonl                  # monthly: re-underwrite the thesis
 orion agent run <asset> --type bootstrap --out signals.jsonl         # a new asset: research every manual metric; you confirm the rows from the inbox
+orion agent run lit --type disclosure --doc 1 [--dry-run]           # read one stored issuer document; file proposals, dev findings and catalysts
 orion agent run vvv --type weekly --dry-run                          # everything except the commit (spends tokens)
 orion agent runs list vvv
 orion agent runs show 3 [--transcript]                   # outcome, what was committed, tokens, estimated cost
@@ -105,6 +108,8 @@ Credentials: put `ANTHROPIC_API_KEY=...` in `<ORION_HOME>/.env` (or the environm
 What the agent can do directly: change an assumption inside its band for that scenario (the `bear`/`base`/`bull` sub-ranges under `assumptions:` in the asset YAML) and within the max step per run (25 percent of the band's width), citing at least one observation it has seen in that run; resolve an open anomaly with evidence; record a researched figure as a provisional observation, citing a page it fetched in that run and quoting it verbatim; write its journal. Everything else becomes a proposal: a value outside its band or step, any change to the asset YAML, acknowledging an anomaly, confirming or rejecting an observation, and a researched value on a critical metric that moves more than `review_triggers.provisional_move_pct` (25) from the last confirmed value (its own earlier provisional figures never move that baseline). A quote it cites must sit inside one paragraph, table cell, or list item of the fetched page, so it cannot be spliced from unrelated parts; and it cannot record a figure where an observation already exists at the same metric and time: it proposes rejecting that one instead. While a `degrading` anomaly is open it cannot change assumptions at all. It can never touch `agent:` settings, persona or skill files, or a signal.
 
 A new asset starts with a `bootstrap` run: the one run type that needs no assumption set. It researches every manual metric of the asset and records what it can cite as provisional rows, changes no assumption, and proposes no config change; its journal lists each metric as found, not found, or ambiguous. `orion tick` starts it by itself on an asset that has never had a deep or bootstrap attempt, and it counts as that month's deep and that week's weekly. The rows wait in `orion inbox <asset>` for you to confirm; then the calibration sweep is run against confirmed data and the set is imported, and the next tick produces the first signal. Its budget is its own (`agent.budgets.bootstrap`), about $8 to $12 at list price.
+
+A `disclosure` run reads one stored issuer document (`orion doc add`: a call transcript or a post) and compares every figure and dated plan in it with what Orion measures. It changes nothing directly (it is never offered `apply_assumption_change`): value changes become proposals, code and data-source work becomes dev findings in the run summary (`orion agent runs show <id>`), dated plans become catalysts in the journal, and each one cites the document. The tick never starts one; the disclosure watcher does (`docs/ops/disclosure-watcher.md`), or you, with `--doc <id>`. Its budget is `agent.budgets.disclosure`, about $1 to $3 a call.
 
 A run either finishes cleanly, journal entry included, and commits everything together, or commits nothing (`budget_exhausted`, `refused`, `no_journal`, `conflict`, `error`). The run row, the transcript, and the token counts are kept either way. `conflict` means the world changed mid-run (you saved an assumption set, or edited `assets/<id>.yaml`, while it ran): run it again. After a commit that can move a signal the run values the asset and prints the signal; `change.author` and `provenance.agent_run_id` say who moved it. Exit codes: `0` completed, `2` completed with a `blocked` signal, `1` anything else.
 

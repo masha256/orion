@@ -21,7 +21,8 @@ describe('the shipped persona and skills', () => {
   it('load, and every run type gets at least one skill', () => {
     expect(listPersonaNames(ROOT)).toEqual(['ai-infra-analyst', 'consumer-launchpad-analyst', 'onchain-dex-analyst', 'oracle-network-analyst', 'perp-exchange-analyst', 'stablecoin-protocol-analyst']);
     expect(loadPersona(ROOT, 'ai-infra-analyst')).toMatchObject({ model: 'claude-opus-5-5', effort: 'high' });
-    expect(loadSkills(ROOT).map((s) => s.name)).toEqual(['anomaly-triage', 'assumption-review', 'bootstrap-research', 'disclosure-research', 'tokenomics-audit']);
+    expect(loadSkills(ROOT).map((s) => s.name)).toEqual(['anomaly-triage', 'assumption-review', 'bootstrap-research', 'disclosure-research', 'disclosure-review', 'tokenomics-audit']);
+    expect(skillsFor(ROOT, 'disclosure').map((s) => s.name)).toEqual(['disclosure-research', 'disclosure-review']);
     expect(skillsFor(ROOT, 'bootstrap').map((s) => s.name)).toEqual(['bootstrap-research', 'disclosure-research']);
     expect(skillsFor(ROOT, 'weekly').map((s) => s.name)).toEqual(['assumption-review', 'disclosure-research']);
     expect(skillsFor(ROOT, 'triage').map((s) => s.name)).toEqual(['anomaly-triage', 'disclosure-research']);

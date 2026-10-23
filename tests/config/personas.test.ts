@@ -132,3 +132,35 @@ describe('dominance rule in the sector personas (2026-10-17)', () => {
     }
   });
 });
+
+describe('the disclosure run text (2026-10-23)', () => {
+  const ROOT_DIR = fileURLToPath(new URL('../..', import.meta.url));
+
+  it('disclosure runs load disclosure-review and disclosure-research only', () => {
+    expect(skillsFor(ROOT_DIR, 'disclosure').map((s) => s.name)).toEqual(['disclosure-research', 'disclosure-review']);
+  });
+
+  it('the perp persona carries the disclosure paragraph and stays ASCII', () => {
+    const body = loadPersona(ROOT_DIR, 'perp-exchange-analyst').body;
+    expect(body).toContain('Issuer disclosures.');
+    expect(body).toContain('A gap between the two is the finding; neither side is right by default.');
+    expect(body).toContain('watch the team and investor unlocks from 2026-12-29');
+    expect(/^[\x00-\x7F]*$/.test(body)).toBe(true);
+  });
+
+  it('the persona names none of the Q3 findings', () => {
+    const body = loadPersona(ROOT_DIR, 'perp-exchange-analyst').body;
+    expect(body).not.toContain('Robinhood');
+    expect(body).not.toContain('2027-01-29');
+  });
+
+  it('the disclosure-review skill names the real tools and none of the Q3 findings', () => {
+    const review = skillsFor(ROOT_DIR, 'disclosure').find((s) => s.name === 'disclosure-review')!;
+    expect(review.runTypes).toEqual(['disclosure']);
+    for (const tool of ['get_flow_total', 'get_observations', 'propose_change', 'record_dev_finding', 'write_journal', 'apply_assumption_change', 'asset_config_yaml', 'adapter_params']) {
+      expect(review.body).toContain(tool);
+    }
+    expect(/^[\x00-\x7F]*$/.test(review.body)).toBe(true);
+    for (const leak of ['Robinhood', 'DefiLlama', '2027-01-29', 'CFTC', 'Q3']) expect(review.body).not.toContain(leak);
+  });
+});
