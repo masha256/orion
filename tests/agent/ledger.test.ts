@@ -17,6 +17,7 @@ let asset: AssetConfig;
 let ledger: Ledger;
 let priceId: number;
 
+const CITATION = { source: 'doc:1', quotedText: 'the API lags by design, every day', locator: '12:33', docSha256: 'd'.repeat(64), docKind: 'transcript' as const };
 const count = (table: string): number => (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
 const anomaly = () =>
   raiseAnomaly(db, {
@@ -105,7 +106,7 @@ describe('commit', () => {
     ledger.stageAssumptionChange({ key: 'rev_growth_y1', scenario: 'base', value: 0.1, rationale: 'new disclosure', evidence: [staged.tempId, priceId] });
     ledger.stageProposal({
       change: { kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'bull', value: 3 }, filedAgainst: { value: 0 },
-      rationale: 'beyond the step', evidence: [staged.tempId], effect: null,
+      rationale: 'beyond the step', evidence: [staged.tempId], effect: null, citations: [],
     });
     const summary = ledger.commit(db, asset, { agentRunId: null, now: NOW });
     const row = listActiveObservations(db, 'mini', 'revenue_run_rate_usd')[0];
@@ -131,12 +132,13 @@ describe('commit', () => {
     ledger.setJournal({ thesis: 'steady, still', openQuestions: ['Q3 revenue?'], summary: 'no change' });
     ledger.stageProposal({
       change: { kind: 'acknowledge_anomaly', anomalyId: 1, note: 'lags by design' }, filedAgainst: { status: 'open' }, rationale: 'known lag', evidence: [], effect: null,
+      citations: [CITATION],
     });
     const summary = ledger.commit(db, asset, { agentRunId: null, now: NOW });
     expect(summary).toMatchObject({ setVersion: null, observationIds: [], resolvedAnomalyIds: [] });
     expect(listJournal(db, 'mini')).toHaveLength(1);
     expect(listJournal(db, 'mini')[0]).toMatchObject({ id: summary.journalId, thesis: 'steady, still', persona: 'analyst' });
-    expect(listProposals(db)[0]).toMatchObject({ id: summary.proposalIds[0], persona: 'analyst', status: 'pending' });
+    expect(listProposals(db)[0]).toMatchObject({ id: summary.proposalIds[0], persona: 'analyst', status: 'pending', citations: [CITATION] });
     expect(movesSignal(summary)).toBe(false);
   });
 
@@ -156,7 +158,7 @@ describe('the world changes mid-run', () => {
     const staged = research();
     ledger.stageAssumptionChange({ key: 'rev_growth_y1', scenario: 'base', value: 0.1, rationale: 'up', evidence: [staged.tempId] });
     ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's' });
-    ledger.stageProposal({ change: { kind: 'acknowledge_anomaly', anomalyId: 1, note: 'n' }, filedAgainst: {}, rationale: 'r', evidence: [], effect: null });
+    ledger.stageProposal({ change: { kind: 'acknowledge_anomaly', anomalyId: 1, note: 'n' }, filedAgainst: {}, rationale: 'r', evidence: [], effect: null, citations: [] });
   };
   const nothingWritten = () => {
     expect(count('observations')).toBe(1);

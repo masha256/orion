@@ -1,3 +1,4 @@
+import type { StoredCitation } from '../agent/guardrails.js';
 import { OrionError, type ConfigEdit, type Scenario } from '../types.js';
 import { canonicalJson } from '../util/canonical.js';
 import type { Db } from './connection.js';
@@ -36,6 +37,8 @@ export interface Proposal {
   rationale: string;
   evidence: number[];
   effect: ProposalEffect | null;
+  /** Verified citations (spec 5.4), outside the change: they never make a duplicate look new. `[]` on rows from before them. */
+  citations: StoredCitation[];
   status: ProposalStatus;
   createdAt: string;
   decidedAt: string | null;
@@ -51,6 +54,8 @@ export interface NewProposal {
   rationale: string;
   evidence: number[];
   effect: ProposalEffect | null;
+  /** Verified by the tool that filed it. Omitted or empty is stored as NULL, so a citation-free row looks like an old one. */
+  citations?: StoredCitation[];
   createdAt: string;
 }
 
@@ -65,6 +70,7 @@ interface Row {
   rationale: string;
   evidence_json: string;
   effect_json: string | null;
+  citations_json: string | null;
   status: ProposalStatus;
   created_at: string;
   decided_at: string | null;
@@ -77,6 +83,7 @@ function fromRow(r: Row): Proposal {
     change: JSON.parse(r.change_json) as ProposalChange, filedAgainst: JSON.parse(r.filed_against_json) as unknown,
     rationale: r.rationale, evidence: JSON.parse(r.evidence_json) as number[],
     effect: r.effect_json === null ? null : (JSON.parse(r.effect_json) as ProposalEffect),
+    citations: r.citations_json === null ? [] : (JSON.parse(r.citations_json) as StoredCitation[]),
     status: r.status, createdAt: r.created_at, decidedAt: r.decided_at, decisionNote: r.decision_note,
   };
 }
@@ -84,13 +91,14 @@ function fromRow(r: Row): Proposal {
 export function insertProposal(db: Db, input: NewProposal): Proposal {
   const info = db
     .prepare(
-      `INSERT INTO proposals (asset_id, persona, agent_run_id, kind, change_json, filed_against_json, rationale, evidence_json, effect_json, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+      `INSERT INTO proposals (asset_id, persona, agent_run_id, kind, change_json, filed_against_json, rationale, evidence_json, effect_json, citations_json, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
     )
     .run(
       // Stored as written, not canonically: a config edit's value is later written into the YAML, and its key order should be the author's.
       input.assetId, input.persona, input.agentRunId, input.change.kind, JSON.stringify(input.change), JSON.stringify(input.filedAgainst ?? null),
       input.rationale, JSON.stringify(input.evidence), input.effect === null ? null : JSON.stringify(input.effect),
+      input.citations === undefined || input.citations.length === 0 ? null : JSON.stringify(input.citations),
       new Date(input.createdAt).toISOString(),
     );
   return getProposal(db, Number(info.lastInsertRowid))!;

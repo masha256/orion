@@ -457,6 +457,87 @@ describe('propose_change', () => {
     });
     expect(outcome2.isError).toBe(false);
   });
+
+  describe('citations', () => {
+    const DOC_TEXT = '[12:30] Thanks for joining the call.\n[12:33] We are moving the base scenario weight to one half,\n[12:37] because the fee switch is now live.\n';
+    const DOC_QUOTE = 'moving the base scenario weight to one half, because the fee switch is now live';
+    const DOC = { id: 1, kind: 'transcript' as const, sha256: 'd'.repeat(64), text: DOC_TEXT };
+    const probabilities = (base: number) => ({
+      kind: 'config', edits: [{ path: ['scenario_probabilities'], value: { bear: (1 - base) / 2, base, bull: (1 - base) / 2 } }],
+    });
+    const withDoc = (runType: 'weekly' | 'disclosure' = 'weekly') => {
+      w.ctx.citableDocs = () => [DOC];
+      if (runType === 'disclosure') {
+        w.ctx.runType = 'disclosure';
+        w.ctx.targetDoc = DOC;
+      }
+    };
+    const storedCitations = (): unknown => {
+      w.ledger.commit(w.db, w.loaded.config, { agentRunId: null, now: new Date(AS_OF) });
+      const row = w.db.prepare('SELECT citations_json FROM proposals ORDER BY id DESC LIMIT 1').get() as { citations_json: string | null };
+      return row.citations_json === null ? null : JSON.parse(row.citations_json);
+    };
+
+    it('propose_change verifies each citation and stores it', () => {
+      withDoc();
+      const r = propose({ ...probabilities(0.5), citations: [{ source: 'doc:1', quoted_text: DOC_QUOTE }, { source: PAGE_URL, quoted_text: QUOTE }] });
+      expect(r.isError).toBe(false);
+      const expected = [
+        { source: 'doc:1', quotedText: DOC_QUOTE, locator: '12:33', docSha256: 'd'.repeat(64), docKind: 'transcript' },
+        { source: PAGE_URL, quotedText: QUOTE, locator: null, docSha256: null, docKind: null },
+      ];
+      expect(w.ledger.proposals()[0].citations).toEqual(expected);
+      expect(storedCitations()).toEqual(expected);
+    });
+
+    it('a bad citation refuses the whole proposal', () => {
+      withDoc();
+      const bad = propose({ ...probabilities(0.5), citations: [{ source: 'doc:1', quoted_text: DOC_QUOTE }, { source: 'doc:1', quoted_text: 'the fee switch was never discussed at all' }] });
+      expect(bad).toMatchObject({ isError: true, result: { refused: 'quote_not_found' } });
+      expect(propose({ ...probabilities(0.5), citations: [{ source: 'doc:2', quoted_text: DOC_QUOTE }] }).result.refused).toBe('doc_not_in_run');
+      expect(w.ledger.proposals()).toEqual([]);
+      // At most five.
+      const six = Array.from({ length: 6 }, () => ({ source: 'doc:1', quoted_text: DOC_QUOTE }));
+      expect(propose({ ...probabilities(0.5), citations: six }).result.refused).toBe('invalid_input');
+      expect(w.ledger.proposals()).toEqual([]);
+    });
+
+    it('a disclosure run refuses a proposal without a citation of the target doc', () => {
+      withDoc('disclosure');
+      expect(propose(probabilities(0.5))).toMatchObject({ isError: true, result: { refused: 'citation_required' } });
+      expect(propose({ ...probabilities(0.5), citations: [] }).result.refused).toBe('citation_required');
+      expect(propose({ ...probabilities(0.5), citations: [{ source: PAGE_URL, quoted_text: QUOTE }] }).result.refused).toBe('citation_required');
+      expect(w.ledger.proposals()).toEqual([]);
+      expect(propose({ ...probabilities(0.5), citations: [{ source: PAGE_URL, quoted_text: QUOTE }, { source: 'doc:1', quoted_text: DOC_QUOTE }] }).isError).toBe(false);
+      expect(w.ledger.proposals()[0].citations.map((c) => c.source)).toEqual([PAGE_URL, 'doc:1']);
+    });
+
+    it('other run types may file without citations, as before', () => {
+      withDoc();
+      expect(propose(probabilities(0.5)).isError).toBe(false);
+      expect(w.ledger.proposals()[0].citations).toEqual([]);
+      expect(storedCitations()).toBeNull();
+    });
+
+    it('citations do not change duplicate detection', () => {
+      withDoc();
+      expect(propose({ ...probabilities(0.5), citations: [{ source: 'doc:1', quoted_text: DOC_QUOTE }] }).isError).toBe(false);
+      expect(propose({ ...probabilities(0.5), citations: [{ source: PAGE_URL, quoted_text: QUOTE }] }))
+        .toMatchObject({ isError: true, result: { refused: 'duplicate_proposal', staged_in_this_run: true } });
+      w.ledger.commit(w.db, w.loaded.config, { agentRunId: null, now: new Date(AS_OF) });
+      expect(propose(probabilities(0.5))).toMatchObject({ isError: true, result: { refused: 'duplicate_proposal', proposal_id: expect.any(Number) } });
+    });
+
+    it('a machine-transcript observation proposal carries the verified citation it came from', () => {
+      const text = '[00:01] Our annualized revenue reached $1,100 in September,\n[00:04] up from a thousand.\n';
+      w.ctx.citableDocs = () => [{ id: 1, kind: 'machine_transcript', sha256: 'c'.repeat(64), text }];
+      const quote = 'annualized revenue reached $1,100 in September, up from a thousand';
+      expect(research({ citation_url: 'doc:1', quoted_text: quote }).result.recorded).toBe(false);
+      expect(w.ledger.proposals()[0].citations).toEqual([
+        { source: 'doc:1', quotedText: quote, locator: '00:01', docSha256: 'c'.repeat(64), docKind: 'machine_transcript' },
+      ]);
+    });
+  });
 });
 
 describe('model-authored text', () => {

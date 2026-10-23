@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { buildProgram } from '../../src/cli/program.js';
 import { raiseAnomaly } from '../../src/db/anomalies.js';
 import { openDb } from '../../src/db/connection.js';
+import { insertDocument } from '../../src/db/documents.js';
 import { insertProposal, type ProposalChange } from '../../src/db/proposals.js';
 import { acquireRunLock, getRunLock, releaseRunLock } from '../../src/db/runLocks.js';
 import type { OrionError } from '../../src/types.js';
@@ -252,6 +253,32 @@ describe('orion model proposals', () => {
     expect(await orion('model', 'proposals', 'list')).toBe('no proposals');
     expect(await orion('model', 'proposals', 'list', '--all')).toContain('approved');
     expect(await orion('model', 'assumptions', 'history', 'mini')).toContain(`Approved proposal #${p.id} from analyst: because`);
+  });
+
+  it('shows each citation with its locator and the label of its document', async () => {
+    const doc = withDb((db) =>
+      insertDocument(db, {
+        assetId: 'mini', kind: 'machine_transcript', sourceUrl: 'https://x.com/mini/status/1', sourceId: null, title: null, publishedAt: AS_OF,
+        addedAt: AS_OF, meta: { asr_model: 'whisper-large-v3' }, text: '[12:33] revenue reached $1,100 in September\n',
+      }).doc,
+    );
+    const p = withDb((db) =>
+      insertProposal(db, {
+        assetId: 'mini', persona: 'analyst', agentRunId: null, change: { kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 },
+        filedAgainst: { value: 0 }, rationale: 'because', evidence: [], effect: null, createdAt: AS_OF,
+        citations: [
+          { source: `doc:${doc.id}`, quotedText: 'revenue reached $1,100 in September', locator: '12:33', docSha256: doc.sha256, docKind: 'machine_transcript' },
+          { source: 'https://news.example.com/a', quotedText: 'annualized revenue of $1,100', locator: null, docSha256: null, docKind: null },
+        ],
+      }),
+    );
+    const shown = (await orion('model', 'proposals', 'show', String(p.id))).split('\n');
+    expect(shown).toContain(
+      `  citation doc:${doc.id} at 12:33 [machine transcript (whisper-large-v3): names and numbers may be misheard; every figure in it is the speaker's dated claim, not a fact]: "revenue reached $1,100 in September"`,
+    );
+    expect(shown).toContain('  citation https://news.example.com/a: "annualized revenue of $1,100"');
+    const json = JSON.parse(await orion('model', 'proposals', 'show', String(p.id), '--json')) as { citations: unknown[] };
+    expect(json.citations).toHaveLength(2);
   });
 
   it('approving a config proposal edits the YAML and says to review and commit it', async () => {

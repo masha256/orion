@@ -1,11 +1,25 @@
 import type { Command } from 'commander';
 import { approveProposal, rejectProposal, type ApproveResult } from '../../app/proposals.js';
 import { changesAgentLimits } from '../../config/edit.js';
+import type { Db } from '../../db/connection.js';
+import { docLabel, getDocument } from '../../db/documents.js';
 import { getObservationsByIds } from '../../db/observations.js';
 import { getProposal, listProposals, type Proposal } from '../../db/proposals.js';
 import { MS_PER_DAY, OrionError } from '../../types.js';
 import { canonicalJson } from '../../util/canonical.js';
 import { guarded, output, parseNumber, withDb, type CliContext } from '../util.js';
+
+const DOC_SOURCE = /^doc:(\d+)$/;
+
+/** One line per citation: the source, a transcript's locator, and for a stored document its fixed label (spec 5.3). */
+function citationLines(db: Db, p: Proposal): string[] {
+  return p.citations.map((c) => {
+    const m = DOC_SOURCE.exec(c.source);
+    const doc = m ? getDocument(db, Number(m[1])) : null;
+    const label = m ? ` [${doc ? docLabel(doc) : 'document not found'}]` : '';
+    return `  citation ${c.source}${c.locator === null ? '' : ` at ${c.locator}`}${label}: "${c.quotedText}"`;
+  });
+}
 
 function changeSummary(p: Proposal): string {
   const c = p.change;
@@ -82,9 +96,9 @@ export function registerProposals(model: Command, ctx: CliContext): void {
     .action((id: string, opts: { json?: boolean }) =>
       guarded(ctx, opts.json, () => {
         const proposalId = parseNumber(id, 'id');
-        const { p, evidence } = withDb(ctx, (db) => {
+        const { p, evidence, citations } = withDb(ctx, (db) => {
           const found = getProposal(db, proposalId);
-          return { p: found, evidence: found ? getObservationsByIds(db, found.evidence) : [] };
+          return { p: found, evidence: found ? getObservationsByIds(db, found.evidence) : [], citations: found ? citationLines(db, found) : [] };
         });
         if (!p) throw new OrionError('proposal_not_found', `no proposal with id ${proposalId}`);
         output(ctx, opts.json, { ...p, evidence_observations: evidence }, () => [
@@ -93,6 +107,7 @@ export function registerProposals(model: Command, ctx: CliContext): void {
           `rationale: ${p.rationale}`,
           ...evidence.map((o) => `  evidence #${o.id}  ${o.metricKey} = ${o.value} at ${o.observedAt} (${o.source}, ${o.status})${o.citationUrl ? ` ${o.citationUrl}` : ''}`),
           ...(p.change.kind === 'observation' ? [`  quote: "${p.change.quotedText}"`] : []),
+          ...citations,
           ...(p.status === 'pending' ? [] : [`${p.status} ${p.decidedAt ?? ''}${p.decisionNote ? `: ${p.decisionNote}` : ''}`]),
         ]);
       }),

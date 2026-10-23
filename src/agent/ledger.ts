@@ -8,7 +8,7 @@ import { insertJournalEntry } from '../db/journal.js';
 import { insertObservation, listActiveObservations, type Observation } from '../db/observations.js';
 import { insertProposal, type ProposalChange, type ProposalEffect } from '../db/proposals.js';
 import { OrionError, type AssumptionValues, type Scenario } from '../types.js';
-import { blockingAnomalies } from './guardrails.js';
+import { blockingAnomalies, type StoredCitation } from './guardrails.js';
 
 /**
  * Everything an agent run wants to write, held in memory until the run finishes cleanly. Tools validate against the
@@ -51,6 +51,8 @@ export interface StagedProposal {
   rationale: string;
   evidence: number[];
   effect: ProposalEffect | null;
+  /** Verified when the proposal was filed; `[]` when it cites nothing. */
+  citations: StoredCitation[];
 }
 
 export interface StagedJournal {
@@ -287,7 +289,8 @@ export class Ledger {
           (p) =>
             insertProposal(db, {
               assetId: this.assetId, persona: this.persona, agentRunId: ctx.agentRunId, change: p.change, filedAgainst: p.filedAgainst,
-              rationale: p.rationale, evidence: remap(p.evidence), effect: p.effect, createdAt: nowIso,
+              rationale: p.rationale, evidence: remap(p.evidence), effect: p.effect, citations: p.citations,
+              createdAt: nowIso,
             }).id,
         );
 

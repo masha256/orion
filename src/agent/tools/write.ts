@@ -11,6 +11,7 @@ import { SCENARIOS, type Scenario } from '../../types.js';
 import { canonicalJson } from '../../util/canonical.js';
 import {
   allowedRange, blockingAnomalies, checkEvidence, checkStep, cleanText, placeValue, routeObservation, verifyAnyCitation, TRANSCRIPT_WINDOW, type EvidenceRef,
+  type StoredCitation,
 } from '../guardrails.js';
 import { computeEffect } from './think.js';
 import { defineTool, refuse, ToolRefusal, type AgentTool, type ToolContext } from './types.js';
@@ -41,6 +42,7 @@ const MAX_URL = 2000;
 const MAX_JOURNAL_TEXT = 4000;
 const MAX_OPEN_QUESTION = 500;
 const MAX_OPEN_QUESTIONS = 20;
+const MAX_PROPOSAL_CITATIONS = 5;
 
 function requireText(value: string, field: string): string {
   const text = cleanText(value);
@@ -48,10 +50,31 @@ function requireText(value: string, field: string): string {
   return text;
 }
 
+/**
+ * Verifies every citation the model gave, cleaned first so the stored quote is the checked one. One that fails refuses
+ * the whole call: a proposal is never staged on a subset of its sources. In a disclosure run at least one must cite the
+ * run's target document (spec 5.4); elsewhere citations are optional.
+ */
+function verifyProposalCitations(ctx: ToolContext, input: { source: string; quoted_text: string }[]): StoredCitation[] {
+  const sources = { pages: ctx.fetchedPages(), docs: ctx.citableDocs() };
+  const citations = input.map((c) => {
+    const verified = verifyAnyCitation(sources, { source: cleanText(c.source), quoted_text: cleanText(c.quoted_text) });
+    if ('refusal' in verified) throw new ToolRefusal(verified.refusal);
+    return verified.citation;
+  });
+  if (ctx.runType === 'disclosure') {
+    const target = ctx.targetDoc === null ? null : `doc:${ctx.targetDoc.id}`;
+    if (target === null || !citations.some((c) => c.source === target)) {
+      refuse('citation_required', `a disclosure run's proposal must cite its document: give at least one citation of ${target ?? 'the target document'}, quoted verbatim`);
+    }
+  }
+  return citations;
+}
+
 /** Stages a proposal after the checks every kind shares: the run's proposal budget, and no duplicate of a pending or staged one. */
 function fileProposal(
   ctx: ToolContext,
-  p: { change: ProposalChange; filedAgainst: unknown; rationale: string; evidence: number[]; effect: ProposalEffect | null },
+  p: { change: ProposalChange; filedAgainst: unknown; rationale: string; evidence: number[]; effect: ProposalEffect | null; citations: StoredCitation[] },
 ): Record<string, unknown> {
   if (ctx.ledger.proposals().length >= ctx.budgets.proposals) {
     refuse('proposal_budget', `this run may file at most ${ctx.budgets.proposals} proposals`);
@@ -114,7 +137,7 @@ const applyAssumptionChange = defineTool({
       const change: ProposalChange = { kind: 'assumption_value', key: input.key, scenario: s, value: input.value };
       const staged = fileProposal(ctx, {
         change, filedAgainst: { value: starts.get(s) }, rationale, evidence: input.evidence,
-        effect: computeEffect(ctx, [{ key: input.key, value: input.value, scenario: s }]),
+        effect: computeEffect(ctx, [{ key: input.key, value: input.value, scenario: s }]), citations: [],
       });
       return {
         applied: false,
@@ -259,7 +282,7 @@ const recordProvisionalObservation = defineTool({
           : `${input.metric} is critical and ${input.value} is more than ${movePct}% from the last confirmed value (${inForce})`;
       const staged = fileProposal(ctx, {
         change, filedAgainst: { inForce }, rationale: note ? `${note} (${why})` : why, evidence: [],
-        effect: computeEffect(ctx, [], { addObservations: [preview] }),
+        effect: computeEffect(ctx, [], { addObservations: [preview] }), citations: [verified.citation],
       });
       return { recorded: false, converted_to_proposal: staged, reason: `${why}; it cannot be cited as evidence until the user approves it` };
     }
@@ -292,7 +315,10 @@ const proposeChange = defineTool({
     'config (edits: a list of {path, value}, where path is a list of segments into the asset config, a string segment selects a map key or ' +
     'the list item with that id, and a null value deletes; all edits must leave the config valid together, so change weights in one proposal); ' +
     'acknowledge_anomaly and withdraw_acknowledgement (anomaly_id); confirm_observation and reject_observation (observation_id). ' +
-    'Proposals that can move the target store the computed effect. The rationale is what the user reads: make the case.',
+    'Proposals that can move the target store the computed effect. The rationale is what the user reads: make the case. ' +
+    `citations (at most ${MAX_PROPOSAL_CITATIONS}): each a {source, quoted_text}, source the URL of a page you fetched or doc:<id> for the stored ` +
+    'document in your context pack, quoted_text its own words under the same rules as record_provisional_observation. Every citation is ' +
+    'verified; one that fails refuses the whole proposal. In a disclosure run at least one must cite the target document.',
   input: z.strictObject({
     kind: z.enum(PROPOSABLE_KINDS),
     rationale: z.string().max(MAX_RATIONALE),
@@ -303,12 +329,14 @@ const proposeChange = defineTool({
     edits: z.array(z.strictObject({ path: z.array(z.union([z.string(), z.number().int()])).min(1), value: z.unknown() })).min(1).optional(),
     anomaly_id: z.number().int().optional(),
     observation_id: z.number().int().optional(),
+    citations: z.array(z.strictObject({ source: z.string().max(MAX_URL), quoted_text: z.string().max(MAX_QUOTE) })).max(MAX_PROPOSAL_CITATIONS).optional(),
   }),
   run(ctx, input) {
     const asset = ctx.loaded.config;
     const rationale = requireText(input.rationale, 'rationale');
     const evidence = input.evidence ?? [];
     if (evidence.length > 0 || input.kind === 'assumption_value') requireEvidence(ctx, evidence);
+    const citations = verifyProposalCitations(ctx, input.citations ?? []);
 
     switch (input.kind) {
       case 'assumption_value': {
@@ -323,7 +351,7 @@ const proposeChange = defineTool({
         const committed = ctx.ledger.startValue(key, scenario);
         if (committed === value) refuse('no_change', `${key} (${scenario}) is already ${value}`);
         return fileProposal(ctx, {
-          change: { kind: 'assumption_value', key, scenario, value }, filedAgainst: { value: committed ?? null }, rationale, evidence,
+          change: { kind: 'assumption_value', key, scenario, value }, filedAgainst: { value: committed ?? null }, rationale, evidence, citations,
           effect: computeEffect(ctx, [{ key, value, scenario }]),
         });
       }
@@ -351,7 +379,7 @@ const proposeChange = defineTool({
           });
         }
         return fileProposal(ctx, {
-          change: { kind: 'config', edits }, filedAgainst, rationale, evidence, effect: computeEffect(ctx, [], { config: edited.config }),
+          change: { kind: 'config', edits }, filedAgainst, rationale, evidence, citations, effect: computeEffect(ctx, [], { config: edited.config }),
         });
       }
 
@@ -363,7 +391,7 @@ const proposeChange = defineTool({
         const needed = input.kind === 'acknowledge_anomaly' ? 'open' : 'acknowledged';
         if (anomaly!.status !== needed) refuse('wrong_anomaly_status', `anomaly ${anomaly!.id} is ${anomaly!.status}; ${input.kind} needs it ${needed}`);
         return fileProposal(ctx, {
-          change: { kind: input.kind, anomalyId: anomaly!.id, note: rationale }, filedAgainst: { status: needed }, rationale, evidence, effect: null,
+          change: { kind: input.kind, anomalyId: anomaly!.id, note: rationale }, filedAgainst: { status: needed }, rationale, evidence, citations, effect: null,
         });
       }
 
@@ -377,7 +405,7 @@ const proposeChange = defineTool({
         if (confirming && o.status !== 'provisional') refuse('not_provisional', `observation ${o.id} is already ${o.status}`);
         return fileProposal(ctx, {
           change: { kind: input.kind, observationId: o.id, note: rationale },
-          filedAgainst: { status: o.status, active: true }, rationale, evidence,
+          filedAgainst: { status: o.status, active: true }, rationale, evidence, citations,
           effect: computeEffect(ctx, [], confirming ? { addObservations: [{ ...o, status: 'confirmed' }] } : { removeObservationIds: [o.id] }),
         });
       }

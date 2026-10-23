@@ -148,6 +148,27 @@ describe('proposals', () => {
     expect(listProposals(db)).toEqual([]);
     expect(listProposals(db, { includeDecided: true })).toHaveLength(2);
   });
+
+  it('stores citations as JSON, and a citation-free proposal as NULL', () => {
+    const citations = [
+      { source: 'doc:1', quotedText: 'we moved the base weight to one half', locator: '12:33', docSha256: 'd'.repeat(64), docKind: 'transcript' as const },
+      { source: 'https://news.example.com/a', quotedText: 'annualized revenue of $1,100', locator: null, docSha256: null, docKind: null },
+    ];
+    const cited = insertProposal(db, proposal({ citations }));
+    expect(cited.citations).toEqual(citations);
+    expect(getProposal(db, cited.id)!.citations).toEqual(citations);
+    const raw = (id: number) => (db.prepare('SELECT citations_json FROM proposals WHERE id = ?').get(id) as { citations_json: string | null }).citations_json;
+    expect(JSON.parse(raw(cited.id)!)).toEqual(citations);
+    const bare = insertProposal(db, proposal({ change: { kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'bull', value: 1 }, citations: [] }));
+    expect(raw(bare.id)).toBeNull();
+  });
+
+  it('old proposal rows read citations as []', () => {
+    const p = insertProposal(db, proposal());
+    db.prepare('UPDATE proposals SET citations_json = NULL WHERE id = ?').run(p.id);
+    expect(getProposal(db, p.id)!.citations).toEqual([]);
+    expect(listProposals(db)[0].citations).toEqual([]);
+  });
 });
 
 describe('journal', () => {
