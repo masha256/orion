@@ -13,6 +13,8 @@ export interface AdapterDef {
   name: string;
   /** True when the adapter reads the chain, so the run must open an RPC connection. */
   needsRpc: boolean;
+  /** What the adapter's params mean, for the analyst writing a config proposal (a disclosure run's pack shows it). */
+  paramsDoc?: string;
   run(ctx: SourceContext, params: Record<string, unknown>): Promise<SourceValue>;
 }
 

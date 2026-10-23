@@ -170,6 +170,31 @@ describe('orion agent run', () => {
     expect(await orion('agent', 'runs', 'list')).toBe('no agent runs');
   });
 
+  it('--type disclosure without --doc fails with disclosure_needs_doc and spends nothing', async () => {
+    await expect(orion('agent', 'run', 'mini', '--type', 'disclosure')).rejects.toMatchObject({ code: 'disclosure_needs_doc' });
+    const out = JSON.parse(await orion('agent', 'run', 'mini', '--type', 'disclosure', '--json')) as { error: { code: string } };
+    expect(out.error.code).toBe('disclosure_needs_doc');
+    expect(exitCode).toBe(1);
+    await expect(orion('agent', 'run', 'mini', '--type', 'disclosure', '--doc', '7')).rejects.toMatchObject({ code: 'doc_not_found' });
+    await expect(orion('agent', 'run', 'mini', '--type', 'weekly', '--doc', '7')).rejects.toMatchObject({ code: 'doc_only_for_disclosure' });
+    expect(await orion('agent', 'runs', 'list')).toBe('no agent runs');
+  });
+
+  it('runs a disclosure run on --doc with the document and the asset YAML text in its pack', async () => {
+    const docPath = join(home, 'post.txt');
+    writeFileSync(docPath, 'Mini said its annualized revenue reached $1,100 in September.\n');
+    const added = JSON.parse(await orion('doc', 'add', 'mini', '--file', docPath, '--kind', 'post', '--url', 'https://x.com/mini/status/1', '--json')) as { id: number; sha256: string };
+    script = [calls(journalCall()), say('Done.')];
+    const run = JSON.parse(await orion('agent', 'run', 'mini', '--type', 'disclosure', '--doc', String(added.id), '--json')) as { run: { id: number; runType: string; outcome: string; triggerDetail: unknown } };
+    expect(run.run).toMatchObject({ runType: 'disclosure', outcome: 'completed', triggerDetail: { docId: added.id, docSha256: added.sha256 } });
+    const shown = JSON.parse(await orion('agent', 'runs', 'show', String(run.run.id), '--transcript', '--json')) as { transcript: { messages: { content: unknown }[] } };
+    const first = shown.transcript.messages[0].content as string;
+    const pack = JSON.parse(first.slice(first.indexOf('{'))) as Record<string, any>;
+    expect(pack.document).toMatchObject({ id: added.id, kind: 'post', label: "the issuer's own post: a dated claim" });
+    expect(pack.asset_config_yaml).toBe(readFileSync(join(home, 'assets', 'mini.yaml'), 'utf8'));
+    expect(pack.adapter_params).toEqual([]);
+  });
+
   it('exits 1 with run_in_progress while another holder has the asset\'s lock, and releases its own lock afterwards', async () => {
     withDb((db) => acquireRunLock(db, 'mini', 'tick pid 999', AS_OF));
     script = [calls(journalCall()), say('Done.')];

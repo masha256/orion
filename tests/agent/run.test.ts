@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runAgent, type RunAgentDeps, type RunAgentOptions } from '../../src/agent/run.js';
+import { DISCLOSURE_ONLY_TOOLS, toolsForRun, type AgentTool } from '../../src/agent/tools/index.js';
 import { runValuation } from '../../src/app/valuation.js';
+import { DEFAULT_BUDGETS } from '../../src/config/agentPolicy.js';
 import { getAgentRun, getTranscript, listAgentRuns } from '../../src/db/agentRuns.js';
 import { insertFiring } from '../../src/db/triggerFirings.js';
+import { insertDocument } from '../../src/db/documents.js';
 import { getAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
 import { listAssumptionChanges } from '../../src/db/assumptionChanges.js';
 import { createAssumptionSet, getLatestAssumptionSet } from '../../src/db/assumptions.js';
@@ -349,5 +352,90 @@ describe('preflight', () => {
     const changed = (await run([calls(journalCall()), say('Done.')])).run.configHash;
     expect(same).toBe(first);
     expect(changed).not.toBe(first);
+  });
+});
+
+describe('a disclosure run', () => {
+  const POST = 'Mini said its annualized revenue reached $1,100 in September, up from $1,000.\n';
+  const addDoc = (assetId = 'mini', text = POST) =>
+    insertDocument(w.db, {
+      assetId, kind: 'post', sourceUrl: `https://x.com/mini/status/${text.length}${assetId}`, sourceId: null, title: null, publishedAt: '2026-06-29T00:00:00.000Z',
+      addedAt: AS_OF, meta: {}, text,
+    }).doc;
+  const codeOf = async (p: Promise<unknown>): Promise<string | undefined> => p.then(() => undefined, (err: OrionError) => err.code);
+  const toolNames = (i = 0) => model.requests[i].tools.map((t) => ('name' in t ? t.name : t.type));
+
+  it('a disclosure run needs --doc, refuses a doc of another asset, and refuses --doc on other types', async () => {
+    const own = addDoc();
+    const foreign = addDoc('hype', 'Hype said something else entirely about its revenue.\n');
+    expect(await codeOf(run([], { runType: 'disclosure' }))).toBe('disclosure_needs_doc');
+    expect(await codeOf(run([], { runType: 'disclosure', docId: 999 }))).toBe('doc_not_found');
+    expect(await codeOf(run([], { runType: 'disclosure', docId: foreign.id }))).toBe('doc_not_found');
+    for (const runType of ['weekly', 'triage', 'deep', 'bootstrap'] as const) {
+      expect(await codeOf(run([], { runType, docId: own.id, note: 'a lead' }))).toBe('doc_only_for_disclosure');
+    }
+    expect(model.requests).toHaveLength(0);
+    expect(count('agent_runs')).toBe(0);
+  });
+
+  it('a disclosure run gets no apply_assumption_change; a weekly run gets no disclosure-only tools', async () => {
+    const doc = addDoc();
+    await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id });
+    expect(toolNames()).not.toContain('apply_assumption_change');
+    expect(toolNames()).toEqual(expect.arrayContaining(['get_assumptions', 'run_whatif', 'propose_change', 'resolve_anomaly', 'record_provisional_observation', 'write_journal', 'web_search', 'web_fetch']));
+    expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'unknown_tool' } });
+    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1);
+    expect(model.requests[0].system).toContain('This is a disclosure run.');
+
+    await run([calls(journalCall()), say('Done.')], { runType: 'weekly' });
+    expect(toolNames()).toContain('apply_assumption_change');
+    expect(toolNames().filter((n) => (DISCLOSURE_ONLY_TOOLS as readonly string[]).includes(n))).toEqual([]);
+  });
+
+  it('a disclosure run can cite doc:<id> of its target doc and nothing else', async () => {
+    const doc = addDoc();
+    const other = addDoc('mini', 'Mini also said its annualized revenue reached $1,100 in September, per a second post.\n');
+    const research = (source: string) =>
+      toolUse('record_provisional_observation', { metric: 'revenue_run_rate_usd', value: 1100, observed_at: '2026-06-28', citation_url: source, quoted_text: QUOTE });
+    const result = await run([calls(research(`doc:${other.id}`)), calls(research(`doc:${doc.id}`)), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id });
+    expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'doc_not_in_run', citable_docs: [`doc:${doc.id}`] } });
+    expect(model.toolResults(2)[0]).toMatchObject({ is_error: false, result: { recorded: true, in_signal: true } });
+    expect(result.run.outcome).toBe('completed');
+    expect(listActiveObservations(w.db, 'mini', 'revenue_run_rate_usd').filter((o) => o.citationUrl === `doc:${doc.id}`)).toMatchObject([{ value: 1100, quotedText: QUOTE }]);
+  });
+
+  it('a weekly run can cite no stored document', async () => {
+    const doc = addDoc();
+    await run([calls(toolUse('record_provisional_observation', { metric: 'revenue_run_rate_usd', value: 1100, observed_at: '2026-06-28', citation_url: `doc:${doc.id}`, quoted_text: QUOTE })), calls(journalCall()), say('Done.')]);
+    expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'doc_not_in_run', citable_docs: [] } });
+  });
+
+  it('records docId and docSha256 in trigger_detail and runs under budget disclosure', async () => {
+    const doc = addDoc();
+    const result = await run([calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id, note: 'see the post' });
+    expect(result.run).toMatchObject({ outcome: 'completed', runType: 'disclosure', trigger: 'manual', triggerDetail: { note: 'see the post', docId: doc.id, docSha256: doc.sha256 } });
+    expect(getAgentRun(w.db, result.run.id)!.triggerDetail).toEqual({ note: 'see the post', docId: doc.id, docSha256: doc.sha256 });
+    const pack = JSON.parse((model.requests[0].messages[0].content as string).slice((model.requests[0].messages[0].content as string).indexOf('{')));
+    expect(pack.run).toMatchObject({ type: 'disclosure', budgets: DEFAULT_BUDGETS.disclosure });
+    expect(pack.document).toMatchObject({ id: doc.id, kind: 'post', sha256: doc.sha256, text: POST });
+    // 25 requests, 3 searches, 5 fetches: the web tools carry the disclosure budget's limits.
+    expect(DEFAULT_BUDGETS.disclosure).toEqual({ requests: 25, inputTokens: 1_200_000, outputTokens: 40_000, webSearches: 3, webFetches: 5, proposals: 5 });
+    expect(model.requests[0].tools.find((t) => 'name' in t && t.name === 'web_search')).toMatchObject({ max_uses: 3 });
+    expect(model.requests[0].tools.find((t) => 'name' in t && t.name === 'web_fetch')).toMatchObject({ max_uses: 5 });
+  });
+});
+
+describe('which tools a run is offered', () => {
+  // The disclosure-only tools arrive with a later task; the filter goes by name, so stand-ins with those names test it.
+  const stand = (name: string): AgentTool => ({ name, description: name, input: {} as AgentTool['input'], run: () => null });
+  const ALL = ['get_assumptions', 'apply_assumption_change', 'write_journal', ...DISCLOSURE_ONLY_TOOLS].map(stand);
+  const offered = (runType: Parameters<typeof toolsForRun>[1], hasSet = true) => toolsForRun(ALL, runType, hasSet).map((t) => t.name);
+
+  it('offers the disclosure-only tools to a disclosure run only, and apply_assumption_change to neither disclosure nor bootstrap', () => {
+    expect(DISCLOSURE_ONLY_TOOLS).toEqual(['get_flow_total', 'record_dev_finding']);
+    expect(offered('disclosure')).toEqual(['get_assumptions', 'write_journal', 'get_flow_total', 'record_dev_finding']);
+    for (const runType of ['weekly', 'triage', 'deep'] as const) expect(offered(runType)).toEqual(['get_assumptions', 'apply_assumption_change', 'write_journal']);
+    expect(offered('bootstrap')).toEqual(['get_assumptions', 'write_journal']);
+    expect(offered('bootstrap', false)).toEqual(['write_journal']);
   });
 });

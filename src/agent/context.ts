@@ -4,6 +4,7 @@ import type { LoadedAsset } from '../config/load.js';
 import { lastCompletedRun } from '../db/agentRuns.js';
 import { getAnomaly, listAnomalies } from '../db/anomalies.js';
 import type { Db } from '../db/connection.js';
+import { docLabel, type StoredDocument } from '../db/documents.js';
 import { listFetchRuns } from '../db/fetchRuns.js';
 import type { Firing } from '../db/triggerFirings.js';
 import { listJournal } from '../db/journal.js';
@@ -11,6 +12,7 @@ import { listProposals, recentlyDecidedProposals } from '../db/proposals.js';
 import { listSignals } from '../db/runs.js';
 import { computeDrivers } from '../drivers/compute.js';
 import { requiredExtraMetrics } from '../engine/requirements.js';
+import { getAdapter } from '../ingest/adapters/registry.js';
 import { MS_PER_DAY, type RunType } from '../types.js';
 import { describeAnomaly, describeAssumptions, describeDrivers, describeProposal, describeSignal } from './describe.js';
 import type { Ledger } from './ledger.js';
@@ -27,6 +29,10 @@ export interface ContextPackInput {
   budgets: RunBudgets;
   now: Date;
   trigger: RunTrigger;
+  /** A disclosure run's target document. Shown on disclosure runs only. */
+  document?: StoredDocument;
+  /** The text of `assets/<id>.yaml`, comments included. Shown on disclosure runs only. */
+  assetYaml?: string;
 }
 
 const CALENDAR_DAYS = 30;
@@ -58,7 +64,7 @@ export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, in
   const horizonEnd = input.now.getTime() + CALENDAR_DAYS * MS_PER_DAY;
   const calendar = calendarEvents(asset);
 
-  return {
+  const pack: Record<string, unknown> = {
     asset: {
       id: asset.id, symbol: asset.symbol, name: asset.name,
       // What research may write: every metric with no source. A bootstrap works through this list.
@@ -95,6 +101,31 @@ export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, in
       return at >= input.now.getTime() - MS_PER_DAY && at <= horizonEnd;
     }),
   };
+  if (input.runType !== 'disclosure') return pack;
+  const doc = input.document;
+  return {
+    ...pack,
+    // The text is the stored text verbatim; the label says how far to trust it.
+    document: doc
+      ? { id: doc.id, kind: doc.kind, label: docLabel(doc), source_url: doc.sourceUrl, source_id: doc.sourceId, title: doc.title, published_at: doc.publishedAt, sha256: doc.sha256, text: doc.text }
+      : null,
+    // Where each of Orion's numbers comes from, in the user's own words, so a finding can be checked against the config.
+    asset_config_yaml: input.assetYaml ?? null,
+    adapter_params: adapterParams(loaded),
+  };
+}
+
+/** The params each adapter source on the asset accepts, for adapters that document them: what a config proposal may set. */
+function adapterParams(loaded: LoadedAsset): { metric: string; adapter: string; params_doc: string }[] {
+  const out: { metric: string; adapter: string; params_doc: string }[] = [];
+  for (const [metric, def] of Object.entries(loaded.config.metrics).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    for (const source of [def.source, ...(def.cross_checks ?? []).map((c) => c.source)]) {
+      if (source?.type !== 'adapter') continue;
+      const paramsDoc = getAdapter(source.name).paramsDoc;
+      if (paramsDoc !== undefined) out.push({ metric, adapter: source.name, params_doc: paramsDoc });
+    }
+  }
+  return out;
 }
 
 /** The first user message. JSON, because every section is data the agent will quote numbers and ids from. */

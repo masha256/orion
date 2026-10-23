@@ -1,4 +1,6 @@
 import type { Command } from 'commander';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { estimateCostUsd } from '../../agent/cost.js';
 import { runAgent, type RunAgentResult } from '../../agent/run.js';
 import { lockHolder, withRunLock } from '../../app/lock.js';
@@ -39,21 +41,25 @@ export function registerAgent(program: Command, ctx: CliContext): void {
   agent
     .command('run <asset>')
     .description('one agent run; exit 0 completed, 2 completed with a blocked signal, 1 anything else')
-    .requiredOption('--type <type>', 'weekly | triage | deep | bootstrap')
+    .requiredOption('--type <type>', 'weekly | triage | deep | bootstrap | disclosure')
     .option('--anomaly <id>', 'triage: the anomaly to look into')
     .option('--note <text>', 'triage: a lead for the agent to verify (text or a URL); never evidence')
+    .option('--doc <id>', 'disclosure: the stored document to read (orion doc list); refused for other types')
     .option('--dry-run', 'do everything except commit; spends tokens')
     .option('--out <file>', 'JSONL file to append the signal to, when the run produces one')
     .option('--json', 'JSON output')
-    .action((assetId: string, opts: { type: string; anomaly?: string; note?: string; dryRun?: boolean; out?: string; json?: boolean }) =>
+    .action((assetId: string, opts: { type: string; anomaly?: string; note?: string; doc?: string; dryRun?: boolean; out?: string; json?: boolean }) =>
       guarded(ctx, opts.json, async () => {
         if (!isRunType(opts.type)) throw new OrionError('invalid_run_type', `--type must be one of ${RUN_TYPES.join(', ')}`);
         const runType = opts.type;
         const anomalyId = opts.anomaly === undefined ? undefined : parseNumber(opts.anomaly, '--anomaly');
+        const docId = opts.doc === undefined ? undefined : parseNumber(opts.doc, '--doc');
         const loaded = loadAsset(ctx.home, assetId);
+        // The file as the user wrote it, comments included: a disclosure run's pack shows it.
+        const assetYaml = runType === 'disclosure' ? readFileSync(join(ctx.home, 'assets', `${assetId}.yaml`), 'utf8') : undefined;
         const result = await withDbAsync(ctx, (db) =>
           withRunLock(db, assetId, lockHolder('agent run'), ctx.now(), () =>
-            runAgent(db, loaded, { runType, anomalyId, note: opts.note, dryRun: opts.dryRun }, {
+            runAgent(db, loaded, { runType, anomalyId, note: opts.note, dryRun: opts.dryRun, docId, assetYaml }, {
               home: ctx.home, now: ctx.now, modelClient: () => modelClientFor(ctx), reload: () => loadAsset(ctx.home, assetId),
             })
           , { onReleaseError: (err) => ctx.stderr?.(`warning: the run lock could not be released (${err instanceof Error ? err.message : String(err)}); it expires on its own`) }),

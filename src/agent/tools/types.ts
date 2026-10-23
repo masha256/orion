@@ -18,6 +18,8 @@ export interface ToolContext {
   fetchedPages: () => FetchedPage[];
   /** Stored documents this run may cite as `doc:<id>`. */
   citableDocs: () => CitableDoc[];
+  /** A disclosure run's target document (the run's own asset's, checked at preflight); null for every other run type. */
+  targetDoc: CitableDoc | null;
   /** Which run this is: some writes are closed to a bootstrap. */
   runType: RunType;
 }

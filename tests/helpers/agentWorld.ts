@@ -60,6 +60,7 @@ export function agentWorld(yaml: string = AGENT_ASSET_YAML, assumptionsOver: Par
   const ctx: ToolContext = {
     db, loaded, ledger, now: () => new Date(AS_OF), budgets: budgetsFor(loaded.config, 'weekly'), runType: 'weekly', fetchedPages: () => pages,
     citableDocs: () => [],
+    targetDoc: null,
   };
   const call = (name: string, input: unknown) => {
     const outcome = runTool(AGENT_TOOLS, ctx, name, input);
