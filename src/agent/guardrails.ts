@@ -1,5 +1,6 @@
 import { agentBand, keyBounds, maxStepFraction, type Range } from '../config/agentPolicy.js';
 import type { AssetConfig } from '../config/schema.js';
+import type { DocKind } from '../db/documents.js';
 import type { Scenario } from '../types.js';
 
 /**
@@ -317,4 +318,131 @@ export function verifyCitation(pages: FetchedPage[], citationUrl: string, quoted
     refused: 'quote_not_found',
     message: `quoted_text does not occur in the fetched text of ${citationUrl}; quote the page verbatim`,
   };
+}
+
+// ---- Citing a stored document --------------------------------------------------------------------------------------
+
+/**
+ * How many consecutive transcript segments one quote may span. A Whisper segment is a cut inside a sentence, so one
+ * segment would refuse most real quotes; three still keeps a claim spliced across topics out (spec 5.2).
+ */
+export const TRANSCRIPT_WINDOW = 3;
+
+/** A stored document the run may cite as `doc:<id>`: in v1, the run's target document only. */
+export interface CitableDoc {
+  id: number;
+  kind: DocKind;
+  sha256: string;
+  text: string;
+}
+
+/** A citation as the model writes it: a fetched page's URL or `doc:<id>`, and the quote. */
+export interface CitationInput {
+  source: string;
+  quoted_text: string;
+}
+
+/** A verified citation, as it is stored. `locator` is a transcript's `mm:ss` stamp; the doc fields are null for a page. */
+export interface StoredCitation {
+  source: string;
+  quotedText: string;
+  locator: string | null;
+  docSha256: string | null;
+  docKind: DocKind | null;
+}
+
+const SEGMENT = /^\[(\d{2,3}:\d{2})\] ?(.*)$/;
+
+interface Segment {
+  stamp: string;
+  text: string;
+}
+
+/** The transcript's segments: one per `[mm:ss] text` line, the stamp kept apart from the words. Other lines carry no words. */
+function transcriptSegments(text: string): Segment[] {
+  const segments: Segment[] = [];
+  for (const line of text.split('\n')) {
+    const m = SEGMENT.exec(line);
+    if (m) segments.push({ stamp: m[1]!, text: m[2]! });
+  }
+  return segments;
+}
+
+/**
+ * Where a quote sits in a transcript: inside a window of 1..TRANSCRIPT_WINDOW consecutive segments, joined by one space
+ * and normalized. The locator is the stamp of the first segment of the smallest such window, the earliest one first.
+ * Stamps are not part of any segment's words, so a quote that copies one is not found.
+ */
+export function findInTranscript(text: string, quote: string): { locator: string } | null {
+  const q = normalizeText(quote);
+  if (q === '') return null;
+  const segments = transcriptSegments(text);
+  for (let size = 1; size <= TRANSCRIPT_WINDOW; size++) {
+    for (let i = 0; i + size <= segments.length; i++) {
+      const window = normalizeText(segments.slice(i, i + size).map((s) => s.text).join(' '));
+      if (window.includes(q)) return { locator: segments[i]!.stamp };
+    }
+  }
+  return null;
+}
+
+const DOC_SOURCE = /^doc:(\d+)$/;
+const isTranscript = (kind: DocKind): boolean => kind === 'machine_transcript' || kind === 'transcript';
+
+/**
+ * Verifies a citation of a fetched page or of a stored document. A `doc:` source must name a document citable in this
+ * run (else `doc_not_in_run`); a transcript is checked with the window rule, every other kind with `textBlocks`, as a
+ * page. Any other source is a URL, checked by `verifyCitation` exactly as before. The quote rules are the page rules.
+ */
+export function verifyAnyCitation(
+  sources: { pages: FetchedPage[]; docs: CitableDoc[] },
+  citation: CitationInput,
+): { citation: StoredCitation } | { refusal: Refusal } {
+  const { source, quoted_text: quotedText } = citation;
+  if (!source.startsWith('doc:')) {
+    const refusal = verifyCitation(sources.pages, source, quotedText);
+    return refusal ? { refusal } : { citation: { source, quotedText, locator: null, docSha256: null, docKind: null } };
+  }
+  const quote = normalizeText(quotedText);
+  if (quote.length < MIN_QUOTE_LENGTH) {
+    return { refusal: { refused: 'quote_too_short', message: `quoted_text must be at least ${MIN_QUOTE_LENGTH} characters of the document's own words` } };
+  }
+  const m = DOC_SOURCE.exec(source);
+  const doc = m ? sources.docs.find((d) => d.id === Number(m[1])) : undefined;
+  if (!doc) {
+    return {
+      refusal: {
+        refused: 'doc_not_in_run',
+        message: `${source} is not a document you can cite in this run; cite the stored document in your context pack as doc:<id>, or a page you fetched`,
+        citable_docs: sources.docs.map((d) => `doc:${d.id}`),
+      },
+    };
+  }
+  const stored = (locator: string | null): { citation: StoredCitation } => ({
+    citation: { source, quotedText, locator, docSha256: doc.sha256, docKind: doc.kind },
+  });
+  if (isTranscript(doc.kind)) {
+    const found = findInTranscript(doc.text, quotedText);
+    if (found) return stored(found.locator);
+    const whole = normalizeText(transcriptSegments(doc.text).map((s) => s.text).join(' '));
+    if (whole.includes(quote)) {
+      return {
+        refusal: {
+          refused: 'quote_spans_blocks',
+          message: `quoted_text runs across more than ${TRANSCRIPT_WINDOW} consecutive segments of ${source}; quote from within ${TRANSCRIPT_WINDOW} of them, without the [mm:ss] stamps`,
+        },
+      };
+    }
+    return { refusal: { refused: 'quote_not_found', message: `quoted_text does not occur in ${source}; quote the transcript verbatim, without the [mm:ss] stamps` } };
+  }
+  if (textBlocks(doc.text).some((block) => block.includes(quote))) return stored(null);
+  if (normalizeText(doc.text).includes(quote)) {
+    return {
+      refusal: {
+        refused: 'quote_spans_blocks',
+        message: `quoted_text runs across separate blocks of ${source} (paragraphs, table cells, list items); quote from within one of them`,
+      },
+    };
+  }
+  return { refusal: { refused: 'quote_not_found', message: `quoted_text does not occur in ${source}; quote the document verbatim` } };
 }

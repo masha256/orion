@@ -10,7 +10,7 @@ import { requiredAssumptionKeys, validateAssetModules, validateAssumptions } fro
 import { SCENARIOS, type Scenario } from '../../types.js';
 import { canonicalJson } from '../../util/canonical.js';
 import {
-  allowedRange, blockingAnomalies, checkEvidence, checkStep, cleanText, placeValue, routeObservation, verifyCitation, type EvidenceRef,
+  allowedRange, blockingAnomalies, checkEvidence, checkStep, cleanText, placeValue, routeObservation, verifyAnyCitation, type EvidenceRef,
 } from '../guardrails.js';
 import { computeEffect } from './think.js';
 import { defineTool, refuse, ToolRefusal, type AgentTool, type ToolContext } from './types.js';
@@ -169,10 +169,11 @@ const resolveAnomaly = defineTool({
 const recordProvisionalObservation = defineTool({
   name: 'record_provisional_observation',
   description:
-    'Records a value you found by research, for a manually maintained metric. citation_url must be a page you fetched with web_fetch in ' +
-    'this run, and quoted_text must be the page\'s own words (20 characters or more, verbatim, from within one paragraph, table cell, or list item) ' +
-    'stating the figure. The row is stored as ' +
-    'provisional. On a critical metric, a large move from the last confirmed value becomes a proposal for the user instead of going live. ' +
+    'Records a value you found by research, for a manually maintained metric. citation_url is the URL of a page you fetched, or doc:<id> ' +
+    'for the stored document in your context pack. quoted_text must be the source\'s own words (20 characters or more, verbatim, from within ' +
+    'one paragraph, table cell, or list item; in a transcript, within three consecutive segments, without the [mm:ss] stamps) stating the ' +
+    'figure. The row is stored as provisional; a row citing a machine transcript stays out of the signal until the user confirms it. ' +
+    'On a critical metric, a large move from the last confirmed value becomes a proposal for the user instead of going live. ' +
     'Future dates are for announced schedule changes and events only. A fetched metric takes a researched row only when it is a schedule or event ' +
     'metric and the date is in the future: an announced change with its effective date. Fetched levels and flows never take one. ' +
     'You cannot write where an observation already exists at the same metric and time; propose reject_observation for one that is wrong.',
@@ -225,13 +226,18 @@ const recordProvisionalObservation = defineTool({
       );
     }
 
-    const citation = verifyCitation(ctx.fetchedPages(), citationUrl, quotedText);
-    if (citation) throw new ToolRefusal(citation);
+    const verified = verifyAnyCitation({ pages: ctx.fetchedPages(), docs: ctx.citableDocs() }, { source: citationUrl, quoted_text: quotedText });
+    if ('refusal' in verified) throw new ToolRefusal(verified.refusal);
 
     // The last CONFIRMED value: measuring from a provisional row would let the guard compound from run to run.
     const inForce = valueInForce(ctx.db, asset, input.metric, now.toISOString(), { confirmedOnly: true });
     const movePct = provisionalMovePct(asset);
-    const route = routeObservation({ allowProvisional: def.allow_provisional, critical: def.critical, inForce, value: input.value, movePct });
+    // A figure from a machine transcript may be misheard: it never reaches a signal unconfirmed, whatever the metric
+    // allows, and never becomes a proposal on its own (spec invariant 3).
+    const route =
+      verified.citation.docKind === 'machine_transcript'
+        ? 'inert'
+        : routeObservation({ allowProvisional: def.allow_provisional, critical: def.critical, inForce, value: input.value, movePct });
     const periodDays = input.period_days ?? null;
 
     if (route === 'proposal') {
@@ -263,7 +269,9 @@ const recordProvisionalObservation = defineTool({
       note:
         route === 'live'
           ? 'provisional; it will be in the next signal, at data-quality grade C. You may cite this id as evidence in this run.'
-          : `provisional; ${input.metric} does not allow provisional data, so it stays out of the signal until the user confirms it. You may cite this id as evidence in this run.`,
+          : `provisional; ${
+            verified.citation.docKind === 'machine_transcript' ? 'it cites a machine transcript' : `${input.metric} does not allow provisional data`
+          }, so it stays out of the signal until the user confirms it. You may cite this id as evidence in this run.`,
     };
   },
 });

@@ -126,7 +126,9 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   try {
     const pack = buildContextPack(db, loaded, ledger, { runType: opts.runType, budgets, now: started, trigger: { anomalyId: opts.anomalyId, note, firings } });
     messages.push({ role: 'user', content: renderContextPack(pack) });
-    const ctx: ToolContext = { db, loaded, ledger, now: deps.now, budgets, runType: opts.runType, fetchedPages: () => fetchedPagesFrom(messages) };
+    const ctx: ToolContext = {
+      db, loaded, ledger, now: deps.now, budgets, runType: opts.runType, fetchedPages: () => fetchedPagesFrom(messages), citableDocs: () => [],
+    };
 
     const loop = await runLoop({
       client, model: persona.model, effort: persona.effort, system, tools, messages, budgets,

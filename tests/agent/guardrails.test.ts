@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  allowedRange, blockingAnomalies, checkEvidence, checkStep, cleanText, maxStep, normalizeText, normalizeUrl, placeValue, routeObservation,
-  textBlocks, verifyCitation, type EvidenceRef,
+  allowedRange, blockingAnomalies, checkEvidence, checkStep, cleanText, findInTranscript, maxStep, normalizeText, normalizeUrl, placeValue,
+  routeObservation, textBlocks, TRANSCRIPT_WINDOW, verifyAnyCitation, verifyCitation, type CitableDoc, type EvidenceRef,
 } from '../../src/agent/guardrails.js';
+import { normalizeDocText } from '../../src/db/documents.js';
 import { parseAssetYaml } from '../../src/config/load.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
 
@@ -248,5 +250,87 @@ describe('verified citations', () => {
     expect(verifyCitation(pages, 'https://news.example.com/venice-revenue', 'annualized revenue of $999 million')?.refused).toBe('quote_not_found');
     expect(verifyCitation(pages, 'https://news.example.com/venice-revenue', '$100 million')?.refused).toBe('quote_too_short');
     expect(verifyCitation([], 'https://news.example.com/venice-revenue', 'annualized revenue of $100 million')?.refused).toBe('citation_not_fetched');
+  });
+});
+
+describe('citing a stored document', () => {
+  const transcript = normalizeDocText(readFileSync(new URL('../fixtures/disclosure/lit-q3-2026-call-transcript.txt', import.meta.url), 'utf8'));
+  const call: CitableDoc = { id: 1, kind: 'machine_transcript', sha256: 'a'.repeat(64), text: transcript };
+  const post: CitableDoc = {
+    id: 2, kind: 'post', sha256: 'b'.repeat(64),
+    text: 'Q3 update from the team.\n\nRevenue for the quarter was 8.5 million dollars.\nBuybacks continue.\n',
+  };
+  const pages = [{ url: 'https://news.example.com/lit', text: '<p>Lighter bought back 2.45 million LIT in the third quarter.</p>' }];
+
+  it('uses a window of three segments', () => {
+    expect(TRANSCRIPT_WINDOW).toBe(3);
+  });
+
+  it.each([
+    ['Actually, the first one will be January 29th of next year,', '12:33'],
+    ['what unlocks will happen literally over 36 months.', '12:29'],
+    ['because the three year window starts at the end of December, but then month one will be unlocked one month later.', '12:40'],
+    ['100% of trading revenue is used for buybacks.', '11:27'],
+    ["I should remind everyone that it's a 50-50 ref share.", '05:20'],
+    ['already more than a million in fees attributed back to Lighter from the 50-50 split.', '06:12'],
+    ['So the total revenue of the quarter, 8.5 million,', '04:22'],
+    ['And so the plan from here is to file for these licenses next month.', '26:13'],
+    ["And then from there, there's a period of up to 180 days that the agency would have to review", '26:20'],
+    ['So the state we are looking at is getting a DCM and a DCO.', '25:09'],
+    ['Vanilla options are going live by end of year.', '20:13'],
+    ['So this will be rolled out as part of the rollout for a vanilla options at the end of the quarter.', '21:48'],
+    ['So the mainnet is planned by year end.', '18:18'],
+    ['So LIDAR EVM, a lot of progress made there.', '17:46'],
+    ['At this point, over 18 million lit has been bought back as of the end of Q3, 2.45 million in Q3', '11:31'],
+  ])('finds %s at %s', (quote, locator) => {
+    expect(findInTranscript(transcript, quote)).toEqual({ locator });
+    const r = verifyAnyCitation({ pages: [], docs: [call] }, { source: 'doc:1', quoted_text: quote });
+    expect(r).toEqual({ citation: { source: 'doc:1', quotedText: quote, locator, docSha256: call.sha256, docKind: 'machine_transcript' } });
+  });
+
+  it('refuses a splice across topics', () => {
+    const splice = "it's a 50-50 ref share. 100% of trading revenue";
+    expect(findInTranscript(transcript, splice)).toBeNull();
+    expect(verifyAnyCitation({ pages: [], docs: [call] }, { source: 'doc:1', quoted_text: splice })).toMatchObject({ refusal: { refused: 'quote_not_found' } });
+  });
+
+  it('refuses a quote that needs four segments', () => {
+    // [12:22] [12:26] [12:27] [12:29]: every one of them is needed, so no window of three holds it.
+    const four = "we announced how the unlocks are gonna work, but just to refresh everyone. So there's no cliff, what unlocks will happen";
+    expect(findInTranscript(transcript, four)).toBeNull();
+    expect(findInTranscript(transcript, "but just to refresh everyone. So there's no cliff, what unlocks will happen")).toEqual({ locator: '12:26' });
+    expect(verifyAnyCitation({ pages: [], docs: [call] }, { source: 'doc:1', quoted_text: four })).toMatchObject({ refusal: { refused: 'quote_spans_blocks' } });
+  });
+
+  it('refuses a quote that includes a stamp', () => {
+    expect(findInTranscript(transcript, '[12:33] Actually, the first one')).toBeNull();
+  });
+
+  it('verifyAnyCitation: doc:<id> not in the run -> doc_not_in_run; URL sources behave as verifyCitation', () => {
+    const quote = 'So the mainnet is planned by year end.';
+    for (const source of ['doc:3', 'doc:', 'doc:01x']) {
+      expect(verifyAnyCitation({ pages, docs: [call] }, { source, quoted_text: quote })).toMatchObject({ refusal: { refused: 'doc_not_in_run' } });
+    }
+    expect(verifyAnyCitation({ pages, docs: [] }, { source: 'doc:1', quoted_text: quote })).toMatchObject({ refusal: { refused: 'doc_not_in_run' } });
+    expect(verifyAnyCitation({ pages, docs: [call] }, { source: 'doc:1', quoted_text: 'the mainnet' })).toMatchObject({ refusal: { refused: 'quote_too_short' } });
+    expect(verifyAnyCitation({ pages, docs: [call] }, { source: 'doc:1', quoted_text: 'So the mainnet is planned by next week.' }))
+      .toMatchObject({ refusal: { refused: 'quote_not_found' } });
+
+    const url = 'https://news.example.com/lit';
+    expect(verifyAnyCitation({ pages, docs: [call] }, { source: url, quoted_text: 'bought back 2.45 million LIT' }))
+      .toEqual({ citation: { source: url, quotedText: 'bought back 2.45 million LIT', locator: null, docSha256: null, docKind: null } });
+    for (const [source, quoted] of [[url, 'bought back 9.99 million LIT'], [url, '2.45 million'], ['https://other.example.com/', 'bought back 2.45 million LIT']]) {
+      expect(verifyAnyCitation({ pages, docs: [call] }, { source, quoted_text: quoted })).toEqual({ refusal: verifyCitation(pages, source, quoted) });
+    }
+  });
+
+  it('verifyAnyCitation: a post doc uses textBlocks', () => {
+    const docs = [call, post];
+    expect(verifyAnyCitation({ pages: [], docs }, { source: 'doc:2', quoted_text: 'Revenue for the quarter was 8.5 million dollars.' }))
+      .toEqual({ citation: { source: 'doc:2', quotedText: 'Revenue for the quarter was 8.5 million dollars.', locator: null, docSha256: post.sha256, docKind: 'post' } });
+    expect(verifyAnyCitation({ pages: [], docs }, { source: 'doc:2', quoted_text: 'Q3 update from the team. Revenue for the quarter' }))
+      .toMatchObject({ refusal: { refused: 'quote_spans_blocks' } });
+    expect(verifyAnyCitation({ pages: [], docs }, { source: 'doc:2', quoted_text: '8.5 million dollars. Buybacks continue.' }))
+      .toMatchObject({ refusal: { refused: 'quote_spans_blocks' } });
   });
 });

@@ -236,6 +236,22 @@ describe('record_provisional_observation', () => {
     expect(w.ledger.proposals()).toEqual([]);
   });
 
+  it('record_provisional_observation accepts doc:<id> and routes a machine transcript inert even with allow_provisional', () => {
+    // Not critical, provisional allowed: a page citation would go live. A machine transcript never does (invariant 3).
+    w = agentWorld(AGENT_ASSET_YAML.replace('critical: true, allow_provisional: true', 'critical: false, allow_provisional: true'));
+    const text = '[00:01] Our annualized revenue reached $1,100 in September,\n[00:04] up from a thousand.\n';
+    w.ctx.citableDocs = () => [{ id: 1, kind: 'machine_transcript', sha256: 'c'.repeat(64), text }];
+    const quote = 'annualized revenue reached $1,100 in September, up from a thousand';
+    expect(research({ citation_url: 'doc:2', quoted_text: quote }).result.refused).toBe('doc_not_in_run');
+    const r = research({ citation_url: 'doc:1', quoted_text: quote });
+    expect(r).toMatchObject({ isError: false, result: { recorded: true, in_signal: false } });
+    expect(r.result.note).toMatch(/^provisional; it cites a machine transcript, so it stays out of the signal/);
+    expect(w.ledger.observations()).toEqual([expect.objectContaining({ citationUrl: 'doc:1', quotedText: quote, live: false })]);
+    expect(w.ledger.proposals()).toEqual([]);
+    // The same metric, cited from a fetched page, goes live.
+    expect(research({ observed_at: '2026-06-29' })).toMatchObject({ isError: false, result: { recorded: true, in_signal: true } });
+  });
+
   it('verifies the citation against the pages fetched in this run', () => {
     expect(research({ citation_url: 'https://elsewhere.example.com/' }).result.refused).toBe('citation_not_fetched');
     expect(research({ quoted_text: 'annualized revenue reached $9,999 in September' }).result.refused).toBe('quote_not_found');

@@ -4,7 +4,7 @@ import type { RunBudgets } from '../../config/agentPolicy.js';
 import type { LoadedAsset } from '../../config/load.js';
 import type { Db } from '../../db/connection.js';
 import { OrionError, type RunType } from '../../types.js';
-import type { FetchedPage, Refusal } from '../guardrails.js';
+import type { CitableDoc, FetchedPage, Refusal } from '../guardrails.js';
 import type { Ledger } from '../ledger.js';
 
 /** What every tool gets. Tools read the database, and write only to the ledger. */
@@ -16,6 +16,8 @@ export interface ToolContext {
   budgets: RunBudgets;
   /** Pages fetched by web_fetch so far in this run, read from the transcript by the runner. */
   fetchedPages: () => FetchedPage[];
+  /** Stored documents this run may cite as `doc:<id>`. */
+  citableDocs: () => CitableDoc[];
   /** Which run this is: some writes are closed to a bootstrap. */
   runType: RunType;
 }
