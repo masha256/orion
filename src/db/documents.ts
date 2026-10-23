@@ -33,6 +33,15 @@ export function normalizeDocText(raw: string): string {
   return raw.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\n+$/, '') + '\n';
 }
 
+/** The fixed label shown wherever a document is displayed or cited (spec 5.3). */
+export function docLabel(doc: Pick<StoredDocument, 'kind' | 'meta'>): string {
+  if (doc.kind === 'machine_transcript') {
+    return `machine transcript (${doc.meta.asr_model ?? 'unknown model'}): names and numbers may be misheard; every figure in it is the speaker's dated claim, not a fact`;
+  }
+  if (doc.kind === 'post') return "the issuer's own post: a dated claim";
+  return doc.kind;
+}
+
 interface Row {
   id: number;
   asset_id: string;

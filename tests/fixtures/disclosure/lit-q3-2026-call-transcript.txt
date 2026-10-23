@@ -1,0 +1,757 @@
+[00:00] All right, hey everyone, I'm Vlad, founder and CEO of Lighter.
+[00:03] We are ready to start our Q3 investor update.
+[00:08] So as we've done in the past,
+[00:11] we have a number of folks joining live
+[00:14] and then we're gonna publish the video from this publicly
+[00:19] after the event concludes.
+[00:20] So glad to have everyone join
+[00:24] and we're gonna get right into it.
+[00:26] So what we're gonna cover today,
+[00:30] first I'll give you a snapshot of where we are in Q3,
+[00:35] lots of different metrics to talk about as part of that.
+[00:39] Then we're gonna move on and talk about revenue,
+[00:43] do a deeper dive there,
+[00:45] talk about partnerships that have come on board in Q3
+[00:49] and also work on upcoming partnerships from there.
+[00:54] Then as we've done in the past,
+[00:57] we will talk more about the technology,
+[00:59] some of the core features that we've shipped in Q3,
+[01:05] what that means for Lighter customers,
+[01:09] what that means for costs and latency.
+[01:15] Then from there, we'll talk about what's next,
+[01:18] some of the things we're gonna be launching in Q4,
+[01:22] as well as kind of update on the regulatory side of things.
+[01:28] And finally, we'll wrap up with the Q&A,
+[01:31] which Trevor who heads up in Western relations
+[01:35] is gonna help run.
+[01:36] So anyway, that's the game plan for today.
+[01:39] So let's talk about where we are with the snapshot.
+[01:43] So in Q3, kind of another strong quarter of trading volume,
+[01:48] at the start of the quarter,
+[01:54] we announced the partnership with Robinhood,
+[01:57] meaning the exclusive partnership of perps
+[02:01] inside of Robinhood wallets.
+[02:03] So the instance of Lighter that's running there
+[02:08] is now contributing in a significant way to volume.
+[02:13] So we're breaking that up a bit.
+[02:15] The total volume 137.67 billion for the quarter,
+[02:21] that's quite healthy in terms of these markets.
+[02:27] And the open interest has gone up quite a bit,
+[02:31] roughly double from where we were a quarter ago.
+[02:34] So as of September 30th,
+[02:35] we were over 1.6 billion open interests
+[02:39] across Lighter core and Lighter Robinhood.
+[02:42] I think another important metrics,
+[02:46] we're continuing to do buybacks as we have
+[02:51] from the start of the year.
+[02:52] And so now in Q3, we've done 2.4 million lit
+[02:59] in programmatic buybacks.
+[03:02] This lid has already been burned on Ethereum as well.
+[03:06] We'll talk about buybacks in more detail,
+[03:11] but that's the top level number.
+[03:13] Also some other highlights here.
+[03:16] We actually just crossed,
+[03:17] this didn't quite happen in Q3,
+[03:19] but it just happened today.
+[03:23] In the Lighter core, we just crossed a million accounts.
+[03:28] Of course, the Lighter core has been around
+[03:29] since early 2025, and that's an important milestone.
+[03:33] I think another important metric here
+[03:35] is on the Robinhood instance,
+[03:38] as of end of Q3, we were at almost 40,000 accounts,
+[03:41] 39.8 thousand.
+[03:44] That instance generated 17.8 billion in volume.
+[03:48] And of note is the share of open interest
+[03:54] on the Robinhood instance in RWA.
+[03:57] So that is actually almost 70% RWA.
+[04:00] So we're seeing, Lighter core is continuing
+[04:04] to attract a higher proportion of crypto native traders
+[04:07] versus the Robinhood instance is attracting
+[04:09] higher proportion of RWA traders.
+[04:14] Let's talk a bit about the activity and the revenue here.
+[04:22] So the total revenue of the quarter, 8.5 million,
+[04:30] split again pretty evenly between Lighter core,
+[04:35] evenly in terms of meaning relative to volume.
+[04:36] So 87% Lighter core.
+[04:40] From here, the take rate has gone up relative
+[04:43] to last quarter.
+[04:46] I think we were closer to a half a basis point.
+[04:49] Now we're at around 0.6.
+[04:51] So we're increasing revenue relative to volume.
+[04:56] And I think the time series shows you that
+[05:01] the trends are such that both kind of
+[05:06] overall volume is going up, revenue is going up
+[05:10] and the proportion of the share that's coming
+[05:15] from Robinhood chain is going up as well.
+[05:17] Well now when it comes to revenue there,
+[05:20] I should remind everyone that it's a 50-50 ref share.
+[05:24] So what we're showing here is the revenue
+[05:26] that flows back to Lighter.
+[05:28] And that's, especially in September,
+[05:32] has going into October has become quite significant.
+[05:37] So yeah, and again, just I think a quarter ago
+[05:45] we just launched this instance.
+[05:46] So it's really quite interesting to see how fast it's grown.
+[05:53] The open interest on the Robinhood instance is already,
+[05:56] as of the end of Q3 was already at almost half a billion,
+[06:01] 454 million to be exact.
+[06:04] And it generated fees such that as of end of Q3,
+[06:12] already more than a million in fees attributed back to Lighter
+[06:15] from the 50-50 split.
+[06:16] So this instance having been around just a single quarter
+[06:21] is already kind of bigger than I think most of the
+[06:26] competitors in the space across the board.
+[06:31] And for Lighter, this is kind of the second instance
+[06:36] after Lighter Core, both are growing.
+[06:38] This one is growing faster.
+[06:39] So I think those are all great trends we'd like to see.
+[06:45] We've also done a lot of work in Q3 to expand revenue.
+[06:51] Of course, the standard trading is free,
+[06:55] but we're doing more to facilitate kind of
+[06:59] prosumer type traders.
+[07:00] So, for example, advanced order types have been rolled out
+[07:04] and now there's a one basis point fee
+[07:08] on these advanced order types.
+[07:09] We've also added additional tier for traders
+[07:16] who really care about the lower latency.
+[07:18] So this has led to an increase in our premium taker share.
+[07:25] So this went up from 13% at the end of Q2 to over 18%.
+[07:31] At the end of Q3.
+[07:32] So we're expanding revenue and kind of giving more flexibility
+[07:37] to traders, depending on the specific strategy they're running.
+[07:47] So I think that we're very well positioned
+[07:55] to expand our number of partnerships.
+[07:58] And we're seeing that in Q3, we're seeing
+[08:04] that the prospects of many different partnerships
+[08:08] in Q4 as well.
+[08:09] And so I just wanna, we're gonna announce them
+[08:12] as they launch, but I wanted to give the audience here
+[08:17] kind of a sense of what these look like.
+[08:23] So one type of partnership is what we would think of
+[08:25] as crypto wallets.
+[08:27] So these are crypto native users that already are using
+[08:35] one of the wallet products and they want to start trading
+[08:40] perps at with low costs, low latency, all the great features
+[08:45] that the lighter offers.
+[08:46] So they can do that directly inside a wallet product.
+[08:52] There are a number of integrations like this
+[08:55] that went live in Q3 and some bigger partnerships
+[09:01] of this kind going live in Q4.
+[09:02] So that's kind of the crypto wallet part.
+[09:07] But the TAM doesn't stop there, right?
+[09:09] So then zooming out, there's centralized exchange.
+[09:10] So in particular, we just spent a couple of weeks in Asia
+[09:15] where we met with a number of partners
+[09:19] that fit into this category.
+[09:20] And this, I think out of the existing big partnerships,
+[09:24] this looks the closest to the Telegram wallet one,
+[09:27] which is actually a centralized product,
+[09:30] but essentially kind of centralized exchanges
+[09:33] that want to give their customers greater liquidity,
+[09:36] open up perps and other products in a way
+[09:41] that is cost efficient, easy to plug in
+[09:46] and work with our team to build out that offering.
+[09:52] There are a number of partnerships like this
+[09:55] that are already in the works and kind of more to come
+[09:57] as well.
+[09:58] So that kind of opens up the TAM further
+[10:01] and you go in even further than that, right?
+[10:02] So once there's the lighter US instance,
+[10:07] then not only can lighter be integrated
+[10:10] with crypto native wallets
+[10:13] or kind of centralized exchange type products,
+[10:15] but even more broadly, like let's say someone
+[10:18] who's looking to trade pre IPO perps
+[10:22] or someone who's looking to trade options 24 seven on chain
+[10:27] can actually do that through US financial apps
+[10:32] that would need to integrate with a licensed exchange.
+[10:35] And so that I think is,
+[10:39] I mean, all of these market opportunities are important,
+[10:41] but I think that last one is something
+[10:43] we've been working towards for a long time
+[10:45] between our infrastructure, our tech
+[10:50] and our regulatory approach.
+[10:52] So anyway, I think we're,
+[10:53] the go-to-market team has grown a lot as well.
+[10:56] So we're able to kind of work in parallel
+[10:58] across all of these verticals
+[11:00] and again, we'll announce them as they go live,
+[11:03] but I want to give everyone a sense
+[11:06] of what all the different things that are on play here.
+[11:14] So going back to the revenue,
+[11:21] I just, we've been running buybacks from the start
+[11:25] of the year, but just to remind everyone,
+[11:27] 100% of trading revenue is used for buybacks.
+[11:31] At this point, over 18 million lit has been bought back
+[11:36] as of the end of Q3, 2.45 million in Q3
+[11:41] and also 109.8 million lit is currently staked,
+[11:48] which is quite a significant part as well.
+[11:50] So, I think these are all numbers
+[11:56] that have been continuing to trend in a good direction.
+[12:03] We recently announced that we crossed over 7%
+[12:06] of the original 250 million has been burned
+[12:11] through the buybacks.
+[12:16] So another point I wanted to make,
+[12:19] so we've announced when we did our TG,
+[12:22] we announced how the unlocks are gonna work,
+[12:26] but just to refresh everyone.
+[12:27] So there's no cliff,
+[12:29] what unlocks will happen literally over 36 months.
+[12:33] Actually, the first one will be January 29th of next year,
+[12:40] because the three year window starts at the end of December,
+[12:46] but then month one will be unlocked one month later.
+[12:49] So this will actually start end of January.
+[12:53] We've been actively speaking with our existing cap table
+[12:58] on this in the last couple of months.
+[13:04] So we have a good sense of where folks stand.
+[13:06] I mean, the strong majority of our cap table
+[13:11] are very long-term focused investors
+[13:13] who won't be affected by these unlocks
+[13:17] in terms of how they think about allocation.
+[13:21] But there's also a really interesting opportunity now
+[13:24] to onboard strategic investors.
+[13:26] And some of the partnerships that I mentioned earlier
+[13:31] are looking to, in working with LIDAR,
+[13:36] they actually would want to allocate
+[13:40] to LID in a very meaningful way,
+[13:43] kind of above and beyond what they can do
+[13:46] in the liquid market.
+[13:47] So there's actually a really interesting opportunity
+[13:48] to onboard strategic investors
+[13:50] with the kind of the small proportion
+[13:53] of existing cap table that would be interested
+[13:57] in participating there.
+[14:01] And so we're going through that process right now.
+[14:05] I think it's actually gonna be a win-win outcome
+[14:07] and allow us to bring some strategic investors
+[14:11] as part of kind of larger partnerships onboard.
+[14:17] And I also, we've spent a lot of time
+[14:21] talking about some of the bigger partners,
+[14:22] but the universe of projects building on LIDAR
+[14:26] is actually quite substantial.
+[14:29] We have 124 projects building on LIDAR
+[14:33] in 12 different categories.
+[14:36] So we're very proud of kind of the growing ecosystem here.
+[14:42] It ranges from data to apps, terminals,
+[14:47] and kind of with AI, now there are agents,
+[14:51] kind of bots and copy trading applications
+[14:55] as well as more kind of development type projects and more.
+[15:01] So again, very, very happy with all the different builders
+[15:04] and this will only expand further once
+[15:08] we launch new products.
+[15:12] Once LIDAR EVM goes into production,
+[15:15] I mean, the slowly grow and our team,
+[15:18] we've been very happy with how these integrations
+[15:23] have been going.
+[15:24] And let us know if anyone wants to partner with us,
+[15:28] if we haven't talked to you yet, please reach out.
+[15:30] On the technical side,
+[15:36] this quarter has been very significant
+[15:39] in terms of reducing proving costs.
+[15:42] I think we already, last time we talked about
+[15:45] the infrastructure that uses Mac minis to generate proofs.
+[15:50] Those costs are continuing to go down quite significantly.
+[15:54] We actually ran a prover, an open challenge
+[15:59] that where anyone could submit kind of use AI
+[16:03] to optimize our prover, very strong results from that.
+[16:07] We've reduced costs overall by over 50%.
+[16:14] In a particular kind of the circuits
+[16:16] and the business logic are three to four times more efficient.
+[16:20] Now, another really important metric,
+[16:22] the average block proof time is down
+[16:25] from over five minutes to one minute.
+[16:28] So that's a 81% reduction here.
+[16:31] And I think across the board,
+[16:34] whether you're looking at costs
+[16:36] or whether you're looking at latency,
+[16:38] other kind of important technical metrics,
+[16:43] these are all trending in the right direction.
+[16:44] So we're continuing to push ahead.
+[16:49] The technical teams are very excited
+[16:52] to keep making progress and achieve our mission
+[16:56] of building the lowest cost,
+[17:01] lowest latency kind of secure verifiable place
+[17:04] to trade on chain.
+[17:09] We're also doing more with open source.
+[17:12] In particular, we've open sourced a client side foundation
+[17:15] for building on LIDAR.
+[17:16] This has probably contributed to the number of partnerships
+[17:19] that have gone live.
+[17:20] So now we provide reusable state
+[17:25] and core trading infrastructure
+[17:26] and anyone kind of can work with our SDK.
+[17:30] We still of course have our forward deployed engineers
+[17:34] and developer relations,
+[17:36] but this open source library kind of provides
+[17:39] an easy way to get started for builders on top of LIDAR.
+[17:46] So LIDAR EVM, a lot of progress made there.
+[17:50] So I think that we've expanded
+[17:58] how we think about LIDAR EVM
+[18:00] so that now we'll be able to do synchronous reads
+[18:03] from LIDAR core, asynchronous transfers and order management,
+[18:07] fully on chain vaults, RFQs, on ramps and trading apps.
+[18:12] And a lot of the standard EVM tooling will be available
+[18:15] while the ZK settlement will happen to Ethereum.
+[18:18] So the mainnet is planned by year end.
+[18:22] So we're very happy about the work with Axiom on this.
+[18:28] I think we've heard a lot of feedback
+[18:31] from the earlier beta versions
+[18:36] in the test environment.
+[18:39] And so now it's actually gonna be something that,
+[18:44] kind of the synchronicity part is gonna be stronger now
+[18:48] and allow a greater variety of different apps
+[18:51] that will be able to function on LIDAR.
+[18:55] So this is a lot of progress there
+[19:00] for the core engineering team.
+[19:04] This is one of the big priorities for Q4
+[19:06] to get the mainnet out.
+[19:11] And then the other really big priority for us is options.
+[19:15] So I think many of you have seen
+[19:19] that we've rolled out binary options this week.
+[19:22] Binary options are the starting point.
+[19:27] And right now they work for contracts
+[19:31] that are based on the price.
+[19:34] What we're working on next is vanilla options.
+[19:37] So this is options that are very important to stratify.
+[19:44] Essentially, calls and puts, European style options.
+[19:48] We've recently made a few key hires in this area as well.
+[19:55] Of course, I traded options many years ago also,
+[19:58] but now we have kind of dedicated team members
+[20:00] that are really pushing this ahead
+[20:02] on the technical side, on the liquidity side
+[20:06] and the product side.
+[20:08] So the roadmap here is that binary options are live now.
+[20:13] Vanilla options are going live by end of year.
+[20:17] And as part of this, if we continue on,
+[20:25] so this will allow options to serve every type of trader
+[20:28] between perps and options.
+[20:29] So perps give you kind of linear exposure
+[20:31] for traders who are interested to kind of take a linear bet
+[20:37] on the market.
+[20:38] Options allow new forms of trading
+[20:43] including kind of volatility and yield.
+[20:46] And so this will allow lighter to be accessible
+[20:51] to retail, prosumer and institutional traders
+[20:54] like once we're live in the US,
+[20:59] I mean, a lot of the largest institutions
+[21:02] that have really been dominant in options markets
+[21:05] over the years will be able to trade on lighter
+[21:09] as kind of market makers or hedgers.
+[21:11] And again, options can be used for hedging.
+[21:17] They're another tool for leverage
+[21:20] as well as for volatility arbitrage.
+[21:21] So this will kind of expand the number of strategies
+[21:27] that can execute on lighter.
+[21:32] And so part of what we've been looking at
+[21:37] and building as it relates to options
+[21:39] is kind of a risk engine that where spot perps
+[21:44] and options are all margin together.
+[21:48] So this will be rolled out as part of the rollout
+[21:52] for a vanilla options at the end of the quarter.
+[21:55] And so the way to think about this is,
+[22:01] today collateral is shared across your account
+[22:05] but each position's margin requirements calculated
+[22:08] on its own.
+[22:09] With the portfolio margin, we look at spot perps
+[22:12] and options and the same assets together
+[22:14] and ask what's the worst realistic loss would be
+[22:17] if the market moved sharply.
+[22:19] And so here, this shows you how you can look at the price,
+[22:22] you can look at the implied vol.
+[22:24] And so if you have positions that hedge each other,
+[22:27] for example, let's say you have your longer call option
+[22:29] but your shorter perp,
+[22:31] that should be more capital efficient
+[22:33] than having those positions in isolation.
+[22:36] The worst case is smaller
+[22:38] and so you have to post less margin.
+[22:40] This introduces significant capital efficiency
+[22:44] and this is how professional trading shops
+[22:47] run options books.
+[22:48] So because all of these will live on lighter,
+[22:52] the whole portfolio can function
+[22:54] without having to move collateral around.
+[22:56] And so this will be better capital efficiency
+[23:00] for everyone including market makers.
+[23:02] And if market makers more capital efficient,
+[23:05] they can quote tighter spreads, deeper books,
+[23:08] which in turn, so market maker being more efficient
+[23:12] also is good for retail, right?
+[23:14] Even someone who's just looking to,
+[23:17] someone who doesn't have a whole portfolio
+[23:19] who just wants to take a single bet,
+[23:21] they'll benefit from this too
+[23:22] because they'll have better liquidity.
+[23:24] So this will be an important rollout
+[23:26] as part of rolling out vanilla options.
+[23:30] And so definitely stay tuned for that.
+[23:37] So turning now to regulation.
+[23:39] So our engagement with the CFTC continues to move forward.
+[23:45] In August, I attended the inaugural meeting
+[23:49] of the CFTC Innovation Advisory Committee,
+[23:53] where we had some really interesting discussions about,
+[23:56] among other things, perps, prediction markets, AI,
+[24:00] agentic trading, and so on.
+[24:03] I also, while there we continued our engagement
+[24:06] directly with the chairman's office
+[24:10] and the divisions of the CFTC
+[24:14] for kind of our licensing path,
+[24:16] which would actually cover both perps and options
+[24:20] since both are regulated by CFTC.
+[24:26] And I'll talk a bit more about that in the next slide,
+[24:30] but why are we doing this?
+[24:32] Why is this important?
+[24:33] Because kind of expanding retail
+[24:35] and institutional participation in the US,
+[24:37] which is the largest financial market in the world,
+[24:40] opens up a lot of market opportunity for lighter,
+[24:45] for on-chain trading.
+[24:46] And so our team has been spending
+[24:50] a lot of time on this and kind of going in through,
+[24:56] kind of going in through the front door
+[24:57] at like spending time with all the different divisions,
+[25:00] CFTC going through the rules.
+[25:02] And so I will, on the next slide,
+[25:05] we can explain a bit what this means, right?
+[25:09] So the state we are looking at is getting a DCM and a DCO.
+[25:14] So DCM is kind of the license
+[25:20] that allows you to kind of operate a market.
+[25:23] DCO is for clearing of the market.
+[25:25] So things like the order book management fit in the DCM part,
+[25:30] things like how liquidations work,
+[25:32] how ADL works, and so on, which fit in the DCO part.
+[25:36] So we've been spending a lot of time with the CFTC staff
+[25:42] and kind of going all the core principles.
+[25:43] There are 23 core principles on the DCM side
+[25:46] and 18 on the DCO side, kind of where many of them,
+[25:51] the existing framework is already a clear mapping
+[25:55] to how lighter accomplishes this on-chain.
+[25:57] For some of the others, it's a novel implementation,
+[26:00] which is new to the agency,
+[26:03] but they've now spent a lot of time with us
+[26:05] to understand how it works.
+[26:06] And so this is what I would call
+[26:08] kind of the pre-existing framework.
+[26:10] This is what I would call kind of the pre-engagement
+[26:12] that we've been doing.
+[26:13] And so the plan from here is to file
+[26:17] for these licenses next month.
+[26:20] And then from there, there's a period of up to 180 days
+[26:24] that the agency would have to review now
+[26:27] because we've already done all this preliminary work.
+[26:30] We see that process as kind of being smooth from there
+[26:35] and we're very excited about the process
+[26:40] of getting these licenses in the US
+[26:42] and opening it up to US markets,
+[26:45] not only in the retail side, but on the institutional side.
+[26:48] So that's a little bit of the detail
+[26:50] of how what this work looks like.
+[26:53] So we'll continue to push ahead on this.
+[26:57] It's a very important priority for our team.
+[27:02] Great, well now we're at the Q&A part.
+[27:05] So I will hand it off to Trevor who joined us.
+[27:09] I mean, that was another big development last quarter.
+[27:11] Trevor joining us to head investor relations.
+[27:13] So, you know, he will, as part of that,
+[27:18] will kind of ask questions that have come up
+[27:21] as well as questions that may have arisen live.
+[27:24] And thank you, Trevor.
+[27:27] Yeah, it's a pleasure to be here.
+[27:28] And if I haven't spoken with you,
+[27:30] anyone listening, please reach out.
+[27:31] I'm happy to have a conversation.
+[27:34] Vlad, we've gotten a lot of questions regarding security.
+[27:38] Someone said, we are seeing in the news
+[27:39] a lot of hacks and attack vectors driven by AI usage.
+[27:42] How is the lighter team thinking about security?
+[27:46] Yeah, that's a really important question.
+[27:49] And, you know, by the way, like security and AI,
+[27:53] that came up a lot with the meetings we had at the CFTC,
+[27:57] the advisory committee kind of across the whole industry.
+[27:59] And so I think, you know, our approach,
+[28:01] we're very, I think, well positioned with our approach here.
+[28:06] You know, we approach security in layers
+[28:07] and because we're in Ethereum L2,
+[28:10] we have that structure by design.
+[28:12] So every state change on lighter executed
+[28:15] is executed by the sequencer
+[28:17] and then proven by the ZK circuits
+[28:19] and verified by our contracts on Ethereum
+[28:21] with Guardians in between.
+[28:23] So what that means is that the sequencer and the circuits
+[28:25] enforce the same rules for separate implementations.
+[28:28] So each acts as a cross-check on the other.
+[28:32] We think about this as the Swiss cheese model.
+[28:34] So there's a lot of redundancy built in to our architecture.
+[28:39] On top of that, we run security reviews
+[28:41] and testing with our internal team, outside teams.
+[28:44] And we have a lot of, you know, our team actually,
+[28:48] as some of you know, we were AI builders before
+[28:50] who started working on lighter.
+[28:51] So we have a deep understanding of all the different AI tools
+[28:58] as well as connectivity within that space.
+[29:00] So we're, you know, very actively using AI tools,
+[29:03] including from kind of basic testing
+[29:06] to formal verification.
+[29:07] And we're working on formally verifying
+[29:11] our most critical components through that.
+[29:14] And finally, you know,
+[29:15] our architecture gives us a natural window
+[29:18] because there is a lag between the execution
+[29:20] and finalization of Ethereum.
+[29:21] If something does go wrong,
+[29:23] there's time to monitor that activity
+[29:25] and respond before, you know,
+[29:29] funds actually change hands on Ethereum.
+[29:31] So, you know, obviously a lot of work to do here
+[29:34] and it's an important priority,
+[29:37] but I think the way we've,
+[29:40] A, the way we built lighter
+[29:41] and B, kind of the past experience we've had around AI,
+[29:45] I think are both kind of things
+[29:47] that are coming into play here.
+[29:50] We have a few questions on the EVM actually.
+[29:53] This one says really curious about the joint settlement
+[29:56] between core and lighter EVM.
+[29:58] Like how does combining both into one proof
+[30:00] actually help with interoperability cost or security?
+[30:04] Yeah, so let me kind of talk through how that works.
+[30:08] So each EVM block points
+[30:09] to the latest available core state version.
+[30:13] And so, you know,
+[30:15] async transfers and orders work in a way that,
+[30:19] the core executes some in its own sequence,
+[30:23] and then the EVM calls don't have to wait on the result
+[30:25] or block other core transactions.
+[30:27] So once each side commits to its own inbox and outbox,
+[30:33] we have what's called an aggregation circuit
+[30:35] and that forces, you know, both sides to be equal.
+[30:38] And so one proof settles both to Ethereum,
+[30:42] both the lighter core and lighter EVM.
+[30:44] And so that creates a lot of efficiencies here.
+[30:46] There's no need for a bridge,
+[30:47] there's no need for new trust assumptions
+[30:50] and there's one on one verification instead of two.
+[30:52] So, you know, I think these efficiencies
+[30:55] reduce the cost significantly
+[30:56] and also kind of reduce any latency between the two.
+[31:02] Yeah, and we have a lot of questions
+[31:04] regarding the US market as well.
+[31:06] And some people are asking,
+[31:08] what will distribution look like in the US
+[31:10] outside of Robinhood?
+[31:11] And maybe this is probably a good opportunity
+[31:13] to talk a little bit more about the Robinhood partnership
+[31:15] and what it is today.
+[31:16] Yeah, by the way, on the EVM side,
+[31:18] there was a second part, right?
+[31:20] Yeah, regarding costs and security.
+[31:22] Yeah, yeah.
+[31:25] Right.
+[31:28] Right, so I think just one other thing
+[31:29] to say about the EVM side there, you know,
+[31:32] because the core kind of executes continuously
+[31:37] matching orders and running risk checks across every market.
+[31:42] That is something that's very helpful
+[31:45] when we think about security as well.
+[31:46] So now in terms of US, right?
+[31:48] So, you know, I think there,
+[31:51] obviously US market is huge.
+[31:52] I mean, there's some,
+[31:55] like even when we talked about like crypto native wallets,
+[31:57] some of those are already run by US companies.
+[32:01] And so we're actively working with those right now.
+[32:04] Robinhood, Wallet, you know,
+[32:06] we're the exclusive partner for Perps.
+[32:08] I mean, they, you know,
+[32:10] I was the first advisor to Robinhood back in 2013.
+[32:14] So I remember this firsthand,
+[32:15] like they're very careful about regulation.
+[32:17] They don't want to do anything that is, you know,
+[32:24] in kind of a gray area.
+[32:26] They really wanna make sure to go through the front door
+[32:28] and kind of comply with all the core principles.
+[32:30] So, you know, as soon as we have those licenses in place,
+[32:36] we'll be able to integrate in different parts
+[32:39] of their US offering as, you know,
+[32:44] as it makes sense for their product,
+[32:45] both on the Perps and the option side.
+[32:48] So I think, you know, there's a lot,
+[32:51] obviously we can do there,
+[32:52] but it is contingent on the, you know,
+[32:56] the US license as it should be for how Robinhood operates.
+[33:01] But there are a number of other,
+[33:06] so the way that the CFTC works,
+[33:08] right, there's the DCO and the DCM, as I mentioned,
+[33:10] and then kind of what sits on top of that is the FCM,
+[33:13] which is kind of the entity that actually routes orders,
+[33:18] like a brokerage kind of routing orders to an exchange.
+[33:21] There are a number of integrations like that
+[33:25] we can do with DCM, DCO.
+[33:28] So that's very important.
+[33:32] And I think, you know, ultimately like our view
+[33:38] is building technology in a verifiable way.
+[33:43] And that is not only better tech,
+[33:47] it's better for the customer, right?
+[33:48] It's better for the cost structure.
+[33:49] So there, you know, some of these partners
+[33:52] really care about how it's built.
+[33:54] Others just know that this is the lowest latency,
+[33:56] a lowest cost solution that is also very,
+[34:00] you know, taking regulation very seriously.
+[34:01] So I think there are a number of these partnerships
+[34:04] that are in the works, some on the wallet side,
+[34:09] some for kind of, you know, let's say,
+[34:13] called like centralized exchange side
+[34:14] and some for the more, you know, trot-fi type apps.
+[34:21] We've had a few users ask a little bit more
+[34:23] about what the CFTC approval process looks like in filing.
+[34:27] So if you were asking when we file,
+[34:29] would this be public or would this be something
+[34:32] that we need to share after the fact?
+[34:34] So a few questions on that.
+[34:36] Maybe we can try to-
+[34:37] And you know, these processes are transparent,
+[34:45] you know, in which I think as they should be,
+[34:46] like we're, you know, going through
+[34:52] all these core principles and have, you know,
+[34:58] kind of mappings between those two,
+[35:00] how lighter tech works, which itself is open source
+[35:04] and verifiable.
+[35:05] We definitely welcome the transparency that,
+[35:09] you know, the CFTC favors as well.
+[35:14] Gotcha, thank you.
+[35:14] That was a great answer.
+[35:16] And then to continue on that,
+[35:17] as these questions continue to come in,
+[35:19] given all the pre-engagement effort,
+[35:20] do you expect the license to come earlier
+[35:23] than 180 day time window that the CFTC has to review?
+[35:28] I know that's a difficult question to answer.
+[35:30] Yeah, I mean, I think we definitely expect
+[35:33] that all the kind of the preliminary engagement
+[35:38] and kind of working together to map out the,
+[35:43] how, you know, DeFi approaches both the DCM side
+[35:50] and I think even more importantly, like the DCO side, right?
+[35:52] Like understanding how ADL maps to the core principles there.
+[35:55] Like we think a lot of that work will make the process
+[36:00] from there much smoother.
+[36:02] I mean, I think, you know, exact,
+[36:04] some is obviously, you know,
+[36:06] we're, I know that, you know,
+[36:11] we're an important part of the ecosystem,
+[36:17] but, you know, CFTC obviously has a lot of other things
+[36:19] on their plate, so we don't,
+[36:21] I think it's hard to,
+[36:24] to know like an exact timeline,
+[36:25] but we expect the process.
+[36:27] We know that this is a very fast moving team over there
+[36:30] and it's been great working with them so far,
+[36:33] so we expect the process to be smooth.
+[36:38] With regards to go-to-market,
+[36:40] how is the team splitting up efforts
+[36:42] between more crypto-native teams
+[36:45] and then the institutional side as well?
+[36:47] More of, you know, partnerships akin to Robinhood?
+[36:51] Yeah, I mean, we have at this point
+[36:54] over 10 people on the go-to-market team,
+[36:57] so we're able to walk in through gum at the same time.
+[37:01] I think it's split pretty evenly.
+[37:05] I mean, I think, you know,
+[37:09] options is, like I said,
+[37:10] is like kind of a new vertical,
+[37:12] which we have a new team member focusing specifically on that.
+[37:16] We have, I would say, like two team members focused more
+[37:19] on the institutional partnerships
+[37:21] and, you know, three team members focused a bit more
+[37:25] on the crypto-native ones,
+[37:25] but everyone, it's a very collaborative team,
+[37:27] so, you know, we're definitely not siloed.
+[37:32] We're also very strong on the developer relations side
+[37:34] as well as forward-deployed engineering,
+[37:36] so with each of these partnerships,
+[37:39] like it's not like we just, you know, hand off an API,
+[37:44] and now if somebody wants to use our open-source API,
+[37:47] they're certainly welcome to,
+[37:48] but partners who want to go more in depth
+[37:50] and figure out something that is a more bespoke solution
+[37:56] for their customers,
+[37:57] our forward-deployed engineers are kind of there to execute.
+[38:01] Yeah, and just to add to that,
+[38:02] when we have conversations with these institutions
+[38:05] and you mentioned, when we mentioned
+[38:06] we have forward-deployed engineers,
+[38:08] this is a pretty big, like, lift for them
+[38:10] to do this internally,
+[38:11] and so that's definitely been,
+[38:13] we'll call it a competitive edge
+[38:15] in our go-to-market strategy,
+[38:17] and we're excited to come to market
+[38:19] with a few more players.
+[38:21] I think we've covered most of the questions
+[38:24] that have come in.
+[38:25] We do have one, will you hire a comms or marketing person?
+[38:30] I think we'll have most of the other ones,
+[38:31] but that's one that's coming as well.
+[38:33] Yeah, so I think on that,
+[38:38] we, like I said, we have a very collaborative
+[38:42] go-to-market team, part of the work that they do
+[38:45] and includes, like, partnerships with,
+[38:50] you know, folks who can help bring lighter
+[38:55] to new forms of customers.
+[38:58] We're also, you know, as you might have seen,
+[39:01] we're working with a lot of different podcasts
+[39:03] and kind of media folks,
+[39:05] so we're doing a lot of that work.
+[39:08] I think that the world is changing.
+[39:12] It's not like the old days where,
+[39:14] like, working with ad agencies or something like that,
+[39:16] you know, it's not the 1950s anymore.
+[39:19] So, you know, it's not like, I think now,
+[39:20] especially with AI, kind of the landscape
+[39:22] of how information gets shared has evolved a lot
+[39:25] and so has our team.
+[39:29] All right, last question.
+[39:31] We continue to get them filing.
+[39:33] And if your question did not get answered,
+[39:36] please reach out to me directly.
+[39:38] I'm happy to answer.
+[39:40] But regarding Robinhood,
+[39:41] is there more to come with this partnership?
+[39:43] We've seen you tease it on various podcasts
+[39:47] and curious what's to come there,
+[39:49] if you can share.
+[39:50] Yeah.
+[39:53] Well, like I said, Robinhood,
+[39:55] the most important thing, you know,
+[39:58] for them is compliance, right?
+[40:00] So the kind of a US instance will open up
+[40:03] a few different places in their product offering
+[40:06] where lighter could be a great addition,
+[40:09] whether it's perps or options.
+[40:11] And so the fact that we already have an integration
+[40:17] in the wallet is a great starting point
+[40:20] because they've seen how well that works.
+[40:24] And so we expect that there'll be integrations
+[40:29] across a few different parts of their stack over time.
+[40:35] But again, we, you know, to advance that,
+[40:42] the most important thing we could be doing right now
+[40:44] is work on the licensing part.
+[40:47] And that will also open up, you know,
+[40:51] where we don't want to lose sight of kind of all the,
+[40:56] you know, again, like once we have the DCM, DCL,
+[40:59] like lots of FCMs could route flow to us.
+[41:02] And of course we love working with the Robinhood team,
+[41:05] but just to make sure it's clear,
+[41:08] like there's like a variety of US partnerships
+[41:11] that will be possible.
+[41:14] Amazing.
+[41:15] I think that is it.
+[41:17] If your question did not get answered in any of these,
+[41:20] please reach out.
+[41:20] We're happy to answer, but Vlad, I think that's great.
+[41:23] I think we can wrap it there.
+[41:25] Great.
+[41:25] Well, thank you so much for everyone who's writing on.
+[41:27] Thanks for moderating, Trevor.
+[41:29] And we'll see you in a quarter.

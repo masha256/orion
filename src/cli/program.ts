@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { registerAgent } from './commands/agent.js';
 import { registerAsset } from './commands/asset.js';
 import { registerData } from './commands/data.js';
+import { registerDoc } from './commands/doc.js';
 import { registerInbox } from './commands/inbox.js';
 import { registerInit } from './commands/init.js';
 import { registerModel } from './commands/model.js';
@@ -32,6 +33,7 @@ export function buildProgram(ctx: CliContext): Command {
   registerInbox(program, ctx);
   registerPersona(program, ctx);
   registerAgent(program, ctx);
+  registerDoc(program, ctx);
   registerReport(program, ctx);
   return program;
 }
