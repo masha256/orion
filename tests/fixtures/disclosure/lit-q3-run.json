@@ -1,0 +1,422 @@
+{
+ "run": {
+  "id": 1,
+  "assetId": "lit",
+  "persona": "perp-exchange-analyst",
+  "runType": "disclosure",
+  "trigger": "manual",
+  "triggerDetail": {
+   "docId": 1,
+   "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e"
+  },
+  "outcome": "completed",
+  "dryRun": true,
+  "configHash": "<configHash>",
+  "model": "claude-opus-5-5",
+  "startedAt": "<startedAt>",
+  "endedAt": "<endedAt>",
+  "usage": {
+   "requests": 5,
+   "inputTokens": 500,
+   "cacheReadTokens": 0,
+   "cacheWriteTokens": 0,
+   "outputTokens": 250,
+   "webSearches": 0,
+   "webFetches": 0
+  },
+  "error": null,
+  "summary": {
+   "committed": null,
+   "staged": {
+    "assumptionChanges": [],
+    "resolutions": [],
+    "observations": [],
+    "proposals": [
+     {
+      "change": {
+       "kind": "config",
+       "edits": [
+        {
+         "path": [
+          "metrics",
+          "unlocks_next_year",
+          "source",
+          "params",
+          "tranches"
+         ],
+         "value": {
+          "first": "2027-01-29",
+          "every_months": 1,
+          "count": 36
+         }
+        },
+        {
+         "path": [
+          "reporting",
+          "dilution",
+          "unlocks",
+          "note"
+         ],
+         "value": "team and investor vesting, 36 monthly tranches from 2027-01-29 (Lighter Q3 2026 call)"
+        }
+       ]
+      },
+      "filedAgainst": [
+       null,
+       "team and investor vesting from 2026-12-29 (DefiLlama emissions)"
+      ],
+      "rationale": "The call says team and investor tokens unlock in 36 monthly tranches from 2027-01-29, not linearly from 2026-12-29 as DefiLlama has it.",
+      "evidence": [],
+      "citations": [
+       {
+        "source": "doc:1",
+        "quotedText": "Actually, the first one will be January 29th of next year,",
+        "locator": "12:33",
+        "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+        "docKind": "machine_transcript"
+       },
+       {
+        "source": "doc:1",
+        "quotedText": "what unlocks will happen literally over 36 months.",
+        "locator": "12:29",
+        "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+        "docKind": "machine_transcript"
+       }
+      ],
+      "effect": {
+       "6m": {
+        "from": 0.3177979773977757,
+        "to": 0.3177979773977757
+       },
+       "12m": {
+        "from": 0.3544432006757628,
+        "to": 0.3544432006757628
+       }
+      }
+     }
+    ],
+    "journal": {
+     "thesis": "Buybacks track trading revenue; the unlock cadence and the Robinhood share are the open items.",
+     "openQuestions": [
+      "Where is the Robinhood ref share spent?"
+     ],
+     "summary": "Reviewed the Q3 2026 call: one config proposal, two dev findings, three catalysts.",
+     "catalysts": [
+      {
+       "event": "CFTC DCM and DCO applications filed, then up to 180 days of review",
+       "kind": "regulatory",
+       "from": "2026-11-01",
+       "to": "2027-05-29",
+       "citations": [
+        {
+         "source": "doc:1",
+         "quotedText": "And so the plan from here is to file for these licenses next month.",
+         "locator": "26:13",
+         "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+         "docKind": "machine_transcript"
+        },
+        {
+         "source": "doc:1",
+         "quotedText": "And then from there, there's a period of up to 180 days that the agency would have to review",
+         "locator": "26:20",
+         "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+         "docKind": "machine_transcript"
+        }
+       ]
+      },
+      {
+       "event": "Vanilla options go live",
+       "kind": "product",
+       "by": "2026-12-31",
+       "citations": [
+        {
+         "source": "doc:1",
+         "quotedText": "Vanilla options are going live by end of year.",
+         "locator": "20:13",
+         "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+         "docKind": "machine_transcript"
+        }
+       ]
+      },
+      {
+       "event": "Lighter EVM mainnet",
+       "kind": "product",
+       "by": "2026-12-31",
+       "citations": [
+        {
+         "source": "doc:1",
+         "quotedText": "So the mainnet is planned by year end.",
+         "locator": "18:18",
+         "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+         "docKind": "machine_transcript"
+        }
+       ]
+      }
+     ]
+    },
+    "devFindings": [
+     {
+      "category": "holder_flow",
+      "title": "Q3 buys miss the Robinhood instance",
+      "metricKeys": [
+       "flow_usd.buyback"
+      ],
+      "claim": "All trading revenue (8.5M USD in Q3, including about 1M USD from the 50-50 Robinhood ref share) goes to buybacks.",
+      "orionReading": "Orion measures 7,410,898 USD of treasury buys in Q3 2026 (2026-07-01..09-30), against 8.5M USD disclosed.",
+      "valueDirection": "up",
+      "proposedFix": "Find where the Robinhood share is spent on LIT and add it to the holder flow.",
+      "evidence": [
+       1,
+       92
+      ],
+      "citations": [
+       {
+        "source": "doc:1",
+        "quotedText": "I should remind everyone that it's a 50-50 ref share.",
+        "locator": "05:20",
+        "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+        "docKind": "machine_transcript"
+       },
+       {
+        "source": "doc:1",
+        "quotedText": "100% of trading revenue is used for buybacks.",
+        "locator": "11:27",
+        "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+        "docKind": "machine_transcript"
+       }
+      ],
+      "fingerprint": "217a33d3dc58418f67c15d9b1bab6062f26e67d300791516e2fd7695b9147366"
+     },
+     {
+      "category": "revenue",
+      "title": "DefiLlama's revenue overstates Lighter's Q3",
+      "metricKeys": [
+       "flow_usd.llama_revenue"
+      ],
+      "claim": "Lighter disclosed 8.5M USD of Q3 revenue, of which more than 1M USD came from the Robinhood split.",
+      "orionReading": "DefiLlama's dailyRevenue sums to 9,846,397 USD for Q3 2026, against 8.5M USD disclosed.",
+      "valueDirection": "none",
+      "proposedFix": "Check how DefiLlama counts the Robinhood instance and label the proxy accordingly.",
+      "evidence": [
+       93
+      ],
+      "citations": [
+       {
+        "source": "doc:1",
+        "quotedText": "So the total revenue of the quarter, 8.5 million,",
+        "locator": "04:22",
+        "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+        "docKind": "machine_transcript"
+       },
+       {
+        "source": "doc:1",
+        "quotedText": "already more than a million in fees attributed back to Lighter from the 50-50 split.",
+        "locator": "06:12",
+        "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+        "docKind": "machine_transcript"
+       }
+      ],
+      "fingerprint": "4abd7590d82085890aebd0074fbe2c989f7ce991dae317b83de1b59c19914b4f"
+     }
+    ]
+   },
+   "signal_id": null,
+   "valuation_error": null
+  }
+ },
+ "staged": {
+  "assumptionChanges": [],
+  "resolutions": [],
+  "observations": [],
+  "proposals": [
+   {
+    "change": {
+     "kind": "config",
+     "edits": [
+      {
+       "path": [
+        "metrics",
+        "unlocks_next_year",
+        "source",
+        "params",
+        "tranches"
+       ],
+       "value": {
+        "first": "2027-01-29",
+        "every_months": 1,
+        "count": 36
+       }
+      },
+      {
+       "path": [
+        "reporting",
+        "dilution",
+        "unlocks",
+        "note"
+       ],
+       "value": "team and investor vesting, 36 monthly tranches from 2027-01-29 (Lighter Q3 2026 call)"
+      }
+     ]
+    },
+    "filedAgainst": [
+     null,
+     "team and investor vesting from 2026-12-29 (DefiLlama emissions)"
+    ],
+    "rationale": "The call says team and investor tokens unlock in 36 monthly tranches from 2027-01-29, not linearly from 2026-12-29 as DefiLlama has it.",
+    "evidence": [],
+    "citations": [
+     {
+      "source": "doc:1",
+      "quotedText": "Actually, the first one will be January 29th of next year,",
+      "locator": "12:33",
+      "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+      "docKind": "machine_transcript"
+     },
+     {
+      "source": "doc:1",
+      "quotedText": "what unlocks will happen literally over 36 months.",
+      "locator": "12:29",
+      "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+      "docKind": "machine_transcript"
+     }
+    ],
+    "effect": {
+     "6m": {
+      "from": 0.3177979773977757,
+      "to": 0.3177979773977757
+     },
+     "12m": {
+      "from": 0.3544432006757628,
+      "to": 0.3544432006757628
+     }
+    }
+   }
+  ],
+  "journal": {
+   "thesis": "Buybacks track trading revenue; the unlock cadence and the Robinhood share are the open items.",
+   "openQuestions": [
+    "Where is the Robinhood ref share spent?"
+   ],
+   "summary": "Reviewed the Q3 2026 call: one config proposal, two dev findings, three catalysts.",
+   "catalysts": [
+    {
+     "event": "CFTC DCM and DCO applications filed, then up to 180 days of review",
+     "kind": "regulatory",
+     "from": "2026-11-01",
+     "to": "2027-05-29",
+     "citations": [
+      {
+       "source": "doc:1",
+       "quotedText": "And so the plan from here is to file for these licenses next month.",
+       "locator": "26:13",
+       "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+       "docKind": "machine_transcript"
+      },
+      {
+       "source": "doc:1",
+       "quotedText": "And then from there, there's a period of up to 180 days that the agency would have to review",
+       "locator": "26:20",
+       "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+       "docKind": "machine_transcript"
+      }
+     ]
+    },
+    {
+     "event": "Vanilla options go live",
+     "kind": "product",
+     "by": "2026-12-31",
+     "citations": [
+      {
+       "source": "doc:1",
+       "quotedText": "Vanilla options are going live by end of year.",
+       "locator": "20:13",
+       "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+       "docKind": "machine_transcript"
+      }
+     ]
+    },
+    {
+     "event": "Lighter EVM mainnet",
+     "kind": "product",
+     "by": "2026-12-31",
+     "citations": [
+      {
+       "source": "doc:1",
+       "quotedText": "So the mainnet is planned by year end.",
+       "locator": "18:18",
+       "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+       "docKind": "machine_transcript"
+      }
+     ]
+    }
+   ]
+  },
+  "devFindings": [
+   {
+    "category": "holder_flow",
+    "title": "Q3 buys miss the Robinhood instance",
+    "metricKeys": [
+     "flow_usd.buyback"
+    ],
+    "claim": "All trading revenue (8.5M USD in Q3, including about 1M USD from the 50-50 Robinhood ref share) goes to buybacks.",
+    "orionReading": "Orion measures 7,410,898 USD of treasury buys in Q3 2026 (2026-07-01..09-30), against 8.5M USD disclosed.",
+    "valueDirection": "up",
+    "proposedFix": "Find where the Robinhood share is spent on LIT and add it to the holder flow.",
+    "evidence": [
+     1,
+     92
+    ],
+    "citations": [
+     {
+      "source": "doc:1",
+      "quotedText": "I should remind everyone that it's a 50-50 ref share.",
+      "locator": "05:20",
+      "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+      "docKind": "machine_transcript"
+     },
+     {
+      "source": "doc:1",
+      "quotedText": "100% of trading revenue is used for buybacks.",
+      "locator": "11:27",
+      "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+      "docKind": "machine_transcript"
+     }
+    ],
+    "fingerprint": "217a33d3dc58418f67c15d9b1bab6062f26e67d300791516e2fd7695b9147366"
+   },
+   {
+    "category": "revenue",
+    "title": "DefiLlama's revenue overstates Lighter's Q3",
+    "metricKeys": [
+     "flow_usd.llama_revenue"
+    ],
+    "claim": "Lighter disclosed 8.5M USD of Q3 revenue, of which more than 1M USD came from the Robinhood split.",
+    "orionReading": "DefiLlama's dailyRevenue sums to 9,846,397 USD for Q3 2026, against 8.5M USD disclosed.",
+    "valueDirection": "none",
+    "proposedFix": "Check how DefiLlama counts the Robinhood instance and label the proxy accordingly.",
+    "evidence": [
+     93
+    ],
+    "citations": [
+     {
+      "source": "doc:1",
+      "quotedText": "So the total revenue of the quarter, 8.5 million,",
+      "locator": "04:22",
+      "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+      "docKind": "machine_transcript"
+     },
+     {
+      "source": "doc:1",
+      "quotedText": "already more than a million in fees attributed back to Lighter from the 50-50 split.",
+      "locator": "06:12",
+      "docSha256": "bdea5e5169884f68312611d55dea81b35b275506d482784a10001291cf89352e",
+      "docKind": "machine_transcript"
+     }
+    ],
+    "fingerprint": "4abd7590d82085890aebd0074fbe2c989f7ce991dae317b83de1b59c19914b4f"
+   }
+  ]
+ },
+ "committed": null,
+ "signal": null
+}
