@@ -216,7 +216,8 @@ const recordProvisionalObservation = defineTool({
     'Records a value you found by research, for a manually maintained metric. citation_url is the URL of a page you fetched, or doc:<id> ' +
     'for the stored document in your context pack. quoted_text must be the source\'s own words (20 characters or more, verbatim, from within ' +
     `one paragraph, table cell, or list item; in a transcript, within ${TRANSCRIPT_WINDOW} consecutive segments, without the [mm:ss] stamps) ` +
-    'stating the figure. The row is stored as provisional. A figure from a machine transcript never reaches the signal unconfirmed: on a ' +
+    'stating the figure. The row is stored as provisional. A figure from a machine transcript, and every figure in a disclosure run, never ' +
+    'reaches the signal unconfirmed: on a ' +
     'metric that allows provisional data it becomes a proposal for the user, otherwise the row stays out of the signal until the user confirms it. ' +
     'On a critical metric, a large move from the last confirmed value becomes a proposal for the user instead of going live. ' +
     'Future dates are for announced schedule changes and events only. A fetched metric takes a researched row only when it is a schedule or event ' +
@@ -280,10 +281,13 @@ const recordProvisionalObservation = defineTool({
     const inForce = valueInForce(ctx.db, asset, input.metric, now.toISOString(), { confirmedOnly: true });
     const movePct = provisionalMovePct(asset);
     // A figure from a machine transcript may be misheard: it never reaches a signal unconfirmed (spec invariant 3). A
-    // provisional row is signal-eligible on a metric that allows provisional data, so there it goes to the user as a
-    // proposal, whatever the move or the metric's criticality; elsewhere a provisional row is inert until confirmed.
+    // figure from a disclosure run, whatever it cites, waits for the user too (spec section 15, Ruling 18): the run reads
+    // the issuer's own claims. A provisional row is signal-eligible on a metric that allows provisional data, so there it
+    // goes to the user as a proposal, whatever the move or the metric's criticality; elsewhere a provisional row is inert
+    // until confirmed.
     const fromMachineTranscript = verified.citation.docKind === 'machine_transcript';
-    const route = fromMachineTranscript
+    const fromDisclosureRun = ctx.runType === 'disclosure';
+    const route = fromMachineTranscript || fromDisclosureRun
       ? def.allow_provisional ? 'proposal' : 'inert'
       : routeObservation({ allowProvisional: def.allow_provisional, critical: def.critical, inForce, value: input.value, movePct });
     const periodDays = input.period_days ?? null;
@@ -298,7 +302,9 @@ const recordProvisionalObservation = defineTool({
       };
       const why = fromMachineTranscript
         ? `${source} is a machine transcript, which may be misheard: a figure from a machine transcript always goes to the user`
-        : inForce === null
+        : fromDisclosureRun
+          ? 'this is a disclosure run: a figure from a disclosure run always goes to the user'
+          : inForce === null
           ? `${input.metric} is critical and there is no confirmed value to compare ${input.value} against`
           : `${input.metric} is critical and ${input.value} is more than ${movePct}% from the last confirmed value (${inForce})`;
       const staged = fileProposal(ctx, {
@@ -319,7 +325,9 @@ const recordProvisionalObservation = defineTool({
         route === 'live'
           ? 'provisional; it will be in the next signal, at data-quality grade C. You may cite this id as evidence in this run.'
           : `provisional; ${
-            fromMachineTranscript ? 'it cites a machine transcript' : `${input.metric} does not allow provisional data`
+            fromMachineTranscript
+              ? 'it cites a machine transcript'
+              : fromDisclosureRun ? 'it comes from a disclosure run' : `${input.metric} does not allow provisional data`
           }, so it stays out of the signal until the user confirms it. You may cite this id as evidence in this run.`,
     };
   },
@@ -485,9 +493,11 @@ const writeJournal = defineTool({
     const catalysts: Catalyst[] = (input.catalysts ?? []).map((c) => {
       const event = requireText(c.event, 'event');
       const whose = `catalyst "${event}"`;
+      // Dates first, then citations: a malformed date is named before any quote is checked, in every run type.
+      const dates = catalystDates({ ...c, event });
       const citations = verifyCitations(ctx, c.citations, whose);
       if (ctx.runType === 'disclosure') requireTargetDocCitation(ctx, citations, whose);
-      return { event, kind: c.kind, ...catalystDates({ ...c, event }), citations };
+      return { event, kind: c.kind, ...dates, citations };
     });
     ctx.ledger.setJournal({ thesis, openQuestions: input.open_questions.map((q) => cleanText(q)).filter((q) => q !== ''), summary, catalysts });
     return { staged: true };

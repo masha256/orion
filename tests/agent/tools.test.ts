@@ -238,6 +238,42 @@ describe('record_provisional_observation', () => {
     expect(w.ledger.proposals()).toEqual([]);
   });
 
+  describe('in a disclosure run (spec section 15, Ruling 18): every figure waits for the user', () => {
+    const NON_CRITICAL = AGENT_ASSET_YAML.replace('critical: true, allow_provisional: true', 'critical: false, allow_provisional: true');
+
+    it('a URL citation on a non-critical allow_provisional metric becomes an observation proposal, not a live row', () => {
+      w = agentWorld(NON_CRITICAL);
+      w.ctx.runType = 'disclosure';
+      const r = research({ note: 'from the call' });
+      expect(r).toMatchObject({ isError: false, result: { recorded: false } });
+      expect(r.result.converted_to_proposal).toBeDefined();
+      expect(r.result.reason).toMatch(/disclosure run/);
+      expect(r.result.reason).toMatch(/always goes to the user/);
+      expect(w.ledger.observations()).toEqual([]);
+      const proposals = w.ledger.proposals();
+      expect(proposals).toHaveLength(1);
+      expect(proposals[0].change).toMatchObject({ kind: 'observation', metricKey: 'revenue_run_rate_usd', value: 1100, citationUrl: PAGE_URL, quotedText: QUOTE });
+      expect(proposals[0].rationale).toMatch(/^from the call \(.*disclosure run.*\)$/);
+    });
+
+    it('a URL citation on a metric that does not allow provisional data stages an inert row', () => {
+      w.ctx.runType = 'disclosure';
+      const r = research({ metric: 'staked_supply', value: 55 });
+      expect(r).toMatchObject({ isError: false, result: { recorded: true, in_signal: false } });
+      expect(r.result.note).toMatch(/^provisional; it comes from a disclosure run, so it stays out of the signal/);
+      expect(w.ledger.observations()).toEqual([expect.objectContaining({ citationUrl: PAGE_URL, live: false })]);
+      expect(w.ledger.proposals()).toEqual([]);
+    });
+
+    it('a weekly run with the same URL citation on the same metric still goes live (unchanged)', () => {
+      w = agentWorld(NON_CRITICAL);
+      expect(w.ctx.runType).toBe('weekly');
+      expect(research()).toMatchObject({ isError: false, result: { recorded: true, observation_id: -1, in_signal: true } });
+      expect(w.ledger.proposals()).toEqual([]);
+      expect(w.ledger.observations()[0].live).toBe(true);
+    });
+  });
+
   describe('citing a machine transcript', () => {
     const TEXT =
       '[00:01] Our annualized revenue reached $1,100 in September,\n[00:04] up from a thousand.\n' +
@@ -671,6 +707,18 @@ describe('write_journal', () => {
       expect(w.ctx.runType).toBe('weekly');
       expect(journal([catalyst({ citations: [{ source: PAGE_URL, quoted_text: QUOTE }] })]).isError).toBe(false);
       expect(w.ledger.journal()!.catalysts).toHaveLength(1);
+    });
+
+    it('checks the dates before the citations, in every run type: a bad date refuses invalid_catalyst_dates even when a quote fails too', () => {
+      w.ctx.citableDocs = () => [DOC];
+      const badBoth = catalyst({ by: 'end of Q3', citations: [{ source: PAGE_URL, quoted_text: 'a sentence the page never said at all' }] });
+      expect(journal([badBoth]).result.refused).toBe('invalid_catalyst_dates');
+      w.ctx.runType = 'disclosure';
+      w.ctx.targetDoc = DOC;
+      expect(journal([badBoth]).result.refused).toBe('invalid_catalyst_dates');
+      // A bad date with a verified URL-only citation in a disclosure run: the date is named first, not citation_required.
+      expect(journal([catalyst({ by: '2026-02-30', citations: [{ source: PAGE_URL, quoted_text: QUOTE }] })]).result.refused).toBe('invalid_catalyst_dates');
+      expect(w.ledger.journal()).toBeNull();
     });
 
     it('a catalyst citation that fails verification names the catalyst in the refusal', () => {

@@ -674,13 +674,30 @@ wins where they differ.
 - Ruling 9 (enforces invariant 2 for catalysts; amends 7.2 and 5.4): in a disclosure run each catalyst in
   `write_journal` must carry at least one verified citation of the target document (`doc:<id>`), else the entry is
   refused `citation_required`, naming the catalyst's event. Other run types only verify every citation. A catalyst
-  citation that fails verification is refused with its message prefixed `catalyst "<event>": `.
-- Ruling 10 (amends invariant 1 and 8.4): invariant 1 reads "A disclosure run makes no direct assumption change: value
-  changes leave it only as proposals, and figures wait for the user; the tool layer does not offer
-  `apply_assumption_change` to it (as for `bootstrap`)." The watcher's `agent run` passes
+  citation that fails verification is refused with its message prefixed `catalyst "<event>": `. A catalyst's dates are
+  checked before its citations, in every run type, so a malformed date refuses `invalid_catalyst_dates` first.
+- Ruling 10 (amends invariant 1 and 8.4; wording updated by Ruling 18): invariant 1 reads "A disclosure run makes no
+  direct assumption change: value changes leave it only as proposals, and every figure it records waits for the user (a
+  proposal where the metric takes provisional data, an inert row otherwise, whatever it cites); the tool layer does not
+  offer `apply_assumption_change` to it (as for `bootstrap`)." The watcher's `agent run` passes
   `--out <ORION_HOME>/signals.jsonl`, as every real hand-run agent run does (a dry run passes `--dry-run` and no `--out`).
-- Ruling 7 (amends 5.4 and 7.3): an observation proposal converted from a `record_provisional_observation` call carries
-  that call's own citation in `proposals.citations_json`.
+- Ruling 7 (amends 5.4 and 7.3; an exception to invariant 2): an observation proposal converted from a
+  `record_provisional_observation` call carries that call's own citation in `proposals.citations_json`. In a disclosure
+  run that citation may be a page fetched in the run instead of the target document: a converted observation proposal is
+  the one proposal exempt from invariant 2's target-document citation.
+- Ruling 18 (amends invariant 1, 5.4 and Ruling 6): in a disclosure run every figure waits for the user, whatever it
+  cites (the target document, another stored document or a fetched page). `record_provisional_observation` routes it as
+  for a machine transcript: on a metric with `allow_provisional` it is filed as an `observation` proposal, on any other
+  metric it is stored as an inert row; the move guard and the metric's criticality do not apply. Other run types route a
+  figure as before, except that a machine-transcript citation still goes to the user (Ruling 6).
+- Ruling 19 (amends 8.4 and 11.3): `ingest` (and so the scan's processing of a post) writes the raw `orion agent run
+  --json` result to `--run-json <file>` (default `transcripts/<asset>/<post_id>.run.json`; on a dry run the default sits
+  next to `--queue-file`). `check_acceptance.py` accepts that shape and the `orion agent runs show <id> --json` shape
+  (no top-level `staged`: it reads `summary.staged` and takes the whole result as the run).
+- Tool descriptions (amends 6.2's "no other run's tool list or system prompt changes except the operating-rules line"):
+  the `propose_change`, `write_journal` and `record_provisional_observation` descriptions changed for every run type
+  (citations of stored documents, catalysts, and the disclosure-run and machine-transcript routing); the tool lists of
+  other run types did not change.
 - The PUMP note (amends 7.4's "no other asset's validation changes"): PUMP's `lit.unlocks_next_year` sources are also
   validated by `validateParams` now; its config passes, and no PUMP output or pin moves.
 - Ruling 5 (amends 4.1): `normalizeDocText` strips a leading BOM, turns CRLF into LF, and collapses any run of trailing

@@ -1,6 +1,6 @@
 # Disclosure watcher (Hermes side, LIT pilot)
 
-When an issuer publishes something material (in v1: Lighter's quarterly investor-call recording on X), the watcher finds it, transcribes it, stores it in Orion, and has Orion's analyst read it in a `disclosure` run. What the analyst finds comes back as Orion proposals (the inbox), dev-queue entries (code and data-source work) and dated catalysts in the journal. It makes no direct assumption change: value changes are proposals, and figures wait for the user. Design: `docs/superpowers/specs/2026-10-23-orion-disclosure-watcher-design.md`, sections 8 to 10.
+When an issuer publishes something material (in v1: Lighter's quarterly investor-call recording on X), the watcher finds it, transcribes it, stores it in Orion, and has Orion's analyst read it in a `disclosure` run. What the analyst finds comes back as Orion proposals (the inbox), dev-queue entries (code and data-source work) and dated catalysts in the journal. It makes no direct assumption change: value changes are proposals, and every figure it records waits for the user (a proposal where the metric takes provisional data, an inert row otherwise, whatever it cites). Design: `docs/superpowers/specs/2026-10-23-orion-disclosure-watcher-design.md`, sections 8 to 10.
 
 Status: the Hermes script is not built yet; it is designed in the spec (sections 8 to 10), and this page describes it as designed. The Orion side (`orion doc`, the `disclosure` run type) is built and in this repo. The script will live in the Hermes profile, not in git, and its cron job is created paused and enabled only on the owner's go after the merge.
 
@@ -79,11 +79,11 @@ orion doc add <asset> --url <source url> --file <path> --kind <kind> [--publishe
                       [--source-id <platform:id>] [--meta <key=value>]... [--json]
 orion doc list [asset] [--json]                 # a re-transcription of the same URL is a new row; the older one shows superseded_by_newer
 orion doc show <id> [--text] [--json]           # metadata and the kind's label; --text adds the stored text
-orion agent run <asset> --type disclosure --doc <id> [--dry-run] [--json]
+orion agent run <asset> --type disclosure --doc <id> [--dry-run] [--out <ORION_HOME>/signals.jsonl] [--json]
 orion agent runs show <id>                      # outcome, dev findings with their citation labels, estimated cost
 ```
 
-Kinds: `machine_transcript | transcript | post | filing | article`. Documents are append-only: the same asset and text (same sha256) is not stored twice, and no command edits or deletes one. `--doc` is required for `disclosure` and refused for other run types (`doc_only_for_disclosure`); the document must belong to the asset (`doc_not_found`). A disclosure run has its own budget (`agent.budgets.disclosure` overrides it; default 25 requests, 1.2M input tokens, 40,000 output tokens, 3 web searches, 5 fetches, 5 proposals), about $1 to $3 a call, about $7 at worst. It is never offered `apply_assumption_change`, so it makes no direct assumption change: every value change it wants is a proposal, figures wait for the user, and every proposal, dev finding and catalyst cites the document.
+Kinds: `machine_transcript | transcript | post | filing | article`. Documents are append-only: the same asset and text (same sha256) is not stored twice, and no command edits or deletes one. `--doc` is required for `disclosure` and refused for other run types (`doc_only_for_disclosure`); the document must belong to the asset (`doc_not_found`). A disclosure run has its own budget (`agent.budgets.disclosure` overrides it; default 25 requests, 1.2M input tokens, 40,000 output tokens, 3 web searches, 5 fetches, 5 proposals), about $1 to $3 a call, about $7 at worst. It is never offered `apply_assumption_change`, so it makes no direct assumption change: every value change it wants is a proposal, every figure it records waits for the user (a proposal where the metric takes provisional data, an inert row otherwise, whatever it cites), and every proposal, dev finding and catalyst cites the document (one exception: a proposal converted from a recorded figure carries that figure's own citation, which may be a page it fetched).
 
 ## The digest and the dev queue
 

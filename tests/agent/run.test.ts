@@ -420,9 +420,11 @@ describe('a disclosure run', () => {
       toolUse('record_provisional_observation', { metric: 'revenue_run_rate_usd', value: 1100, observed_at: '2026-06-28', citation_url: source, quoted_text: QUOTE });
     const result = await run([calls(research(`doc:${other.id}`)), calls(research(`doc:${doc.id}`)), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id, assetYaml: AGENT_ASSET_YAML });
     expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'doc_not_in_run', citable_docs: [`doc:${doc.id}`] } });
-    expect(model.toolResults(2)[0]).toMatchObject({ is_error: false, result: { recorded: true, in_signal: true } });
+    // A figure from a disclosure run waits for the user (spec section 15, Ruling 18): on an allow_provisional metric it is a proposal.
+    expect(model.toolResults(2)[0]).toMatchObject({ is_error: false, result: { recorded: false } });
     expect(result.run.outcome).toBe('completed');
-    expect(listActiveObservations(w.db, 'mini', 'revenue_run_rate_usd').filter((o) => o.citationUrl === `doc:${doc.id}`)).toMatchObject([{ value: 1100, quotedText: QUOTE }]);
+    expect(listActiveObservations(w.db, 'mini', 'revenue_run_rate_usd').filter((o) => o.citationUrl === `doc:${doc.id}`)).toEqual([]);
+    expect(listProposals(w.db).map((p) => p.change)).toMatchObject([{ kind: 'observation', value: 1100, citationUrl: `doc:${doc.id}`, quotedText: QUOTE }]);
   });
 
   it('keeps dev findings in the run summary: staged on a dry run, committed too after a commit, and in no table', async () => {
