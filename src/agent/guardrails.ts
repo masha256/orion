@@ -386,7 +386,8 @@ export function findInTranscript(text: string, quote: string): { locator: string
   return null;
 }
 
-const DOC_SOURCE = /^doc:(\d+)$/;
+// Canonical ids only: `doc:01` would resolve to doc 1 but store a different string for the same document.
+const DOC_SOURCE = /^doc:([1-9]\d*)$/;
 const isTranscript = (kind: DocKind): boolean => kind === 'machine_transcript' || kind === 'transcript';
 
 /**
@@ -419,7 +420,7 @@ export function verifyAnyCitation(
     };
   }
   const stored = (locator: string | null): { citation: StoredCitation } => ({
-    citation: { source, quotedText, locator, docSha256: doc.sha256, docKind: doc.kind },
+    citation: { source: `doc:${doc.id}`, quotedText, locator, docSha256: doc.sha256, docKind: doc.kind },
   });
   if (isTranscript(doc.kind)) {
     const found = findInTranscript(doc.text, quotedText);

@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AGENT_TOOLS, runTool, toApiTools } from '../../src/agent/tools/index.js';
 import { decideAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
-import { valueInForce } from '../../src/app/eligibility.js';
-import { confirmObservation, insertObservation } from '../../src/db/observations.js';
+import { eligibleObservations, valueInForce } from '../../src/app/eligibility.js';
+import { TRANSCRIPT_WINDOW } from '../../src/agent/guardrails.js';
+import { confirmObservation, insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { insertProposal } from '../../src/db/proposals.js';
 import { AGENT_ASSET_YAML, agentWorld, PAGE_URL, QUOTE, type AgentWorld } from '../helpers/agentWorld.js';
 import { AS_OF } from '../helpers/obs.js';
@@ -236,20 +237,72 @@ describe('record_provisional_observation', () => {
     expect(w.ledger.proposals()).toEqual([]);
   });
 
-  it('record_provisional_observation accepts doc:<id> and routes a machine transcript inert even with allow_provisional', () => {
-    // Not critical, provisional allowed: a page citation would go live. A machine transcript never does (invariant 3).
-    w = agentWorld(AGENT_ASSET_YAML.replace('critical: true, allow_provisional: true', 'critical: false, allow_provisional: true'));
-    const text = '[00:01] Our annualized revenue reached $1,100 in September,\n[00:04] up from a thousand.\n';
-    w.ctx.citableDocs = () => [{ id: 1, kind: 'machine_transcript', sha256: 'c'.repeat(64), text }];
-    const quote = 'annualized revenue reached $1,100 in September, up from a thousand';
-    expect(research({ citation_url: 'doc:2', quoted_text: quote }).result.refused).toBe('doc_not_in_run');
-    const r = research({ citation_url: 'doc:1', quoted_text: quote });
-    expect(r).toMatchObject({ isError: false, result: { recorded: true, in_signal: false } });
-    expect(r.result.note).toMatch(/^provisional; it cites a machine transcript, so it stays out of the signal/);
-    expect(w.ledger.observations()).toEqual([expect.objectContaining({ citationUrl: 'doc:1', quotedText: quote, live: false })]);
-    expect(w.ledger.proposals()).toEqual([]);
-    // The same metric, cited from a fetched page, goes live.
-    expect(research({ observed_at: '2026-06-29' })).toMatchObject({ isError: false, result: { recorded: true, in_signal: true } });
+  describe('citing a machine transcript', () => {
+    const TEXT =
+      '[00:01] Our annualized revenue reached $1,100 in September,\n[00:04] up from a thousand.\n' +
+      '[00:09] Staked supply now stands at 55 tokens across the network.\n';
+    const REVENUE_QUOTE = 'annualized revenue reached $1,100 in September, up from a thousand';
+    const STAKED_QUOTE = 'Staked supply now stands at 55 tokens across the network.';
+    const withTranscript = (yaml?: string) => {
+      w = agentWorld(yaml);
+      w.ctx.citableDocs = () => [{ id: 1, kind: 'machine_transcript', sha256: 'c'.repeat(64), text: TEXT }];
+    };
+    /** Commits the run and returns the eligible rows that cite a document. */
+    const eligibleFromDocs = () => {
+      w.ledger.commit(w.db, w.loaded.config, { agentRunId: null, now: new Date(AS_OF) });
+      return eligibleObservations(w.db, w.loaded.config, AS_OF).filter((o) => o.citationUrl?.startsWith('doc:'));
+    };
+
+    it.each([
+      ['not critical', AGENT_ASSET_YAML.replace('critical: true, allow_provisional: true', 'critical: false, allow_provisional: true')],
+      ['critical, a small move', AGENT_ASSET_YAML],
+    ])('on an allow_provisional metric (%s), goes to the user as an observation proposal and never reaches the signal', (_label, yaml) => {
+      withTranscript(yaml);
+      expect(research({ citation_url: 'doc:2', quoted_text: REVENUE_QUOTE }).result.refused).toBe('doc_not_in_run');
+      const r = research({ citation_url: 'doc:1', quoted_text: REVENUE_QUOTE, note: 'Q3 call' });
+      expect(r).toMatchObject({ isError: false, result: { recorded: false } });
+      expect(r.result.converted_to_proposal).toBeDefined();
+      expect(r.result.reason).toMatch(/machine transcript/);
+      expect(w.ledger.observations()).toEqual([]);
+      const proposals = w.ledger.proposals();
+      expect(proposals).toHaveLength(1);
+      expect(proposals[0].change).toMatchObject({
+        kind: 'observation', metricKey: 'revenue_run_rate_usd', value: 1100, observedAt: '2026-06-28T00:00:00.000Z', citationUrl: 'doc:1', quotedText: REVENUE_QUOTE,
+      });
+      expect(proposals[0].rationale).toMatch(/^Q3 call \(.*machine transcript.*\)$/);
+      expect(eligibleFromDocs()).toEqual([]);
+    });
+
+    it('on a metric that does not allow provisional data, stages an inert row that stays out of the signal after commit', () => {
+      withTranscript();
+      const r = research({ metric: 'staked_supply', value: 55, citation_url: 'doc:1', quoted_text: STAKED_QUOTE });
+      expect(r).toMatchObject({ isError: false, result: { recorded: true, in_signal: false } });
+      expect(r.result.note).toMatch(/^provisional; it cites a machine transcript, so it stays out of the signal/);
+      expect(w.ledger.observations()).toEqual([expect.objectContaining({ citationUrl: 'doc:1', quotedText: STAKED_QUOTE, live: false })]);
+      expect(w.ledger.proposals()).toEqual([]);
+      expect(eligibleFromDocs()).toEqual([]);
+      // It is stored, as a provisional row, for the user to confirm.
+      expect(listActiveObservations(w.db, 'mini', 'staked_supply').filter((o) => o.citationUrl === 'doc:1').map((o) => o.status)).toEqual(['provisional']);
+    });
+
+    it('leaves a URL citation on the same metric exactly as before', () => {
+      withTranscript(AGENT_ASSET_YAML.replace('critical: true, allow_provisional: true', 'critical: false, allow_provisional: true'));
+      expect(research()).toMatchObject({ isError: false, result: { recorded: true, observation_id: -1, in_signal: true } });
+      expect(w.ledger.proposals()).toEqual([]);
+      w.ledger.commit(w.db, w.loaded.config, { agentRunId: null, now: new Date(AS_OF) });
+      expect(eligibleObservations(w.db, w.loaded.config, AS_OF).filter((o) => o.citationUrl === PAGE_URL)).toHaveLength(1);
+    });
+
+    it('refuses a non-canonical doc id', () => {
+      withTranscript();
+      expect(research({ citation_url: 'doc:01', quoted_text: REVENUE_QUOTE }).result.refused).toBe('doc_not_in_run');
+      expect(w.ledger.proposals()).toEqual([]);
+    });
+  });
+
+  it('describes the transcript window with TRANSCRIPT_WINDOW', () => {
+    const tool = toApiTools(AGENT_TOOLS).find((t) => t.name === 'record_provisional_observation')!;
+    expect(tool.description).toContain(`within ${TRANSCRIPT_WINDOW} consecutive segments`);
   });
 
   it('verifies the citation against the pages fetched in this run', () => {

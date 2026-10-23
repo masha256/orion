@@ -308,7 +308,7 @@ describe('citing a stored document', () => {
 
   it('verifyAnyCitation: doc:<id> not in the run -> doc_not_in_run; URL sources behave as verifyCitation', () => {
     const quote = 'So the mainnet is planned by year end.';
-    for (const source of ['doc:3', 'doc:', 'doc:01x']) {
+    for (const source of ['doc:3', 'doc:', 'doc:01x', 'doc:01', 'doc:0', 'doc:+1', 'doc:1 ']) {
       expect(verifyAnyCitation({ pages, docs: [call] }, { source, quoted_text: quote })).toMatchObject({ refusal: { refused: 'doc_not_in_run' } });
     }
     expect(verifyAnyCitation({ pages, docs: [] }, { source: 'doc:1', quoted_text: quote })).toMatchObject({ refusal: { refused: 'doc_not_in_run' } });
