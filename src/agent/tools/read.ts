@@ -6,7 +6,7 @@ import { listActiveObservations, listObservations, type Observation } from '../.
 import { listSignals } from '../../db/runs.js';
 import { computeDrivers } from '../../drivers/compute.js';
 import { requiredExtraMetrics } from '../../engine/requirements.js';
-import { dayStartMs, isIsoDate, utcDay } from '../../ingest/time.js';
+import { dayStartMs, isIsoDate, observationDays, utcDay } from '../../ingest/time.js';
 import { MS_PER_DAY, OrionError } from '../../types.js';
 import { describeAnomaly, describeAssumptions, describeDrivers, describeObservation, describeSignal } from '../describe.js';
 import { defineTool, refuse, type AgentTool } from './types.js';
@@ -105,25 +105,14 @@ const getJournal = defineTool({
 /** The longest range get_flow_total sums: a year, so `days_missing` stays a list a reader can take in. */
 const MAX_FLOW_TOTAL_DAYS = 366;
 
-/**
- * The UTC days a row covers: from the start of the day its period begins in, up to its `observed_at`. A daily row
- * observed at the end of day D (D+1 00:00Z, period 1) covers D alone; a row not at midnight covers the day it ends in
- * as well. The same convention as the API-flow gap check (`coveredDays` in ingest/apiFlow.ts).
- */
-function daysCovered(o: Observation): string[] {
-  const endMs = new Date(o.observedAt).getTime();
-  const days: string[] = [];
-  for (let ms = dayStartMs(utcDay(endMs - (o.periodDays ?? 1) * MS_PER_DAY)); ms < endMs; ms += MS_PER_DAY) days.push(utcDay(ms));
-  return days;
-}
-
 const getFlowTotal = defineTool({
   name: 'get_flow_total',
   description:
-    'Orion\'s own sum of a flow metric over whole UTC days, from and to inclusive (YYYY-MM-DD, at most a year): total, unit, days_covered, ' +
-    'days_missing (days no summed row covers), rows, and first_id/last_id. Sums every active row (staged ones included) whose days all fall ' +
-    'in the range; a row that reaches outside it is left out and its days in range count as missing. Every summed row counts as shown, so ' +
-    'you may cite any of them as evidence.',
+    'Orion\'s own confirmed measurement of a flow metric, summed over whole UTC days, from and to inclusive (YYYY-MM-DD, at most a year): ' +
+    'total, unit, days_covered, days_missing (days no summed row covers), rows, and first_id/last_id. It sums only confirmed rows already ' +
+    'in the database: provisional rows and the figures staged in this run are not in it. A row that reaches outside the range is left out ' +
+    'and its days in range count as missing. If two summed rows cover the same day it gives no total and refuses flow_conflict with their ' +
+    'ids and the days. Every summed row counts as shown, so you may cite any of them as evidence.',
   input: z.strictObject({ metric: z.string(), from: z.string(), to: z.string() }),
   run(ctx, input) {
     const asset = ctx.loaded.config;
@@ -135,17 +124,24 @@ const getFlowTotal = defineTool({
     const span = (dayStartMs(input.to) - dayStartMs(input.from)) / MS_PER_DAY + 1;
     if (span > MAX_FLOW_TOTAL_DAYS) refuse('invalid_range', `${span} days is more than ${MAX_FLOW_TOTAL_DAYS}; ask for a shorter range`);
 
-    const staged = ctx.ledger.observationRows(ctx.now().toISOString()).filter((o) => o.metricKey === input.metric);
-    const covered = new Set<string>();
+    // Confirmed, active, committed rows only: a provisional or staged figure is a claim, not Orion's measurement.
+    const coveredBy = new Map<string, number[]>();
     const summed: Observation[] = [];
-    for (const o of [...listActiveObservations(ctx.db, asset.id, input.metric), ...staged]) {
-      const days = daysCovered(o);
+    for (const o of listActiveObservations(ctx.db, asset.id, input.metric)) {
+      if (o.status !== 'confirmed') continue;
+      const days = observationDays(o.observedAt, o.periodDays);
       if (!days.every((d) => d >= input.from && d <= input.to)) continue;
       summed.push(o);
-      for (const d of days) covered.add(d);
+      for (const d of days) coveredBy.set(d, [...(coveredBy.get(d) ?? []), o.id]);
+    }
+    const overlaps = [...coveredBy].filter(([, ids]) => ids.length > 1).sort(([a], [b]) => a.localeCompare(b));
+    if (overlaps.length > 0) {
+      const ids = [...new Set(overlaps.flatMap(([, rowIds]) => rowIds))].sort((a, b) => a - b);
+      const days = overlaps.map(([d]) => d);
+      refuse('flow_conflict', `observations ${ids.join(', ')} cover the same day (${days.join(', ')}); no total is given until the overlap is resolved`, { ids, days });
     }
     const missing: string[] = [];
-    for (let ms = dayStartMs(input.from); ms <= dayStartMs(input.to); ms += MS_PER_DAY) if (!covered.has(utcDay(ms))) missing.push(utcDay(ms));
+    for (let ms = dayStartMs(input.from); ms <= dayStartMs(input.to); ms += MS_PER_DAY) if (!coveredBy.has(utcDay(ms))) missing.push(utcDay(ms));
     const ids = summed.map((o) => o.id);
     ctx.ledger.markShown(ids);
     return {

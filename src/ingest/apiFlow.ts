@@ -5,7 +5,7 @@ import type { FlowConflict, SourceOutcome } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
 import { MS_PER_DAY } from '../types.js';
 import { findFlowConflicts } from './flow.js';
-import { addDays, dayStartMs, utcDay } from './time.js';
+import { addDays, dayStartMs, observationDays, utcDay } from './time.js';
 import type { DailyPoint, WrittenObservation } from './types.js';
 
 /**
@@ -63,12 +63,7 @@ function storedApiDays(db: Db, assetId: string, metricKey: string): Map<string, 
 /** Every UTC day that an active row of the metric covers, whatever its source: a day here is not a gap. */
 function coveredDays(db: Db, assetId: string, metricKey: string): Set<string> {
   const days = new Set<string>();
-  for (const o of listActiveObservations(db, assetId, metricKey)) {
-    const endMs = new Date(o.observedAt).getTime();
-    const startMs = endMs - (o.periodDays ?? 1) * MS_PER_DAY;
-    // From the start of the first day: a row not at midnight covers the day it ends in as well.
-    for (let ms = dayStartMs(utcDay(startMs)); ms < endMs; ms += MS_PER_DAY) days.add(utcDay(ms));
-  }
+  for (const o of listActiveObservations(db, assetId, metricKey)) for (const d of observationDays(o.observedAt, o.periodDays)) days.add(d);
   return days;
 }
 

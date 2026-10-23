@@ -695,25 +695,71 @@ describe('get_flow_total', () => {
     expect(total({ from: '2026-07-01', to: '2026-07-03' }).result).toMatchObject({ total: 1 + 2 + 3, days_covered: 3, rows: 3 });
   });
 
-  it('reports a dropped day as missing, and counts a row staged in this run', () => {
+  it('reports a dropped day as missing, and a row staged in this run does not fill it', () => {
     seedQ3(['2026-08-15']); // day index 45, value 46
     expect(total().result).toMatchObject({ total: (92 * 93) / 2 - 46, days_covered: 91, days_missing: ['2026-08-15'], rows: 91 });
     const staged = w.ledger.stageObservation({
       metricKey: FEES, value: 46, observedAt: '2026-08-16T00:00:00Z', periodDays: 1, citationUrl: PAGE_URL, quotedText: QUOTE, live: true,
     });
-    expect(total().result).toMatchObject({ total: (92 * 93) / 2, days_covered: 92, days_missing: [], rows: 92, first_id: staged.tempId });
+    // Staged rows are this run's own figures, not Orion's measurement: the day stays missing and the row is not summed.
+    expect(total().result).toMatchObject({ total: (92 * 93) / 2 - 46, days_covered: 91, days_missing: ['2026-08-15'], rows: 91 });
+    expect(w.ledger.shown.has(staged.tempId)).toBe(true); // shown because it was staged, not because it was summed
+  });
+
+  it('ignores a 92-day provisional row staged on top of the 92 daily rows: the total is the daily sum', () => {
+    const ids = seedQ3();
+    w.ledger.stageObservation({
+      metricKey: FEES, value: 99_999, observedAt: '2026-10-01T00:00:00Z', periodDays: 92, citationUrl: PAGE_URL, quotedText: QUOTE, live: true,
+    });
+    expect(total()).toMatchObject({
+      isError: false,
+      result: { total: (92 * 93) / 2, days_covered: 92, days_missing: [], rows: 92, first_id: Math.min(...ids), last_id: Math.max(...ids) },
+    });
+  });
+
+  it('ignores a committed provisional row: only confirmed rows are summed', () => {
+    seedQ3(['2026-08-15']);
+    const provisional = insertObservation(w.db, {
+      assetId: 'mini', metricKey: FEES, observedAt: '2026-08-16T00:00:00Z', periodDays: 1, value: 46, source: 'manual', fetchedAt: AS_OF,
+      status: 'provisional', citationUrl: PAGE_URL, quotedText: QUOTE,
+    });
+    expect(total().result).toMatchObject({ total: (92 * 93) / 2 - 46, days_covered: 91, days_missing: ['2026-08-15'], rows: 91 });
+    expect(w.ledger.shown.has(provisional.id)).toBe(false);
+  });
+
+  it('refuses flow_conflict, with the ids and the days, when two confirmed rows cover the same day', () => {
+    const ids = seedQ3();
+    // A confirmed two-day manual row for 2026-07-01 and 2026-07-02.
+    const manual = insertObservation(w.db, {
+      assetId: 'mini', metricKey: FEES, observedAt: '2026-07-03T00:00:00Z', periodDays: 2, value: 7, source: 'manual', fetchedAt: AS_OF,
+    });
+    // It shares observed_at with the daily row for 2026-07-02, which insertObservation supersedes, so it overlaps 07-01's row only.
+    expect(listActiveObservations(w.db, 'mini', FEES).some((o) => o.id === ids[1])).toBe(false);
+    const { isError, result } = total();
+    expect(isError).toBe(true);
+    expect(result).toMatchObject({ refused: 'flow_conflict', ids: [ids[0], manual.id], days: ['2026-07-01'] });
+    expect(result).not.toHaveProperty('total');
+    expect(w.ledger.shown.size).toBe(0);
   });
 
   it('leaves out superseded and rejected rows, and a row that straddles the edge of the range', () => {
-    seedQ3();
+    seedQ3(['2026-07-01']); // the straddling row below is the only row on 2026-07-01, so it overlaps nothing
     const rejected = insertObservation(w.db, {
       assetId: 'mini', metricKey: FEES, observedAt: '2026-07-02T12:00:00Z', periodDays: 1, value: 1000, source: 'manual', fetchedAt: AS_OF,
     });
     w.db.prepare("UPDATE observations SET status = 'rejected' WHERE id = ?").run(rejected.id);
     // Noon to noon: covers 2026-06-30 and 2026-07-01, half outside July, so July leaves it out.
     insertObservation(w.db, { assetId: 'mini', metricKey: FEES, observedAt: '2026-07-01T12:00:00Z', periodDays: 1, value: 500, source: 'manual', fetchedAt: AS_OF });
-    expect(total({ from: '2026-07-01', to: '2026-07-31' }).result).toMatchObject({ total: (31 * 32) / 2, days_covered: 31, rows: 31 });
-    expect(total({ from: '2026-06-30', to: '2026-07-31' }).result).toMatchObject({ total: (31 * 32) / 2 + 500, days_covered: 32, rows: 32, days_missing: [] });
+    expect(total({ from: '2026-07-01', to: '2026-07-31' }).result).toMatchObject({ total: (31 * 32) / 2 - 1, days_covered: 30, rows: 30, days_missing: ['2026-07-01'] });
+    expect(total({ from: '2026-06-30', to: '2026-07-31' }).result).toMatchObject({ total: (31 * 32) / 2 - 1 + 500, days_covered: 32, rows: 31, days_missing: [] });
+  });
+
+  it('says it reports confirmed measurements only, without provisional or staged figures', () => {
+    const description = AGENT_TOOLS.find((t) => t.name === 'get_flow_total')!.description;
+    expect(description).toContain('confirmed');
+    expect(description).toMatch(/provisional/);
+    expect(description).toMatch(/staged/);
+    expect(description).toContain('flow_conflict');
   });
 
   it('get_flow_total refuses a level metric and from > to', () => {

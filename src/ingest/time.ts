@@ -16,6 +16,18 @@ export function dayStartMs(day: string): number {
   return Date.parse(`${day}T00:00:00.000Z`);
 }
 
+/**
+ * The UTC days an observation covers: from the start of the day its period begins in, up to its `observed_at`. A daily
+ * row observed at the end of day D (D+1 00:00Z, period 1) covers D alone; a row not at midnight covers the day it ends
+ * in as well. A null period is one day.
+ */
+export function observationDays(observedAt: string, periodDays: number | null): string[] {
+  const endMs = new Date(observedAt).getTime();
+  const days: string[] = [];
+  for (let ms = dayStartMs(utcDay(endMs - (periodDays ?? 1) * MS_PER_DAY)); ms < endMs; ms += MS_PER_DAY) days.push(utcDay(ms));
+  return days;
+}
+
 export function addDays(day: string, n: number): string {
   return utcDay(dayStartMs(day) + n * MS_PER_DAY);
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addDays, dayStartMs, daysInMonth, monthOf, utcDay } from '../../src/ingest/time.js';
+import { addDays, dayStartMs, daysInMonth, monthOf, observationDays, utcDay } from '../../src/ingest/time.js';
 import { toFiniteNumber, unitsToNumber } from '../../src/ingest/units.js';
 
 describe('unitsToNumber', () => {
@@ -32,5 +32,13 @@ describe('UTC day helpers', () => {
     expect(daysInMonth('2026-02')).toBe(28);
     expect(daysInMonth('2028-02')).toBe(29);
     expect(daysInMonth('2026-09')).toBe(30);
+  });
+
+  it('observationDays lists the UTC days a row covers, counting the day a row not at midnight ends in', () => {
+    expect(observationDays('2026-07-02T00:00:00.000Z', 1)).toEqual(['2026-07-01']);
+    expect(observationDays('2026-07-02T00:00:00Z', null)).toEqual(['2026-07-01']);
+    expect(observationDays('2026-07-04T00:00:00Z', 3)).toEqual(['2026-07-01', '2026-07-02', '2026-07-03']);
+    expect(observationDays('2026-07-01T12:00:00Z', 1)).toEqual(['2026-06-30', '2026-07-01']);
+    expect(observationDays('2026-01-01T00:00:00Z', 2)).toEqual(['2025-12-30', '2025-12-31']);
   });
 });
