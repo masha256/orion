@@ -100,6 +100,52 @@ describe('the context pack', () => {
     expect(p.drivers_at_previous_run).toMatchObject({ run_started_at: AS_OF, drivers: { price: { value: 10 } } });
   });
 
+  describe('catalysts_due', () => {
+    const cite = [{ source: 'doc:1', quotedText: 'q', locator: '00:01', docSha256: 'e'.repeat(64), docKind: 'transcript' as const }];
+    const entry = (catalysts: unknown[], thesis = 't') =>
+      insertJournalEntry(w.db, { assetId: 'mini', persona: 'analyst', agentRunId: null, createdAt: AS_OF, thesis, openQuestions: [], summary: 's', catalysts: catalysts as never });
+
+    it('catalysts_due lists a catalyst whose to-date is 20 days ahead and omits one 40 days ahead', () => {
+      const j = entry([
+        { event: 'soon', kind: 'product', from: '2026-07-01', to: '2026-07-20', citations: cite },
+        { event: 'later', kind: 'token', from: '2026-07-01', to: '2026-08-09', citations: cite },
+      ]);
+      expect(pack().catalysts_due).toEqual([{ journal_id: j.id, event: 'soon', kind: 'product', by: null, from: '2026-07-01', to: '2026-07-20' }]);
+      // The entry in the journal section carries its catalysts too.
+      expect(pack().journal[0].catalysts).toHaveLength(2);
+    });
+
+    it('uses an inclusive 30-day window either side of now, on by or to, from the last 20 entries, newest first', () => {
+      // now is 2026-06-30: the window is 2026-05-31 .. 2026-07-30.
+      const oldest = entry([{ event: 'oldest', kind: 'other', by: '2026-07-01', citations: cite }]);
+      for (let n = 0; n < 19; n++) entry([]);
+      const first = entry([
+        { event: 'edge past', kind: 'regulatory', by: '2026-05-31', citations: cite },
+        { event: 'too old', kind: 'regulatory', by: '2026-05-30', citations: cite },
+        { event: 'edge ahead', kind: 'partnership', by: '2026-07-30', citations: cite },
+        { event: 'too far', kind: 'partnership', by: '2026-07-31', citations: cite },
+        { event: 'range ends in window', kind: 'other', from: '2026-01-01', to: '2026-06-01', citations: cite },
+      ]);
+      const due = pack().catalysts_due as { journal_id: number; event: string }[];
+      expect(due.map((c) => c.event)).toEqual(['edge past', 'edge ahead', 'range ends in window']);
+      expect(due.every((c) => c.journal_id === first.id)).toBe(true);
+      expect(due.some((c) => c.journal_id === oldest.id)).toBe(false); // the 21st entry back
+      expect(pack({}, undefined, '2026-06-30T23:59:59.000Z').catalysts_due.map((c: { event: string }) => c.event)).toEqual(['edge past', 'edge ahead', 'range ends in window']);
+    });
+
+    it('is in every run type\'s pack, an empty list when nothing is due', () => {
+      expect(pack().catalysts_due).toEqual([]);
+      entry([{ event: 'soon', kind: 'product', by: '2026-07-10', citations: cite }]);
+      const doc = insertDocument(w.db, {
+        assetId: 'mini', kind: 'transcript', sourceUrl: 'https://x.com/mini/status/1', sourceId: 'x:1', title: 'call', publishedAt: AS_OF, addedAt: AS_OF, meta: {}, text: 'hello\n',
+      }).doc;
+      for (const runType of ['weekly', 'triage', 'deep', 'bootstrap', 'disclosure'] as const) {
+        const p = buildContextPack(w.db, w.loaded, w.ledger, { runType, budgets: DEFAULT_BUDGETS[runType], now: new Date(AS_OF), trigger: {}, document: doc, assetYaml: AGENT_ASSET_YAML });
+        expect(p.catalysts_due).toEqual([expect.objectContaining({ event: 'soon', by: '2026-07-10', from: null, to: null })]);
+      }
+    });
+  });
+
   it('lists calendar events in the next 30 days only', () => {
     const yaml = `${AGENT_ASSET_YAML}review_triggers:\n  calendar:\n    - { date: "2026-07-15", note: "Emission cut" }\n    - { date: "2026-09-01", note: "Too far" }\n    - { date: "2026-06-01", note: "Past" }\n`;
     expect(pack({}, yaml).calendar).toEqual([{ date: '2026-07-15', note: 'Emission cut' }]);

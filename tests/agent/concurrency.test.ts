@@ -38,7 +38,7 @@ beforeEach(() => {
   priceId = insertObservation(A, { assetId: 'mini', metricKey: 'price_usd', observedAt: '2026-09-19', value: 10, source: 'onchain', fetchedAt: '2026-09-19' }).id;
   ledger = new Ledger('mini', 'analyst', set);
   ledger.stageAssumptionChange({ key: 'rev_growth_y1', scenario: 'base', value: 0.1, rationale: 'up', evidence: [priceId] });
-  ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's' });
+  ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's', catalysts: [] });
 });
 
 afterEach(() => {

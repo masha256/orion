@@ -548,7 +548,7 @@ describe('model-authored text', () => {
     });
     expect(w.ledger.assumptionChanges()[0].rationale).toBe('usage is up\nand steady');
     w.call('write_journal', { thesis: 'steady\u0007', open_questions: ['what\u0000 next?', ' \u0007 '], summary: 'review\u001Bed' });
-    expect(w.ledger.journal()).toEqual({ thesis: 'steady', openQuestions: ['what next?'], summary: 'reviewed' });
+    expect(w.ledger.journal()).toEqual({ thesis: 'steady', openQuestions: ['what next?'], summary: 'reviewed', catalysts: [] });
   });
 
   it('is cleaned before the citation is verified, so a stray control character in a quote costs nothing', () => {
@@ -582,6 +582,81 @@ describe('write_journal', () => {
     expect(w.call('write_journal', { thesis: ' ', open_questions: [], summary: 's' }).result.refused).toBe('invalid_input');
     w.call('write_journal', { thesis: 'first', open_questions: ['q', ' '], summary: 's' });
     w.call('write_journal', { thesis: 'second', open_questions: ['q', ' '], summary: 's' });
-    expect(w.ledger.journal()).toEqual({ thesis: 'second', openQuestions: ['q'], summary: 's' });
+    expect(w.ledger.journal()).toEqual({ thesis: 'second', openQuestions: ['q'], summary: 's', catalysts: [] });
+  });
+
+  describe('catalysts', () => {
+    const DOC_TEXT = '[00:01] Thanks for joining.\n[00:04] The exchange license should be granted by the end of September.\n';
+    const DOC_QUOTE = 'The exchange license should be granted by the end of September';
+    const DOC = { id: 1, kind: 'transcript' as const, sha256: 'e'.repeat(64), text: DOC_TEXT };
+    const catalyst = (over: Record<string, unknown> = {}) => ({
+      event: 'exchange license granted', kind: 'regulatory', by: '2026-09-30', citations: [{ source: 'doc:1', quoted_text: DOC_QUOTE }], ...over,
+    });
+    const journal = (catalysts: unknown[]) => w.call('write_journal', { thesis: 't', open_questions: [], summary: 's', catalysts });
+
+    it('write_journal stages catalysts with verified citations; commit stores them', () => {
+      w.ctx.citableDocs = () => [DOC];
+      const r = journal([
+        catalyst({ event: ' exchange license\u0007 granted ' }),
+        { event: 'revenue milestone', kind: 'product', from: '2026-07-01', to: '2026-09-30', citations: [{ source: PAGE_URL, quoted_text: QUOTE }] },
+      ]);
+      expect(r.isError).toBe(false);
+      const expected = [
+        {
+          event: 'exchange license granted', kind: 'regulatory', by: '2026-09-30',
+          citations: [{ source: 'doc:1', quotedText: DOC_QUOTE, locator: '00:04', docSha256: 'e'.repeat(64), docKind: 'transcript' }],
+        },
+        {
+          event: 'revenue milestone', kind: 'product', from: '2026-07-01', to: '2026-09-30',
+          citations: [{ source: PAGE_URL, quotedText: QUOTE, locator: null, docSha256: null, docKind: null }],
+        },
+      ];
+      expect(w.ledger.journal()!.catalysts).toEqual(expected);
+      const { journalId } = w.ledger.commit(w.db, w.loaded.config, { agentRunId: null, now: new Date(AS_OF) });
+      const row = w.db.prepare('SELECT catalysts_json FROM journal WHERE id = ?').get(journalId) as { catalysts_json: string };
+      expect(JSON.parse(row.catalysts_json)).toEqual(expected);
+      expect((w.call('get_journal', {}).result.entries as { catalysts: unknown }[])[0].catalysts).toEqual(expected);
+    });
+
+    it('refuses by together with from/to, from after to, a bad date, a 9th catalyst, an unverified quote', () => {
+      w.ctx.citableDocs = () => [DOC];
+      const refused = (c: Record<string, unknown>) => journal([catalyst(c)]).result.refused;
+      expect(refused({ from: '2026-07-01', to: '2026-09-30' })).toBe('invalid_catalyst_dates');
+      expect(refused({ by: undefined })).toBe('invalid_catalyst_dates');
+      expect(refused({ by: undefined, from: '2026-07-01' })).toBe('invalid_catalyst_dates');
+      expect(refused({ by: undefined, to: '2026-07-01' })).toBe('invalid_catalyst_dates');
+      expect(refused({ by: undefined, from: '2026-10-01', to: '2026-09-30' })).toBe('invalid_catalyst_dates');
+      expect(refused({ by: '2026-02-30' })).toBe('invalid_catalyst_dates');
+      expect(refused({ by: '2026-9-30' })).toBe('invalid_catalyst_dates');
+      expect(refused({ by: '2026-09-30T00:00:00Z' })).toBe('invalid_catalyst_dates');
+      expect(refused({ by: 'end of Q3' })).toBe('invalid_catalyst_dates');
+      expect(journal([catalyst({ by: undefined, from: '2026-09-30', to: '2026-09-30' })]).isError).toBe(false);
+      expect(refused({ kind: 'rumor' })).toBe('invalid_input');
+      expect(refused({ event: 'e'.repeat(201) })).toBe('invalid_input');
+      expect(refused({ event: ' \u0007 ' })).toBe('invalid_input');
+      expect(refused({ citations: [] })).toBe('invalid_input');
+      expect(refused({ citations: Array.from({ length: 4 }, () => ({ source: 'doc:1', quoted_text: DOC_QUOTE })) })).toBe('invalid_input');
+      expect(journal(Array.from({ length: 9 }, () => catalyst())).result.refused).toBe('invalid_input');
+      expect(refused({ citations: [{ source: 'doc:1', quoted_text: DOC_QUOTE }, { source: 'doc:1', quoted_text: 'the license was denied outright by the regulator' }] })).toBe('quote_not_found');
+      expect(refused({ citations: [{ source: 'doc:2', quoted_text: DOC_QUOTE }] })).toBe('doc_not_in_run');
+      // A refused call leaves the earlier staged entry in place.
+      expect(w.ledger.journal()!.catalysts).toHaveLength(1);
+      expect(journal(Array.from({ length: 8 }, () => catalyst())).isError).toBe(false);
+      expect(w.ledger.journal()!.catalysts).toHaveLength(8);
+    });
+
+    it('needs no target-doc citation in a disclosure run, but every citation still verifies', () => {
+      w.ctx.citableDocs = () => [DOC];
+      w.ctx.runType = 'disclosure';
+      w.ctx.targetDoc = DOC;
+      expect(journal([catalyst({ citations: [{ source: PAGE_URL, quoted_text: QUOTE }] })]).isError).toBe(false);
+      expect(journal([catalyst({ citations: [{ source: PAGE_URL, quoted_text: 'a sentence the page never said at all' }] })]).result.refused).toBe('quote_not_found');
+    });
+
+    it('a journal without catalysts stores NULL', () => {
+      journal([]);
+      const { journalId } = w.ledger.commit(w.db, w.loaded.config, { agentRunId: null, now: new Date(AS_OF) });
+      expect((w.db.prepare('SELECT catalysts_json FROM journal WHERE id = ?').get(journalId) as { catalysts_json: string | null }).catalysts_json).toBeNull();
+    });
   });
 });

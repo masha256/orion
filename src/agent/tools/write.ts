@@ -4,6 +4,7 @@ import { provisionalMovePct } from '../../config/agentPolicy.js';
 import { applyEditsToObject, getAtPath, UNPROPOSABLE_ROOTS, unproposableEdits } from '../../config/edit.js';
 import { parseAssetObject, rawConfig } from '../../config/load.js';
 import { getAnomaly, listOpenAnomalies } from '../../db/anomalies.js';
+import { CATALYST_KINDS, type Catalyst } from '../../db/journal.js';
 import { getObservationsByIds, listActiveObservations, type Observation } from '../../db/observations.js';
 import { findPendingDuplicate, proposalIdentity, type ProposalChange, type ProposalEffect } from '../../db/proposals.js';
 import { requiredAssumptionKeys, validateAssetModules, validateAssumptions } from '../../engine/requirements.js';
@@ -43,6 +44,9 @@ const MAX_JOURNAL_TEXT = 4000;
 const MAX_OPEN_QUESTION = 500;
 const MAX_OPEN_QUESTIONS = 20;
 const MAX_PROPOSAL_CITATIONS = 5;
+export const MAX_CATALYSTS = 8;
+const MAX_CATALYST_EVENT = 200;
+const MAX_CATALYST_CITATIONS = 3;
 
 function requireText(value: string, field: string): string {
   const text = cleanText(value);
@@ -52,16 +56,20 @@ function requireText(value: string, field: string): string {
 
 /**
  * Verifies every citation the model gave, cleaned first so the stored quote is the checked one. One that fails refuses
- * the whole call: a proposal is never staged on a subset of its sources. In a disclosure run at least one must cite the
- * run's target document (spec 5.4); elsewhere citations are optional.
+ * the whole call: nothing is ever staged on a subset of its sources.
  */
-function verifyProposalCitations(ctx: ToolContext, input: { source: string; quoted_text: string }[]): StoredCitation[] {
+function verifyCitations(ctx: ToolContext, input: { source: string; quoted_text: string }[]): StoredCitation[] {
   const sources = { pages: ctx.fetchedPages(), docs: ctx.citableDocs() };
-  const citations = input.map((c) => {
+  return input.map((c) => {
     const verified = verifyAnyCitation(sources, { source: cleanText(c.source), quoted_text: cleanText(c.quoted_text) });
     if ('refusal' in verified) throw new ToolRefusal(verified.refusal);
     return verified.citation;
   });
+}
+
+/** A proposal's citations: all verified, and in a disclosure run at least one of the target document (spec 5.4); elsewhere optional. */
+function verifyProposalCitations(ctx: ToolContext, input: { source: string; quoted_text: string }[]): StoredCitation[] {
+  const citations = verifyCitations(ctx, input);
   if (ctx.runType === 'disclosure') {
     const target = ctx.targetDoc === null ? null : `doc:${ctx.targetDoc.id}`;
     if (target === null || !citations.some((c) => c.source === target)) {
@@ -415,22 +423,64 @@ const proposeChange = defineTool({
 
 // ---- write_journal -------------------------------------------------------------------------------------------------
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Exactly `YYYY-MM-DD`, and a real calendar day: `2026-02-30` does not round-trip. */
+function isIsoDate(s: string): boolean {
+  if (!ISO_DATE.test(s)) return false;
+  const at = Date.parse(`${s}T00:00:00Z`);
+  return !Number.isNaN(at) && new Date(at).toISOString().slice(0, 10) === s;
+}
+
+/** Either `by`, or both `from` and `to` with `from <= to`; never both forms, never neither. */
+function catalystDates(c: { event: string; by?: string; from?: string; to?: string }): Pick<Catalyst, 'by' | 'from' | 'to'> {
+  const bad = (why: string): never => refuse('invalid_catalyst_dates', `catalyst "${c.event}": ${why}`);
+  const given = [c.by, c.from, c.to].filter((d): d is string => d !== undefined);
+  for (const d of given) if (!isIsoDate(d)) bad(`${d} is not a date in the form YYYY-MM-DD`);
+  if (c.by !== undefined) {
+    if (c.from !== undefined || c.to !== undefined) bad('give either by, or from and to, not both');
+    return { by: c.by };
+  }
+  if (c.from === undefined || c.to === undefined) bad('give either by, or both from and to');
+  if ((c.from as string) > (c.to as string)) bad(`from ${c.from} is after to ${c.to}`);
+  return { from: c.from, to: c.to };
+}
+
 const writeJournal = defineTool({
   name: 'write_journal',
   description:
     'Your journal entry for this run: the only thing the next run will remember. thesis is your running view of the asset; open_questions ' +
-    'is what the next run should look at; summary is what you did in this run and why. Required before you finish. A second call replaces the first.',
+    'is what the next run should look at; summary is what you did in this run and why. Required before you finish. A second call replaces the first. ' +
+    `catalysts (at most ${MAX_CATALYSTS}): dated claims a source makes about what will happen, each {event, kind, by} or {event, kind, from, to} ` +
+    `(dates YYYY-MM-DD, from <= to) with 1 to ${MAX_CATALYST_CITATIONS} citations, {source, quoted_text}, under the same rules as propose_change. ` +
+    'Every citation is verified; one that fails refuses the whole entry. A catalyst schedules nothing: a later run sees it when its date comes near.',
   input: z.strictObject({
     thesis: z.string().max(MAX_JOURNAL_TEXT),
     open_questions: z.array(z.string().max(MAX_OPEN_QUESTION)).max(MAX_OPEN_QUESTIONS),
     summary: z.string().max(MAX_JOURNAL_TEXT),
+    catalysts: z
+      .array(
+        z.strictObject({
+          event: z.string().max(MAX_CATALYST_EVENT),
+          kind: z.enum(CATALYST_KINDS),
+          by: z.string().optional(),
+          from: z.string().optional(),
+          to: z.string().optional(),
+          citations: z.array(z.strictObject({ source: z.string().max(MAX_URL), quoted_text: z.string().max(MAX_QUOTE) })).min(1).max(MAX_CATALYST_CITATIONS),
+        }),
+      )
+      .max(MAX_CATALYSTS)
+      .optional(),
   }),
   run(ctx, input) {
-    ctx.ledger.setJournal({
-      thesis: requireText(input.thesis, 'thesis'),
-      openQuestions: input.open_questions.map((q) => cleanText(q)).filter((q) => q !== ''),
-      summary: requireText(input.summary, 'summary'),
+    const thesis = requireText(input.thesis, 'thesis');
+    const summary = requireText(input.summary, 'summary');
+    // Allowed in every run type with no target-document rule (spec 7.2), but every quote must verify.
+    const catalysts: Catalyst[] = (input.catalysts ?? []).map((c) => {
+      const event = requireText(c.event, 'event');
+      return { event, kind: c.kind, ...catalystDates({ ...c, event }), citations: verifyCitations(ctx, c.citations) };
     });
+    ctx.ledger.setJournal({ thesis, openQuestions: input.open_questions.map((q) => cleanText(q)).filter((q) => q !== ''), summary, catalysts });
     return { staged: true };
   },
 });

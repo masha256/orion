@@ -128,8 +128,8 @@ describe('commit', () => {
   });
 
   it('writes proposals and the journal, and a journal-only commit does not move a signal', () => {
-    ledger.setJournal({ thesis: 'steady', openQuestions: ['Q3 revenue?'], summary: 'no change' });
-    ledger.setJournal({ thesis: 'steady, still', openQuestions: ['Q3 revenue?'], summary: 'no change' });
+    ledger.setJournal({ thesis: 'steady', openQuestions: ['Q3 revenue?'], summary: 'no change', catalysts: [] });
+    ledger.setJournal({ thesis: 'steady, still', openQuestions: ['Q3 revenue?'], summary: 'no change', catalysts: [] });
     ledger.stageProposal({
       change: { kind: 'acknowledge_anomaly', anomalyId: 1, note: 'lags by design' }, filedAgainst: { status: 'open' }, rationale: 'known lag', evidence: [], effect: null,
       citations: [CITATION],
@@ -144,10 +144,10 @@ describe('commit', () => {
 
   it('previews what it would write without writing', () => {
     research();
-    ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's' });
+    ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's', catalysts: [] });
     const preview = ledger.preview();
     expect(preview.observations).toHaveLength(1);
-    expect(preview.journal).toEqual({ thesis: 't', openQuestions: [], summary: 's' });
+    expect(preview.journal).toEqual({ thesis: 't', openQuestions: [], summary: 's', catalysts: [] });
     expect(count('observations')).toBe(1);
     expect(count('journal')).toBe(0);
   });
@@ -157,7 +157,7 @@ describe('the world changes mid-run', () => {
   const stageEverything = () => {
     const staged = research();
     ledger.stageAssumptionChange({ key: 'rev_growth_y1', scenario: 'base', value: 0.1, rationale: 'up', evidence: [staged.tempId] });
-    ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's' });
+    ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's', catalysts: [] });
     ledger.stageProposal({ change: { kind: 'acknowledge_anomaly', anomalyId: 1, note: 'n' }, filedAgainst: {}, rationale: 'r', evidence: [], effect: null, citations: [] });
   };
   const nothingWritten = () => {
@@ -177,7 +177,7 @@ describe('the world changes mid-run', () => {
   });
 
   it('does not mind a newer set when it staged no assumption change', () => {
-    ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's' });
+    ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's', catalysts: [] });
     createAssumptionSet(db, { assetId: 'mini', author: 'user', rationale: 'mine', values: miniAssumptions(), createdAt: '2026-09-19T12:00:00Z' });
     expect(ledger.commit(db, asset, { agentRunId: null, now: NOW }).journalId).not.toBeNull();
   });
@@ -194,7 +194,7 @@ describe('the world changes mid-run', () => {
 
   it('conflicts rather than supersede an observation that already exists at the same metric and time', () => {
     research();
-    ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's' });
+    ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's', catalysts: [] });
     const users = insertObservation(db, {
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-18', value: 1000, source: 'manual', status: 'provisional',
       citationUrl: 'https://example.com/user', fetchedAt: '2026-09-19',

@@ -7,7 +7,7 @@ import type { Db } from '../db/connection.js';
 import { docLabel, type StoredDocument } from '../db/documents.js';
 import { listFetchRuns } from '../db/fetchRuns.js';
 import type { Firing } from '../db/triggerFirings.js';
-import { listJournal } from '../db/journal.js';
+import { listJournal, type CatalystKind } from '../db/journal.js';
 import { listProposals, recentlyDecidedProposals } from '../db/proposals.js';
 import { listSignals } from '../db/runs.js';
 import { computeDrivers } from '../drivers/compute.js';
@@ -39,6 +39,9 @@ const CALENDAR_DAYS = 30;
 const TARGET_HISTORY = 8;
 const DECIDED_PROPOSALS = 10;
 const FETCH_RUNS = 7;
+/** catalysts_due: the journal entries searched, and how far either side of now a catalyst's date may fall. */
+const CATALYST_ENTRIES = 20;
+const CATALYST_WINDOW_DAYS = 30;
 
 /**
  * Everything the agent starts a run knowing, as one object. Every observation id in it is marked as shown on the ledger,
@@ -93,6 +96,8 @@ export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, in
       recently_decided: recentlyDecidedProposals(db, asset.id, DECIDED_PROPOSALS).map(describeProposal),
     },
     journal: listJournal(db, asset.id, { limit: 3 }),
+    // Dated claims earlier runs filed, whose date (`by`, or a range's `to`) is within 30 days of now either way.
+    catalysts_due: catalystsDue(db, asset.id, input.now),
     source_failures: listFetchRuns(db, asset.id, FETCH_RUNS).flatMap((run) =>
       run.detail.sources.filter((s) => s.status === 'failed').map((s) => ({ fetch_run_started_at: run.startedAt, source: s.sourceId, error: s.error })),
     ),
@@ -113,6 +118,29 @@ export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, in
     asset_config_yaml: input.assetYaml ?? null,
     adapter_params: adapterParams(loaded),
   };
+}
+
+interface DueCatalyst {
+  journal_id: number;
+  event: string;
+  kind: CatalystKind;
+  by: string | null;
+  from: string | null;
+  to: string | null;
+}
+
+/** From the last 20 journal entries, newest first; days compared at UTC midnight, both ends inclusive. */
+function catalystsDue(db: Db, assetId: string, now: Date): DueCatalyst[] {
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const window = CATALYST_WINDOW_DAYS * MS_PER_DAY;
+  return listJournal(db, assetId, { limit: CATALYST_ENTRIES }).flatMap((entry) =>
+    entry.catalysts
+      .filter((c) => {
+        const at = Date.parse(`${c.by ?? c.to}T00:00:00Z`);
+        return at >= today - window && at <= today + window;
+      })
+      .map((c) => ({ journal_id: entry.id, event: c.event, kind: c.kind, by: c.by ?? null, from: c.from ?? null, to: c.to ?? null })),
+  );
 }
 
 /** The params each adapter source on the asset accepts, for adapters that document them: what a config proposal may set. */

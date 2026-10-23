@@ -4,7 +4,7 @@ import { decideAnomaly, getAnomaly, listOpenAnomalies } from '../db/anomalies.js
 import { insertAssumptionChange } from '../db/assumptionChanges.js';
 import { getLatestAssumptionSet, type AssumptionSet } from '../db/assumptions.js';
 import type { Db } from '../db/connection.js';
-import { insertJournalEntry } from '../db/journal.js';
+import { insertJournalEntry, type Catalyst } from '../db/journal.js';
 import { insertObservation, listActiveObservations, type Observation } from '../db/observations.js';
 import { insertProposal, type ProposalChange, type ProposalEffect } from '../db/proposals.js';
 import { OrionError, type AssumptionValues, type Scenario } from '../types.js';
@@ -59,6 +59,8 @@ export interface StagedJournal {
   thesis: string;
   openQuestions: string[];
   summary: string;
+  /** Verified when the journal was written; `[]` when there are none. */
+  catalysts: Catalyst[];
 }
 
 export interface CommitSummary {

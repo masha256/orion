@@ -186,6 +186,24 @@ describe('journal', () => {
     expect(listJournal(db, 'mini', { beforeId: ids[1], limit: 5 }).map((e) => e.id)).toEqual([ids[0]]);
     expect(listJournal(db, 'other')).toEqual([]);
   });
+
+  it('stores catalysts, and old journal rows read catalysts as []', () => {
+    const catalysts = [
+      {
+        event: 'license granted', kind: 'regulatory' as const, by: '2026-09-30',
+        citations: [{ source: 'doc:1', quotedText: 'the license should be granted by September', locator: '00:04', docSha256: 'e'.repeat(64), docKind: 'transcript' as const }],
+      },
+    ];
+    const entry = (over: Record<string, unknown> = {}) =>
+      insertJournalEntry(db, { assetId: 'mini', persona: 'analyst', agentRunId: null, createdAt: '2026-09-01T00:00:00Z', thesis: 't', openQuestions: [], summary: 's', ...over });
+    const cited = entry({ catalysts });
+    expect(cited.catalysts).toEqual(catalysts);
+    const old = entry();
+    expect(old.catalysts).toEqual([]);
+    const raw = (id: number) => (db.prepare('SELECT catalysts_json FROM journal WHERE id = ?').get(id) as { catalysts_json: string | null }).catalysts_json;
+    expect(raw(old.id)).toBeNull();
+    expect(listJournal(db, 'mini').map((e) => e.catalysts)).toEqual([[], catalysts]);
+  });
 });
 
 describe('assumption changes', () => {

@@ -10,7 +10,7 @@ import { insertProposal, type ProposalChange } from '../../src/db/proposals.js';
 import { acquireRunLock, getRunLock, releaseRunLock } from '../../src/db/runLocks.js';
 import type { OrionError } from '../../src/types.js';
 import { AGENT_ASSET_YAML, PERSONA_MD } from '../helpers/agentWorld.js';
-import { calls, journalCall, say, scriptedModel, toolUse, type ScriptStep } from '../helpers/fakeModel.js';
+import { calls, journalCall, say, scriptedModel, toolUse, webFetch, type ScriptStep } from '../helpers/fakeModel.js';
 import { AS_OF } from '../helpers/obs.js';
 
 let home: string;
@@ -125,6 +125,19 @@ describe('orion agent run', () => {
     // A dry run never runs the valuation, so it must not claim that nothing could move a signal.
     expect(text).toContain('no signal: a dry run commits nothing');
     expect(text).not.toContain('nothing this run committed');
+  });
+
+  it('prints one line per staged catalyst: the date or range, kind, event, and where each citation points', async () => {
+    const page = 'https://news.example.com/mini-roadmap';
+    const quote = 'the mainnet launch is planned for the third quarter';
+    const catalysts = [
+      { event: 'mainnet launch', kind: 'product', from: '2026-07-01', to: '2026-09-30', citations: [{ source: page, quoted_text: quote }] },
+      { event: 'token unlock', kind: 'token', by: '2026-08-01', citations: [{ source: page, quoted_text: quote }] },
+    ];
+    script = [{ content: [...webFetch(page, `<p>Mini said ${quote}.</p>`), journalCall({ catalysts })], stop_reason: 'tool_use' }, say('Done.')];
+    const text = await orion('agent', 'run', 'mini', '--type', 'weekly', '--dry-run');
+    expect(text).toContain(`would commit catalyst 2026-07-01..2026-09-30 product: mainnet launch [${page}]`);
+    expect(text).toContain(`would commit catalyst by 2026-08-01 token: token unlock [${page}]`);
   });
 
   it('exits 1 when the run does not complete, and says what was discarded', async () => {

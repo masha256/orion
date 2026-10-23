@@ -305,6 +305,17 @@ describe('runs that do not finish cleanly', () => {
     expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1);
     expect(count('journal')).toBe(0);
   });
+
+  it('catalysts on a dry run appear in staged.journal and nothing is written', async () => {
+    const catalysts = [{ event: 'revenue milestone', kind: 'product', by: '2026-09-30', citations: [{ source: PAGE_URL, quoted_text: QUOTE }] }];
+    const result = await run([{ content: [...webFetch(PAGE_URL, PAGE_TEXT), journalCall({ catalysts })], stop_reason: 'tool_use' }, say('Done.')], { dryRun: true });
+    expect(result.run).toMatchObject({ outcome: 'completed', dryRun: true });
+    expect(result.committed).toBeNull();
+    expect(result.staged.journal!.catalysts).toEqual([
+      { event: 'revenue milestone', kind: 'product', by: '2026-09-30', citations: [{ source: PAGE_URL, quotedText: QUOTE, locator: null, docSha256: null, docKind: null }] },
+    ]);
+    expect(count('journal')).toBe(0);
+  });
 });
 
 describe('preflight', () => {

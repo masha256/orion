@@ -27,7 +27,15 @@ function stagedLines(staged: RunAgentResult['staged'], verb: string): string[] {
   for (const r of staged.resolutions) lines.push(`  ${verb} anomaly #${r.anomalyId} resolved: ${r.note}`);
   for (const o of staged.observations) lines.push(`  ${verb} provisional ${o.metricKey} = ${o.value} at ${o.observedAt} (${o.live ? 'in the signal' : 'inert until confirmed'}) ${o.citationUrl}`);
   for (const p of staged.proposals) lines.push(`  ${verb} proposal ${p.change.kind}: ${p.rationale}`);
-  if (staged.journal) lines.push(`  ${verb} journal: ${staged.journal.summary}`);
+  if (staged.journal) {
+    lines.push(`  ${verb} journal: ${staged.journal.summary}`);
+    // `?? []`: run summaries stored before catalysts existed have none.
+    for (const c of staged.journal.catalysts ?? []) {
+      const when = c.by !== undefined ? `by ${c.by}` : `${c.from}..${c.to}`;
+      const where = c.citations.map((x) => (x.locator === null ? x.source : `${x.source}@${x.locator}`)).join(', ');
+      lines.push(`  ${verb} catalyst ${when} ${c.kind}: ${c.event} [${where}]`);
+    }
+  }
   return lines.length > 0 ? lines : ['  nothing staged'];
 }
 
