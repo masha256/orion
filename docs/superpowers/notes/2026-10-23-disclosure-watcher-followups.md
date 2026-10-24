@@ -74,5 +74,19 @@ the watcher's window-closed catch-up stops once the next window opens, an error 
 `.run.json`, skill item 5 does not mention the converted-observation exception, spec 5.4's body wording is stale
 (section 15 governs), a text-only post gets the "investor update" title.
 
+Deferred minors, status (branch `fix/minors-2026-10-24`, kanban t_b3b09288, not merged; 13/13 `whatif` identical and
+13/13 config hashes unchanged):
+- Fixed: `--published-at` validated (CLI and store: an ISO date or a zoned instant); the insert yields to the
+  `(asset_id, sha256)` unique index (`ON CONFLICT DO NOTHING`, then read back), so a racing writer gets `existing: true`;
+  kind/meta validated at the store; `StoredCitation` lives in `src/db/documents.ts` (no db→agent import; `Catalyst` was
+  already a db type); a citation given twice is stored once; `catalysts_due` lists a re-filed catalyst once, under the
+  newest entry; `adapter_params` lists a metric and adapter once; `lit.unlocks_next_year` paramsDoc names `url`;
+  `--note` help names every run type; review skill item 5 names the converted-observation exception; spec 5.4 says
+  section 15 governs. Tool layer 1.1.0 → 1.1.1 (agent run config hash only).
+- No change: `get_flow_total` excluding rows that straddle the range is the tool's documented contract.
+- Open (outside the repo: `~/.hermes/profiles/raymond/workspace/orion/disclosure-watcher/bin/disclosure_watch.py`, not
+  in this card's worktree): the window-closed catch-up stopping once the next window opens, an error result
+  overwriting the post's `.run.json`, and a text-only post getting the "investor update" title.
+
 For Mike, when he decides the Q3 unlock proposal: approving it moves only LIT's report dilution line (~136M → ~122–125M
 next-365-day unlocks) and LIT's config hash; update the persona's "from 2026-12-29" line with it.

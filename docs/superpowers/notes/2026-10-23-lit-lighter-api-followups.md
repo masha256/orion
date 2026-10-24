@@ -121,6 +121,28 @@ Two findings from the check (no action taken; for Mike):
 - A watched source that keeps failing shows only in sources_failed; monitor-only metrics have no staleness trigger.
 - LIT revenue = flow_usd.fees_core + 0.5 x flow_usd.fees_rh; get_flow_total returns gross series, the pack's revenue_streams carries the share.
 
+## Deferred review minors (fixed on `fix/minors-2026-10-24`, kanban t_b3b09288, not merged)
+
+The build ledger went with its worktree; the list was kept in the dev queue. All fixed, with 13/13 `whatif` identical
+(old vs new dist, same `.backup` DB, as-of 2026-10-24T12:00Z) and 13/13 config hashes unchanged:
+- `lit.app_fee_share` validates its params (`url` only; a mistyped key is refused). LIT sets no params, so no hash moved.
+- `lit.staking_pool` pages the explorer logs (`limit=100&offset=…`, newest first, read live 2026-10-24: 271 logs since
+  2026-01-28, only the two reward senders 733613 and 711044) until a log older than the newest reward day, counts a
+  transfer once by hash, refuses logs out of order or past 20 pages. Live dry run, main vs branch: the same
+  staked 111,080,868 LIT and APR 0.06023.
+- `lit.exchange_fees_daily`: a held-back newest day moves the window back one day, so `days: 1` returns the day
+  before instead of refusing; the routine `days: 7` read now ends a day earlier on a held-back run (the writer only
+  re-reads its 3 revision days plus any gap day, so stored rows change only where an older day was missing).
+- `src/db/fetchRuns.ts` takes `WatchFiring` from `src/types.ts`; the schema counts watch rules by rule, not by key.
+- Tests: the full non-numeric message, host spacing measured through the transport, one `messageOf`, `withShare` names
+  its stream, share absence asserted with `in`, the new LIT metrics' type and unit pinned, the LIT report through
+  `report yield lit --json`, structural notes from the asset's own config, the no-trigger proof in the tick test, the
+  quiet watch fetch at a later instant.
+
+Seen while checking, not changed: at 16:40Z on 2026-10-24 Lighter's exchangeMetrics still listed no row for the 24th,
+so the 23rd was held back on main and on the branch alike (Ruling 20's rule); the fee series runs two days behind
+whenever Lighter has not opened today's row by the fetch.
+
 ## Live rollout (2026-10-24 01:27-01:35Z, Mike: "Merge")
 
 - Idle check clean; backup `backups/orion.db.pre-lit-lighter-api-20261024T0127*Z` (integrity ok, row counts equal).
