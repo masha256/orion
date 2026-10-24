@@ -65,7 +65,7 @@ export function registerAgent(program: Command, ctx: CliContext): void {
     .description('one agent run; exit 0 completed, 2 completed with a blocked signal, 1 anything else')
     .requiredOption('--type <type>', 'weekly | triage | deep | bootstrap | disclosure')
     .option('--anomaly <id>', 'triage: the anomaly to look into')
-    .option('--note <text>', 'triage: a lead for the agent to verify (text or a URL); never evidence')
+    .option('--note <text>', 'a lead for the agent to verify (text or a URL), shown to every run type; a triage run needs it or --anomaly; never evidence')
     .option('--doc <id>', 'disclosure: the stored document to read (orion doc list); refused for other types')
     .option('--dry-run', 'do everything except commit; spends tokens')
     .option('--out <file>', 'JSONL file to append the signal to, when the run produces one')

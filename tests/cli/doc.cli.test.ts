@@ -112,6 +112,17 @@ describe('orion doc', () => {
     expect((await json('doc', 'list')) as unknown as unknown[]).toHaveLength(1);
   });
 
+  it('refuses a --published-at that is not an ISO date or an instant with a zone', async () => {
+    const ok = file('ok.txt', '[00:00] Fine.\n');
+    for (const at of ['yesterday', '2026-10-22 16:00', '2026-02-30', '2026-10-22T16:00:00']) {
+      const out = await add(ok, '--published-at', at);
+      expect(exitCode, at).toBe(1);
+      expect(errorOf(out).code, at).toBe('invalid_published_at');
+    }
+    expect((await json('doc', 'list')) as unknown as unknown[]).toHaveLength(0);
+    expect((await add(ok, '--published-at', '2026-10-22T00:32:09.000Z')).existing).toBe(false);
+  });
+
   it('refuses a bad --meta key or a value over 200 characters', async () => {
     const ok = file('ok.txt', '[00:00] Fine.\n');
     for (const meta of ['ASR=x', 'asr-model=x', 'a'.repeat(33) + '=x', '=x', 'noequals', `asr_model=${'x'.repeat(201)}`]) {

@@ -55,6 +55,52 @@ describe('documents', () => {
     expect(byId).toEqual(new Map([[3, false], [2, false], [1, true]]));
   });
 
+  it('a writer that stores the same text between the read and the insert yields existing: true, not a UNIQUE error', () => {
+    // Another process (the watcher and a hand-run `doc add`) lands the same row just before this insert runs.
+    let raced = false;
+    const racing = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop !== 'prepare') return Reflect.get(target, prop, receiver);
+        return (sql: string) => {
+          if (!raced && sql.startsWith('INSERT INTO documents')) {
+            raced = true;
+            insertDocument(db, input({ title: 'the other writer' }));
+          }
+          return target.prepare(sql);
+        };
+      },
+    });
+    const r = insertDocument(racing, input());
+    expect(raced).toBe(true);
+    expect(r.existing).toBe(true);
+    expect(r.doc.title).toBe('the other writer');
+    expect(listDocuments(db)).toHaveLength(1);
+  });
+
+  it('validates at the store: meta keys and values, published_at as an ISO date or instant', () => {
+    const code = (over: Partial<Parameters<typeof insertDocument>[1]>) => {
+      try {
+        insertDocument(db, input(over));
+      } catch (err) {
+        return (err as { code?: string }).code;
+      }
+      return 'stored';
+    };
+    const bad: Record<string, string>[] = [{ 'asr-model': 'x' }, { ASR: 'x' }, { ['a'.repeat(33)]: 'x' }, { '': 'x' }, { asr_model: 'x'.repeat(201) }, { asr_model: 5 as unknown as string }];
+    for (const meta of bad) {
+      expect(code({ meta }), JSON.stringify(meta)).toBe('invalid_meta');
+    }
+    for (const publishedAt of ['yesterday', '2026-10-22 16:00', '2026-02-30', '2026-10-22T25:00:00Z', '2026-10-22T16:00:00', '22/10/2026']) {
+      expect(code({ publishedAt }), publishedAt).toBe('invalid_published_at');
+    }
+    expect(code({ kind: 'tweet' as never })).toBe('invalid_doc_kind');
+    let n = 0;
+    for (const publishedAt of ['2026-10-22', '2026-10-22T16:00Z', '2026-10-22T16:00:00Z', '2026-10-22T00:32:09.000Z', '2026-10-22T09:00:00-07:00', null]) {
+      expect(code({ publishedAt, text: `[00:0${n++}] t\n` }), String(publishedAt)).toBe('stored');
+    }
+    expect(code({ meta: { ['a'.repeat(32)]: 'x'.repeat(200) }, text: 'other\n' })).toBe('stored');
+  });
+
   it('lists newest first, filtered by asset, without text', () => {
     insertDocument(db, input({ text: 'one\n' }));
     insertDocument(db, input({ assetId: 'hype', kind: 'post', sourceId: null, title: null, publishedAt: null, meta: {}, text: 'two\n' }));

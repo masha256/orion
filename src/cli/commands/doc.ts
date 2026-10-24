@@ -1,13 +1,11 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import type { Command } from 'commander';
 import { loadAsset } from '../../config/load.js';
-import { DOC_KINDS, docLabel, getDocument, insertDocument, listDocuments, normalizeDocText, type DocKind, type StoredDocument } from '../../db/documents.js';
+import { DOC_KINDS, docLabel, getDocument, insertDocument, isIsoDateOrInstant, listDocuments, MAX_META_VALUE, META_KEY, normalizeDocText, type DocKind, type StoredDocument } from '../../db/documents.js';
 import { OrionError } from '../../types.js';
 import { guarded, output, parseNumber, withDb, type CliContext } from '../util.js';
 
 const MAX_DOC_BYTES = 512 * 1024;
-const MAX_META_VALUE = 200;
-const META_KEY = /^[a-z_]{1,32}$/;
 /** One Whisper segment per line: `[mm:ss] text`, minutes in two or three digits. */
 const TRANSCRIPT_LINE = /^\[\d{2,3}:\d{2}\] \S/;
 
@@ -79,7 +77,7 @@ export function registerDoc(program: Command, ctx: CliContext): void {
     .requiredOption('--url <url>', 'where the document comes from (http or https)')
     .requiredOption('--file <path>', 'the text, UTF-8, at most 512 KiB')
     .requiredOption('--kind <kind>', DOC_KINDS.join(' | '))
-    .option('--published-at <iso>', 'when the source was published')
+    .option('--published-at <iso>', 'when the source was published: YYYY-MM-DD, or an instant with a zone (2026-10-22T16:00:00Z)')
     .option('--title <text>', 'a title for display')
     .option('--source-id <platform:id>', "the watcher's dedupe key, e.g. x:2113065839352336774")
     .option('--meta <key=value>', 'metadata, e.g. asr_model=... (repeatable)', collect, [])
@@ -91,6 +89,9 @@ export function registerDoc(program: Command, ctx: CliContext): void {
           const kind = opts.kind;
           loadAsset(ctx.home, assetId);
           checkUrl(opts.url);
+          if (opts.publishedAt !== undefined && !isIsoDateOrInstant(opts.publishedAt)) {
+            throw new OrionError('invalid_published_at', `--published-at must be an ISO date (YYYY-MM-DD) or an instant with a zone (e.g. 2026-10-22T16:00:00Z), got "${opts.publishedAt}"`);
+          }
           const text = readDocFile(opts.file);
           if (kind === 'machine_transcript') checkTranscript(text);
           const meta = parseMeta(opts.meta);

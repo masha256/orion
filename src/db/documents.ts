@@ -1,3 +1,4 @@
+import { OrionError } from '../types.js';
 import { sha256 } from '../util/canonical.js';
 import type { Db } from './connection.js';
 
@@ -75,21 +76,57 @@ const fromRow = (r: Row): StoredDocument => ({
   meta: JSON.parse(r.meta_json) as Record<string, string>,
 });
 
+/** `meta` rules, shared by the store and `doc add`: keys of 1 to 32 characters a-z or _, string values of at most 200. */
+export const META_KEY = /^[a-z_]{1,32}$/;
+export const MAX_META_VALUE = 200;
+
+/** A date `YYYY-MM-DD`, or an instant with a zone (`Z` or `+hh:mm`), seconds and milliseconds optional. */
+const ISO_DATE_OR_INSTANT = /^(\d{4})-(\d{2})-(\d{2})(?:T([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d{1,3})?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d))?$/;
+
+export function isIsoDateOrInstant(text: string): boolean {
+  const m = ISO_DATE_OR_INSTANT.exec(text);
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const day = new Date(Date.UTC(y, mo - 1, d));
+  return day.getUTCFullYear() === y && day.getUTCMonth() === mo - 1 && day.getUTCDate() === d && Number.isFinite(Date.parse(text));
+}
+
+/** Refuses what the store must never hold, whoever calls it (the CLI checks the same rules first, with flag names). */
+function checkDocument(input: NewDocument): void {
+  if (!(DOC_KINDS as readonly string[]).includes(input.kind)) throw new OrionError('invalid_doc_kind', `kind must be one of ${DOC_KINDS.join(', ')}, got "${input.kind}"`);
+  if (input.publishedAt !== null && !isIsoDateOrInstant(input.publishedAt)) {
+    throw new OrionError('invalid_published_at', `published_at must be an ISO date (YYYY-MM-DD) or an instant with a zone (e.g. 2026-10-22T16:00:00Z), got "${input.publishedAt}"`);
+  }
+  for (const [key, value] of Object.entries(input.meta)) {
+    if (!META_KEY.test(key)) throw new OrionError('invalid_meta', `meta key "${key}" must be 1 to 32 characters a-z or _`);
+    if (typeof value !== 'string') throw new OrionError('invalid_meta', `meta ${key}: the value must be a string`);
+    if (value.length > MAX_META_VALUE) throw new OrionError('invalid_meta', `meta ${key}: the value is ${value.length} characters; the limit is ${MAX_META_VALUE}`);
+  }
+}
+
 /**
  * Stores a document, normalized and hashed. Idempotent on (asset, sha256): the same text again returns the stored row
  * with `existing: true`, whatever the other fields say. A different text from the same URL (a re-transcription) is a new row.
+ * The insert comes first and yields to the unique index, so a second writer storing the same text at the same moment
+ * (the watcher beside a hand-run `doc add`) gets the stored row back rather than a UNIQUE error.
  */
 export function insertDocument(db: Db, input: NewDocument): { doc: StoredDocument; existing: boolean } {
+  checkDocument(input);
   const text = normalizeDocText(input.text);
   const hash = sha256(text);
-  const found = db.prepare('SELECT * FROM documents WHERE asset_id = ? AND sha256 = ?').get(input.assetId, hash) as Row | undefined;
-  if (found) return { doc: fromRow(found), existing: true };
   const info = db
-    .prepare('INSERT INTO documents (asset_id, kind, source_url, source_id, title, published_at, added_at, sha256, bytes, text, meta_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .prepare(
+      'INSERT INTO documents (asset_id, kind, source_url, source_id, title, published_at, added_at, sha256, bytes, text, meta_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+        'ON CONFLICT (asset_id, sha256) DO NOTHING',
+    )
     .run(
       input.assetId, input.kind, input.sourceUrl, input.sourceId, input.title, input.publishedAt, input.addedAt, hash,
       Buffer.byteLength(text, 'utf8'), text, JSON.stringify(input.meta),
     );
+  if (info.changes === 0) {
+    const found = db.prepare('SELECT * FROM documents WHERE asset_id = ? AND sha256 = ?').get(input.assetId, hash) as Row;
+    return { doc: fromRow(found), existing: true };
+  }
   return { doc: getDocument(db, Number(info.lastInsertRowid))!, existing: false };
 }
 
