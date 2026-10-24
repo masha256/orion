@@ -56,6 +56,46 @@ Baseline saved: `~/.hermes/profiles/raymond/workspace/orion/lit-scoping/revision
 (fees_core and fees_rh, 2026-10-17 .. 2026-10-23). At rollout, diff a fresh pull against it and record any restated day
 here.
 
+### Result (kanban t_3bfa0ba7, 2026-10-24): no restatement
+
+Read-only: the live DB (`mode=ro`) after the first post-baseline tick (fetch_run 272, 2026-10-24T12:50:18Z), and a
+fresh `exchangeMetrics?period=all` pull of the four kinds from both instances at 2026-10-24T15:48:26Z. Rows are stamped
+at day end, so stamp 2026-10-17 is Lighter day 2026-10-16. Delta = fresh - baseline = stored - baseline, in USD.
+
+| stamp (day end) | Lighter day | core baseline | core stored | core fresh | delta | RH baseline | RH stored | RH fresh | delta |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2026-10-17 | 10-16 | 100,321.05 | 100,321.05 | 100,321.05 | 0 | 82,360.43 | 82,360.43 | 82,360.43 | 0 |
+| 2026-10-18 | 10-17 | 54,065.35 | 54,065.35 | 54,065.35 | 0 | 47,860.78 | 47,860.78 | 47,860.78 | 0 |
+| 2026-10-19 | 10-18 | 85,679.30 | 85,679.30 | 85,679.30 | 0 | 55,491.50 | 55,491.50 | 55,491.50 | 0 |
+| 2026-10-20 | 10-19 | 122,885.40 | 122,885.40 | 122,885.40 | 0 | 68,924.97 | 68,924.97 | 68,924.97 | 0 |
+| 2026-10-21 | 10-20 | 140,415.13 | 140,415.13 | 140,415.13 | 0 | 76,499.49 | 76,499.49 | 76,499.49 | 0 |
+| 2026-10-22 | 10-21 | 118,054.92 | 118,054.92 | 118,054.92 | 0 | 92,160.18 | 92,160.18 | 92,160.18 | 0 |
+| 2026-10-23 | 10-22 | 123,112.62 | 123,112.62 | 123,112.62 | 0 | 82,623.03 | 82,623.03 | 82,623.03 | 0 |
+| 2026-10-24 | 10-23 | 87,065.95 | not stored | 87,065.95 | 0 | 71,007.68 | not stored | 71,007.68 | 0 |
+
+- No day restated, within or beyond 7 days. Wider check: every active stored row (fees_core 361 days from stamp
+  2025-10-28, fees_rh 119 days from 2026-06-27) equals the fresh pull to within $0.005; no fees row is superseded.
+- Lighter day 2026-10-23 read the same at 01:12Z and 15:48Z: unchanged from 72 min after the day closed.
+- Evidence is still thin: the stored rows all come from the 01:28Z backfill, so baseline vs stored spans ~16 min and
+  baseline vs fresh ~14.6 h. A restatement days later would not show yet.
+- `days` stays 7; no change is warranted.
+
+Two findings from the check (no action taken; for Mike):
+1. **The routine re-read is 3 written days, not 7.** `writeApiFlow` re-reads `REVISION_DAYS` = 3 for every non-DefiLlama
+   API flow (`src/ingest/apiFlow.ts`; `revision_days` exists only on `defillama` sources). The adapter's `days: 7` only
+   sets how many days it returns. Run 272 re-read 2026-10-20..10-23 (notes: "no new or revised day in 2026-10-20 to
+   2026-10-23"). So raising `days` would not widen revision coverage. If Lighter is ever seen restating older days, the
+   fix is a code change (a `revision_days` for adapter flows), not config.
+2. **The newest complete day was held back again at the 12:50Z tick.** Run 272 skipped 2026-10-23 ("not in the series,
+   skipped: 2026-10-23") for all three exchangeMetrics series. At 15:48Z Lighter still listed no row for 2026-10-24
+   (today) on any kind on either instance. The adapter treats a kind with no today row as "newest day may be partial"
+   and holds that day back. The spec's scoping (2026-10-23) says the last point is today's partial day; on 2026-10-24
+   that was not so at 01:28Z, 12:50Z or 15:48Z. If Lighter now lists completed days only (or lists today late in the
+   day), every tick
+   holds back D-1 and the series runs one day behind: nothing is lost (the day is written on the next tick, inside the
+   3-day re-read), and `staleness_days: 5` covers it. Check run 2026-10-25 12:50Z: stamp 2026-10-24 should be written
+   then. If it isn't, the series is stuck rather than lagging, and that goes to Mike.
+
 ## Rollout commands (spec section 9, after Mike's merge go)
 
 1. Idle check, verified backup, 13 whatif baselines with the old dist.
