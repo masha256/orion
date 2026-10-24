@@ -23,19 +23,38 @@ change.
 
 ## No value moved (13 assets)
 
-TODO (Task 9): `model whatif <a> --as-of 2026-10-23T12:00:00.000Z --json`, main vs branch, on two `.backup` copies.
+`model whatif <a> --as-of 2026-10-23T12:00:00.000Z --json` with `main`'s dist (642fd3b) and the branch's dist (48a5dc5)
+on two `.backup` copies of the live DB (2026-10-24 ~01:05Z): **13/13 byte-identical** (aero, cake, crv, cvxcrv, hype, link,
+lit, pump, sdcrv, sky, uni, vvv, ycrv). LIT is identical too: whatif output carries no config hash. `asset validate`: ok
+for all 13 with the branch build.
 
 ## Scratch rehearsal
 
-TODO (Task 9): timings, failed sources, anomalies, watch firings for the backfill and the four level reads.
+Scratch `.backup` home, branch dist, real Lighter reads (2026-10-24 01:12Z):
+- Backfill (`flow_usd.fees_core`, `flow_usd.fees_rh`, `flow_usd.rh_buyback`, `--backfill-days 362`): 5.7 s, exit 0, no
+  failed source. Rows: fees_core 362 (2025-10-27 .. 2026-10-23), fees_rh 120 (from 2026-06-26), rh_buyback 298 (sum $141).
+- Level reads: 5.2 s, exit 0. rh_fee_account_usd $3,489,760.63; rh_revenue_share_app 0.5; staked_tokens_reported
+  111,162,089.96 LIT; staking_apr 0.06018.
+- anomalies 7 -> 7, trigger_firings 4 -> 4; no watch fired (first readings have no previous).
+- Pitfall met: the live `.env` sets `ORION_HOME`; sourcing a copy re-pointed the shell at live. Both commands refused at
+  config validation before any fetch; live unchanged (mtime, size, fetch_runs, observations). Rerun with `ORION_HOME`
+  inline and the line removed from the scratch copies; the orion skill now carries the rule.
 
 ## Report check
 
-TODO (Task 9): `report yield lit --json` against spec section 2 (revenue ~$40.5M, payout ~80%, volume ~$48.1M; 1%).
+`report yield lit --json` in the scratch home (window to 2026-10-22, 91 days):
+- revenue $40,490,272/yr = core $32,882,153 + robinhood $7,608,118 (share 0.5 of gross $15,216,237); spec section 2:
+  $40.5M (the same figure, recomputed by hand from the API on 2026-10-23).
+- holders $32,486,661 (unchanged); protocol income $8,003,610 (was $15.9M); payout 80.23% (was 67%).
+- volume $48,098,390 (was $60.2M, DefiLlama dailyFees).
+- Growth now computes (a year of history): +343%/yr annualized with the new RH stream, +93%/yr ex streams younger than
+  180 days (`robinhood` excluded). Read the ex-new figure.
 
 ## Revision check
 
-TODO (Task 9 records the scratch pull's last 7 days of `flow_usd.fees_core`; the rollout diffs a fresh pull).
+Baseline saved: `~/.hermes/profiles/raymond/workspace/orion/lit-scoping/revision-baseline-2026-10-24T0112Z.csv`
+(fees_core and fees_rh, 2026-10-17 .. 2026-10-23). At rollout, diff a fresh pull against it and record any restated day
+here.
 
 ## Rollout commands (spec section 9, after Mike's merge go)
 
