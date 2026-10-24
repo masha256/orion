@@ -4,6 +4,18 @@ import type { Db } from './connection.js';
 export const DOC_KINDS = ['machine_transcript', 'transcript', 'post', 'filing', 'article'] as const;
 export type DocKind = (typeof DOC_KINDS)[number];
 
+/**
+ * A verified citation, as it is stored (proposals, journal catalysts, dev findings). `locator` is a transcript's `mm:ss`
+ * stamp; the doc fields are null for a page. The agent layer verifies it (guardrails); the db layer only stores it.
+ */
+export interface StoredCitation {
+  source: string;
+  quotedText: string;
+  locator: string | null;
+  docSha256: string | null;
+  docKind: DocKind | null;
+}
+
 /** A stored source document (a call transcript, a post, a filing): the exact text a citation is checked against. */
 export interface StoredDocument {
   id: number;

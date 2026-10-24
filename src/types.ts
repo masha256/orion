@@ -14,6 +14,25 @@ export type ObservationStatus = 'confirmed' | 'provisional' | 'rejected';
 export const RUN_TYPES = ['weekly', 'triage', 'deep', 'bootstrap', 'disclosure'] as const;
 export type RunType = (typeof RUN_TYPES)[number];
 
+/** A monitor-only metric's watch rules (config `metrics.<key>.watch`; evaluated in src/ingest/watch.ts). */
+export const WATCH_RULES = ['above', 'change_pct', 'outside'] as const;
+export type WatchRule = (typeof WATCH_RULES)[number];
+
+/**
+ * A watched monitor-only metric that moved this fetch. Reported in the fetch run's detail and the tick report, never as an
+ * anomaly: every open anomaly fires the `open_anomaly` trigger, which starts a paid analyst run, and display data must
+ * never wake the analyst. `day` is the last covered day for a flow (the day before its period end, where it is stored;
+ * for a one-day flow, the covered day), the reading's UTC date for a level. Here, not in src/ingest, because the db layer
+ * stores it (fetch_runs.detail_json.watch).
+ */
+export interface WatchFiring {
+  metric: string;
+  rule: WatchRule;
+  value: number;
+  previous: number | null;
+  day: string;
+}
+
 export const MS_PER_DAY = 86_400_000;
 export const DAYS_PER_YEAR = 365;
 

@@ -1,25 +1,11 @@
 import type { AssetConfig } from '../config/schema.js';
 import type { Observation } from '../db/observations.js';
-import { MS_PER_DAY } from '../types.js';
+import { MS_PER_DAY, type WatchFiring } from '../types.js';
 import { utcDay } from './time.js';
 import type { WrittenObservation } from './types.js';
 
-export const WATCH_RULES = ['above', 'change_pct', 'outside'] as const;
-export type WatchRule = (typeof WATCH_RULES)[number];
-
-/**
- * A watched monitor-only metric that moved this fetch. Reported in the fetch run's detail and the tick report, never as an
- * anomaly: every open anomaly fires the `open_anomaly` trigger, which starts a paid analyst run, and display data must
- * never wake the analyst. `day` is the last covered day for a flow (the day before its period end, where it is stored;
- * for a one-day flow, the covered day), the reading's UTC date for a level.
- */
-export interface WatchFiring {
-  metric: string;
-  rule: WatchRule;
-  value: number;
-  previous: number | null;
-  day: string;
-}
+// Defined in src/types.ts (the db layer stores a firing); re-exported for the ingest and app layers.
+export { WATCH_RULES, type WatchFiring, type WatchRule } from '../types.js';
 
 /** Per watched metric: its active observations' values by observedAt (normalized ISO), taken before the fetch writes. */
 export type WatchSnapshot = Map<string, Map<string, number>>;

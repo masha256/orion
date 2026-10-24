@@ -1,6 +1,6 @@
 import { agentBand, keyBounds, maxStepFraction, type Range } from '../config/agentPolicy.js';
 import type { AssetConfig } from '../config/schema.js';
-import type { DocKind } from '../db/documents.js';
+import type { DocKind, StoredCitation } from '../db/documents.js';
 import type { Scenario } from '../types.js';
 
 /**
@@ -342,14 +342,8 @@ export interface CitationInput {
   quoted_text: string;
 }
 
-/** A verified citation, as it is stored. `locator` is a transcript's `mm:ss` stamp; the doc fields are null for a page. */
-export interface StoredCitation {
-  source: string;
-  quotedText: string;
-  locator: string | null;
-  docSha256: string | null;
-  docKind: DocKind | null;
-}
+/** Defined in the db layer, which stores it (proposals, journal); re-exported for the agent layer. */
+export type { StoredCitation };
 
 const SEGMENT = /^\[(\d{2,3}:\d{2})\] ?(.*)$/;
 

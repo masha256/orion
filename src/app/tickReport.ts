@@ -1,8 +1,7 @@
 import { appendFileSync } from 'node:fs';
 import { z } from 'zod';
 import { TRIGGER_KINDS } from '../db/triggerFirings.js';
-import { WATCH_RULES } from '../ingest/watch.js';
-import { RUN_TYPES } from '../types.js';
+import { RUN_TYPES, WATCH_RULES } from '../types.js';
 import { InboxSchema } from './inbox.js';
 
 const ErrorSchema = z.strictObject({ code: z.string(), message: z.string() });

@@ -1,4 +1,4 @@
-import type { StoredCitation } from '../agent/guardrails.js';
+import type { StoredCitation } from './documents.js';
 import type { Db } from './connection.js';
 
 export const CATALYST_KINDS = ['regulatory', 'product', 'token', 'partnership', 'other'] as const;

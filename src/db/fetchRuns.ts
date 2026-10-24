@@ -1,4 +1,4 @@
-import type { WatchFiring } from '../ingest/watch.js';
+import type { WatchFiring } from '../types.js';
 import type { Db } from './connection.js';
 
 export type FetchOutcome = 'ok' | 'partial' | 'failed';

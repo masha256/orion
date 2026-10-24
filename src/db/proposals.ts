@@ -1,4 +1,4 @@
-import type { StoredCitation } from '../agent/guardrails.js';
+import type { StoredCitation } from './documents.js';
 import { OrionError, type ConfigEdit, type Scenario } from '../types.js';
 import { canonicalJson } from '../util/canonical.js';
 import type { Db } from './connection.js';

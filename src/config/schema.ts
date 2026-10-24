@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { SCENARIOS, STD_METRICS } from '../types.js';
+import { SCENARIOS, STD_METRICS, WATCH_RULES } from '../types.js';
 import { CrossCheckSchema, IngestSchema, SourceSchema, sourceIssues } from './sources.js';
 
 const MetricDefSchema = z.strictObject({
@@ -285,7 +285,8 @@ export const AssetConfigSchema = z
       if (def.watch !== undefined) {
         const w = def.watch;
         if (def.monitor_only !== true) issue(`metrics: "${key}" has a watch, which is for monitor_only metrics`);
-        if (Object.keys(w).length !== 1) issue(`metrics: "${key}" watch takes exactly one rule (above, change_pct or outside)`);
+        // Counted by rule, not by key: a parser that kept an absent rule as an undefined key must not make it two.
+        if (WATCH_RULES.filter((r) => w[r] !== undefined).length !== 1) issue(`metrics: "${key}" watch takes exactly one rule (above, change_pct or outside)`);
         if (w.above !== undefined && def.type !== 'flow') issue(`metrics: "${key}" watch above is for flow metrics`);
         if (w.change_pct !== undefined && def.type !== 'level') issue(`metrics: "${key}" watch change_pct is for level metrics`);
         if (w.outside !== undefined && def.type !== 'level') issue(`metrics: "${key}" watch outside is for level metrics`);
