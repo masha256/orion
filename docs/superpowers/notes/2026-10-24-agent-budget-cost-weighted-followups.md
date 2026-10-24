@@ -47,6 +47,15 @@ the CLI and `agent.reserve` in the tick report.
 - The cron prompts do not yet print `agent.reserve`.
 - The projected pre-request check (spec §11): stop when units so far plus the last request's size would cross the cap.
   Revisit if the one-request overshoot shows up again.
+- (final review) R keeps the web server tools with the run's full `max_uses` (prompt cache). A model that searches
+  inside R pays for one server loop, ~$1 worst case (#44's 5th request), then ends `budget_exhausted`. Check R's
+  `server_tool_use` on the first live use.
+- (final review) Spec §9 asked for units in the CLI; the plan narrowed Task 4 to the reserve line, so `usageLine`
+  still prints raw tokens and an operator can't see units against the cap. Display only.
+- (final review) R's `write_journal` result is not sent back, so a stored transcript that used R ends on a
+  `tool_use` with no `tool_result`. Harmless while transcripts are never replayed.
+- Final whole-branch review (on 3f26030): ready to merge, no critical/important findings; all 12 deferred minors
+  triaged fine to leave. Controller rerun on 3f26030: 100 files / 1158 tests, typecheck clean.
 
 ## Rulings (SDD ledger)
 
@@ -54,6 +63,7 @@ the CLI and `agent.reserve` in the tick report.
 - Ruling: the context pack's run.budgets now shows `inputUnits` to the model (follows from the rename; pack unpinned) — accepted, consistent with Task 3's rule text naming input units — costs one analyst confusion at worst, fixed by Task 3 text.
 - Ruling: accept the reserve's test edits in run.test.ts ('writes nothing when a budget runs out' gets a say('ok') reserve step) and tick.test.ts ('ends short of completed' script -> [growth, say('ok')], requests 2) in Task 2's commit — R's existence forces them; Tasks 3/4 add their own tests on top — costs nothing if wrong (test-only).
 - Ruling: the reserve text goes as a separate user message after the tool_result user message (two consecutive user turns), as the brief's test requires; the Messages API documents that consecutive same-role turns are combined into one — if wrong, R gets a 400, which the loop already maps to budget_exhausted 'reserve request failed' (today's outcome), so the cost is only a lost rescue, visible in the first live use.
+- Ruling: Task 5's base whatif worktree was created with --detach at 08ab5f6 (main is checked out in the live tree) — same commit, costs nothing.
 
 ## Deferred minors (SDD ledger; none blocks the merge)
 
