@@ -1,6 +1,10 @@
 # Orion: LIT revenue, Robinhood share and staked LIT from Lighter's own API (design, 2026-10-23)
 
-Status: design for review. Mike's picks on 2026-10-23 ("1: a. 2: a. 3: a"):
+Status: approved by Mike, 2026-10-23 ("Proceed with all recommendations"). The section 11 decisions were taken as
+recommended: thresholds as written; WATCH lines in all 13 cron prompts; volume = first-party gross fees; 362-day
+backfill for the fee series. Plan: `docs/superpowers/plans/2026-10-23-orion-lit-lighter-api.md`.
+
+Mike's picks on 2026-10-23 ("1: a. 2: a. 3: a"):
 1. Holder flow stays the measured Core buys. A display-only watch on the Robinhood fee account and its buyback series
    shows a payout or catch-up buyback the day it happens.
 2. Revenue is two first-party streams: Lighter Core fees, plus 50% of Robinhood-instance fees. DefiLlama stays as a
@@ -88,7 +92,7 @@ because revenue and volume are report lines.
   outside 1–30. `paramsDoc` documents all of the params, `api` included.
 - Allowed kinds: `maker_fee, taker_fee, transfer_fee, withdraw_fee, liquidation_fee, buyback, buyback_usdc`.
 - Revisions: Lighter may restate a recent day (unverified). The writer re-reads `days` (7) on every run and supersedes a
-  changed day, as the existing API flows do. The plan's first task diffs two pulls a day apart and records the result.
+  changed day, as the existing API flows do. The plan records the last 7 days of the scratch pull, and the rollout diffs a fresh pull against it; the result goes in the followups note.
 
 ### 3.2 Schema: a `share` on a revenue stream
 
