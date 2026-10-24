@@ -14,7 +14,7 @@ import { computeDrivers } from '../drivers/compute.js';
 import { requiredExtraMetrics } from '../engine/requirements.js';
 import { getAdapter } from '../ingest/adapters/registry.js';
 import { MS_PER_DAY, type RunType } from '../types.js';
-import { describeAnomaly, describeAssumptions, describeDrivers, describeProposal, describeSignal } from './describe.js';
+import { describeAnomaly, describeAssumptions, describeDrivers, describeProposal, describeSignal, structuralNotes } from './describe.js';
 import type { Ledger } from './ledger.js';
 
 export interface RunTrigger {
@@ -54,10 +54,12 @@ export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, in
   const observations = eligibleObservations(db, asset, nowIso);
   ledger.markShown(observations.map((o) => o.id));
   const report = computeDrivers(asset, observations, nowIso, requiredExtraMetrics(asset));
+  // Drivers read from a config constant carry its note, so the analyst does not take e.g. "staked 0" for a reading.
+  const structural = structuralNotes(asset);
 
   const previous = lastCompletedRun(db, asset.id);
   const previousDrivers = previous
-    ? describeDrivers(computeDrivers(asset, eligibleObservations(db, asset, previous.startedAt), previous.startedAt, requiredExtraMetrics(asset)), previous.startedAt)
+    ? describeDrivers(computeDrivers(asset, eligibleObservations(db, asset, previous.startedAt), previous.startedAt, requiredExtraMetrics(asset)), previous.startedAt, structural)
     : null;
 
   const anomalies = listAnomalies(db, { assetId: asset.id, includeDecided: true });
@@ -81,7 +83,7 @@ export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, in
       // Conditions Orion's own data raised this tick: what to look into first. Details hold Orion's numbers and ids, never text from a model or a page (a calendar note is the user's own YAML).
       triggers_this_tick: (input.trigger.firings ?? []).map((f) => ({ kind: f.kind, key: f.key, fired_at: f.firedAt, detail: f.detail })),
     },
-    drivers_now: describeDrivers(report, nowIso),
+    drivers_now: describeDrivers(report, nowIso, structural),
     drivers_at_previous_run: previousDrivers && { run_started_at: previous?.startedAt, ...previousDrivers },
     observations_in_force: observations.map((o) => ({ id: o.id, metric: o.metricKey, value: o.value, observed_at: o.observedAt, source: o.source, status: o.status })),
     anomalies: {

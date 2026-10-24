@@ -1,10 +1,11 @@
 import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildContextPack, renderContextPack } from '../../src/agent/context.js';
+import { describeDrivers, structuralNotes } from '../../src/agent/describe.js';
 import { buildSystemPrompt, OPERATING_RULES } from '../../src/agent/prompt.js';
 import { runValuation } from '../../src/app/valuation.js';
 import { DEFAULT_BUDGETS } from '../../src/config/agentPolicy.js';
-import { loadAsset } from '../../src/config/load.js';
+import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
 import { parsePersona, parseSkill } from '../../src/config/personas.js';
 import { finishAgentRun, startAgentRun, ZERO_USAGE } from '../../src/db/agentRuns.js';
 import { decideAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
@@ -13,9 +14,10 @@ import { insertJournalEntry } from '../../src/db/journal.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { decideProposal, insertProposal } from '../../src/db/proposals.js';
 import { insertFiring } from '../../src/db/triggerFirings.js';
+import { computeDrivers } from '../../src/drivers/compute.js';
 import { registerAdapter } from '../../src/ingest/adapters/registry.js';
 import { AGENT_ASSET_YAML, agentWorld, PERSONA_MD, type AgentWorld } from '../helpers/agentWorld.js';
-import { AS_OF } from '../helpers/obs.js';
+import { AS_OF, miniObservations } from '../helpers/obs.js';
 
 let w: AgentWorld;
 beforeEach(() => {
@@ -100,6 +102,56 @@ describe('the context pack', () => {
     const p = pack({}, undefined, '2026-06-30T12:00:00.000Z');
     expect(p.drivers_now.drivers.price.value).toBe(12);
     expect(p.drivers_at_previous_run).toMatchObject({ run_started_at: AS_OF, drivers: { price: { value: 10 } } });
+  });
+
+  describe('structural constants', () => {
+    const LIT_STAKED_NOTE = 'staking rewards are bought LIT passed on, not a fee share; the burn reaches every holder';
+    const constantStaked = AGENT_ASSET_YAML.replace(
+      'staked_supply: { type: level, unit: tokens, staleness_days: 7 }',
+      `staked_supply: { type: level, unit: tokens, staleness_days: 7, source: { type: constant, value: 50, note: "${LIT_STAKED_NOTE}" } }`,
+    );
+
+    it('a constant staked_supply marks staked_ratio structural', () => {
+      const lit = loadAsset(fileURLToPath(new URL('../..', import.meta.url)), 'lit');
+      expect(structuralNotes(lit.config)).toEqual({
+        staked_ratio: LIT_STAKED_NOTE,
+        staker_emission_share: 'no emissions',
+        emission_rate_now: '1B minted at launch; unlocks move tokens already in total supply',
+      });
+      // LIT's notes on a report: staked_ratio carries the note beside its value.
+      const report = computeDrivers(w.loaded.config, miniObservations(), AS_OF, []);
+      const d = describeDrivers(report, AS_OF, structuralNotes(lit.config)).drivers as Record<string, any>;
+      expect(d.staked_ratio).toMatchObject({ value: 0.5, structural: LIT_STAKED_NOTE });
+      // In the pack, now and at the previous run.
+      expect(constantStaked).not.toBe(AGENT_ASSET_YAML);
+      const id = startAgentRun(w.db, { assetId: 'mini', persona: 'analyst', runType: 'weekly', trigger: 'manual', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: AS_OF });
+      finishAgentRun(w.db, id, { outcome: 'completed', endedAt: '2026-06-30T00:05:00Z', usage: ZERO_USAGE, error: null, summary: null, transcript: [] });
+      const p = buildContextPack(w.db, parseAssetYaml(constantStaked), w.ledger, { runType: 'weekly', budgets: DEFAULT_BUDGETS.weekly, now: new Date('2026-06-30T12:00:00.000Z'), trigger: {} }) as Record<string, any>;
+      expect(p.drivers_now.drivers.staked_ratio.structural).toBe(LIT_STAKED_NOTE);
+      expect(p.drivers_at_previous_run.drivers.staked_ratio.structural).toBe(LIT_STAKED_NOTE);
+      expect('structural' in p.drivers_now.drivers.staker_emission_share).toBe(false);
+    });
+
+    it('a fetched staked_supply has no structural key', () => {
+      const fetched = AGENT_ASSET_YAML.replace(
+        'staked_supply: { type: level, unit: tokens, staleness_days: 7 }',
+        'staked_supply: { type: level, unit: tokens, staleness_days: 7, source: { type: coingecko, id: mini, field: circulating_supply } }',
+      );
+      expect(structuralNotes(parseAssetYaml(fetched).config)).toEqual({});
+      const d = pack({}, fetched).drivers_now.drivers;
+      expect(d.staked_ratio).not.toBeNull();
+      expect('structural' in d.staked_ratio).toBe(false);
+      for (const v of Object.values(pack().drivers_now.drivers)) if (v && typeof v === 'object' && !Array.isArray(v)) expect('structural' in v).toBe(false);
+    });
+
+    it('real_staking_yield is unchanged', () => {
+      const plain = pack().drivers_now.drivers;
+      const marked = pack({}, constantStaked).drivers_now.drivers;
+      expect(marked.real_staking_yield).toEqual(plain.real_staking_yield);
+      const { structural, ...rest } = marked.staked_ratio;
+      expect(structural).toBe(LIT_STAKED_NOTE);
+      expect(rest).toEqual(plain.staked_ratio);
+    });
   });
 
   describe('catalysts_due', () => {

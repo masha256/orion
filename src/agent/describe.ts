@@ -24,8 +24,32 @@ const driver = (v: DriverValue | null, nowIso: string) =>
         age_days: Math.round(((Date.parse(nowIso) - Date.parse(v.observedAt)) / MS_PER_DAY) * 10) / 10,
       };
 
-export function describeDrivers(report: DriverReport, nowIso: string): Record<string, unknown> {
+/** Each driver read straight from one standard metric, by the driver's pack name. */
+const STRUCTURAL_SOURCES: Record<string, string> = {
+  staked_ratio: 'staked_supply',
+  staker_emission_share: 'staker_emission_share',
+  emission_rate_now: 'emission_rate_annual',
+};
+
+/**
+ * Drivers whose metric is a config `constant`, mapped to the constant's note: a structural choice, not a measurement
+ * (LIT's staked supply is 0 by design). The analyst's pack shows the note beside the value; nothing else reads it.
+ */
+export function structuralNotes(asset: AssetConfig): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, metric] of Object.entries(STRUCTURAL_SOURCES)) {
+    const src = asset.metrics[metric]?.source;
+    if (src?.type === 'constant' && src.note) out[name] = src.note;
+  }
+  return out;
+}
+
+export function describeDrivers(report: DriverReport, nowIso: string, structural: Record<string, string> = {}): Record<string, unknown> {
   const d = report.drivers;
+  const marked = (name: string, v: DriverValue | null) => {
+    const out = driver(v, nowIso);
+    return out && structural[name] !== undefined ? { ...out, structural: structural[name] } : out;
+  };
   return {
     drivers: d && {
       as_of: d.asOf,
@@ -34,10 +58,10 @@ export function describeDrivers(report: DriverReport, nowIso: string): Record<st
       usage_index: driver(d.usageIndex, nowIso),
       total_supply: driver(d.totalSupply, nowIso),
       circulating_supply: driver(d.circulatingSupply, nowIso),
-      staked_ratio: driver(d.stakedRatio, nowIso),
+      staked_ratio: marked('staked_ratio', d.stakedRatio),
       locked_ratio: driver(d.lockedRatio, nowIso),
-      staker_emission_share: driver(d.stakerEmissionShare, nowIso),
-      emission_rate_now: driver(d.emissionRateNow, nowIso),
+      staker_emission_share: marked('staker_emission_share', d.stakerEmissionShare),
+      emission_rate_now: marked('emission_rate_now', d.emissionRateNow),
       emission_schedule: d.emissionSchedule,
       scheduled_unlocks: d.scheduledUnlocks,
       real_staking_yield: driver(d.realStakingYield, nowIso),
