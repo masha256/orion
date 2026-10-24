@@ -132,8 +132,10 @@ metrics:
     critical: true
     source: { type: derived, name: flow_annualized, params: { metric: flow_usd.buyback, days: 91 } }
 
-  # Report-only: team and investor tokens unlocking over the next 365 days (linear from 2026-12-29 over three years,
-  # 1.661M + 1.533M LIT a week). DefiLlama's emissions dataset, the asset-specific series with no on-chain source.
+  # Report-only: team and investor tokens unlocking over the next 365 days. Allocation sizes from DefiLlama's emissions
+  # dataset (no vesting contract on chain); timing from Lighter's own terms (Q3 2026 call, doc #1 at 12:27-12:33: no cliff,
+  # 36 monthly tranches, the first on 2027-01-29), applied by proposal #3 (Mike, 2026-10-24). DefiLlama models a weekly
+  # linear release from 2026-12-29 instead, which overstated the next-365-day figure (136.0M vs 124.9M on 2026-10-24).
   unlocks_next_year: { type: level, unit: tokens_per_year, staleness_days: 14, monitor_only: true, source: { type: adapter, name: lit.unlocks_next_year, params: { allocations: [ Team, Investors ], tranches: { first: 2027-01-29, every_months: 1, count: 36 } } } }
   reserve_lit: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: token, function: balanceOf, args: [ ecosystem_reserve ], decimals: 18 } }
 
@@ -287,4 +289,4 @@ reporting:
   volume: [ flow_usd.fees_core, flow_usd.fees_rh ]
   burned_tokens: [ flow_tokens.buyback ]
   dilution:
-    - { id: unlocks, metric: unlocks_next_year, note: "team and investor vesting from 2026-12-29 (DefiLlama emissions)" }
+    - { id: unlocks, metric: unlocks_next_year, note: "team and investor vesting, 36 monthly tranches from 2027-01-29 (Lighter terms; sizes from DefiLlama emissions)" }

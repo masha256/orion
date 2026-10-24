@@ -31,7 +31,7 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = '2026-10-23T12:00:00.000Z';
 const TRANSCRIPT = join(ROOT, 'tests/fixtures/disclosure/lit-q3-2026-call-transcript.txt');
 const RUN_FIXTURE = join(ROOT, 'tests/fixtures/disclosure/lit-q3-run.json');
-const LIT_HASH = 'f2fae2705b68149a7d51fa83178c34c66d1baaba047ad64009d42cf4554a0a53';
+const LIT_HASH = '0bf60b7da45c103c1849d0a5dc77b9f7bfb2ac5aac3508af85a5de1f0c3b791e';
 const SOURCE_URL = 'https://x.com/Lighter_xyz/status/2113065839352336774';
 
 // Q3 2026 as the live DB has it (spec section 2): the treasury's buys and DefiLlama's revenue, summed over 92 days.
@@ -182,6 +182,19 @@ function script(docId: number): (Step | ((r: ModelRequest) => Step))[] {
  * - run.configHash: hashes the persona, skill and asset texts, so any later edit of those files would move it.
  * The shape (RunAgentResult: run, staged, committed, signal) is kept; only those values become placeholders.
  */
+/**
+ * assets/lit.yaml as it stood when the Q3 2026 run was filed (2026-10-23): proposal #3's tranches were approved later
+ * (Mike, 2026-10-24), so the replay and its approval run on the file without them, the config the run actually saw.
+ */
+const TRANCHES_TEXT = ', tranches: { first: 2027-01-29, every_months: 1, count: 36 }';
+const NOTE_NOW = 'team and investor vesting, 36 monthly tranches from 2027-01-29 (Lighter terms; sizes from DefiLlama emissions)';
+const NOTE_THEN = 'team and investor vesting from 2026-12-29 (DefiLlama emissions)';
+function preApprovalLitYaml(): string {
+  const text = readFileSync(join(ROOT, 'assets/lit.yaml'), 'utf8');
+  if (!text.includes(TRANCHES_TEXT) || !text.includes(NOTE_NOW)) throw new Error('assets/lit.yaml no longer carries the approved tranches text');
+  return text.replace(TRANCHES_TEXT, '').replace(NOTE_NOW, NOTE_THEN);
+}
+
 function normalized(r: RunAgentResult): unknown {
   const copy = structuredClone(r) as RunAgentResult;
   copy.run.startedAt = '<startedAt>';
@@ -193,7 +206,7 @@ function normalized(r: RunAgentResult): unknown {
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), 'orion-disclosure-e2e-'));
   await orion(home, 'init');
-  copyFileSync(join(ROOT, 'assets/lit.yaml'), join(home, 'assets/lit.yaml'));
+  writeFileSync(join(home, 'assets/lit.yaml'), preApprovalLitYaml());
   cpSync(join(ROOT, 'personas'), join(home, 'personas'), { recursive: true });
   cpSync(join(ROOT, 'skills'), join(home, 'skills'), { recursive: true });
   await orion(home, 'model', 'assumptions', 'import', 'lit', join(ROOT, 'calibration/lit-assumptions.yaml'), '--rationale', 'central package (Mike, 2026-10-16)');
@@ -332,7 +345,7 @@ describe('approving the config proposal on a copy of assets/lit.yaml', () => {
     const h2 = mkdtempSync(join(tmpdir(), 'orion-disclosure-approve-'));
     home2 = h2;
     await orion(h2, 'init');
-    copyFileSync(join(ROOT, 'assets/lit.yaml'), join(h2, 'assets/lit.yaml'));
+    writeFileSync(join(h2, 'assets/lit.yaml'), preApprovalLitYaml());
     await orion(h2, 'model', 'assumptions', 'import', 'lit', join(ROOT, 'calibration/lit-assumptions.yaml'), '--rationale', 'central package');
 
     const approved = withDb(h2, (db) => {

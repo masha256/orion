@@ -144,7 +144,7 @@ describe('the disclosure run text (2026-10-23)', () => {
     const body = loadPersona(ROOT_DIR, 'perp-exchange-analyst').body;
     expect(body).toContain('Issuer disclosures.');
     expect(body).toContain('A gap between the two is the finding; neither side is right by default.');
-    expect(body).toContain('watch the team and investor unlocks from 2026-12-29');
+    expect(body).toContain('watch the team and investor unlocks (the tranche schedule is in the asset config)');
     expect(/^[\x00-\x7F]*$/.test(body)).toBe(true);
   });
 

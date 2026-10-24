@@ -58,12 +58,12 @@ describe('adapter params validation', () => {
   registerAdapter({ name: 'test_checked', needsRpc: false, validateParams: (p) => (p.ok === true ? [] : ['ok: must be true']), run: () => Promise.reject(new Error('not run')) });
 
   it('parseAssetObject surfaces the refusal with the metric path; assets/lit.yaml still loads and keeps its hash', () => {
-    expect(parseAssetYaml(litYaml).hash).toBe('f2fae2705b68149a7d51fa83178c34c66d1baaba047ad64009d42cf4554a0a53');
-    expect(parseAssetObject(parseYaml(litYaml)).hash).toBe('f2fae2705b68149a7d51fa83178c34c66d1baaba047ad64009d42cf4554a0a53');
-    // A valid schedule loads (and is a different config).
-    const good = parseAssetObject(withTranches({ first: '2027-01-29', every_months: 1, count: 36 }));
-    expect(good.config.metrics.unlocks_next_year.source).toMatchObject({ params: { tranches: { first: '2027-01-29', every_months: 1, count: 36 } } });
-    expect(good.hash).not.toBe('f2fae2705b68149a7d51fa83178c34c66d1baaba047ad64009d42cf4554a0a53');
+    expect(parseAssetYaml(litYaml).hash).toBe('0bf60b7da45c103c1849d0a5dc77b9f7bfb2ac5aac3508af85a5de1f0c3b791e');
+    expect(parseAssetObject(parseYaml(litYaml)).hash).toBe('0bf60b7da45c103c1849d0a5dc77b9f7bfb2ac5aac3508af85a5de1f0c3b791e');
+    // Another valid schedule loads (and is a different config from the file's 36 monthly tranches).
+    const good = parseAssetObject(withTranches({ first: '2027-01-29', every_months: 3, count: 12 }));
+    expect(good.config.metrics.unlocks_next_year.source).toMatchObject({ params: { tranches: { first: '2027-01-29', every_months: 3, count: 12 } } });
+    expect(good.hash).not.toBe('0bf60b7da45c103c1849d0a5dc77b9f7bfb2ac5aac3508af85a5de1f0c3b791e');
     // A malformed one is refused with the metric path, through the object path (filing) and the YAML path (approve).
     const bad = withTranches({ first: '2027-01-29', every_months: 13, count: 36 });
     expect(() => parseAssetObject(bad)).toThrow(expect.objectContaining({ code: 'invalid_asset_config', message: expect.stringContaining('metrics.unlocks_next_year.source.params: tranches.every_months') }));

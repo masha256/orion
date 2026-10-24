@@ -190,7 +190,7 @@ describe('assets/lit.yaml', () => {
     // A deliberate edit of assets/lit.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-10-23: revenue and volume from Lighter's API, the Robinhood watch, staked LIT (all monitor-only).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('f2fae2705b68149a7d51fa83178c34c66d1baaba047ad64009d42cf4554a0a53');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('0bf60b7da45c103c1849d0a5dc77b9f7bfb2ac5aac3508af85a5de1f0c3b791e');
   });
 
   it('plans one allowlisted scan into dead (the quarterly burns) and the buyback run rate', () => {
@@ -216,8 +216,10 @@ describe('assets/lit.yaml', () => {
     expect(value('price_usd')).toBe(PRICE);
     expect(value('total_supply')).toBe(981_909_280);
     expect(value('reserve_lit')).toBe(231_809_000);
-    // 74 days to the cliff leaves 291 of the next 365.
-    expect(value('unlocks_next_year') / 1e6).toBeCloseTo((291 * 3_194_000) / 7 / 1e6, 1);
+    // Lighter's tranche schedule (proposal #3): the canned allocations release (1199 - 80) days x 3,194,000/7 after the
+    // schedule start (2026-12-29), split into 36 monthly tranches from 2027-01-29; 9 of them (Jan 29 .. Sep 29) fall in
+    // the next 365 days from 2026-10-16.
+    expect(value('unlocks_next_year') / 1e6).toBeCloseTo((((1199 - 80) * 3_194_000) / 7 / 36) * 9 / 1e6, 1);
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual(
       expect.arrayContaining([['total_supply', true], ['price_usd', true]]),
     );
