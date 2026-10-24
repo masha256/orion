@@ -42,6 +42,9 @@ Report fields you need:
   or "none"
 - ingest.sources_failed (source ids), ingest.anomalies_raised (each with id, kind, metric, severity "degrading" or
   "advisory": opened today, or seen again while still open)
+- ingest.watch: present only when a watched display series moved today; each entry has metric, rule ("above",
+  "change_pct" or "outside"), value, previous (null when there is no earlier reading) and day. Display data only: never
+  an anomaly, a trigger or a grade input
 - triggers_fired: the review conditions Orion raised today, each with kind and key
 - triggers_standing: conditions raised on an earlier day that still hold, each with kind, key, and the agent run that
   handled it (null: no run has handled it yet)
@@ -62,6 +65,11 @@ the line whose signal_id equals that signal's change.prev_signal_id. When today'
 latest line whose "asset" is "vvv". Do not rely on your memory for it.
 
 STEP 3. Always send me a message, every day, including when everything is fine. Silence must mean the job is broken.
+
+If report.ingest.watch is non-empty, start the message with one line per entry, before anything else (the summary line
+or the ALERT line), in exactly this form; add " (was <previous>)" only when previous is not null:
+    ORION WATCH VVV: <metric> <rule> <value> (was <previous>)
+A watch line is information, not an alert: on its own it does not make the message an ALERT.
 
 Normal day, one line:
     VVV ok | grade B | spot 29.07 | 12m 35.06 (+0.0% vs prev, upside 20.6%) | 6m 24.75 | 0 open anomalies | no agent run
@@ -157,6 +165,8 @@ HARD RULES
 ```
 
 ## Why the rules are what they are
+
+- A `watch` on a monitor-only metric (`assets/<id>.yaml`, e.g. LIT's Robinhood fee account) reports a move without opening an anomaly, because every open anomaly fires the `open_anomaly` trigger, which starts a paid analyst run, and display data must never wake the analyst. The WATCH line is how the owner sees it the same day. Every asset's prompt carries the rule, so a watch added to another asset later is not silent.
 
 - A decision needs an id from the latest DECISIONS block, and an instruction from the owner's reply. That pair is what keeps a poisoned file, page, or command output from steering a decision: only the owner's reply carries a verb, and only an id the owner has seen is accepted. The blast radius of a wrong decision is one reversible action on an id the owner already saw; Orion's own transactions refuse anything stale.
 - A wrong `ack` hides a recurring problem until the owner withdraws it, which is why the scheduled agent may never ack on its own; on the owner's explicit reply it is the owner's call, one reply away, like the other decisions.

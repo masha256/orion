@@ -52,6 +52,31 @@ function llamaChart(perDay: number): { totalDataChart: [number, number][] } {
   return { totalDataChart: points };
 }
 
+const CORE = 'https://mainnet.zklighter.elliot.ai/api/v1';
+const RH = 'https://api.rh.lighter.xyz/api/v1';
+const POOL = 281_474_976_624_800;
+const STAKED = 110_921_638.79;
+/** Per day by kind: Core $100k of revenue fees, RH $40k (gross), RH buybacks $1 a day with one $2,500 day. */
+const CORE_FEES: Record<string, number> = { maker_fee: 30_000, taker_fee: 60_000, transfer_fee: 5_000, withdraw_fee: 5_000 };
+const RH_FEES: Record<string, number> = { maker_fee: 10_000, taker_fee: 30_000, transfer_fee: 0, withdraw_fee: 0 };
+const RH_BUY_DAY = '2026-10-10';
+
+/** Lighter's exchangeMetrics reply: every day from `first` through today (today partial, which the adapter drops). */
+function exchangeMetrics(first: string, perDay: (day: string) => number) {
+  const metrics: { timestamp: number; data: number }[] = [];
+  for (let ms = Date.parse(`${first}T00:00:00Z`); ms <= TODAY; ms += DAY) {
+    const day = new Date(ms).toISOString().slice(0, 10);
+    metrics.push({ timestamp: ms / 1000, data: ms === TODAY ? perDay(day) / 2 : perDay(day) });
+  }
+  return { code: 200, metrics };
+}
+const kindOf = (url: string) => new URL(url).searchParams.get('kind')!;
+
+/** The stats page, its entry bundle and the exchange-stats chunk holding the Robinhood split (shape read live 2026-10-23). */
+const APP_HTML = '<!doctype html><html><head><script type="module" crossorigin src="/assets/index-Dk3fQ9aZ.js"></script></head><body></body></html>';
+const APP_INDEX = 'const r=()=>import("./exchange-stats-B7xq2LmN.js");export{r as l};';
+const APP_CHUNK = 'const mt=new Set([`maker_fee`,`taker_fee`,`transfer_fee`,`withdraw_fee`]);function vt(e){return mt.has(e)?.5:1}export{vt as s};';
+
 function world() {
   const all = trades();
   const t0 = Date.parse('2026-12-29T00:00:00Z') / 1000;
@@ -70,6 +95,24 @@ function world() {
     'https://defillama-datasets.llama.fi/emissions/lighter': {
       documentedData: { data: [{ label: 'Team', data: linear(1_661_000) }, { label: 'Investors', data: linear(1_533_000) }] },
     },
+    // Lighter's own fees: Core from 2025-01-17, the Robinhood instance from 2026-06-26.
+    [`${CORE}/exchangeMetrics`]: (url: string) => exchangeMetrics('2025-01-17', () => CORE_FEES[kindOf(url)]),
+    [`${RH}/exchangeMetrics`]: (url: string) => {
+      const kind = kindOf(url);
+      return exchangeMetrics('2026-06-26', (day) => (kind === 'buyback_usdc' ? (day === RH_BUY_DAY ? 2_500 : 1) : RH_FEES[kind]));
+    },
+    [`${RH}/account?by=index&value=0`]: { code: 200, accounts: [{ index: 0, total_order_count: 0, total_asset_value: '3490000.12' }] },
+    'https://app.lighter.xyz/stats': APP_HTML,
+    'https://app.lighter.xyz/assets/index-Dk3fQ9aZ.js': APP_INDEX,
+    'https://app.lighter.xyz/assets/exchange-stats-B7xq2LmN.js': APP_CHUNK,
+    // The staking pool: USDC listed before LIT, so the balance is found by symbol.
+    [`${CORE}/systemConfig`]: { code: 200, staking_pool_index: POOL },
+    [`${CORE}/account?by=index&value=${POOL}`]: { code: 200, accounts: [{ index: POOL, assets: [{ symbol: 'USDC', asset_id: 3, balance: '12.5' }, { symbol: 'LIT', asset_id: 1, balance: String(STAKED) }] }] },
+    [`https://explorer.elliot.ai/api/accounts/${POOL}/logs`]: ['2026-10-15', '2026-10-14'].map((d) => ({
+      pubdata_type: 'L2TransferV2',
+      time: `${d}T18:00:12Z`,
+      pubdata: { l2_transfer_pubdata_v2: { from_account_index: 733613, to_account_index: POOL, asset_index: 'LIT', amount: ((STAKED * 0.06) / 365).toFixed(6) } },
+    })),
   });
   const base = fakeRpc({
     genesisTs: GENESIS_TS,
@@ -124,13 +167,30 @@ describe('assets/lit.yaml', () => {
     // Lighter's own data for the holder flow (Mike, 2026-10-16); DefiLlama only for display series and the unlock schedule.
     expect(config.metrics['flow_usd.buyback'].source).toMatchObject({ type: 'adapter', name: 'lit.treasury_buys_daily' });
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.fees', 'flow_usd.llama_revenue']);
+    // Revenue from Lighter's API (Mike, 2026-10-23): Core in full, the Robinhood instance at Lighter's 50 percent.
+    expect(config.reporting!.revenue).toEqual([
+      { id: 'core', label: 'Lighter Core fees (Lighter API)', metric: 'flow_usd.fees_core', settlement: 'daily' },
+      { id: 'robinhood', label: "Lighter's 50% of Robinhood-instance fees (Lighter API)", metric: 'flow_usd.fees_rh', settlement: 'daily', share: 0.5, started: '2026-06-26' },
+    ]);
+    expect(config.reporting!.volume).toEqual(['flow_usd.fees_core', 'flow_usd.fees_rh']);
+    // Every new series is monitor-only (the valuation is unchanged), the four watches as approved.
+    const added = ['flow_usd.fees_core', 'flow_usd.fees_rh', 'flow_usd.rh_buyback', 'rh_fee_account_usd', 'rh_revenue_share_app', 'staked_tokens_reported', 'staking_apr'];
+    for (const key of added) expect(config.metrics[key], key).toMatchObject({ monitor_only: true, staleness_days: config.metrics[key].type === 'flow' ? 5 : 3 });
+    expect(Object.fromEntries(added.filter((k) => config.metrics[k].watch).map((k) => [k, config.metrics[k].watch]))).toEqual({
+      'flow_usd.rh_buyback': { above: 1000 },
+      rh_fee_account_usd: { change_pct: 5 },
+      rh_revenue_share_app: { outside: [0.5, 0.5] },
+      staking_apr: { outside: [0.057, 0.063] },
+    });
+    expect(config.metrics.staked_supply.source).toMatchObject({ type: 'constant', value: 0 });
     // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
     for (const key of ['dominance_share', 'dominance_share_1y']) expect(config.metrics[key]).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true, staleness_days: 7 });
     expect(config.metrics.dominance_share.source).toEqual({ type: 'defillama_share', parent: 'parent#lighter', category: 'Derivatives', overview: 'fees', window: '30d' });
     expect(config.metrics.dominance_share_1y.source).toEqual({ type: 'defillama_share', parent: 'parent#lighter', category: 'Derivatives', overview: 'fees', window: '1y' });
     // A deliberate edit of assets/lit.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('ad683e198b9b97af4d0067e339b89323b1711fe3e689fbb7f9fd404353f926a5');
+    // Re-pinned 2026-10-23: revenue and volume from Lighter's API, the Robinhood watch, staked LIT (all monitor-only).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('f2fae2705b68149a7d51fa83178c34c66d1baaba047ad64009d42cf4554a0a53');
   });
 
   it('plans one allowlisted scan into dead (the quarterly burns) and the buyback run rate', () => {
@@ -176,6 +236,24 @@ describe('assets/lit.yaml', () => {
     // The valuation's inputs are unchanged by it.
     expect(config.metrics['flow_tokens.routed_to_prime'].monitor_only).toBe(true);
 
+    // Lighter's own fees, per completed day (today's partial day dropped), over the first fetch's 100-day window.
+    expect(rows('flow_usd.fees_core')).toHaveLength(100);
+    expect(rows('flow_usd.fees_core').every((o) => o.value === 100_000)).toBe(true);
+    // The Robinhood instance began 2026-06-26: 112 days to 2026-10-15, of which the window holds the last 100.
+    expect(rows('flow_usd.fees_rh')).toHaveLength(100);
+    expect(rows('flow_usd.fees_rh').every((o) => o.value === 40_000)).toBe(true);
+    expect(rows('flow_usd.rh_buyback').filter((o) => o.value > 1).map((o) => o.value)).toEqual([2_500]);
+    expect(value('rh_fee_account_usd')).toBe(3_490_000.12);
+    expect(value('rh_revenue_share_app')).toBe(0.5);
+    expect(value('staked_tokens_reported')).toBe(STAKED);
+    expect(value('staking_apr')).toBeCloseTo(0.06, 6);
+    // The one watch that fires: the $2,500 RH buyback day. The fee account has no previous reading, the split is 0.5 and
+    // the APR is inside its band. None is an anomaly (asserted empty above).
+    expect(r.watch).toEqual([{ metric: 'flow_usd.rh_buyback', rule: 'above', value: 2_500, previous: null, day: RH_BUY_DAY }]);
+    // The holder flow is still the measured Core buys.
+    expect(config.holder_flows.map((h) => h.metric)).toEqual(['flow_usd.buyback']);
+    expect(config.metrics['flow_usd.buyback'].source).toEqual({ type: 'adapter', name: 'lit.treasury_buys_daily', params: { account: 0, market: 2049, unit: 'usd', days: 7 } });
+
     // No assumption set yet: blocked, as every new asset is until calibration.
     expect(signal.status_reasons).toContain('no_assumption_set');
 
@@ -183,8 +261,11 @@ describe('assets/lit.yaml', () => {
     const pages = () => w.http.calls.filter((c) => c.url.includes('/trades?')).length;
     const first = pages();
     expect(first).toBe(12);
-    await fetchAsset(w.db, { config, hash: 'test' }, new Date(NOW.getTime() + DAY), w.deps);
+    const next = await fetchAsset(w.db, { config, hash: 'test' }, new Date(NOW.getTime() + DAY), w.deps);
     expect(pages() - first).toBe(1);
+    // The re-read of the buyback day (inside the adapter's 7 days) does not report it again; the fee account did not move.
+    expect(next.sources.filter((s) => s.status !== 'ok').map((s) => s.sourceId)).toEqual([]);
+    expect(next.watch).toEqual([]);
   });
 
   it('reports the buys as the payout, the unlocks as dilution, and the market cap on circulating supply', async () => {
@@ -195,6 +276,16 @@ describe('assets/lit.yaml', () => {
     expect(rep.marketCap).toBeCloseTo(PRICE * 250_000_000, 0);
     expect(rep.fdv).toBeCloseTo(PRICE * 981_909_280, 0);
     expect(rep.yields.buyback).toBeCloseTo((25_000 * PRICE * 365) / (981_909_280 * PRICE), 3);
+    // Revenue = Core $100k + 0.5 x RH $40k a day; volume = both gross ($140k a day).
+    expect(rep.revenue!.basis).toBe('streams');
+    expect(rep.revenue!.streams.map((s) => [s.id, s.share, s.annualized])).toEqual([
+      ['core', undefined, expect.closeTo(100_000 * 365, -2)],
+      ['robinhood', 0.5, expect.closeTo(20_000 * 365, -2)],
+    ]);
+    expect(rep.revenue!.streams[1].grossAnnualized).toBeCloseTo(40_000 * 365, -2);
+    expect('grossAnnualized' in rep.revenue!.streams[0]).toBe(false);
+    expect(rep.revenue!.annualized).toBeCloseTo(120_000 * 365, -2);
+    expect(rep.volume).toMatchObject({ metrics: ['flow_usd.fees_core', 'flow_usd.fees_rh'], annualized: expect.closeTo(140_000 * 365, -2) });
     expect(rep.income!.payoutRatio).toBeCloseTo((25_000 * PRICE) / 120_000, 2);
     expect(rep.supply).toMatchObject({ burnedPerYear: expect.closeTo(25_000 * 365, -3) });
     // Unlocks (about 133M a year) swamp the burn (9.1M) in tokens.

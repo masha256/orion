@@ -257,11 +257,19 @@ describe('the disclosure pack', () => {
     const doc = storeDoc();
     const lit = loadAsset(fileURLToPath(new URL('../..', import.meta.url)), 'lit');
     const p: Record<string, any> = buildContextPack(w.db, lit, w.ledger, { runType: 'disclosure', budgets: DEFAULT_BUDGETS.disclosure, now: new Date(AS_OF), trigger: {}, document: doc, assetYaml: 'lit' });
-    expect(p.adapter_params).toEqual([
-      {
-        metric: 'unlocks_next_year', adapter: 'lit.unlocks_next_year',
-        params_doc: "allocations: string[] (DefiLlama allocation labels, required); tranches?: { first: YYYY-MM-DD, every_months: 1..12, count: 1..120 }: the issuer's own tranche schedule; each allocation's remaining amount from the schedule start is split evenly over the tranches",
-      },
+    expect(p.adapter_params).toContainEqual({
+      metric: 'unlocks_next_year', adapter: 'lit.unlocks_next_year',
+      params_doc: "allocations: string[] (DefiLlama allocation labels, required); tranches?: { first: YYYY-MM-DD, every_months: 1..12, count: 1..120 }: the issuer's own tranche schedule; each allocation's remaining amount from the schedule start is split evenly over the tranches",
+    });
+    // Since 2026-10-23 the Lighter-API adapters (revenue, the Robinhood watch, staked LIT) document their params too.
+    expect(p.adapter_params.map((a: { metric: string; adapter: string }) => [a.metric, a.adapter])).toEqual([
+      ['flow_usd.fees_core', 'lit.exchange_fees_daily'],
+      ['flow_usd.fees_rh', 'lit.exchange_fees_daily'],
+      ['flow_usd.rh_buyback', 'lit.exchange_fees_daily'],
+      ['rh_revenue_share_app', 'lit.app_fee_share'],
+      ['staked_tokens_reported', 'lit.staking_pool'],
+      ['staking_apr', 'lit.staking_pool'],
+      ['unlocks_next_year', 'lit.unlocks_next_year'],
     ]);
   });
 

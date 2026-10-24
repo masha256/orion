@@ -58,12 +58,12 @@ describe('adapter params validation', () => {
   registerAdapter({ name: 'test_checked', needsRpc: false, validateParams: (p) => (p.ok === true ? [] : ['ok: must be true']), run: () => Promise.reject(new Error('not run')) });
 
   it('parseAssetObject surfaces the refusal with the metric path; assets/lit.yaml still loads and keeps its hash', () => {
-    expect(parseAssetYaml(litYaml).hash).toBe('ad683e198b9b97af4d0067e339b89323b1711fe3e689fbb7f9fd404353f926a5');
-    expect(parseAssetObject(parseYaml(litYaml)).hash).toBe('ad683e198b9b97af4d0067e339b89323b1711fe3e689fbb7f9fd404353f926a5');
+    expect(parseAssetYaml(litYaml).hash).toBe('f2fae2705b68149a7d51fa83178c34c66d1baaba047ad64009d42cf4554a0a53');
+    expect(parseAssetObject(parseYaml(litYaml)).hash).toBe('f2fae2705b68149a7d51fa83178c34c66d1baaba047ad64009d42cf4554a0a53');
     // A valid schedule loads (and is a different config).
     const good = parseAssetObject(withTranches({ first: '2027-01-29', every_months: 1, count: 36 }));
     expect(good.config.metrics.unlocks_next_year.source).toMatchObject({ params: { tranches: { first: '2027-01-29', every_months: 1, count: 36 } } });
-    expect(good.hash).not.toBe('ad683e198b9b97af4d0067e339b89323b1711fe3e689fbb7f9fd404353f926a5');
+    expect(good.hash).not.toBe('f2fae2705b68149a7d51fa83178c34c66d1baaba047ad64009d42cf4554a0a53');
     // A malformed one is refused with the metric path, through the object path (filing) and the YAML path (approve).
     const bad = withTranches({ first: '2027-01-29', every_months: 13, count: 36 });
     expect(() => parseAssetObject(bad)).toThrow(expect.objectContaining({ code: 'invalid_asset_config', message: expect.stringContaining('metrics.unlocks_next_year.source.params: tranches.every_months') }));
