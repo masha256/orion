@@ -22,7 +22,7 @@ import type { CitableDoc } from './guardrails.js';
 import { AGENT_TOOLS, runTool, toApiTools, toolsForRun, type ToolContext } from './tools/index.js';
 
 /** Bump when a tool's behaviour or a guardrail changes: runs record which tool layer they ran under. */
-export const TOOL_LAYER_VERSION = '1.1.0';
+export const TOOL_LAYER_VERSION = '1.2.0';
 
 /** Why `orion tick` launched the run. Absent, the run was launched by hand and is recorded as `manual`. */
 export interface RunTriggerContext {
@@ -134,6 +134,7 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   let committed: CommitSummary | null = null;
   let signal: Signal | null = null;
   let valuationError: string | null = null;
+  let reserve: string | null = null;
 
   try {
     const pack = buildContextPack(db, loaded, ledger, {
@@ -154,6 +155,7 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
     });
     usage = loop.usage;
     responses = loop.responses;
+    reserve = loop.reserve;
     outcome = OUTCOME_OF[loop.stop];
     error = loop.stop === 'finished' ? null : loop.detail;
 
@@ -200,7 +202,11 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   const finish = (transcript: unknown): AgentRun =>
     finishAgentRun(db, runId, {
       outcome, endedAt: deps.now().toISOString(), usage, error,
-      summary: { committed, staged, signal_id: signal?.signal_id ?? null, valuation_error: valuationError },
+      summary: {
+        committed, staged, signal_id: signal?.signal_id ?? null, valuation_error: valuationError,
+        // Only when the reserve request ran: a run that never needed it keeps the summary it always had.
+        ...(reserve ? { reserve: { reason: reserve } } : {}),
+      },
       transcript,
     });
 

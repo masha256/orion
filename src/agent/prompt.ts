@@ -36,7 +36,7 @@ Prefer primary sources: the project's own blog, documentation, filings, and on-c
 
 ## Budgets and finishing
 
-Each tool result shows the requests and tokens you have left. If a budget runs out, nothing from this run is saved, so pace yourself and leave room to finish.
+Each tool result shows the requests, input units and output tokens you have left. Input units count fresh input in full, cache writes at 1.25 and cache reads at a tenth, so re-reading a long conversation is cheap but not free. If a budget runs out you get one last request, in which you may only write the journal; plan to finish well before that.
 
 Finish every run by calling write_journal. It is the only thing your next run will remember: your running thesis, the open questions to pick up, and what you did and why. Nothing is saved until the run ends cleanly with a journal entry; then everything you staged is committed together. A run that changes nothing is a good run when nothing needed changing. Say so in the journal.`;
 

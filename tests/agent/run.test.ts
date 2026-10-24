@@ -210,6 +210,39 @@ describe('runs that do not finish cleanly', () => {
     expect((result.run.summary as { staged: { assumptionChanges: unknown[] } }).staged.assumptionChanges).toHaveLength(1);
   });
 
+  it('commits what was staged when it finishes on the reserve request, and records why', async () => {
+    runValuation(w.db, w.loaded, new Date(AS_OF)); // a previous signal to compare against
+    const result = await run([{ ...calls(growthCall(0.2)), usage: { input_tokens: 10_000_000 } }, calls(journalCall())]);
+    expect(result.run).toMatchObject({ outcome: 'completed', error: null });
+    expect(result.committed!.setVersion).not.toBeNull();
+    expect(listJournal(w.db, 'mini')[0]).toMatchObject({ agentRunId: result.run.id, thesis: 'steady' });
+    expect((result.run.summary as { reserve?: unknown }).reserve).toEqual({ reason: 'input units (600000)' });
+    expect(result.signal).not.toBeNull();
+  });
+
+  it('still refuses to commit on reserve when the config changed during the run', async () => {
+    const moved = { ...w.loaded, hash: 'c'.repeat(64) };
+    const result = await run([{ ...calls(growthCall(0.2)), usage: { input_tokens: 10_000_000 } }, calls(journalCall())], {}, { reload: () => moved });
+    expect(result.run.outcome).toBe('conflict');
+    expect(result.committed).toBeNull();
+    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1);
+    expect(count('journal') + count('assumption_changes') + count('valuation_runs')).toBe(0);
+  });
+
+  it('puts no reserve key in the summary when the reserve did not run', async () => {
+    const result = await run([calls(journalCall()), say('Done.')]);
+    expect(result.run.outcome).toBe('completed');
+    expect('reserve' in (result.run.summary as object)).toBe(false);
+  });
+
+  it('records the reserve on a run that still ran out', async () => {
+    const result = await run([{ ...calls(growthCall(0.2)), usage: { input_tokens: 10_000_000 } }, calls(toolUse('get_drivers', {}))]);
+    expect(result.run).toMatchObject({ outcome: 'budget_exhausted', error: 'input units (600000)' });
+    expect((result.run.summary as { reserve?: unknown }).reserve).toEqual({ reason: 'input units (600000)' });
+    expect(result.committed).toBeNull();
+    expect(count('journal') + count('assumption_changes') + count('valuation_runs')).toBe(0);
+  });
+
   it('ends as no_journal, refused, or error, each without writing', async () => {
     expect((await run([calls(growthCall(0.2)), say('Done.'), say('Still done.')])).run.outcome).toBe('no_journal');
     expect((await run([{ content: [], stop_reason: 'refusal', stop_details: { type: 'refusal', category: null, explanation: null } }])).run.outcome).toBe('refused');
