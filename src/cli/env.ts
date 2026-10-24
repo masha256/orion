@@ -24,9 +24,18 @@ export function parseEnvFile(text: string): Record<string, string> {
   return out;
 }
 
-/** The process environment, over <ORION_HOME>/.env when that file exists. */
+/**
+ * The process environment, over <ORION_HOME>/.env when that file exists. A process value that is
+ * undefined, empty or whitespace-only does not override the file (a shell that exports
+ * `ANTHROPIC_API_KEY=""` must not hide the real key in .env); it is kept only when the file lacks the key.
+ */
 export function loadEnv(home: string, processEnv: Record<string, string | undefined>): Record<string, string | undefined> {
   const path = join(home, '.env');
   const fromFile = existsSync(path) ? parseEnvFile(readFileSync(path, 'utf8')) : {};
-  return { ...fromFile, ...processEnv };
+  const out: Record<string, string | undefined> = { ...fromFile };
+  for (const [key, value] of Object.entries(processEnv)) {
+    const blank = value === undefined || value.trim() === '';
+    if (!blank || !(key in fromFile)) out[key] = value;
+  }
+  return out;
 }
