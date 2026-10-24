@@ -305,6 +305,14 @@ describe("LIT exchange fees per UTC day, from Lighter's exchangeMetrics", () => 
     await expect(read({ maker_fee: metrics(0, () => 1) }, { kinds: ['maker_fee'] }).result).rejects.toThrow(/no completed day/);
   });
 
+  it('refuses a kind that lists no completed day instead of counting it 0', async () => {
+    // e.g. taker_fee answers `{code:200, metrics: []}` during an outage: maker-only totals would understate fees.
+    const empty = read({ maker_fee: metrics(5, () => 10), taker_fee: { code: 200, metrics: [] } }, { kinds: ['maker_fee', 'taker_fee'], days: 5 });
+    await expect(empty.result).rejects.toThrow('exchangeMetrics taker_fee: no completed day listed');
+    const todayOnly = read({ maker_fee: metrics(5, () => 10), taker_fee: metrics(0, () => 1) }, { kinds: ['maker_fee', 'taker_fee'], days: 5 });
+    await expect(todayOnly.result).rejects.toThrow('exchangeMetrics taker_fee: no completed day listed');
+  });
+
   it('returns the last --backfill-days completed days', async () => {
     const long = metrics(400, () => 2);
     const deep = await series(read({ maker_fee: long }, { kinds: ['maker_fee'] }, 362).result);

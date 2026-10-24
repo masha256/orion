@@ -252,6 +252,8 @@ async function exchangeFeesDaily(ctx: SourceContext, params: Record<string, unkn
       byDay.set(ms, (byDay.get(ms) ?? 0) + value);
       firstMs = Math.min(firstMs, ms);
     }
+    // A kind with no completed row would count 0 on every day and understate the total: refuse it.
+    if (firstMs === Number.POSITIVE_INFINITY) throw new Error(`exchangeMetrics ${kind}: no completed day listed`);
     perKind.set(kind, { byDay, firstMs });
   }
 
