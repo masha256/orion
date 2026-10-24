@@ -82,7 +82,7 @@ Deferred minors, status (branch `fix/minors-2026-10-24`, kanban t_b3b09288, not 
   already a db type); a citation given twice is stored once; `catalysts_due` lists a re-filed catalyst once, under the
   newest entry; `adapter_params` lists a metric and adapter once; `lit.unlocks_next_year` paramsDoc names `url`;
   `--note` help names every run type; review skill item 5 names the converted-observation exception; spec 5.4 says
-  section 15 governs. Tool layer 1.1.0 → 1.1.1 (agent run config hash only).
+  section 15 governs. Tool layer 1.1.0 → 1.1.1 on the branch; rebased onto main 4a2f126 (agent budget, 1.2.0) it lands as 1.2.1 (agent run config hash only).
 - No change: `get_flow_total` excluding rows that straddle the range is the tool's documented contract.
 - Open (outside the repo: `~/.hermes/profiles/raymond/workspace/orion/disclosure-watcher/bin/disclosure_watch.py`, not
   in this card's worktree): the window-closed catch-up stopping once the next window opens, an error result
