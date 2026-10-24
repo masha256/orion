@@ -70,6 +70,34 @@ describe('revenue streams: config', () => {
   });
 });
 
+describe('revenue streams: share', () => {
+  const messageOf = (yaml: string) => {
+    try {
+      parseAssetYaml(yaml);
+    } catch (err) {
+      return (err as Error).message;
+    }
+    return '';
+  };
+  const withShare = (share: string) => streamsYaml().replace('settlement: daily }', `settlement: daily, share: ${share} }`);
+
+  it('accepts a share in (0, 1] on a metric stream; without one the stream has none', () => {
+    expect(parseAssetYaml(withShare('0.5')).config.reporting!.revenue![0].share).toBe(0.5);
+    expect(parseAssetYaml(withShare('1')).config.reporting!.revenue![0].share).toBe(1);
+    expect(parseAssetYaml(streamsYaml()).config.reporting!.revenue![0].share).toBeUndefined();
+  });
+
+  it('refuses a share of 0 or above 1', () => {
+    expect(messageOf(withShare('0'))).toMatch(/reporting\.revenue\.0\.share/);
+    expect(messageOf(withShare('1.5'))).toMatch(/reporting\.revenue\.0\.share/);
+  });
+
+  it('refuses a share on a disclosed stream', () => {
+    const base = `${withMetrics(METRICS)}\nreporting:\n  window_days: 10\n  haircuts: { buyback: 0 }\n  revenue_disclosed: rev_disclosed\n`;
+    expect(messageOf(`${base}  revenue:\n    - { id: business, disclosed: rev_disclosed, share: 0.5 }\n`)).toMatch(/disclosed stream "business" takes no share/);
+  });
+});
+
 describe('revenue streams: periodic settlement', () => {
   it('spreads each payment evenly over the days it covers, and runs the unpaid days at the last period\'s daily rate, provisional', () => {
     const db = openDb(':memory:');

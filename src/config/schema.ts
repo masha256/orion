@@ -21,6 +21,18 @@ const MetricDefSchema = z.strictObject({
    * Optional with no default (hashes).
    */
   monitor_only: z.boolean().optional(),
+  /**
+   * On a monitor-only metric, one rule that reports a move at fetch time without an anomaly (no trigger, no grade, no
+   * streak): `above` (flows) a day written above it; `change_pct` (levels, > 0) a reading that far from the previous one;
+   * `outside` (levels, [lo, hi] with lo <= hi) a reading out of the band. Exactly one rule. Optional with no default (hashes).
+   */
+  watch: z
+    .strictObject({
+      above: z.number().optional(),
+      change_pct: z.number().positive().optional(),
+      outside: z.tuple([z.number(), z.number()]).optional(),
+    })
+    .optional(),
 });
 
 /**
@@ -111,6 +123,8 @@ const ReportingSchema = z.strictObject({
           cross_check: z.string().optional(),
           started: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
           holder_flow: z.enum(['burn', 'hold', 'cash']).optional(),
+          /** The fraction of a metric stream the protocol keeps (0 < share <= 1); absent, the stream counts in full. */
+          share: z.number().positive().max(1).optional(),
         })
         .refine((s) => (s.metric === undefined) !== (s.disclosed === undefined), { message: 'a revenue stream has a metric or a disclosed level, not both' }),
     )
@@ -268,6 +282,15 @@ export const AssetConfigSchema = z
     const standardKeys = new Set<string>(Object.values(STD_METRICS));
     const valuationRefs = new Set<string>([...a.holder_flows.map((f) => f.metric), ...a.total_return_variants.map((v) => v.yield_multiplier_metric)]);
     for (const [key, def] of Object.entries(a.metrics)) {
+      if (def.watch !== undefined) {
+        const w = def.watch;
+        if (def.monitor_only !== true) issue(`metrics: "${key}" has a watch, which is for monitor_only metrics`);
+        if (Object.keys(w).length !== 1) issue(`metrics: "${key}" watch takes exactly one rule (above, change_pct or outside)`);
+        if (w.above !== undefined && def.type !== 'flow') issue(`metrics: "${key}" watch above is for flow metrics`);
+        if (w.change_pct !== undefined && def.type !== 'level') issue(`metrics: "${key}" watch change_pct is for level metrics`);
+        if (w.outside !== undefined && def.type !== 'level') issue(`metrics: "${key}" watch outside is for level metrics`);
+        if (w.outside !== undefined && w.outside[0] > w.outside[1]) issue(`metrics: "${key}" watch outside [lo, hi] needs lo <= hi`);
+      }
       if (def.monitor_only !== true) continue;
       if (def.type !== 'level' && def.type !== 'flow') issue(`metrics: "${key}" is monitor_only, which is for level and flow metrics`);
       if (def.critical) issue(`metrics: "${key}" is monitor_only and cannot be critical`);
@@ -380,6 +403,7 @@ export const AssetConfigSchema = z
           if (s.disclosed !== undefined) {
             if (s.disclosed !== r.revenue_disclosed) issue(`reporting.revenue: stream "${s.id}" disclosed "${s.disclosed}" must be the asset's revenue_disclosed`);
             if (s.settlement !== undefined || s.holder_flow !== undefined) issue(`reporting.revenue: disclosed stream "${s.id}" takes no settlement or holder_flow`);
+            if (s.share !== undefined) issue(`reporting.revenue: disclosed stream "${s.id}" takes no share`);
           }
           if (s.cross_check !== undefined) {
             if (s.disclosed === undefined) issue(`reporting.revenue: only a disclosed stream takes a cross_check ("${s.id}")`);
