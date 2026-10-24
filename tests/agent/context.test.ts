@@ -280,7 +280,7 @@ describe('the disclosure pack', () => {
     const p: Record<string, any> = buildContextPack(w.db, lit, w.ledger, { runType: 'disclosure', budgets: DEFAULT_BUDGETS.disclosure, now: new Date(AS_OF), trigger: {}, document: doc, assetYaml: 'lit' });
     expect(p.adapter_params).toContainEqual({
       metric: 'unlocks_next_year', adapter: 'lit.unlocks_next_year',
-      params_doc: "allocations: string[] (DefiLlama allocation labels, required); tranches?: { first: YYYY-MM-DD, every_months: 1..12, count: 1..120 }: the issuer's own tranche schedule; each allocation's remaining amount from the schedule start is split evenly over the tranches",
+      params_doc: "allocations: string[] (DefiLlama allocation labels, required); url?: string (default https://defillama-datasets.llama.fi/emissions/lighter): the DefiLlama emissions dataset; tranches?: { first: YYYY-MM-DD, every_months: 1..12, count: 1..120 }: the issuer's own tranche schedule; each allocation's remaining amount from the schedule start is split evenly over the tranches",
     });
     // Since 2026-10-23 the Lighter-API adapters (revenue, the Robinhood watch, staked LIT) document their params too.
     expect(p.adapter_params.map((a: { metric: string; adapter: string }) => [a.metric, a.adapter])).toEqual([

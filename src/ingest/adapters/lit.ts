@@ -229,7 +229,8 @@ export function validateExchangeFeesParams(params: Record<string, unknown>): str
  * for it, and a day missing at or after it is refused (an outage gap, never a 0 that understates revenue). A day listed
  * twice, or a timestamp off a UTC day start, is refused too. Today's partial day is dropped; a kind with no row for today
  * yet may still be filling its newest listed day, so that day is held back from the whole series this run. Days: the
- * run's `--backfill-days` when given, else `params.days` (default 7), starting no earlier than the first day any kind lists.
+ * run's `--backfill-days` when given, else `params.days` (default 7), counted back from the newest day not held back,
+ * starting no earlier than the first day any kind lists.
  */
 async function exchangeFeesDaily(ctx: SourceContext, params: Record<string, unknown>): Promise<SourceValue> {
   const issues = validateExchangeFeesParams(params);
@@ -238,7 +239,6 @@ async function exchangeFeesDaily(ctx: SourceContext, params: Record<string, unkn
   const kinds = params.kinds as string[];
   const days = ctx.backfillDays ?? number(params, 'days', 7);
   const todayStart = Math.floor(Date.parse(ctx.nowIso) / MS_PER_DAY) * MS_PER_DAY;
-  const windowStart = todayStart - days * MS_PER_DAY;
 
   const perKind = new Map<string, { byDay: Map<number, number>; firstMs: number }>();
   /** Newest listed days of kinds with no row for today yet: that day may still be partial, so the run leaves it out. */
@@ -272,6 +272,12 @@ async function exchangeFeesDaily(ctx: SourceContext, params: Record<string, unkn
   }
 
   const earliest = Math.min(...[...perKind.values()].map((k) => k.firstMs));
+  // A held-back newest day moves the window back one day: the run still returns `days` completed days (days: 1 would
+  // otherwise return none and fail the source). Only yesterday can be held back here: an older newest day of a kind
+  // leaves yesterday missing for it, which is refused below.
+  const yesterday = todayStart - MS_PER_DAY;
+  const windowEnd = heldBack.has(yesterday) ? yesterday : todayStart;
+  const windowStart = windowEnd - days * MS_PER_DAY;
   const points: { day: string; value: number }[] = [];
   let held = false;
   for (let ms = Math.max(windowStart, earliest); ms < todayStart; ms += MS_PER_DAY) {
@@ -312,6 +318,15 @@ function single(body: string, re: RegExp, what: string, where: string): string {
 
 const escapeRe = (s: string) => s.replace(/[$]/g, '\\$&');
 
+const APP_FEE_SHARE_KEYS = ['url'];
+
+function validateAppFeeShareParams(params: Record<string, unknown>): string[] {
+  const issues: string[] = [];
+  for (const k of Object.keys(params)) if (!APP_FEE_SHARE_KEYS.includes(k)) issues.push(`unknown key "${k}" (${APP_FEE_SHARE_KEYS.join(', ')})`);
+  if (params.url !== undefined && typeof params.url !== 'string') issues.push('url: a string');
+  return issues;
+}
+
 /**
  * The share of Robinhood-instance revenue Lighter's own app applies (0.5 on 2026-10-23), read from the app's
  * exchange-stats chunk: the page names its `index-<hash>.js`, that names `exchange-stats-<hash>.js`, and the chunk holds
@@ -348,6 +363,10 @@ async function appFeeShare(ctx: SourceContext, params: Record<string, unknown>):
 
 const DEFAULT_EXPLORER = 'https://explorer.elliot.ai/api';
 const STAKING_KEYS = ['field', 'api', 'explorer'];
+/** The explorer's account logs: newest first, at most 100 a page (`limit`, `offset`; read 2026-10-24). */
+const LOG_PAGE = 100;
+/** About one reward a day plus a few others (271 logs from 2026-01-28 to 2026-10-23): 20 pages is years of headroom. */
+const MAX_LOG_PAGES = 20;
 
 function validateStakingParams(params: Record<string, unknown>): string[] {
   const issues: string[] = [];
@@ -361,7 +380,9 @@ function validateStakingParams(params: Record<string, unknown>): string[] {
  * Lighter's LIT staking pool (an L2 account named by `/systemConfig.staking_pool_index`). `staked`: the pool's LIT
  * balance, the asset matched by symbol, never by position. `apr`: the newest completed UTC day's reward transfers into
  * the pool (explorer account logs, `L2TransferV2` to the pool in LIT) x 365 / the staked balance read in the same run;
- * a newest reward day more than 2 days old is refused (the rewards stopped, or the explorer lags). Monitor-only levels.
+ * a newest reward day more than 2 days old is refused (the rewards stopped, or the explorer lags). The logs are paged
+ * (newest first) until a log older than that day's start, so the whole day is read; a transfer listed on two pages (the
+ * offsets shift when a log arrives mid-walk) is counted once, by its hash. Monitor-only levels.
  */
 async function stakingPool(ctx: SourceContext, params: Record<string, unknown>): Promise<SourceValue> {
   const issues = validateStakingParams(params);
@@ -383,19 +404,40 @@ async function stakingPool(ctx: SourceContext, params: Record<string, unknown>):
 
   if (staked <= 0) throw new Error(`account ${pool}: staked LIT is ${staked}; no reward rate`);
   const logsUrl = `${explorer}/accounts/${pool}/logs`;
-  const logs = await ctx.http.getJson(logsUrl);
-  if (!Array.isArray(logs)) throw new Error(`${logsUrl}: the reply is not a list of logs`);
   const todayStart = Math.floor(Date.parse(ctx.nowIso) / MS_PER_DAY) * MS_PER_DAY;
   const byDay = new Map<number, number>();
-  for (const l of logs as Record<string, unknown>[]) {
-    if (l?.pubdata_type !== 'L2TransferV2') continue;
-    const t = (l.pubdata as { l2_transfer_pubdata_v2?: Record<string, unknown> } | undefined)?.l2_transfer_pubdata_v2;
-    if (!t || String(t.to_account_index) !== String(pool) || t.asset_index !== 'LIT') continue;
-    const at = typeof l.time === 'string' ? Date.parse(l.time) : Number.NaN;
-    if (Number.isNaN(at)) throw new Error(`${logsUrl}: a reward transfer has no readable time (${JSON.stringify(l.time ?? null)})`);
-    const dayMs = Math.floor(at / MS_PER_DAY) * MS_PER_DAY;
-    if (dayMs >= todayStart) continue;
-    byDay.set(dayMs, (byDay.get(dayMs) ?? 0) + amount(t.amount, `${logsUrl}: a reward amount`));
+  const seen = new Set<string>();
+  /** The newest completed reward day seen so far: the walk stops once a log older than its start has been read. */
+  let newestDay: number | null = null;
+  let previousAt = Number.POSITIVE_INFINITY;
+  let pages = 0;
+  for (let passed = false; !passed; ) {
+    if (pages >= MAX_LOG_PAGES) throw new Error(`${logsUrl}: ${pages} pages read without passing the newest reward day; refusing a partial day`);
+    const logs = await ctx.http.getJson(`${logsUrl}?limit=${LOG_PAGE}&offset=${pages * LOG_PAGE}`);
+    pages++;
+    if (!Array.isArray(logs)) throw new Error(`${logsUrl}: the reply is not a list of logs`);
+    for (const l of logs as Record<string, unknown>[]) {
+      const at = typeof l?.time === 'string' ? Date.parse(l.time) : Number.NaN;
+      if (!Number.isNaN(at)) {
+        // The explorer lists newest first; the walk's stop rule depends on it, so a newer log after an older one is refused.
+        if (at > previousAt) throw new Error(`${logsUrl}: the logs are not newest first (${l.time} after ${new Date(previousAt).toISOString()})`);
+        previousAt = at;
+        if (newestDay !== null && at < newestDay) passed = true;
+      }
+      if (l?.pubdata_type !== 'L2TransferV2') continue;
+      const t = (l.pubdata as { l2_transfer_pubdata_v2?: Record<string, unknown> } | undefined)?.l2_transfer_pubdata_v2;
+      if (!t || String(t.to_account_index) !== String(pool) || t.asset_index !== 'LIT') continue;
+      if (Number.isNaN(at)) throw new Error(`${logsUrl}: a reward transfer has no readable time (${JSON.stringify(l.time ?? null)})`);
+      // Offset pages shift when a log arrives mid-walk, so one transfer can be listed on two pages: count it once.
+      if (typeof l.hash !== 'string' || l.hash === '') throw new Error(`${logsUrl}: a reward transfer has no hash (${l.time})`);
+      if (seen.has(l.hash)) continue;
+      seen.add(l.hash);
+      const dayMs = Math.floor(at / MS_PER_DAY) * MS_PER_DAY;
+      if (dayMs >= todayStart) continue;
+      if (newestDay === null) newestDay = dayMs;
+      byDay.set(dayMs, (byDay.get(dayMs) ?? 0) + amount(t.amount, `${logsUrl}: a reward amount`));
+    }
+    if (logs.length < LOG_PAGE) break;
   }
   if (byDay.size === 0) throw new Error(`${logsUrl}: no LIT reward transfer into the pool before today`);
   const newest = Math.max(...byDay.keys());
@@ -424,6 +466,7 @@ export const litAdapters: AdapterDef[] = [
     name: 'lit.app_fee_share',
     needsRpc: false,
     paramsDoc: "url?: string (default https://app.lighter.xyz/stats): the Lighter app page whose exchange-stats chunk holds the Robinhood revenue split",
+    validateParams: validateAppFeeShareParams,
     run: appFeeShare,
   },
   {
@@ -437,7 +480,7 @@ export const litAdapters: AdapterDef[] = [
     name: 'lit.unlocks_next_year',
     needsRpc: false,
     paramsDoc:
-      "allocations: string[] (DefiLlama allocation labels, required); tranches?: { first: YYYY-MM-DD, every_months: 1..12, count: 1..120 }: the issuer's own tranche schedule; each allocation's remaining amount from the schedule start is split evenly over the tranches",
+      "allocations: string[] (DefiLlama allocation labels, required); url?: string (default https://defillama-datasets.llama.fi/emissions/lighter): the DefiLlama emissions dataset; tranches?: { first: YYYY-MM-DD, every_months: 1..12, count: 1..120 }: the issuer's own tranche schedule; each allocation's remaining amount from the schedule start is split evenly over the tranches",
     validateParams: validateUnlocksParams,
     run: unlocksNextYear,
   },

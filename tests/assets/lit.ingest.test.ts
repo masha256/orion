@@ -110,6 +110,7 @@ function world() {
     [`${CORE}/account?by=index&value=${POOL}`]: { code: 200, accounts: [{ index: POOL, assets: [{ symbol: 'USDC', asset_id: 3, balance: '12.5' }, { symbol: 'LIT', asset_id: 1, balance: String(STAKED) }] }] },
     [`https://explorer.elliot.ai/api/accounts/${POOL}/logs`]: ['2026-10-15', '2026-10-14'].map((d) => ({
       pubdata_type: 'L2TransferV2',
+      hash: `reward-${d}`,
       time: `${d}T18:00:12Z`,
       pubdata: { l2_transfer_pubdata_v2: { from_account_index: 733613, to_account_index: POOL, asset_index: 'LIT', amount: ((STAKED * 0.06) / 365).toFixed(6) } },
     })),

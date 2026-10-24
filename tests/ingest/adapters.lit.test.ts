@@ -235,7 +235,7 @@ describe("LIT unlocks over the next year, on the issuer's own tranche schedule",
 
   it('documents its params; the treasury buys adapter does not', () => {
     expect(getAdapter('lit.unlocks_next_year').paramsDoc).toBe(
-      "allocations: string[] (DefiLlama allocation labels, required); tranches?: { first: YYYY-MM-DD, every_months: 1..12, count: 1..120 }: the issuer's own tranche schedule; each allocation's remaining amount from the schedule start is split evenly over the tranches",
+      "allocations: string[] (DefiLlama allocation labels, required); url?: string (default https://defillama-datasets.llama.fi/emissions/lighter): the DefiLlama emissions dataset; tranches?: { first: YYYY-MM-DD, every_months: 1..12, count: 1..120 }: the issuer's own tranche schedule; each allocation's remaining amount from the schedule start is split evenly over the tranches",
     );
     expect(getAdapter('lit.treasury_buys_daily').paramsDoc).toBeUndefined();
     expect(getAdapter('lit.treasury_buys_daily').validateParams).toBeUndefined();
@@ -317,6 +317,19 @@ describe("LIT exchange fees per UTC day, from Lighter's exchangeMetrics", () => 
     expect(v.detail).toBe('lighter exchangeMetrics mainnet.zklighter.elliot.ai maker_fee+taker_fee (4 days); newest day held back (no row for today yet)');
   });
 
+  it('a held-back newest day moves the window back a day, so days: 1 returns the day before instead of refusing', async () => {
+    const held = { maker_fee: metrics(5, () => 10), taker_fee: metrics(5, (a) => a, [0]) };
+    const one = await series(read(held, { kinds: ['maker_fee', 'taker_fee'], days: 1 }).result);
+    expect(one.points).toEqual([{ day: dayOf(today23 - 2 * DAY), value: 12 }]);
+    expect(one.detail).toBe('lighter exchangeMetrics mainnet.zklighter.elliot.ai maker_fee+taker_fee (1 days); newest day held back (no row for today yet)');
+    // days: 2 returns two completed days, ending the day before the held one.
+    const two = await series(read(held, { kinds: ['maker_fee', 'taker_fee'], days: 2 }).result);
+    expect(two.points.map((p) => p.day)).toEqual([dayOf(today23 - 3 * DAY), dayOf(today23 - 2 * DAY)]);
+    // Nothing held back: days: 1 is yesterday.
+    const plain = await series(read({ maker_fee: metrics(5, () => 10) }, { kinds: ['maker_fee'], days: 1 }).result);
+    expect(plain.points).toEqual([{ day: '2026-10-22', value: 10 }]);
+  });
+
   it('with a row for today on every kind, nothing is held back', async () => {
     const v = await series(read({ maker_fee: metrics(5, () => 10), taker_fee: metrics(5, () => 1) }, { kinds: ['maker_fee', 'taker_fee'], days: 5 }).result);
     expect(v.points.at(-1)).toEqual({ day: '2026-10-22', value: 11 });
@@ -326,7 +339,7 @@ describe("LIT exchange fees per UTC day, from Lighter's exchangeMetrics", () => 
 
   it('refuses a non-numeric data', async () => {
     const r = read({ maker_fee: metrics(5, (a) => (a === 2 ? 'x' : 1)) }, { kinds: ['maker_fee'], days: 5 });
-    await expect(r.result).rejects.toThrow(/maker_fee/);
+    await expect(r.result).rejects.toThrow("exchangeMetrics maker_fee: the data of 2026-10-21 is missing or not a number in Lighter's reply");
     await expect(read({ maker_fee: { code: 200 } }, { kinds: ['maker_fee'] }).result).rejects.toThrow(/no metrics list/);
   });
 
@@ -442,6 +455,14 @@ describe("LIT's Robinhood revenue split, from Lighter's app bundle", () => {
     await expect(read(chunk('q', 'zz', 'e', '.5', '[`maker_fee`,`taker_fee`,`transfer_fee`,`withdraw_fee`,`liquidation_fee`]')).result).rejects.toThrow(/0 /);
   });
 
+  it('validateParams takes only url, a string (a mistyped key is refused, not ignored)', () => {
+    const def = getAdapter('lit.app_fee_share');
+    expect(def.validateParams!({})).toEqual([]);
+    expect(def.validateParams!({ url: `${APP}/stats` })).toEqual([]);
+    expect(def.validateParams!({ uri: `${APP}/stats` })).toEqual(['unknown key "uri" (url)']);
+    expect(def.validateParams!({ url: 5 })).toEqual(['url: a string']);
+  });
+
   it('refuses a transport without text reads', async () => {
     const http = { getJson: async () => ({}), postJson: async () => ({}) };
     await expect(getAdapter('lit.app_fee_share').run(sourceCtx({ http }), {})).rejects.toThrow(/getText/);
@@ -454,18 +475,27 @@ describe("LIT's staking pool, from Lighter's API and explorer", () => {
   const POOL = 281474976624800;
   const EXPLORER = 'https://explorer.elliot.ai/api';
   const STAKED = '110921638.78926387';
-  const reward = (time: string, amount: string, over: { to?: string; asset?: string; type?: string } = {}) => ({
+  const reward = (time: string, amount: string, over: { to?: string; asset?: string; type?: string; hash?: string } = {}) => ({
     tx_type: 'L2Transfer',
+    hash: over.hash ?? `h-${time}-${amount}-${over.to ?? ''}-${over.asset ?? ''}-${over.type ?? ''}`,
     time,
     pubdata_type: over.type ?? 'L2TransferV2',
     pubdata: { l2_transfer_pubdata_v2: { from_account_index: '733613', to_account_index: over.to ?? String(POOL), asset_index: over.asset ?? 'LIT', amount } },
   });
+  /** The explorer's logs over `logs` (newest first): `limit` a page from `offset`, as read live on 2026-10-24. */
+  const pagesOf = (logs: unknown[]) => (url: string) => {
+    const u = new URL(url);
+    const limit = Number(u.searchParams.get('limit'));
+    const offset = Number(u.searchParams.get('offset'));
+    expect(limit).toBe(100);
+    return logs.slice(offset, offset + limit);
+  };
   const assets = [{ symbol: 'USDC', balance: '5' }, { symbol: 'LIT', balance: STAKED }];
-  const read = (field: unknown, o: { config?: unknown; assets?: unknown; logs?: unknown } = {}) => {
+  const read = (field: unknown, o: { config?: unknown; assets?: unknown; logs?: unknown[]; logsRoute?: (url: string) => unknown } = {}) => {
     const http = fakeHttp({
       [`${API}/systemConfig`]: o.config ?? { staking_pool_index: POOL },
       [`${API}/account?by=index&value=${POOL}`]: { code: 200, accounts: [{ index: POOL, assets: o.assets ?? assets }] },
-      [`${EXPLORER}/accounts/${POOL}/logs`]: o.logs ?? [],
+      [`${EXPLORER}/accounts/${POOL}/logs`]: o.logsRoute ?? pagesOf(o.logs ?? []),
     });
     return { http, result: getAdapter('lit.staking_pool').run(sourceCtx({ nowIso: '2026-10-23T12:00:00.000Z', http }), { field }) };
   };
@@ -498,8 +528,8 @@ describe("LIT's staking pool, from Lighter's API and explorer", () => {
   it("apr is the newest completed day's rewards x 365 / staked", async () => {
     const logs = [
       reward('2026-10-23T08:00:01.546Z', '99999'), // today: not completed
-      reward('2026-10-22T18:00:01.135Z', '18000.37'),
       reward('2026-10-22T19:00:00.000Z', '328'),
+      reward('2026-10-22T18:00:01.135Z', '18000.37'),
       reward('2026-10-21T18:00:01.950Z', '18825.34620310'),
     ];
     const r = read('apr', { logs });
@@ -507,7 +537,41 @@ describe("LIT's staking pool, from Lighter's API and explorer", () => {
     expect(v.value).toBeCloseTo((18328.37 * 365) / 110921638.78926387, 10);
     expect(v.value).toBeCloseTo(0.0603, 4);
     expect(v.detail).toContain('2026-10-22');
-    expect(r.http.calls.map((c) => c.url)).toContain(`${EXPLORER}/accounts/${POOL}/logs`);
+    expect(r.http.calls.map((c) => c.url)).toContain(`${EXPLORER}/accounts/${POOL}/logs?limit=100&offset=0`);
+  });
+
+  it('apr pages the logs until it passes the newest reward day, and reads no further', async () => {
+    // 150 transfers on 2026-10-22 (newest first), then a day of older ones: the day straddles pages 1 and 2.
+    const day22 = Array.from({ length: 150 }, (_, i) => reward(new Date(Date.parse('2026-10-22T23:00:00.000Z') - i * 60_000).toISOString(), '100'));
+    const older = Array.from({ length: 200 }, (_, i) => reward(new Date(Date.parse('2026-10-21T23:00:00.000Z') - i * 60_000).toISOString(), '1'));
+    const r = read('apr', { logs: [reward('2026-10-23T08:00:00.000Z', '7'), ...day22, ...older] });
+    const v = await level(r.result);
+    expect(v.value).toBeCloseTo((15_000 * 365) / 110921638.78926387, 10);
+    expect(v.detail).toContain('15000.00 LIT rewards on 2026-10-22');
+    // Page 2 holds the first log older than 2026-10-22, so page 3 is never asked for.
+    expect(r.http.calls.filter((c) => c.url.includes('/logs?')).map((c) => new URL(c.url).searchParams.get('offset'))).toEqual(['0', '100']);
+  });
+
+  it('apr counts a transfer listed on two pages once, by its hash', async () => {
+    // A log arriving mid-walk shifts the offsets by one: page 2 starts with page 1's last entry again.
+    const logs = Array.from({ length: 120 }, (_, i) => reward(new Date(Date.parse('2026-10-22T23:00:00.000Z') - i * 60_000).toISOString(), '10'));
+    const tail = [reward('2026-10-21T18:00:00.000Z', '1')];
+    const logsRoute = (url: string) => {
+      const offset = Number(new URL(url).searchParams.get('offset'));
+      return offset === 0 ? logs.slice(0, 100) : [logs[99], ...logs.slice(100), ...tail];
+    };
+    const v = await level(read('apr', { logsRoute }).result);
+    expect(v.detail).toContain('1200.00 LIT rewards on 2026-10-22');
+  });
+
+  it('apr refuses a reward without a hash, logs out of order, and a walk past the page cap', async () => {
+    const { hash: _h, ...noHash } = reward('2026-10-22T18:00:00.000Z', '18000');
+    await expect(read('apr', { logs: [noHash] }).result).rejects.toThrow(/a reward transfer has no hash/);
+    await expect(read('apr', { logs: [reward('2026-10-21T18:00:00.000Z', '1'), reward('2026-10-22T18:00:00.000Z', '1')] }).result).rejects.toThrow(/not newest first/);
+    // Every page full of today's transfers: the newest completed day is never reached.
+    const today = (offset: number) => Array.from({ length: 100 }, (_, i) => reward(new Date(Date.parse('2026-10-23T11:00:00.000Z') - (offset + i) * 1000).toISOString(), '1'));
+    const endless = (url: string) => today(Number(new URL(url).searchParams.get('offset')));
+    await expect(read('apr', { logsRoute: endless }).result).rejects.toThrow(/20 pages read without passing the newest reward day/);
   });
 
   it('apr refuses a newest reward older than 2 days', async () => {
@@ -519,10 +583,10 @@ describe("LIT's staking pool, from Lighter's API and explorer", () => {
 
   it('apr ignores transfers to other accounts and other assets', async () => {
     const logs = [
-      reward('2026-10-22T18:00:00.000Z', '18328.37'),
-      reward('2026-10-22T18:00:01.000Z', '5000000', { to: '733613' }),
-      reward('2026-10-22T18:00:02.000Z', '5000000', { asset: 'USDC' }),
       reward('2026-10-22T18:00:03.000Z', '5000000', { type: 'L2Withdraw' }),
+      reward('2026-10-22T18:00:02.000Z', '5000000', { asset: 'USDC' }),
+      reward('2026-10-22T18:00:01.000Z', '5000000', { to: '733613' }),
+      reward('2026-10-22T18:00:00.000Z', '18328.37'),
     ];
     expect((await level(read('apr', { logs }).result)).value).toBeCloseTo(0.0603, 4);
   });
