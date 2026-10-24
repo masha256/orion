@@ -25,6 +25,7 @@ import type { BlockRef, RpcFactory, RpcTransport } from './transport/rpc.js';
 import {
   contractResolver, failed, type DailyPoint, type RaisedAnomaly, type ReadingResult, type SourceContext, type SourceRequest, type WrittenObservation,
 } from './types.js';
+import { evaluateWatches, previousLevelIn, watchSnapshot, type WatchFiring } from './watch.js';
 
 /** Used when the asset's rpc_url_env variable is not set. A chain with no keyless default (Ethereum) is absent. */
 export const DEFAULT_RPC_URLS: Record<number, string> = Object.fromEntries(
@@ -58,6 +59,8 @@ export interface FetchResult {
   sources: SourceOutcome[];
   written: WrittenObservation[];
   anomalies: RaisedAnomaly[];
+  /** Watched monitor-only metrics that moved, computed on dry runs too. Never an anomaly. */
+  watch: WatchFiring[];
 }
 
 /**
@@ -151,6 +154,8 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   const plan = buildPlan(asset, { metrics: opts.metrics });
   const startedAt = now.toISOString();
   const dryRun = opts.dryRun ?? false;
+  // Before anything is written: a watch compares this fetch's rows with what was stored.
+  const watchBefore = watchSnapshot(asset, (metricKey) => listActiveObservations(db, asset.id, metricKey));
 
   let rpc: RpcTransport | null = null;
   let block: BlockRef | null = null;
@@ -531,7 +536,8 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
 
   const sources = [...outcomes.values()];
   const outcome: FetchOutcome = sources.every((s) => s.status === 'ok') ? 'ok' : sources.every((s) => s.status === 'failed') ? 'failed' : 'partial';
+  const watch = evaluateWatches(asset, watchBefore, written, previousLevelIn(watchBefore));
   const endedAt = deps.now().toISOString();
-  const fetchRunId = dryRun ? null : insertFetchRun(db, { assetId: asset.id, startedAt, endedAt, outcome, detail: { sources } });
-  return { assetId: asset.id, dryRun, fetchRunId, outcome, startedAt, endedAt, sources, written, anomalies };
+  const fetchRunId = dryRun ? null : insertFetchRun(db, { assetId: asset.id, startedAt, endedAt, outcome, detail: { sources, ...(watch.length > 0 ? { watch } : {}) } });
+  return { assetId: asset.id, dryRun, fetchRunId, outcome, startedAt, endedAt, sources, written, anomalies, watch };
 }

@@ -86,6 +86,9 @@ export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps, opt
           outcome: update.fetch.outcome,
           sources_failed: update.fetch.sources.filter((s) => s.status === 'failed').map((s) => s.sourceId),
           anomalies_raised: update.fetch.anomalies.filter((a) => a.status === 'open').map((a) => ({ id: a.id, kind: a.kind, metric: a.metricKey, severity: a.severity })),
+          ...(update.fetch.watch.length > 0
+            ? { watch: update.fetch.watch.map((f) => ({ metric: f.metric, rule: f.rule, value: f.value, previous: f.previous, day: f.day })) }
+            : {}),
         };
       } catch (err) {
         report.error = errorOf(err);

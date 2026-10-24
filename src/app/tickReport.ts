@@ -1,6 +1,7 @@
 import { appendFileSync } from 'node:fs';
 import { z } from 'zod';
 import { TRIGGER_KINDS } from '../db/triggerFirings.js';
+import { WATCH_RULES } from '../ingest/watch.js';
 import { RUN_TYPES } from '../types.js';
 import { InboxSchema } from './inbox.js';
 
@@ -26,6 +27,10 @@ export const TickReportSchema = z.strictObject({
       sources_failed: z.array(z.string()),
       /** Anomalies the fetch opened, or saw again while still open. Ones standing under an acknowledgement are not news and are left out. */
       anomalies_raised: z.array(z.strictObject({ id: z.number().int().nullable(), kind: z.string(), metric: z.string(), severity: z.enum(['degrading', 'advisory']) })),
+      /** Watched monitor-only metrics that moved (never anomalies). Present only when the fetch had any. */
+      watch: z
+        .array(z.strictObject({ metric: z.string(), rule: z.enum(WATCH_RULES), value: z.number(), previous: z.number().nullable(), day: z.string() }))
+        .optional(),
     })
     .nullable(),
   signal: z

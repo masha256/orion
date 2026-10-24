@@ -140,5 +140,6 @@ export function fetchSummary(r: FetchResult): string[] {
     const standing = a.status === 'acknowledged' ? ': seen again, stays acknowledged' : '';
     lines.push(`  anomaly ${a.id === null ? '(not recorded)' : `#${a.id}`} ${a.kind}${a.metricKey ? ` on ${a.metricKey}` : ''} (${a.severity})${standing}`);
   }
+  for (const f of r.watch) lines.push(`  watch: ${f.metric} ${f.rule} ${trim(f.value)}${f.previous === null ? '' : ` (was ${trim(f.previous)})`} ${f.day}`);
   return lines;
 }

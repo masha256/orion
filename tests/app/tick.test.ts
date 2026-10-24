@@ -18,8 +18,9 @@ import type { RunType } from '../../src/types.js';
 import { agentHome, PAGE_TEXT, PAGE_URL, QUOTE } from '../helpers/agentWorld.js';
 import { miniAssumptions } from '../helpers/assets.js';
 import { calls, journalCall, say, scriptedModel, toolUse, webFetch, type ScriptStep, type ScriptedModel } from '../helpers/fakeModel.js';
-import { harness, NOW, type Harness } from '../helpers/fetchHarness.js';
-import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
+import { GENESIS_TS, harness, NOW, type Harness } from '../helpers/fetchHarness.js';
+import { INGEST_ASSET_YAML, POOL } from '../helpers/ingestAsset.js';
+import { watchAsset } from '../helpers/watchAsset.js';
 
 let h: Harness;
 let home: string;
@@ -73,6 +74,19 @@ describe('tickAsset', () => {
     expect(report.signal!.expected_target_12m).toBeGreaterThan(0);
     expect(signals.map((s) => s.signal_id)).toEqual([report.signal!.signal_id]);
     expect(model.requests).toHaveLength(0);
+    expect(TickReportSchema.parse(report)).toEqual(report);
+    expect(Object.keys(report.ingest!)).not.toContain('watch'); // no firing, no key
+  });
+
+  it('reports watch firings in ingest.watch, and they fire no trigger', async () => {
+    const logs = [{ blockNumber: BigInt(Math.ceil((Date.parse('2026-09-17T12:00:00Z') / 1000 - GENESIS_TS) / 2)), logIndex: 0, txHash: '0xa', from: POOL, value: 3n * 10n ** 18n }];
+    world({ loaded: watchAsset({ above: 20, levels: false }), logs });
+    attempted('deep');
+    const { report } = await tick();
+    expect(report.ingest!.watch).toEqual([{ metric: 'flow_usd.revenue', rule: 'above', value: 30, previous: null, day: '2026-09-17' }]);
+    expect(report.ingest!.anomalies_raised).toEqual([]);
+    expect(report.triggers_fired).toEqual([]);
+    expect(report.agent).toBeNull();
     expect(TickReportSchema.parse(report)).toEqual(report);
   });
 

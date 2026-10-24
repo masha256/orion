@@ -1,3 +1,4 @@
+import type { WatchFiring } from '../ingest/watch.js';
 import type { Db } from './connection.js';
 
 export type FetchOutcome = 'ok' | 'partial' | 'failed';
@@ -50,6 +51,8 @@ export interface SourceOutcome {
 
 export interface FetchRunDetail {
   sources: SourceOutcome[];
+  /** Watch firings (src/ingest/watch.ts); present only when the fetch had any. */
+  watch?: WatchFiring[];
 }
 
 export interface FetchRun {
