@@ -22,7 +22,7 @@ import type { CitableDoc } from './guardrails.js';
 import { AGENT_TOOLS, runTool, toApiTools, toolsForRun, type ToolContext } from './tools/index.js';
 
 /** Bump when a tool's behaviour or a guardrail changes: runs record which tool layer they ran under. */
-export const TOOL_LAYER_VERSION = '1.2.0';
+export const TOOL_LAYER_VERSION = '1.2.1';
 
 /** Why `orion tick` launched the run. Absent, the run was launched by hand and is recorded as `manual`. */
 export interface RunTriggerContext {

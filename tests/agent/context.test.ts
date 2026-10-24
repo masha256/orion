@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildContextPack, renderContextPack } from '../../src/agent/context.js';
@@ -188,6 +189,19 @@ describe('the context pack', () => {
       expect(pack({}, undefined, '2026-06-30T23:59:59.000Z').catalysts_due.map((c: { event: string }) => c.event)).toEqual(['edge past', 'edge ahead', 'range ends in window']);
     });
 
+    it('lists a catalyst filed again by a later run once, under its newest entry', () => {
+      const older = entry([{ event: 'mainnet', kind: 'product', by: '2026-07-10', citations: cite }]);
+      const newer = entry([
+        { event: 'mainnet', kind: 'product', by: '2026-07-10', citations: cite },
+        { event: 'mainnet', kind: 'product', by: '2026-07-12', citations: cite }, // a new date is a different claim
+      ]);
+      expect(newer.id).toBeGreaterThan(older.id);
+      expect(pack().catalysts_due).toEqual([
+        { journal_id: newer.id, event: 'mainnet', kind: 'product', by: '2026-07-10', from: null, to: null },
+        { journal_id: newer.id, event: 'mainnet', kind: 'product', by: '2026-07-12', from: null, to: null },
+      ]);
+    });
+
     it('is in every run type\'s pack, an empty list when nothing is due', () => {
       expect(pack().catalysts_due).toEqual([]);
       entry([{ event: 'soon', kind: 'product', by: '2026-07-10', citations: cite }]);
@@ -292,6 +306,20 @@ describe('the disclosure pack', () => {
       ['staking_apr', 'lit.staking_pool'],
       ['unlocks_next_year', 'lit.unlocks_next_year'],
     ]);
+  });
+
+  it('adapter_params lists a metric and adapter once, even when a cross-check uses the same adapter', () => {
+    const doc = storeDoc();
+    const yaml = readFileSync(fileURLToPath(new URL('../../assets/lit.yaml', import.meta.url)), 'utf8');
+    const checked = yaml.replace(
+      'source: { type: adapter, name: lit.staking_pool, params: { field: staked } }',
+      'source: { type: adapter, name: lit.staking_pool, params: { field: staked } }\n    cross_checks: [ { source: { type: adapter, name: lit.staking_pool, params: { field: staked, api: "https://example.test/api/v1" } } } ]',
+    );
+    expect(checked).not.toBe(yaml);
+    const p: Record<string, any> = buildContextPack(w.db, parseAssetYaml(checked), w.ledger, { runType: 'disclosure', budgets: DEFAULT_BUDGETS.disclosure, now: new Date(AS_OF), trigger: {}, document: doc, assetYaml: checked });
+    const pairs = p.adapter_params.map((a: { metric: string; adapter: string }) => `${a.metric} ${a.adapter}`);
+    expect(pairs.filter((x: string) => x === 'staked_tokens_reported lit.staking_pool')).toHaveLength(1);
+    expect(new Set(pairs).size).toBe(pairs.length);
   });
 
   it('a weekly pack has none of the three', () => {

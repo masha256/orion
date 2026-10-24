@@ -142,28 +142,44 @@ interface DueCatalyst {
   to: string | null;
 }
 
-/** From the last 20 journal entries, newest first; days compared at UTC midnight, both ends inclusive. */
+/**
+ * From the last 20 journal entries, newest first; days compared at UTC midnight, both ends inclusive. A catalyst filed
+ * again by a later run (the same event, kind and dates) is listed once, under the newest entry that carries it.
+ */
 function catalystsDue(db: Db, assetId: string, now: Date): DueCatalyst[] {
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const window = CATALYST_WINDOW_DAYS * MS_PER_DAY;
+  const seen = new Set<string>();
   return listJournal(db, assetId, { limit: CATALYST_ENTRIES }).flatMap((entry) =>
     entry.catalysts
       .filter((c) => {
         const at = Date.parse(`${c.by ?? c.to}T00:00:00Z`);
         return at >= today - window && at <= today + window;
       })
-      .map((c) => ({ journal_id: entry.id, event: c.event, kind: c.kind, by: c.by ?? null, from: c.from ?? null, to: c.to ?? null })),
+      .map((c) => ({ journal_id: entry.id, event: c.event, kind: c.kind, by: c.by ?? null, from: c.from ?? null, to: c.to ?? null }))
+      .filter((c) => {
+        const key = JSON.stringify([c.event, c.kind, c.by, c.from, c.to]);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }),
   );
 }
 
-/** The params each adapter source on the asset accepts, for adapters that document them: what a config proposal may set. */
+/**
+ * The params each adapter source on the asset accepts, for adapters that document them: what a config proposal may set.
+ * One entry per metric and adapter, even when a cross-check uses the metric's own adapter.
+ */
 function adapterParams(loaded: LoadedAsset): { metric: string; adapter: string; params_doc: string }[] {
   const out: { metric: string; adapter: string; params_doc: string }[] = [];
   for (const [metric, def] of Object.entries(loaded.config.metrics).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    const listed = new Set<string>();
     for (const source of [def.source, ...(def.cross_checks ?? []).map((c) => c.source)]) {
-      if (source?.type !== 'adapter') continue;
+      if (source?.type !== 'adapter' || listed.has(source.name)) continue;
       const paramsDoc = getAdapter(source.name).paramsDoc;
-      if (paramsDoc !== undefined) out.push({ metric, adapter: source.name, params_doc: paramsDoc });
+      if (paramsDoc === undefined) continue;
+      listed.add(source.name);
+      out.push({ metric, adapter: source.name, params_doc: paramsDoc });
     }
   }
   return out;

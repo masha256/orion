@@ -527,6 +527,21 @@ describe('propose_change', () => {
       expect(storedCitations()).toEqual(expected);
     });
 
+    it('a citation given twice (the same source and quote, after cleaning) is stored once, in first-given order', () => {
+      withDoc();
+      const r = propose({
+        ...probabilities(0.5),
+        citations: [
+          { source: PAGE_URL, quoted_text: QUOTE },
+          { source: 'doc:1', quoted_text: DOC_QUOTE },
+          { source: PAGE_URL, quoted_text: QUOTE },
+          { source: 'doc:1', quoted_text: `  ${DOC_QUOTE}  ` },
+        ],
+      });
+      expect(r.isError).toBe(false);
+      expect(w.ledger.proposals()[0].citations.map((c) => [c.source, c.quotedText])).toEqual([[PAGE_URL, QUOTE], ['doc:1', DOC_QUOTE]]);
+    });
+
     it('a bad citation refuses the whole proposal', () => {
       withDoc();
       const bad = propose({ ...probabilities(0.5), citations: [{ source: 'doc:1', quoted_text: DOC_QUOTE }, { source: 'doc:1', quoted_text: 'the fee switch was never discussed at all' }] });

@@ -64,16 +64,21 @@ function requireText(value: string, field: string): string {
 
 /**
  * Verifies every citation the model gave, cleaned first so the stored quote is the checked one. One that fails refuses
- * the whole call: nothing is ever staged on a subset of its sources.
+ * the whole call: nothing is ever staged on a subset of its sources. A citation given twice (the same source, quote and
+ * locator once cleaned) is kept once, at its first place.
  */
 function verifyCitations(ctx: ToolContext, input: { source: string; quoted_text: string }[], whose?: string): StoredCitation[] {
   const sources = { pages: ctx.fetchedPages(), docs: ctx.citableDocs() };
-  return input.map((c) => {
+  const seen = new Set<string>();
+  return input.flatMap((c) => {
     const verified = verifyAnyCitation(sources, { source: cleanText(c.source), quoted_text: cleanText(c.quoted_text) });
     if ('refusal' in verified) {
       throw new ToolRefusal(whose === undefined ? verified.refusal : { ...verified.refusal, message: `${whose}: ${verified.refusal.message}` });
     }
-    return verified.citation;
+    const key = JSON.stringify([verified.citation.source, verified.citation.quotedText, verified.citation.locator]);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [verified.citation];
   });
 }
 
