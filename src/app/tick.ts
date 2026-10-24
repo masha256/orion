@@ -181,6 +181,9 @@ async function agentStage(db: Db, loaded: LoadedAsset, deps: TickDeps, runType: 
       stage.error = { code: 'valuation_error', message: String(valuationError).slice(0, 300) };
       deps.onProgress?.(`agent run #${result.run.id} committed but the revaluation failed: ${String(valuationError).slice(0, 300)}`);
     }
+    // Only when the reserve request ran: a report of a run that never needed it keeps the shape it always had.
+    const reserve = (result.run.summary?.reserve as { reason?: unknown } | null | undefined)?.reason;
+    if (typeof reserve === 'string') stage.reserve = reserve;
     deps.onProgress?.(`agent run #${result.run.id} ${result.run.outcome}`);
     if (result.signal) {
       try {

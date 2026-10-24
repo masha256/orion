@@ -65,6 +65,8 @@ export const TickReportSchema = z.strictObject({
       proposals: z.array(z.strictObject({ id: z.number().int(), kind: z.string() })),
       signal_id: z.string().nullable(),
       error: ErrorSchema.nullable(),
+      /** The budget whose exhaustion sent the run its one reserve request (e.g. `input units (600000)`); absent when it was not sent. */
+      reserve: z.string().optional(),
     })
     .nullable(),
   /** Set under `--no-agent` or `agent.cadence.enabled: false`: the run tick would have started. */

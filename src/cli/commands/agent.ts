@@ -46,6 +46,13 @@ function stagedLines(staged: RunAgentResult['staged'], verb: string): string[] {
   return lines.length > 0 ? lines : ['  nothing staged'];
 }
 
+/** What the reserve request did, when it ran: `summary.reserve` is absent on a run that never needed it. */
+function reserveLines(run: AgentRun): string[] {
+  const reason = (run.summary?.reserve as { reason?: unknown } | null | undefined)?.reason;
+  if (typeof reason !== 'string') return [];
+  return [run.outcome === 'completed' ? `finished on reserve after ${reason}` : `reserve request used after ${reason}; nothing committed`];
+}
+
 function runLine(r: AgentRun): string {
   return `#${r.id}  ${r.startedAt}  ${r.assetId}  ${r.runType}  ${r.persona}  ${r.outcome}${r.dryRun ? ' (dry run)' : ''}${r.error ? `  ${r.error}` : ''}`;
 }
@@ -83,6 +90,7 @@ export function registerAgent(program: Command, ctx: CliContext): void {
         output(ctx, opts.json, result, () => [
           runLine(result.run),
           usageLine(result.run),
+          ...reserveLines(result.run),
           ...stagedLines(result.staged, result.committed ? 'committed' : result.run.dryRun ? 'would commit' : 'discarded'),
           ...(result.signal
             ? signalSummary(result.signal)
@@ -125,6 +133,7 @@ export function registerAgent(program: Command, ctx: CliContext): void {
           runLine(run),
           `model ${run.model}  config ${run.configHash.slice(0, 12)}  trigger ${run.trigger} ${JSON.stringify(run.triggerDetail)}`,
           usageLine(run),
+          ...reserveLines(run),
           ...(staged ? stagedLines(staged, run.summary?.committed ? 'committed' : run.dryRun ? 'would commit' : 'discarded') : []),
           ...(run.summary?.signal_id ? [`signal ${String(run.summary.signal_id)}`] : []),
           ...(run.summary?.valuation_error ? [`valuation failed after the commit: ${String(run.summary.valuation_error)}`] : []),

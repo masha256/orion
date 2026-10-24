@@ -178,6 +178,23 @@ describe('tickAsset', () => {
     expect(signals).toHaveLength(1);
   });
 
+  it('reports agent.reserve when the run finished on the reserve request', async () => {
+    const normal = await tick();
+    expect(normal.report.agent!.outcome).toBe('completed');
+    expect('reserve' in normal.report.agent!).toBe(false);
+
+    world();
+    // Seed a deep attempt 8 days ago so a weekly is due: its input cap is 600,000 units.
+    const earlier = new Date(NOW.getTime() - 8 * 86_400_000).toISOString();
+    const deepId = startAgentRun(h.db, { assetId: 'mini', persona: 'analyst', runType: 'deep', trigger: 'schedule', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: earlier });
+    finishAgentRun(h.db, deepId, { outcome: 'completed', endedAt: earlier, usage: ZERO_USAGE, error: null, summary: null, transcript: [] });
+    const { report, exitCode } = await tick([{ ...calls(growth()), usage: { input_tokens: 10_000_000 } }, calls(journalCall())]);
+    expect(exitCode).toBe(0);
+    expect(report.agent).toMatchObject({ run_type: 'weekly', outcome: 'completed', error: null, committed: { assumption_set_version: 2, journal: 1 } });
+    expect(report.agent!.reserve).toBe('input units (600000)');
+    expect(TickReportSchema.parse(report)).toEqual(report);
+  });
+
   it('reports a revaluation failure after a live commit, without discarding it', async () => {
     // Seed a deep attempt 8 days ago so a weekly is due (not a bootstrap)
     const earlier = new Date(NOW.getTime() - 8 * 86_400_000).toISOString();

@@ -140,6 +140,26 @@ describe('orion agent run', () => {
     expect(text).toContain(`would commit catalyst by 2026-08-01 token: token unlock [${page}]`);
   });
 
+  it('says when a run finished on the reserve request', async () => {
+    script = [{ ...calls(growth()), usage: { input_tokens: 10_000_000 } }, calls(journalCall())];
+    const out = await orion('agent', 'run', 'mini', '--type', 'weekly', '--dry-run');
+    expect(out).toContain('finished on reserve after input units (600000)');
+    expect(exitCode).toBeUndefined();
+    expect(await orion('agent', 'runs', 'show', '1')).toContain('finished on reserve after input units (600000)');
+  });
+
+  it('says when the reserve request was used and the run still ran out, and says nothing of it otherwise', async () => {
+    script = [{ ...calls(growth()), usage: { input_tokens: 10_000_000 } }, calls(toolUse('get_drivers', {}))];
+    const out = await orion('agent', 'run', 'mini', '--type', 'weekly', '--dry-run');
+    expect(out).toContain('reserve request used after input units (600000); nothing committed');
+    expect(out).not.toContain('finished on reserve');
+    expect(await orion('agent', 'runs', 'show', '1')).toContain('reserve request used after input units (600000); nothing committed');
+    script = [calls(journalCall()), say('Done.')];
+    const plain = await orion('agent', 'run', 'mini', '--type', 'weekly', '--dry-run');
+    expect(plain).not.toContain('reserve');
+    expect(await orion('agent', 'runs', 'show', '2')).not.toContain('reserve');
+  });
+
   it('exits 1 when the run does not complete, and says what was discarded', async () => {
     script = [calls(growth()), say('Done.'), say('Still done.')];
     const out = await orion('agent', 'run', 'mini', '--type', 'weekly');

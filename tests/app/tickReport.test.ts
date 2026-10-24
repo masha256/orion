@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
-import { emitTickReport, tickId, type TickReport } from '../../src/app/tickReport.js';
+import { emitTickReport, tickId, TickReportSchema, type TickReport } from '../../src/app/tickReport.js';
 
 /** A minimal but schema-valid report: `run_in_progress`, lock set, everything else at its empty/absent value. */
 function minimalReport(): TickReport {
@@ -64,6 +64,19 @@ describe('emitTickReport', () => {
 
     expect(written).toHaveLength(1);
     expect(JSON.parse(written[0])).toEqual(report);
+  });
+});
+
+describe('TickReportSchema', () => {
+  it('accepts agent.reserve as an optional string and still accepts a report without it', () => {
+    const agent: NonNullable<TickReport['agent']> = {
+      run_type: 'weekly', trigger_kind: 'schedule', run_id: 1, outcome: 'completed', usage: null, committed: null, proposals: [], signal_id: null, error: null,
+    };
+    const without: TickReport = { ...minimalReport(), outcome: 'completed', lock: null, agent };
+    const withReserve: TickReport = { ...without, agent: { ...agent, reserve: 'input units (600000)' } };
+    expect(TickReportSchema.parse(without)).toEqual(without);
+    expect(TickReportSchema.parse(withReserve)).toEqual(withReserve);
+    expect(() => TickReportSchema.parse({ ...without, agent: { ...agent, reserve: 600000 } })).toThrow(ZodError);
   });
 });
 
