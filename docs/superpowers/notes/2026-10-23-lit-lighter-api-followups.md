@@ -77,3 +77,6 @@ here.
   go-live day; there is no level backfill.
 - The first `rh_fee_account_usd` reading has no previous, so it never fires.
 - Unlock cadence (Orion proposal #3) is not part of this work.
+- A drained RH fee account reads 0, which validateReading treats as a failed source (sources_failed), not a WATCH line.
+- A watched source that keeps failing shows only in sources_failed; monitor-only metrics have no staleness trigger.
+- LIT revenue = flow_usd.fees_core + 0.5 x flow_usd.fees_rh; get_flow_total returns gross series, the pack's revenue_streams carries the share.

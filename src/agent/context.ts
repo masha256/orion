@@ -84,7 +84,9 @@ export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, in
       triggers_this_tick: (input.trigger.firings ?? []).map((f) => ({ kind: f.kind, key: f.key, fired_at: f.firedAt, detail: f.detail })),
     },
     drivers_now: describeDrivers(report, nowIso, structural),
+    // Drivers as of the previous run's start, read from the observations then; the structural notes are the current config's.
     drivers_at_previous_run: previousDrivers && { run_started_at: previous?.startedAt, ...previousDrivers },
+    ...revenueStreams(asset),
     observations_in_force: observations.map((o) => ({ id: o.id, metric: o.metricKey, value: o.value, observed_at: o.observedAt, source: o.source, status: o.status })),
     anomalies: {
       open: anomalies.filter((a) => a.status === 'open').map((a) => describeAnomaly(a)),
@@ -120,6 +122,15 @@ export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, in
     asset_config_yaml: input.assetYaml ?? null,
     adapter_params: adapterParams(loaded),
   };
+}
+
+/**
+ * The asset's metric revenue streams, when it lists reporting.revenue: a stream with a `share` counts only that share of
+ * its series as revenue, which a flow total of the series does not apply. Absent for an asset without metric streams.
+ */
+function revenueStreams(asset: LoadedAsset['config']): { revenue_streams?: { id: string; metric: string; share?: number }[] } {
+  const streams = (asset.reporting?.revenue ?? []).flatMap((s) => (s.metric === undefined ? [] : [{ id: s.id, metric: s.metric, ...(s.share !== undefined ? { share: s.share } : {}) }]));
+  return streams.length > 0 ? { revenue_streams: streams } : {};
 }
 
 interface DueCatalyst {

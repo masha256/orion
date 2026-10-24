@@ -226,9 +226,10 @@ export function validateExchangeFeesParams(params: Record<string, unknown>): str
 /**
  * Fees per completed UTC day from Lighter's own exchangeMetrics (`period=all`, one request per kind), summed over
  * `kinds`. Lighter lists every day from a kind's first day, zeros included, so a day before a kind's first day counts 0
- * for it, and a day missing at or after it is refused (an outage gap, never a 0 that understates revenue). Today's
- * partial day is dropped. Days: the run's `--backfill-days` when given, else `params.days` (default 7), starting no
- * earlier than the first day any kind lists.
+ * for it, and a day missing at or after it is refused (an outage gap, never a 0 that understates revenue). A day listed
+ * twice, or a timestamp off a UTC day start, is refused too. Today's partial day is dropped; a kind with no row for today
+ * yet may still be filling its newest listed day, so that day is held back from the whole series this run. Days: the
+ * run's `--backfill-days` when given, else `params.days` (default 7), starting no earlier than the first day any kind lists.
  */
 async function exchangeFeesDaily(ctx: SourceContext, params: Record<string, unknown>): Promise<SourceValue> {
   const issues = validateExchangeFeesParams(params);
@@ -240,26 +241,44 @@ async function exchangeFeesDaily(ctx: SourceContext, params: Record<string, unkn
   const windowStart = todayStart - days * MS_PER_DAY;
 
   const perKind = new Map<string, { byDay: Map<number, number>; firstMs: number }>();
+  /** Newest listed days of kinds with no row for today yet: that day may still be partial, so the run leaves it out. */
+  const heldBack = new Set<number>();
   for (const kind of kinds) {
     const reply = (await ctx.http.getJson(`${api}/exchangeMetrics?period=all&kind=${encodeURIComponent(kind)}`)) as { metrics?: unknown };
     if (!reply || !Array.isArray(reply.metrics)) throw new Error(`exchangeMetrics ${kind}: Lighter's reply has no metrics list`);
     const byDay = new Map<number, number>();
     let firstMs = Number.POSITIVE_INFINITY;
+    let newestMs = Number.NEGATIVE_INFINITY;
+    let hasToday = false;
     for (const m of reply.metrics as Record<string, unknown>[]) {
-      const ms = Math.floor((amount(m.timestamp, `exchangeMetrics ${kind}: a timestamp`) * 1000) / MS_PER_DAY) * MS_PER_DAY;
-      if (ms >= todayStart) continue;
-      const value = amount(m.data, `exchangeMetrics ${kind}: the data of ${new Date(ms).toISOString().slice(0, 10)}`);
-      byDay.set(ms, (byDay.get(ms) ?? 0) + value);
+      const ts = amount(m.timestamp, `exchangeMetrics ${kind}: a timestamp`);
+      const ms = ts * 1000;
+      if (ms % MS_PER_DAY !== 0) throw new Error(`exchangeMetrics ${kind}: timestamp ${ts} is not a UTC day start`);
+      if (ms >= todayStart) {
+        if (ms === todayStart) hasToday = true;
+        continue;
+      }
+      const day = new Date(ms).toISOString().slice(0, 10);
+      // Two rows for one day are an API fault: summing them would overstate revenue, keeping either one is a guess.
+      if (byDay.has(ms)) throw new Error(`exchangeMetrics ${kind}: ${day} listed twice`);
+      byDay.set(ms, amount(m.data, `exchangeMetrics ${kind}: the data of ${day}`));
       firstMs = Math.min(firstMs, ms);
+      newestMs = Math.max(newestMs, ms);
     }
     // A kind with no completed row would count 0 on every day and understate the total: refuse it.
     if (firstMs === Number.POSITIVE_INFINITY) throw new Error(`exchangeMetrics ${kind}: no completed day listed`);
+    if (!hasToday) heldBack.add(newestMs);
     perKind.set(kind, { byDay, firstMs });
   }
 
   const earliest = Math.min(...[...perKind.values()].map((k) => k.firstMs));
   const points: { day: string; value: number }[] = [];
+  let held = false;
   for (let ms = Math.max(windowStart, earliest); ms < todayStart; ms += MS_PER_DAY) {
+    if (heldBack.has(ms)) {
+      held = true;
+      continue;
+    }
     const day = new Date(ms).toISOString().slice(0, 10);
     let value = 0;
     for (const [kind, k] of perKind) {
@@ -271,7 +290,8 @@ async function exchangeFeesDaily(ctx: SourceContext, params: Record<string, unkn
     points.push({ day, value });
   }
   if (points.length === 0) throw new Error(`exchangeMetrics ${kinds.join('+')}: no completed day in the last ${days} days`);
-  return { kind: 'daily_series', points, detail: `lighter exchangeMetrics ${new URL(api).host} ${kinds.join('+')} (${points.length} days)` };
+  const heldNote = held ? '; newest day held back (no row for today yet)' : '';
+  return { kind: 'daily_series', points, detail: `lighter exchangeMetrics ${new URL(api).host} ${kinds.join('+')} (${points.length} days)${heldNote}` };
 }
 
 /** Lighter's revenue kinds: the fees a Robinhood-instance split applies to. */

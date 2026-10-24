@@ -835,6 +835,11 @@ describe('get_flow_total', () => {
     expect(description).toContain('flow_conflict');
   });
 
+  it('says a series in revenue_streams with a share counts only that share as revenue', () => {
+    const description = AGENT_TOOLS.find((t) => t.name === 'get_flow_total')!.description;
+    expect(description).toContain('a series listed in revenue_streams with a share counts only that share as the asset\'s revenue');
+  });
+
   it('get_flow_total refuses a level metric and from > to', () => {
     expect(total({ metric: 'price_usd' })).toMatchObject({ isError: true, result: { refused: 'not_a_flow' } });
     expect(total({ metric: 'nope' })).toMatchObject({ isError: true, result: { refused: 'unknown_metric' } });

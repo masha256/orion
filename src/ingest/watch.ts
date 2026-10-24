@@ -10,7 +10,8 @@ export type WatchRule = (typeof WATCH_RULES)[number];
 /**
  * A watched monitor-only metric that moved this fetch. Reported in the fetch run's detail and the tick report, never as an
  * anomaly: every open anomaly fires the `open_anomaly` trigger, which starts a paid analyst run, and display data must
- * never wake the analyst. `day` is the covered day for a flow (stored at its period end), the reading's UTC date for a level.
+ * never wake the analyst. `day` is the last covered day for a flow (the day before its period end, where it is stored;
+ * for a one-day flow, the covered day), the reading's UTC date for a level.
  */
 export interface WatchFiring {
   metric: string;

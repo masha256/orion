@@ -112,7 +112,8 @@ const getFlowTotal = defineTool({
     'total, unit, days_covered, days_missing (days no summed row covers), rows, and first_id/last_id. It sums only confirmed rows already ' +
     'in the database: provisional rows and the figures staged in this run are not in it. A row that reaches outside the range is left out ' +
     'and its days in range count as missing. If two summed rows cover the same day it gives no total and refuses flow_conflict with their ' +
-    'ids and the days. Every summed row counts as shown, so you may cite any of them as evidence.',
+    'ids and the days. Every summed row counts as shown, so you may cite any of them as evidence. The total is the gross ' +
+    'series: a series listed in revenue_streams with a share counts only that share as the asset\'s revenue.',
   input: z.strictObject({ metric: z.string(), from: z.string(), to: z.string() }),
   run(ctx, input) {
     const asset = ctx.loaded.config;

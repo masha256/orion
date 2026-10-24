@@ -18,6 +18,7 @@ import { computeDrivers } from '../../src/drivers/compute.js';
 import { registerAdapter } from '../../src/ingest/adapters/registry.js';
 import { AGENT_ASSET_YAML, agentWorld, PERSONA_MD, type AgentWorld } from '../helpers/agentWorld.js';
 import { AS_OF, miniObservations } from '../helpers/obs.js';
+import { RUN_TYPES } from '../../src/types.js';
 
 let w: AgentWorld;
 beforeEach(() => {
@@ -196,6 +197,26 @@ describe('the context pack', () => {
       for (const runType of ['weekly', 'triage', 'deep', 'bootstrap', 'disclosure'] as const) {
         const p = buildContextPack(w.db, w.loaded, w.ledger, { runType, budgets: DEFAULT_BUDGETS[runType], now: new Date(AS_OF), trigger: {}, document: doc, assetYaml: AGENT_ASSET_YAML });
         expect(p.catalysts_due).toEqual([expect.objectContaining({ event: 'soon', by: '2026-07-10', from: null, to: null })]);
+      }
+    });
+  });
+
+  describe('revenue_streams', () => {
+    it("LIT's pack lists its metric streams in every run type, the Robinhood share 0.5 and Core with no share key", () => {
+      const lit = loadAsset(fileURLToPath(new URL('../..', import.meta.url)), 'lit');
+      for (const runType of RUN_TYPES) {
+        const p: Record<string, any> = buildContextPack(w.db, lit, w.ledger, { runType, budgets: DEFAULT_BUDGETS[runType], now: new Date(AS_OF), trigger: {} });
+        expect(p.revenue_streams).toEqual([
+          { id: 'core', metric: 'flow_usd.fees_core' },
+          { id: 'robinhood', metric: 'flow_usd.fees_rh', share: 0.5 },
+        ]);
+      }
+    });
+
+    it('an asset without reporting.revenue has no revenue_streams key', () => {
+      for (const runType of RUN_TYPES) {
+        const p = buildContextPack(w.db, w.loaded, w.ledger, { runType, budgets: DEFAULT_BUDGETS[runType], now: new Date(AS_OF), trigger: {} });
+        expect(p).not.toHaveProperty('revenue_streams');
       }
     });
   });

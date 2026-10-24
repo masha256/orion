@@ -294,6 +294,36 @@ describe("LIT exchange fees per UTC day, from Lighter's exchangeMetrics", () => 
     await expect(r.result).rejects.toThrow(`exchangeMetrics taker_fee: ${dayOf(today23 - 3 * DAY)} missing`);
   });
 
+  it('refuses a day listed twice rather than summing it', async () => {
+    const twice = metrics(5, () => 1);
+    twice.metrics.splice(2, 0, { timestamp: (today23 - 3 * DAY) / 1000, data: 1 });
+    const r = read({ maker_fee: twice }, { kinds: ['maker_fee'], days: 5 });
+    await expect(r.result).rejects.toThrow(`exchangeMetrics maker_fee: ${dayOf(today23 - 3 * DAY)} listed twice`);
+  });
+
+  it('refuses a timestamp that is not a UTC day start', async () => {
+    const shifted = metrics(5, () => 1);
+    const ts = (today23 - 2 * DAY + 3_600_000) / 1000;
+    shifted.metrics[3] = { timestamp: ts, data: 1 };
+    const r = read({ maker_fee: shifted }, { kinds: ['maker_fee'], days: 5 });
+    await expect(r.result).rejects.toThrow(`exchangeMetrics maker_fee: timestamp ${ts} is not a UTC day start`);
+  });
+
+  it("holds back the newest listed day when a kind has no row for today yet (it may still be partial)", async () => {
+    // taker_fee lists through yesterday but not today: yesterday may still be open on Lighter's side.
+    const v = await series(read({ maker_fee: metrics(5, () => 10), taker_fee: metrics(5, () => 1, [0]) }, { kinds: ['maker_fee', 'taker_fee'], days: 5 }).result);
+    expect(v.points).toEqual([5, 4, 3, 2].map((a) => ({ day: dayOf(today23 - a * DAY), value: 11 })));
+    expect(v.points.some((p) => p.day === '2026-10-22')).toBe(false);
+    expect(v.detail).toBe('lighter exchangeMetrics mainnet.zklighter.elliot.ai maker_fee+taker_fee (4 days); newest day held back (no row for today yet)');
+  });
+
+  it('with a row for today on every kind, nothing is held back', async () => {
+    const v = await series(read({ maker_fee: metrics(5, () => 10), taker_fee: metrics(5, () => 1) }, { kinds: ['maker_fee', 'taker_fee'], days: 5 }).result);
+    expect(v.points.at(-1)).toEqual({ day: '2026-10-22', value: 11 });
+    expect(v.points.length).toBe(5);
+    expect(v.detail).not.toContain('held back');
+  });
+
   it('refuses a non-numeric data', async () => {
     const r = read({ maker_fee: metrics(5, (a) => (a === 2 ? 'x' : 1)) }, { kinds: ['maker_fee'], days: 5 });
     await expect(r.result).rejects.toThrow(/maker_fee/);

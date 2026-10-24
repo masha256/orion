@@ -60,6 +60,14 @@ describe('evaluateWatches', () => {
     expect(evaluateWatches(asset, new Map(), [levelRow('stats_price', 94)], previous)).toHaveLength(1); // a fall counts too
   });
 
+  it('change_pct from a previous 0: a non-zero reading fires, 0 again does not', () => {
+    const zero = () => 0;
+    expect(evaluateWatches(asset, new Map(), [levelRow('stats_price', 3)], zero)).toEqual([
+      { metric: 'stats_price', rule: 'change_pct', value: 3, previous: 0, day: '2026-09-19' },
+    ]);
+    expect(evaluateWatches(asset, new Map(), [levelRow('stats_price', 0)], zero)).toEqual([]);
+  });
+
   it('change_pct needs a previous reading: the first one never fires', () => {
     expect(evaluateWatches(asset, new Map(), [levelRow('stats_price', 106)], noPrevious)).toEqual([]);
   });
