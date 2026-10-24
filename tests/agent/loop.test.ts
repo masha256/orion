@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { runLoop, type LoopInput } from '../../src/agent/loop.js';
+import { RESERVE_MESSAGE } from '../../src/agent/prompt.js';
 import { webTools, type ModelMessageParam } from '../../src/agent/model.js';
 import { fetchedPagesFrom } from '../../src/agent/research.js';
 import { DEFAULT_BUDGETS } from '../../src/config/agentPolicy.js';
 import type { RunType } from '../../src/types.js';
-import { calls, journalCall, say, scriptedModel, text, thinking, toolUse, webFetch, type ScriptStep } from '../helpers/fakeModel.js';
+import { calls, journalCall, say, scriptedModel, text, thinking, toolUse, webFetch, type ScriptStep, type Step } from '../helpers/fakeModel.js';
 
 class RateLimitError extends Error {}
 
@@ -75,13 +76,13 @@ describe('the tool-use loop', () => {
     const h = harness([
       { content: [toolUse('write_journal', {}, 'a')], stop_reason: 'refusal', stop_details: { type: 'refusal', category: 'cyber', explanation: null } },
     ]);
-    expect(await h.run()).toMatchObject({ stop: 'refused', detail: 'cyber' });
+    expect(await h.run()).toMatchObject({ stop: 'refused', detail: 'cyber', reserve: null });
     expect(h.ran).toEqual([]);
   });
 
   it('treats a turn cut off at the token limit as an error and never runs its tools', async () => {
     const h = harness([{ content: [toolUse('apply_assumption_change', { key: 'rev' }, 'a')], stop_reason: 'max_tokens' }]);
-    expect(await h.run()).toMatchObject({ stop: 'error', detail: 'max_tokens' });
+    expect(await h.run()).toMatchObject({ stop: 'error', detail: 'max_tokens', reserve: null });
     expect(h.ran).toEqual([]);
   });
 
@@ -89,8 +90,9 @@ describe('the tool-use loop', () => {
     const step = () => calls(toolUse('get_drivers', {}));
     const h = harness([step(), step(), step()], { budgets: { ...DEFAULT_BUDGETS.weekly, requests: 2 } });
     const result = await h.run();
-    expect(result).toMatchObject({ stop: 'budget_exhausted', detail: 'requests (2)' });
-    expect(h.model.requests).toHaveLength(2);
+    expect(result).toMatchObject({ stop: 'budget_exhausted', detail: 'requests (2)', reserve: 'requests (2)' });
+    expect(h.model.requests).toHaveLength(3); // two, then the reserve request, whose get_drivers does not run
+    expect(h.ran).toHaveLength(2);
   });
 
   it('counts input in weighted units: uncached x1, cache writes x1.25, cache reads x0.1', async () => {
@@ -98,21 +100,23 @@ describe('the tool-use loop', () => {
     const cached = { ...calls(toolUse('get_drivers', {})), usage: { input_tokens: 10, cache_read_input_tokens: 600, cache_creation_input_tokens: 400, output_tokens: 5 } };
     const atCap = harness([cached, cached], { budgets: { ...DEFAULT_BUDGETS.weekly, inputUnits: 570 } });
     const input = await atCap.run();
-    expect(input).toMatchObject({ stop: 'budget_exhausted', detail: 'input units (570)', usage: { inputTokens: 10, cacheReadTokens: 600, cacheWriteTokens: 400 } });
-    expect(atCap.model.requests).toHaveLength(1);
+    expect(input).toMatchObject({ stop: 'budget_exhausted', detail: 'input units (570)', reserve: 'input units (570)' });
+    expect(input.usage).toMatchObject({ requests: 2, inputTokens: 20, cacheReadTokens: 1200, cacheWriteTokens: 800 }); // the reserve request counts
+    expect(atCap.ran).toHaveLength(1); // the first request's tool only: the reserve turn's get_drivers does not run
     const underCap = harness([cached, calls(journalCall()), say('Done.')], { budgets: { ...DEFAULT_BUDGETS.weekly, inputUnits: 571 } });
-    await underCap.run();
-    expect(underCap.model.requests).toHaveLength(2); // one unit under the cap: the second request goes out (its own 100 then spend the rest)
+    expect(await underCap.run()).toMatchObject({ stop: 'finished', reserve: 'input units (571)' });
+    // One unit under the cap: the second request goes out (its own 100 then spend the rest), then the reserve request.
+    expect(underCap.model.requests).toHaveLength(3);
     expect(underCap.model.toolResults(1)[0].budget.input_units_left).toBe(1);
     const output = await harness([{ ...cached, usage: { output_tokens: 70 } }, cached], { budgets: { ...DEFAULT_BUDGETS.weekly, outputTokens: 60 } }).run();
-    expect(output).toMatchObject({ stop: 'budget_exhausted', detail: 'output tokens (60)' });
+    expect(output).toMatchObject({ stop: 'budget_exhausted', detail: 'output tokens (60)', reserve: 'output tokens (60)' });
   });
 
   it('never reports negative input units left', async () => {
     const huge = { ...calls(toolUse('get_drivers', {}, 'a')), usage: { input_tokens: 10_000_000 } };
-    const h = harness([huge], { budgets: { ...DEFAULT_BUDGETS.weekly, inputUnits: 600_000 } });
+    const h = harness([huge, say('ok')], { budgets: { ...DEFAULT_BUDGETS.weekly, inputUnits: 600_000 } });
     expect(await h.run()).toMatchObject({ stop: 'budget_exhausted', detail: 'input units (600000)' });
-    const results = (h.messages.at(-1) as { content: { content: string }[] }).content;
+    const results = (h.messages[2] as { content: { content: string }[] }).content; // the first request's tool results
     expect((JSON.parse(results[0].content.split('\n\nbudget: ')[1]) as Record<string, number>).input_units_left).toBe(0);
   });
 
@@ -146,14 +150,14 @@ describe('the tool-use loop', () => {
     expect(reminded.model.requests[1].messages.at(-1)).toEqual({ role: 'user', content: 'Write your journal entry now.' });
 
     const stubborn = harness([say('All done.'), say('Really done.')]);
-    expect((await stubborn.run()).stop).toBe('no_journal');
+    expect(await stubborn.run()).toMatchObject({ stop: 'no_journal', reserve: null });
     expect(stubborn.model.requests).toHaveLength(2);
   });
 
   it('reports an API error with its class, and keeps the usage so far', async () => {
     const h = harness([calls(toolUse('get_drivers', {})), new RateLimitError('429 slow down')]);
     const result = await h.run();
-    expect(result).toMatchObject({ stop: 'error', detail: 'RateLimitError: 429 slow down', usage: { requests: 1 } });
+    expect(result).toMatchObject({ stop: 'error', detail: 'RateLimitError: 429 slow down', usage: { requests: 1 }, reserve: null });
   });
 
   it('ends as an error when a tool throws unexpectedly, keeping the usage and the turn that asked for it', async () => {
@@ -165,7 +169,7 @@ describe('the tool-use loop', () => {
       },
     });
     const result = await h.run();
-    expect(result).toMatchObject({ stop: 'error', detail: 'ToolBug: undefined is not a function', usage: { requests: 2, inputTokens: 200 } });
+    expect(result).toMatchObject({ stop: 'error', detail: 'ToolBug: undefined is not a function', usage: { requests: 2, inputTokens: 200 }, reserve: null });
     expect(result.responses).toHaveLength(2);
     expect(h.model.requests).toHaveLength(2);
     expect(h.messages.at(-1)).toMatchObject({ role: 'assistant' }); // the turn is kept; no half-built results message follows it
@@ -198,23 +202,24 @@ describe('the tool-use loop', () => {
     // A later request that spends beyond the run's total ends it.
     const over = harness([searched(3), calls(toolUse('get_drivers', {}, 'b'))], { budgets });
     const result = await over.run();
-    expect(result).toMatchObject({ stop: 'budget_exhausted', detail: 'web searches (2)', usage: { webSearches: 3 } });
-    expect(over.model.requests).toHaveLength(1);
+    expect(result).toMatchObject({ stop: 'budget_exhausted', detail: 'web searches (2)', usage: { webSearches: 3 }, reserve: 'web searches (2)' });
+    expect(over.model.requests).toHaveLength(2); // the second is the reserve request; its get_drivers does not run
+    expect(over.ran.map((r) => r.name)).toEqual(['get_drivers']);
   });
 
   it('ends the run on a web fetch budget the same way', async () => {
     const fetched = { ...calls(toolUse('get_drivers', {}, 'a')), usage: { server_tool_use: { web_search_requests: 0, web_fetch_requests: 4 } } };
-    const h = harness([fetched, calls(toolUse('write_journal', {}, 'j'))], { budgets: { ...DEFAULT_BUDGETS.weekly, webFetches: 3 } });
-    expect(await h.run()).toMatchObject({ stop: 'budget_exhausted', detail: 'web fetches (3)' });
+    const h = harness([fetched, say('ok')], { budgets: { ...DEFAULT_BUDGETS.weekly, webFetches: 3 } });
+    expect(await h.run()).toMatchObject({ stop: 'budget_exhausted', detail: 'web fetches (3)', reserve: 'web fetches (3)' });
   });
 
   it('never reports a negative amount of web budget left', async () => {
     // The overspending request's own tool results are built before the loop notices, so this is the one place the
     // figure could go negative. The run ends right after, so the results are read from the conversation itself.
     const searched = { ...calls(toolUse('get_drivers', {}, 'a')), usage: { server_tool_use: { web_search_requests: 9, web_fetch_requests: 9 } } };
-    const h = harness([searched], { budgets: { ...DEFAULT_BUDGETS.weekly, webSearches: 5, webFetches: 5 } });
+    const h = harness([searched, say('ok')], { budgets: { ...DEFAULT_BUDGETS.weekly, webSearches: 5, webFetches: 5 } });
     expect((await h.run()).stop).toBe('budget_exhausted');
-    const results = (h.messages.at(-1) as { content: { content: string }[] }).content;
+    const results = (h.messages[2] as { content: { content: string }[] }).content; // the first request's tool results
     expect(JSON.parse(results[0].content.split('\n\nbudget: ')[1]) as Record<string, number>).toMatchObject({ web_searches_left: 0, web_fetches_left: 0 });
   });
 
@@ -222,7 +227,7 @@ describe('the tool-use loop', () => {
     // The model that declined may have been cut off mid-tool-call; its partial input can still parse.
     const fallback = { type: 'fallback', from: { model: 'claude-opus-5' }, to: { model: 'claude-sonnet-5' }, trigger: { type: 'refusal' } };
     const h = harness([{ content: [toolUse('apply_assumption_change', { key: 'rev' }, 'a'), fallback, text('Carrying on.')], stop_reason: 'tool_use' }]);
-    expect(await h.run()).toMatchObject({ stop: 'error', detail: 'tool call precedes a model fallback; not run' });
+    expect(await h.run()).toMatchObject({ stop: 'error', detail: 'tool call precedes a model fallback; not run', reserve: null });
     expect(h.ran).toEqual([]);
   });
 
@@ -238,6 +243,125 @@ describe('the tool-use loop', () => {
     const result = await harness([searched, say('Done.')]).run();
     expect(result.usage).toMatchObject({ webSearches: 2, webFetches: 1 });
     expect(result.responses.map((r) => [r.model, r.stopReason])).toEqual([['claude-opus-4-8', 'tool_use'], ['claude-opus-5', 'end_turn']]);
+  });
+});
+
+describe('the reserve request', () => {
+  const huge = (step: Step = calls(toolUse('get_drivers', {}))): Step => ({ ...step, usage: { input_tokens: 10_000_000 } });
+  const spentInput = 'input units (600000)';
+
+  it('sends one reserve request on exhaustion, with the reserve message and 16k max tokens, and finishes on a journal', async () => {
+    const h = harness([huge(), calls(journalCall())]);
+    const result = await h.run();
+    expect(result).toMatchObject({ stop: 'finished', detail: null, reserve: spentInput });
+    expect(h.model.requests).toHaveLength(2);
+    expect(h.model.requests[1].maxTokens).toBe(16000);
+    expect(h.model.requests[1].messages.at(-1)).toEqual({ role: 'user', content: RESERVE_MESSAGE(spentInput) });
+    expect(h.model.requests[1].tools).toEqual(h.model.requests[0].tools);
+    expect(h.model.requests[1].system).toBe(h.model.requests[0].system);
+    expect(h.model.requests[1]).toMatchObject({ model: 'claude-opus-5', effort: 'high' });
+    expect(h.model.requests[1]).not.toHaveProperty('toolChoice');
+    expect(result.usage.requests).toBe(2);
+    expect(result.responses).toHaveLength(2);
+    expect(h.ran.map((r) => r.name)).toEqual(['get_drivers', 'write_journal']);
+    expect(h.messages.at(-1)).toMatchObject({ role: 'assistant' }); // the journal's result is not sent back
+  });
+
+  it('runs no tool and ends budget_exhausted when the reserve turn calls anything but write_journal', async () => {
+    const h = harness([huge(), calls(toolUse('get_drivers', {}), journalCall())]);
+    expect(await h.run()).toMatchObject({ stop: 'budget_exhausted', detail: spentInput, reserve: spentInput, usage: { requests: 2 } });
+    expect(h.ran.map((r) => r.name)).toEqual(['get_drivers']);
+    expect(h.model.requests).toHaveLength(2);
+  });
+
+  it('ends budget_exhausted when the reserve turn uses a server tool', async () => {
+    const h = harness([huge(), { ...calls(journalCall()), usage: { server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 } } }]);
+    const result = await h.run();
+    expect(result).toMatchObject({ stop: 'budget_exhausted', detail: spentInput, reserve: spentInput, usage: { webSearches: 1 } });
+    expect(h.ran.map((r) => r.name)).toEqual(['get_drivers']);
+  });
+
+  it('ends budget_exhausted when write_journal is refused in the reserve turn', async () => {
+    const ran: string[] = [];
+    const h = harness([huge(), calls(journalCall())], {
+      runTool: (name) => {
+        ran.push(name);
+        return name === 'write_journal' ? { content: '{"refused":"no thesis","message":"no"}', isError: true } : { content: '{"ok":true}', isError: false };
+      },
+      isFinished: () => false,
+    });
+    expect(await h.run()).toMatchObject({ stop: 'budget_exhausted', detail: spentInput, reserve: spentInput });
+    expect(ran).toEqual(['get_drivers', 'write_journal']);
+  });
+
+  it('finishes when the journal was already staged and the reserve turn calls nothing', async () => {
+    const h = harness([huge(calls(journalCall())), say('Done.')]);
+    expect(await h.run()).toMatchObject({ stop: 'finished', detail: null, reserve: spentInput });
+    expect(h.model.requests).toHaveLength(2);
+  });
+
+  it('reports a failed reserve request as budget_exhausted, not error', async () => {
+    const h = harness([huge(), new RateLimitError('429')]);
+    const result = await h.run();
+    expect(result).toMatchObject({
+      stop: 'budget_exhausted', detail: 'input units (600000); reserve request failed: RateLimitError: 429', reserve: spentInput, usage: { requests: 1 },
+    });
+    expect(result.responses).toHaveLength(1);
+  });
+
+  it('uses the reserve once: a reserve turn ending without a journal does not get a reminder or a second reserve', async () => {
+    const h = harness([huge(), say('ok')]);
+    expect(await h.run()).toMatchObject({ stop: 'budget_exhausted', detail: spentInput, reserve: spentInput });
+    expect(h.model.requests).toHaveLength(2);
+  });
+
+  it('ends budget_exhausted, running nothing, when the reserve turn stops on refusal, the token limit, the context window or a pause', async () => {
+    for (const stop_reason of ['refusal', 'max_tokens', 'model_context_window_exceeded', 'pause_turn']) {
+      const h = harness([huge(), { content: [journalCall()], stop_reason }]);
+      expect(await h.run(), stop_reason).toMatchObject({ stop: 'budget_exhausted', detail: spentInput, reserve: spentInput });
+      expect(h.ran.map((r) => r.name), stop_reason).toEqual(['get_drivers']);
+      expect(h.model.requests, stop_reason).toHaveLength(2);
+    }
+  });
+
+  it('ends budget_exhausted, running nothing, when a reserve-turn journal call precedes a model fallback', async () => {
+    const fallback = { type: 'fallback', from: { model: 'claude-opus-5' }, to: { model: 'claude-sonnet-5' }, trigger: { type: 'refusal' } };
+    const h = harness([huge(), { content: [journalCall(), fallback, text('Carrying on.')], stop_reason: 'tool_use' }]);
+    expect(await h.run()).toMatchObject({ stop: 'budget_exhausted', detail: spentInput, reserve: spentInput });
+    expect(h.ran.map((r) => r.name)).toEqual(['get_drivers']);
+  });
+
+  it('ends as an error when write_journal throws in the reserve turn, as on the main path', async () => {
+    class ToolBug extends Error {}
+    const h = harness([huge(), calls(journalCall())], {
+      runTool: (name) => {
+        if (name === 'write_journal') throw new ToolBug('boom');
+        return { content: '{"ok":true}', isError: false };
+      },
+    });
+    expect(await h.run()).toMatchObject({ stop: 'error', detail: 'ToolBug: boom', reserve: spentInput, usage: { requests: 2 } });
+  });
+
+  it('covers the request, output and web budgets too', async () => {
+    const drivers = () => calls(toolUse('get_drivers', {}));
+    const cases: [Partial<typeof DEFAULT_BUDGETS.weekly>, ScriptStep[], string][] = [
+      [{ requests: 2 }, [drivers(), drivers(), calls(journalCall())], 'requests (2)'],
+      [{ outputTokens: 60 }, [{ ...drivers(), usage: { output_tokens: 70 } }, calls(journalCall())], 'output tokens (60)'],
+      [{ webSearches: 2 }, [{ ...drivers(), usage: { server_tool_use: { web_search_requests: 3, web_fetch_requests: 0 } } }, calls(journalCall())], 'web searches (2)'],
+    ];
+    for (const [over, script, reason] of cases) {
+      const h = harness(script, { budgets: { ...DEFAULT_BUDGETS.weekly, ...over } });
+      expect(await h.run(), reason).toMatchObject({ stop: 'finished', detail: null, reserve: reason });
+      expect(h.model.requests.at(-1)!.messages.at(-1), reason).toEqual({ role: 'user', content: RESERVE_MESSAGE(reason) });
+      expect(h.model.requests.at(-1)!.maxTokens, reason).toBe(16000);
+    }
+  });
+
+  it('runs no reserve after a pause_turn, refusal, error, max_tokens or no_journal', async () => {
+    const paused = { content: [{ type: 'server_tool_use', id: 's1', name: 'web_search', input: { query: 'venice revenue' } }], stop_reason: 'pause_turn', usage: { input_tokens: 10_000_000 } };
+    const h = harness([paused, calls(journalCall())]);
+    expect(await h.run()).toMatchObject({ stop: 'budget_exhausted', detail: spentInput, reserve: null });
+    expect(h.model.requests).toHaveLength(1);
   });
 });
 

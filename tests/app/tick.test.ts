@@ -170,10 +170,10 @@ describe('tickAsset', () => {
 
   it('records a run that ends short of completed, with its outcome as the error code, and exits 0', async () => {
     world({ loaded: parseAssetYaml(`${INGEST_ASSET_YAML}agent:\n  budgets:\n    bootstrap: { requests: 1 }\n`) });
-    const { report, exitCode } = await tick([calls(growth()), calls(journalCall()), say('Done.')]);
+    const { report, exitCode } = await tick([calls(growth()), say('ok')]); // the reserve request writes no journal
     expect(exitCode).toBe(0);
     expect(report.agent).toMatchObject({ outcome: 'budget_exhausted', committed: null, signal_id: null, error: { code: 'budget_exhausted' } });
-    expect(report.agent!.usage!.requests).toBe(1);
+    expect(report.agent!.usage!.requests).toBe(2); // the one allowed, then the reserve request
     expect(getLatestAssumptionSet(h.db, 'mini')!.version).toBe(1);
     expect(signals).toHaveLength(1);
   });

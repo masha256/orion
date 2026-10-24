@@ -200,7 +200,7 @@ describe('guardrails inside a run', () => {
 describe('runs that do not finish cleanly', () => {
   it('writes nothing when a budget runs out, but keeps the run row, the transcript, and what was staged', async () => {
     w.loaded = { ...w.loaded, config: { ...w.loaded.config, agent: { budgets: { weekly: { requests: 1 } } } } };
-    const result = await run([calls(growthCall(0.2))]);
+    const result = await run([calls(growthCall(0.2)), say('ok')]); // the reserve request writes no journal
     expect(result.run).toMatchObject({ outcome: 'budget_exhausted', error: 'requests (1)' });
     expect(result.committed).toBeNull();
     expect(result.staged.assumptionChanges).toHaveLength(1);

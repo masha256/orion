@@ -50,3 +50,8 @@ export function buildSystemPrompt(persona: Persona, skills: Skill[], runType: Ru
 
 export const JOURNAL_REMINDER =
   'You ended your turn without a journal entry. Call write_journal now (thesis, open_questions, summary); without it nothing from this run is saved.';
+
+/** The last user message of the reserve request, sent once when a budget runs out. `reason` is the budget that did. */
+export function RESERVE_MESSAGE(reason: string): string {
+  return `Budget spent (${reason}). Call write_journal now. It records your thesis and commits what you staged. Any other tool call ends the run and nothing is saved.`;
+}
