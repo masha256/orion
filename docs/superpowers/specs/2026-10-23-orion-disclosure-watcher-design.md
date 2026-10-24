@@ -211,6 +211,13 @@ show`, `agent runs show`, the context pack, the dev-queue entry, the digest):
 
 ### 5.4 Where citations are accepted
 
+Superseded in part by section 15, which governs where the two differ: in a disclosure run every figure waits for the
+user whatever it cites (Ruling 18: an `observation` proposal on a metric with `allow_provisional`, an inert row
+otherwise; outside disclosure runs a machine-transcript citation still routes to the user, Ruling 6), and an observation
+proposal converted from `record_provisional_observation` carries that call's own citation, which may be a fetched page,
+so it is the one proposal exempt from the target-document citation (Ruling 7). The table is the design as first
+approved.
+
 | Tool | Change |
 |---|---|
 | `record_provisional_observation` | `citation_url` may be `doc:<id>`. Stored `citation_url` is `doc:<id>` and `quoted_text` the quote. A citation of a `machine_transcript` routes the row `inert` (invariant 3). |
