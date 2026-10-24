@@ -97,6 +97,31 @@ describe('revenue streams: share', () => {
     const base = `${withMetrics(METRICS)}\nreporting:\n  window_days: 10\n  haircuts: { buyback: 0 }\n  revenue_disclosed: rev_disclosed\n`;
     expect(messageOf(`${base}  revenue:\n    - { id: business, disclosed: rev_disclosed, share: 0.5 }\n`)).toMatch(/disclosed stream "business" takes no share/);
   });
+
+  it('refuses a share beside holder_flow, and a share on a metric an income line also reads; LIT\'s shape parses', () => {
+    // Rulings 12 + 15: a share would split a holder flow (gross) from its stream (kept), and an income line from its stream.
+    const reserveShare = streamsYaml().replace('holder_flow: burn }', 'holder_flow: burn, share: 0.5 }');
+    expect(reserveShare).not.toBe(streamsYaml());
+    expect(messageOf(reserveShare)).toMatch(/stream "reserve" takes no share with a holder_flow/);
+    const onIncomeLine = streamsYaml().replace('metric: flow_usd.trading, settlement: daily }', 'metric: flow_usd.buyback, settlement: daily, share: 0.5 }');
+    expect(onIncomeLine).not.toBe(streamsYaml());
+    expect(messageOf(onIncomeLine)).toMatch(/stream "trading" takes no share: its metric "flow_usd\.buyback" is also an income line's metric/);
+    // Without the share both configs parse.
+    expect(messageOf(onIncomeLine.replace(', share: 0.5', ''))).toBe('');
+    // LIT: a share on the Robinhood fee stream, the income line on the buybacks.
+    const litLike = `${withMetrics(`${METRICS}  flow_usd.fees_rh: { type: flow, unit: usd, staleness_days: 4, monitor_only: true }\n`)}
+reporting:
+  window_days: 10
+  haircuts: { buyback: 0 }
+  revenue:
+    - { id: core, metric: flow_usd.trading, settlement: daily }
+    - { id: rh, metric: flow_usd.fees_rh, settlement: daily, share: 0.5 }
+  income:
+    lines:
+      - { id: buyback, to: holders, metric: flow_usd.buyback }
+`;
+    expect(messageOf(litLike)).toBe('');
+  });
 });
 
 describe('revenue streams: share in the report', () => {
@@ -171,17 +196,85 @@ reporting:
     expect(r.income!.revenue.annualized).toBeCloseTo(547_500);
   });
 
-  it('no share, same JSON: stream lines carry no share or grossAnnualized key', () => {
-    const KEYS = ['annualized', 'basis', 'daysInWindow', 'growth', 'holderFlow', 'id', 'isNew', 'label', 'metric', 'provisionalDays', 'started'];
+  it('no share, same JSON: the revenue and income objects equal the base commit\'s (d5a3bcd), values included', () => {
+    // The literals below were computed by holderYieldReport at d5a3bcd (before share existed) from these same inputs.
+    const json = (x: unknown) => JSON.parse(JSON.stringify(x)) as unknown;
+    const g = (current: number | null, prior: number | null, change: number | null, annualized: number | null, note?: string) =>
+      (note === undefined ? { current, prior, change, annualized } : { current, prior, change, annualized, note });
+    // HYPE: a daily stream (3 a day, then 5 from 01-27) and a periodic one; the buybacks at 2 a day.
     const hype = holderYieldReport({ asset: parseAssetYaml(streamsYaml(10, '2026-01-25')).config, day, daily: new Map([
-      ['flow_usd.buyback', flat('2026-01-01', 40, 2)], ['flow_usd.trading', flat('2026-01-01', 40, 3)], ['flow_usd.reserve', flat('2026-01-25', 12, 10)],
+      ['flow_usd.buyback', flat('2026-01-01', 40, 2)],
+      ['flow_usd.trading', new Map([...flat('2026-01-01', 30, 3), ...flat('2026-01-27', 10, 5)])],
+      ['flow_usd.reserve', flat('2026-01-25', 12, 10)],
     ]), levels });
-    for (const s of hype.revenue!.streams) expect(Object.keys(s).sort()).toEqual(KEYS);
+    const tradingGrowth = g(50, 30, 0.6666666666666667, 125163977.98647128);
+    const triple = g(150, 50, 2, 259971534277923460);
+    expect(json({ revenue: hype.revenue, income: hype.income })).toEqual({
+      revenue: {
+        basis: 'streams',
+        streams: [
+          { id: 'trading', label: null, basis: 'daily', metric: 'flow_usd.trading', annualized: 1825, daysInWindow: null, provisionalDays: 0, started: null, isNew: false, growth: tradingGrowth, holderFlow: null },
+          { id: 'reserve', label: 'reserve yield', basis: 'periodic', metric: 'flow_usd.reserve', annualized: 3650, daysInWindow: null, provisionalDays: 0, started: '2026-01-25', isNew: true, growth: g(100, 20, 4, 3.253907165344266e25), holderFlow: 'burn' },
+        ],
+        annualized: 5475,
+        growth: triple,
+        growthExNew: tradingGrowth,
+        excludedFromExNew: ['reserve'],
+        provisional: false,
+      },
+      income: {
+        revenue: { annualized: 5475, growth: triple },
+        holders: { annualized: 4380, growth: g(120, 40, 2, 259971534277923460) },
+        protocol: { annualized: 1095, growth: g(30, 10, 2, 259971534277923460) },
+        costs: { annualized: 0 },
+        payoutRatio: 0.8,
+        protocolMargin: 0.2,
+        lines: [
+          { id: 'buyback', to: 'holders', annualized: 730, basis: 'measured' },
+          { id: 'reserve', to: 'holders', annualized: 3650, basis: 'measured', note: 'reserve yield: a revenue stream paid to holders' },
+          { id: 'protocol_income', to: 'protocol', annualized: 1095, basis: 'remainder', note: 'revenue less holders and costs' },
+        ],
+        checks: [],
+        outsideRevenue: [],
+      },
+    });
+    // VVV: the disclosed stream, with the burns (4 a day) and the cross-check series (9 a day) over 158 days.
     const vvvAsset = parseAssetYaml(readFileSync(fileURLToPath(new URL('../../assets/vvv.yaml', import.meta.url)), 'utf8')).config;
     expect(vvvAsset.reporting!.revenue!.some((s) => s.share !== undefined)).toBe(false);
-    const vvv = holderYieldReport({ asset: vvvAsset, day, daily: new Map(), levels });
-    expect(vvv.revenue!.streams.length).toBeGreaterThan(0);
-    for (const s of vvv.revenue!.streams) expect(Object.keys(s).sort()).toEqual(KEYS);
+    const disclosed = [{ observedAt: '2025-10-01T00:00:00.000Z', value: 50e6 }, { observedAt: '2026-01-15T00:00:00.000Z', value: 80e6 }];
+    const vvv = holderYieldReport({ asset: vvvAsset, day, daily: new Map([
+      ['flow_usd.burn', flat('2025-09-01', 158, 4)], ['flow_usd.revenue_proxy', flat('2025-09-01', 158, 9)],
+    ]), levels: { ...levels, disclosed } });
+    const between = g(80e6, 50e6, 0.6000000000000001, 4.045055846141385, 'between the two latest disclosures');
+    expect(json({ revenue: vvv.revenue, income: vvv.income })).toEqual({
+      revenue: {
+        basis: 'disclosed',
+        streams: [
+          { id: 'business', label: 'disclosed business revenue (annual run rate)', basis: 'disclosed', metric: 'revenue_run_rate_usd', annualized: 80e6, daysInWindow: null, provisionalDays: 0, started: null, isNew: false, growth: between, holderFlow: null },
+        ],
+        annualized: 80e6,
+        growth: between,
+        growthExNew: null,
+        excludedFromExNew: [],
+        disclosedGrowth: { annualized: 4.045055846141385, gapDays: 106, latestAgeDays: 22, flags: [] },
+        crossCheck: { metric: 'flow_usd.revenue_proxy', annualized: 3285 },
+        provisional: false,
+      },
+      income: {
+        revenue: { annualized: 80e6, growth: g(null, null, null, null, 'a disclosed level: see revenue') },
+        holders: { annualized: 1460, growth: g(360, null, null, null, 'needs 180 complete days of every flow') },
+        protocol: { annualized: 79998540, growth: g(null, null, null, null, 'a disclosed level less daily flows') },
+        costs: { annualized: 0 },
+        payoutRatio: 0.00001825,
+        protocolMargin: 0.99998175,
+        lines: [
+          { id: 'burn', to: 'holders', annualized: 1460, basis: 'measured' },
+          { id: 'protocol_income', to: 'protocol', annualized: 79998540, basis: 'remainder', note: 'revenue less holders and costs' },
+        ],
+        checks: [],
+        outsideRevenue: [],
+      },
+    });
   });
 });
 

@@ -8,7 +8,7 @@ import { computeDrivers } from '../../drivers/compute.js';
 import { requiredExtraMetrics } from '../../engine/requirements.js';
 import { dayStartMs, isIsoDate, observationDays, utcDay } from '../../ingest/time.js';
 import { MS_PER_DAY, OrionError } from '../../types.js';
-import { describeAnomaly, describeAssumptions, describeDrivers, describeObservation, describeSignal } from '../describe.js';
+import { describeAnomaly, describeAssumptions, describeDrivers, describeObservation, describeSignal, structuralNotes } from '../describe.js';
 import { defineTool, refuse, type AgentTool } from './types.js';
 
 const getDrivers = defineTool({
@@ -25,7 +25,7 @@ const getDrivers = defineTool({
     const observations = eligibleObservations(ctx.db, asset, iso);
     ctx.ledger.markShown(observations.map((o) => o.id));
     return {
-      ...describeDrivers(computeDrivers(asset, observations, iso, requiredExtraMetrics(asset)), iso),
+      ...describeDrivers(computeDrivers(asset, observations, iso, requiredExtraMetrics(asset)), iso, structuralNotes(asset)),
       // The observations behind these drivers: the ids you may cite as evidence.
       observations_in_force: observations.map((o) => ({ id: o.id, metric: o.metricKey, value: o.value, observed_at: o.observedAt, status: o.status })),
     };

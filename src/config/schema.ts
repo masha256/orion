@@ -405,6 +405,11 @@ export const AssetConfigSchema = z
             if (s.settlement !== undefined || s.holder_flow !== undefined) issue(`reporting.revenue: disclosed stream "${s.id}" takes no settlement or holder_flow`);
             if (s.share !== undefined) issue(`reporting.revenue: disclosed stream "${s.id}" takes no share`);
           }
+          // A share keeps part of a gross series; a holder flow or an income line on the same series would stay gross.
+          if (s.share !== undefined && s.holder_flow !== undefined) issue(`reporting.revenue: stream "${s.id}" takes no share with a holder_flow`);
+          if (s.share !== undefined && s.metric !== undefined && (r.income?.lines ?? []).some((l) => l.metric === s.metric)) {
+            issue(`reporting.revenue: stream "${s.id}" takes no share: its metric "${s.metric}" is also an income line's metric`);
+          }
           if (s.cross_check !== undefined) {
             if (s.disclosed === undefined) issue(`reporting.revenue: only a disclosed stream takes a cross_check ("${s.id}")`);
             if (a.metrics[s.cross_check]?.type !== 'flow') issue(`reporting.revenue: stream "${s.id}" cross_check "${s.cross_check}" is not a flow metric`);
