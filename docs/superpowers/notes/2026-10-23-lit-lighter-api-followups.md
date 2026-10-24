@@ -80,3 +80,22 @@ here.
 - A drained RH fee account reads 0, which validateReading treats as a failed source (sources_failed), not a WATCH line.
 - A watched source that keeps failing shows only in sources_failed; monitor-only metrics have no staleness trigger.
 - LIT revenue = flow_usd.fees_core + 0.5 x flow_usd.fees_rh; get_flow_total returns gross series, the pack's revenue_streams carries the share.
+
+## Live rollout (2026-10-24 01:27-01:35Z, Mike: "Merge")
+
+- Idle check clean; backup `backups/orion.db.pre-lit-lighter-api-20261024T0127*Z` (integrity ok, row counts equal).
+- `git merge --ff-only feat/lit-lighter-api` (642fd3b -> 961affe), `npm run build`, `asset validate` ok for all 13.
+- `model whatif <a> --as-of 2026-10-24T00:00:00.000Z --json`, old dist vs new dist on live: 13/13 identical.
+- Live writes (display series only):
+  - `data fetch lit --metric flow_usd.fees_core --metric flow_usd.fees_rh --metric flow_usd.rh_buyback --backfill-days 362`:
+    5.5 s, exit 0. fees_core 361 days, fees_rh 119, rh_buyback 297 (sum $137). The newest day (2026-10-23) was held back:
+    at 01:28Z Lighter had not listed today's row yet (Ruling 20); the next run stores it.
+  - `data fetch lit --metric rh_fee_account_usd --metric rh_revenue_share_app --metric staked_tokens_reported --metric staking_apr`:
+    5.3 s, exit 0. $3,490,118.56; 0.5; 111,084,324.97 LIT; 0.0602.
+  - observations 25,334 -> 26,115; fetch_runs 259 -> 261; anomalies 7 -> 7; trigger_firings 4 -> 4; no watch fired.
+- `report yield lit --json`: revenue $40,490,272/yr (core $32,882,153 + robinhood $7,608,118 kept), holders $32,486,661,
+  protocol $8,003,610, payout 80.23%, volume $48,098,390 (identical to the rehearsal).
+- Revision check: 14 overlapping fee days vs the 01:12Z baseline, none restated (16 minutes apart, so weak evidence);
+  re-check after the next tick, which re-reads 7 days.
+- Hermes: the WATCH rule and the `ingest.watch` field added to all 13 `orion-<asset>` cron prompts (`hermes cron edit`),
+  verified in `cron/jobs.json`; schedules and enabled state unchanged.
