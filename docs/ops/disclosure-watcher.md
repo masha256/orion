@@ -109,6 +109,15 @@ Always the first line of the message:
 - `ORION DISCLOSURE ALERT lit: <step> failed for post <id>: <error>` (download, transcribe, doc add, run)
 - `ORION DISCLOSURE lit: window 2026Q4 closed with no investor-call recording found` (information, once per window)
 
+Every window that closed since the watcher started (`watch_since` in `state/<asset>.json`, else its first recorded
+post) is reported, oldest first, on its last day or the first scan after it, so an outage past the next quarter end
+still reports the old window. A window that ended before the watcher started is never reported.
+
+A text-only post (no video) is stored as a `post` doc titled by the feed's `post_title` (`{date}` = the post's UTC
+date; default `<ASSET> post <date>`), not by the call `title`. The raw run result goes to
+`transcripts/<asset>/<post_id>.run.json`; a result that is not a completed run never replaces a completed one there
+(a failed `--force` retry): it is written to `<post_id>.run.failed.json` and the output says so.
+
 A search answered with HTTP 202 or an anomaly page is retried once after 60 seconds, then counts as a failed search day, never as "nothing found".
 
 ## The cron job
@@ -144,6 +153,7 @@ assets:
         min_video_minutes: 10
         doc_kind: machine_transcript
         title: 'LIT investor update {year}Q{quarter}'
+        post_title: 'LIT post {date}'          # a text-only post (no video); {date} = its UTC date
     transcribe: { asr_model: small.en, initial_prompt: "Lighter, LIT, zkLighter, perps, buyback, Robinhood, staking, TVL, open interest" }
     run: { type: disclosure, auto: true }
 ```

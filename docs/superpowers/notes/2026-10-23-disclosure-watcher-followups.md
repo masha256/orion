@@ -84,9 +84,12 @@ Deferred minors, status (branch `fix/minors-2026-10-24`, kanban t_b3b09288, not 
   `--note` help names every run type; review skill item 5 names the converted-observation exception; spec 5.4 says
   section 15 governs. Tool layer 1.1.0 → 1.1.1 on the branch; rebased onto main 4a2f126 (agent budget, 1.2.0) it lands as 1.2.1 (agent run config hash only).
 - No change: `get_flow_total` excluding rows that straddle the range is the tool's documented contract.
-- Open (outside the repo: `~/.hermes/profiles/raymond/workspace/orion/disclosure-watcher/bin/disclosure_watch.py`, not
-  in this card's worktree): the window-closed catch-up stopping once the next window opens, an error result
-  overwriting the post's `.run.json`, and a text-only post getting the "investor update" title.
+- Merged and live on main c797f29 (13/13 `whatif` identical on live).
+- The three watcher items (outside the repo, `~/.hermes/profiles/raymond/workspace/orion/disclosure-watcher/`), fixed
+  2026-10-24 with tests first (`tests/test_minors.py`, 12 tests; suite 110/110): every window closed since the
+  watcher started (`watch_since`, else the first recorded post: 2026-10-23 on live) is reported oldest first, not only
+  the latest; a result that is not a completed run goes to `<post_id>.run.failed.json` when a completed
+  `.run.json` is already there; a text-only post is titled by the feed's `post_title` (`LIT post <date>`).
 
 For Mike, when he decides the Q3 unlock proposal: approving it moves only LIT's report dilution line (~136M → ~122–125M
 next-365-day unlocks) and LIT's config hash; update the persona's "from 2026-12-29" line with it.
