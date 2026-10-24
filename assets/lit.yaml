@@ -134,7 +134,7 @@ metrics:
 
   # Report-only: team and investor tokens unlocking over the next 365 days (linear from 2026-12-29 over three years,
   # 1.661M + 1.533M LIT a week). DefiLlama's emissions dataset, the asset-specific series with no on-chain source.
-  unlocks_next_year: { type: level, unit: tokens_per_year, staleness_days: 14, monitor_only: true, source: { type: adapter, name: lit.unlocks_next_year, params: { allocations: [ Team, Investors ] } } }
+  unlocks_next_year: { type: level, unit: tokens_per_year, staleness_days: 14, monitor_only: true, source: { type: adapter, name: lit.unlocks_next_year, params: { allocations: [ Team, Investors ], tranches: { first: 2027-01-29, every_months: 1, count: 36 } } } }
   reserve_lit: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: token, function: balanceOf, args: [ ecosystem_reserve ], decimals: 18 } }
 
   # Revenue from Lighter's own exchangeMetrics (Mike, 2026-10-23, pick 2a): the four revenue kinds per completed UTC day,
