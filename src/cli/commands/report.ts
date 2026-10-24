@@ -35,6 +35,7 @@ export function reportLines(r: HolderYieldReport): string[] {
     for (const s of v.streams) {
       const tags = [
         s.basis,
+        s.share !== undefined ? `${pct(s.share)} of gross ${usd(s.grossAnnualized ?? null)}` : null,
         s.daysInWindow !== null ? `run rate over ${s.daysInWindow}d` : null,
         s.provisionalDays > 0 ? `${s.provisionalDays}d provisional` : null,
         s.isNew ? `new since ${s.started}` : null,

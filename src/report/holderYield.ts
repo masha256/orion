@@ -66,6 +66,10 @@ export interface RevenueStreamLine {
   isNew: boolean;
   growth: Growth;
   holderFlow: Bucket | null;
+  /** The fraction of the gross series the protocol keeps (reporting.revenue[].share): present only when set. */
+  share?: number;
+  /** USD a year before the share (annualized is after it): present only with a share. */
+  grossAnnualized?: number | null;
 }
 
 export interface RevenueReport {
@@ -259,6 +263,8 @@ export function holderYieldReport(input: ReportInput): HolderYieldReport {
     const n = daysIn(s?.started);
     return n === null || n === 0 ? 1 : W / n;
   };
+  // The fraction of a stream's gross series the protocol keeps (1 without a share).
+  const shareOf = (metric: string): number => (r.revenue ?? []).find((x) => x.metric === metric)?.share ?? 1;
   const annualize = (sum: number | null) => (sum === null ? null : (sum * DAYS_PER_YEAR) / W);
   const notes: string[] = [];
   const price = lv.price;
@@ -348,7 +354,7 @@ export function holderYieldReport(input: ReportInput): HolderYieldReport {
   }
 
   const revenue = revenueReport(asset, daily, input.provisional, day, W, lv, daysIn, weightOf);
-  const income = r.income ? incomeStatement(r.income, daily, day, W, r.revenue ? { revenue, weightOf, holderStreams: (r.revenue ?? []).filter((s) => s.holder_flow !== undefined && s.metric !== undefined).map((s) => s.metric!) } : undefined) : null;
+  const income = r.income ? incomeStatement(r.income, daily, day, W, r.revenue ? { revenue, weightOf, shareOf, holderStreams: (r.revenue ?? []).filter((s) => s.holder_flow !== undefined && s.metric !== undefined).map((s) => s.metric!) } : undefined) : null;
   const revenueOut: RevenueReport | null =
     revenue ?? (income ? { basis: 'income', streams: [], annualized: income.revenue.annualized, growth: income.revenue.growth, growthExNew: null, excludedFromExNew: [], provisional: false } : null);
   if (revenue?.provisional) notes.push(`revenue: ${revenue.streams.filter((s) => s.provisionalDays > 0).map((s) => `${s.id} has ${s.provisionalDays} unpaid day(s) at the last period's daily rate (provisional)`).join('; ')}`);
@@ -398,6 +404,8 @@ type Terms = [string, number][];
 interface StreamTotal {
   revenue: RevenueReport | null;
   weightOf: (metric: string) => number;
+  /** A stream's share of its gross series: the statement counts the kept part, as the revenue report does. */
+  shareOf: (metric: string) => number;
   /** Stream metrics that also reach holders: holders lines of the statement. */
   holderStreams: string[];
 }
@@ -413,22 +421,23 @@ function incomeStatement(inc: IncomeConfig, daily: Map<string, Map<string, numbe
     return (s * DAYS_PER_YEAR) / W;
   };
   // A young stream's run-rate weight annualizes it; growth compares raw window sums (weight 1), as the revenue report does.
+  // A stream with a share counts its kept part in both.
   const streamMetrics = new Set((streams?.revenue?.streams ?? []).filter((s) => s.basis !== 'disclosed').map((s) => s.metric));
   const grow = (terms: Terms): Growth =>
     terms.length === 0
       ? { current: 0, prior: 0, change: null, annualized: null, note: 'no lines' }
-      : growthOf(daily, terms.map((t) => t[0]), day, W, terms.map(([m, w]) => (streamMetrics.has(m) ? Math.sign(w) : w)));
+      : growthOf(daily, terms.map((t) => t[0]), day, W, terms.map(([m, w]) => (streamMetrics.has(m) ? Math.sign(w) * streams!.shareOf(m) : w)));
   const termsOf = (l: IncomeConfig['lines'][number]): Terms => (l.metric ? [[l.metric, 1]] : [[l.estimate!.of, l.estimate!.ratio]]);
   const of = (to: IncomeLine['to']): Terms => inc.lines.filter((l) => l.to === to).flatMap(termsOf);
 
   const neg = (t: Terms): Terms => t.map(([m, w]) => [m, -w] as [string, number]);
   // With revenue streams: revenue is their sum (a young stream at its run rate), the streams that reach holders are holders
   // lines, and protocol income is the remainder. A disclosed stream is a level: the statement's revenue is that figure.
-  const streamHolders: Terms = (streams?.holderStreams ?? []).map((m) => [m, streams!.weightOf(m)]);
+  const streamHolders: Terms = (streams?.holderStreams ?? []).map((m) => [m, streams!.weightOf(m) * streams!.shareOf(m)]);
   const holdersT = [...of('holders'), ...streamHolders];
   const costT = of('cost');
   const streamT: Terms | null = streams?.revenue
-    ? streams.revenue.streams.filter((s) => s.basis !== 'disclosed').map((s) => [s.metric, streams.weightOf(s.metric)] as [string, number])
+    ? streams.revenue.streams.filter((s) => s.basis !== 'disclosed').map((s) => [s.metric, streams.weightOf(s.metric) * streams.shareOf(s.metric)] as [string, number])
     : null;
   const disclosedTotal = streams?.revenue?.basis === 'disclosed' ? streams.revenue.annualized : undefined;
   const remainder = inc.remainder_of !== undefined || streams !== undefined;
@@ -472,6 +481,12 @@ function incomeStatement(inc: IncomeConfig, daily: Map<string, Map<string, numbe
   };
 }
 
+/** One series' window sum scaled to a year, times a young stream's run-rate weight. */
+function runRate(daily: Map<string, Map<string, number>>, key: string, day: string, W: number, weight: number): number | null {
+  const sum = windowSum(daily, [key], day, W);
+  return sum === null ? null : ((sum * DAYS_PER_YEAR) / W) * weight;
+}
+
 const noSeries = (note: string): Growth => ({ current: null, prior: null, change: null, annualized: null, note });
 
 /** Days from a to b (ISO times or days), rounded. */
@@ -499,6 +514,14 @@ function revenueReport(
   if (!r.revenue) return null;
   const endIso = `${addDays(day, 1)}T00:00:00.000Z`;
   const streams: RevenueStreamLine[] = [];
+  // A stream with a share reads a scaled copy of its series, keyed by stream id: the shared daily map stays gross for
+  // every other reader of the metric (income lines, holder flows, volume).
+  const kept = new Map<string, Map<string, number>>();
+  for (const s of r.revenue) {
+    const src = s.metric === undefined ? undefined : daily.get(s.metric);
+    if (!src) continue;
+    kept.set(s.id, s.share === undefined ? src : new Map([...src].map(([d, v]) => [d, v * s.share!] as const)));
+  }
   let disclosedGrowth: RevenueReport['disclosedGrowth'];
   let crossCheck: RevenueReport['crossCheck'];
   for (const s of r.revenue) {
@@ -526,7 +549,6 @@ function revenueReport(
       continue;
     }
     const metric = s.metric!;
-    const sum = windowSum(daily, [metric], day, W);
     const n = daysIn(s.started);
     const pending = provisional?.get(metric);
     let provisionalDays = 0;
@@ -534,9 +556,10 @@ function revenueReport(
     const age = s.started === undefined ? null : daysFrom(s.started, day) + 1;
     streams.push({
       id: s.id, label: s.label ?? null, basis: s.settlement ?? 'daily', metric,
-      annualized: sum === null ? null : ((sum * DAYS_PER_YEAR) / W) * weightOf(metric),
+      annualized: runRate(kept, s.id, day, W, weightOf(metric)),
       daysInWindow: n, provisionalDays, started: s.started ?? null, isNew: age !== null && age < NEW_STREAM_DAYS,
-      growth: growthOf(daily, [metric], day, W), holderFlow: s.holder_flow ?? null,
+      growth: growthOf(kept, [s.id], day, W), holderFlow: s.holder_flow ?? null,
+      ...(s.share !== undefined ? { share: s.share, grossAnnualized: runRate(daily, metric, day, W, weightOf(metric)) } : {}),
     });
   }
   const finiteAll = (xs: (number | null)[]) => (xs.some((x) => x === null || !Number.isFinite(x)) ? null : xs.reduce<number>((a, x) => a + x!, 0));
@@ -546,10 +569,10 @@ function revenueReport(
     ? streams[0].growth
     : series.length === 0
       ? noSeries('no daily stream')
-      : growthOf(daily, series.map((s) => s.metric), day, W);
+      : growthOf(kept, series.map((s) => s.id), day, W);
   const old = series.filter((s) => !s.isNew);
   const excluded = series.filter((s) => s.isNew).map((s) => s.id);
-  const growthExNew = isDisclosed || excluded.length === 0 ? null : old.length === 0 ? noSeries('every stream is new') : growthOf(daily, old.map((s) => s.metric), day, W);
+  const growthExNew = isDisclosed || excluded.length === 0 ? null : old.length === 0 ? noSeries('every stream is new') : growthOf(kept, old.map((s) => s.id), day, W);
   return {
     basis: isDisclosed ? 'disclosed' : 'streams',
     streams,

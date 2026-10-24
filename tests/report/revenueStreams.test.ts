@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseAssetYaml } from '../../src/config/load.js';
+import { reportLines } from '../../src/cli/commands/report.js';
 import { openDb } from '../../src/db/connection.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { addDays } from '../../src/ingest/time.js';
@@ -95,6 +96,92 @@ describe('revenue streams: share', () => {
   it('refuses a share on a disclosed stream', () => {
     const base = `${withMetrics(METRICS)}\nreporting:\n  window_days: 10\n  haircuts: { buyback: 0 }\n  revenue_disclosed: rev_disclosed\n`;
     expect(messageOf(`${base}  revenue:\n    - { id: business, disclosed: rev_disclosed, share: 0.5 }\n`)).toMatch(/disclosed stream "business" takes no share/);
+  });
+});
+
+describe('revenue streams: share in the report', () => {
+  // Two daily streams of $1,000 a day; the second is a gross series the protocol keeps half of (LIT's Robinhood fees).
+  const shareYaml = (started = '') => `${withMetrics(`${METRICS}  flow_usd.rh: { type: flow, unit: usd, staleness_days: 4, monitor_only: true }\n`)}
+reporting:
+  window_days: 10
+  haircuts: { buyback: 0 }
+  revenue:
+    - { id: core, metric: flow_usd.trading, settlement: daily }
+    - { id: rh, metric: flow_usd.rh, settlement: daily, share: 0.5${started} }
+  income:
+    lines:
+      - { id: buyback, to: holders, metric: flow_usd.buyback }
+  volume: [ flow_usd.rh ]
+`;
+  const day = '2026-02-05';
+  const daily = () => new Map([
+    ['flow_usd.buyback', flat('2026-01-01', 40, 100)],
+    ['flow_usd.trading', flat('2026-01-01', 40, 1000)],
+    ['flow_usd.rh', new Map([...flat('2026-01-01', 30, 1000), ...flat('2026-01-27', 10, 2000)])], // 01-27 .. 02-05 at 2,000
+  ]);
+  const flatDaily = () => new Map([
+    ['flow_usd.buyback', flat('2026-01-01', 40, 100)],
+    ['flow_usd.trading', flat('2026-01-01', 40, 1000)],
+    ['flow_usd.rh', flat('2026-01-01', 40, 1000)],
+  ]);
+
+  it('share halves the stream: kept 182,500 beside gross 365,000; the total is the kept sum', () => {
+    const asset = parseAssetYaml(shareYaml()).config;
+    const r = holderYieldReport({ asset, day, daily: flatDaily(), levels });
+    const [core, rh] = r.revenue!.streams;
+    expect(core.annualized).toBeCloseTo(365_000);
+    expect(rh.annualized).toBeCloseTo(182_500);
+    expect(r.revenue!.annualized).toBeCloseTo(547_500);
+    expect(rh.share).toBe(0.5);
+    expect(rh.grossAnnualized).toBeCloseTo(365_000);
+    expect('share' in core).toBe(false);
+    expect('grossAnnualized' in core).toBe(false);
+    // The income statement's revenue is the kept total; protocol income is that less the buybacks.
+    expect(r.income!.revenue.annualized).toBeCloseTo(547_500);
+    expect(r.income!.protocol.annualized).toBeCloseTo(547_500 - 36_500);
+    // Other readers of the same metric see the gross series: the volume line is untouched.
+    expect(r.volume!.annualized).toBeCloseTo(365_000);
+    // The text report shows kept beside gross on the stream with a share, and nothing new on the other.
+    const text = reportLines(r);
+    expect(text.find((l) => l.includes('stream rh'))).toMatch(/\$0\.18M .*\[daily, 50\.0% of gross \$0\.36M\]/);
+    expect(text.find((l) => l.includes('stream core'))).not.toMatch(/of gross/);
+  });
+
+  it('growth uses the kept value', () => {
+    const asset = parseAssetYaml(shareYaml()).config;
+    const r = holderYieldReport({ asset, day, daily: daily(), levels });
+    const rh = r.revenue!.streams[1];
+    expect(rh.growth.current).toBeCloseTo(0.5 * 10 * 2000);
+    expect(rh.growth.prior).toBeCloseTo(0.5 * 10 * 1000);
+    expect(r.revenue!.growth.current).toBeCloseTo(10 * 1000 + 0.5 * 10 * 2000);
+    expect(r.revenue!.growth.prior).toBeCloseTo(10 * 1000 + 0.5 * 10 * 1000);
+    expect(r.income!.revenue.growth.current).toBeCloseTo(r.revenue!.growth.current!);
+    expect(r.income!.revenue.growth.prior).toBeCloseTo(r.revenue!.growth.prior!);
+    expect(r.volume!.growth.current).toBeCloseTo(10 * 2000); // gross
+  });
+
+  it('started plus share: a young stream is annualized over its own days, then the share is applied', () => {
+    const asset = parseAssetYaml(shareYaml(', started: "2026-02-01"')).config;
+    const d = new Map([...flatDaily(), ['flow_usd.rh', flat('2026-02-01', 5, 1000)]]); // 5 days to 02-05
+    const r = holderYieldReport({ asset, day, daily: d, levels });
+    const rh = r.revenue!.streams[1];
+    expect(rh.daysInWindow).toBe(5);
+    expect(rh.grossAnnualized).toBeCloseTo(365_000); // 1,000 a day over its own 5 days, not 5,000 / 10
+    expect(rh.annualized).toBeCloseTo(182_500);
+    expect(r.income!.revenue.annualized).toBeCloseTo(547_500);
+  });
+
+  it('no share, same JSON: stream lines carry no share or grossAnnualized key', () => {
+    const KEYS = ['annualized', 'basis', 'daysInWindow', 'growth', 'holderFlow', 'id', 'isNew', 'label', 'metric', 'provisionalDays', 'started'];
+    const hype = holderYieldReport({ asset: parseAssetYaml(streamsYaml(10, '2026-01-25')).config, day, daily: new Map([
+      ['flow_usd.buyback', flat('2026-01-01', 40, 2)], ['flow_usd.trading', flat('2026-01-01', 40, 3)], ['flow_usd.reserve', flat('2026-01-25', 12, 10)],
+    ]), levels });
+    for (const s of hype.revenue!.streams) expect(Object.keys(s).sort()).toEqual(KEYS);
+    const vvvAsset = parseAssetYaml(readFileSync(fileURLToPath(new URL('../../assets/vvv.yaml', import.meta.url)), 'utf8')).config;
+    expect(vvvAsset.reporting!.revenue!.some((s) => s.share !== undefined)).toBe(false);
+    const vvv = holderYieldReport({ asset: vvvAsset, day, daily: new Map(), levels });
+    expect(vvv.revenue!.streams.length).toBeGreaterThan(0);
+    for (const s of vvv.revenue!.streams) expect(Object.keys(s).sort()).toEqual(KEYS);
   });
 });
 
