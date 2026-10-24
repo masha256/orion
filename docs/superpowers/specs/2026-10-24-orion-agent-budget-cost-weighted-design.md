@@ -1,6 +1,14 @@
 # Orion: price-weighted agent input budget, and a reserve request on exhaustion (design, 2026-10-24)
 
-Status: **draft, waiting for Mike** (kanban t_46c152b5). Decisions owed are in section 10. Nothing is built.
+Status: **approved by Mike, 2026-10-24 ("All recs", orion-dev).** Plan:
+`docs/superpowers/plans/2026-10-24-orion-agent-budget-cost-weighted.md`. Decisions (section 10):
+1. **Counting: (a) A1.** Weighted units, uncached ×1, cache write ×1.25, cache read ×0.1, counted in place under
+   the `input_tokens` key. No asset hash moves.
+2. **Defaults: (a) keep the numbers.**
+3. **The 13 weekly 2M overrides: (a) leave them now.** Remove them with the next all-asset YAML change.
+4. **Reserve request R: (a) build it and run it on every exhaustion,** with the new operating-rule line.
+5. **AERO #44's lost `rev_growth_y1` 0.30 → 0.25: (a) wait** for the next scheduled deep, ~2026-11-23. No paid
+   re-run, no manual proposal.
 
 Queue entry this closes: `workspace/orion/dev-queue-revenue.md`, "Agent budget counts cache reads at full weight"
 (found on AERO deep run #44).
@@ -263,8 +271,11 @@ worst"). All 43 past runs pass; the 3 exhausted runs continue (M).
   run ends `budget_exhausted` as today.
 - `maxTokens` for this request is 16k: adaptive thinking needs room, and a journal is short.
 - **Why not force `tool_choice`.** It would be the cleaner way to force the call, but the client sends
-  `thinking: {type: 'adaptive'}`, and as far as I know a forced tool choice is not accepted with thinking on. The plan
-  must check this against the SDK docs; if it is accepted, use it.
+  `thinking: {type: 'adaptive'}`, and a forced tool choice is not accepted with thinking on.
+  - Checked for the plan (2026-10-24, platform.claude.com "Define tools" / "API primer"): on Claude Opus 5.5, a
+    forced `any` or `tool` returns 400. R sends no `tool_choice`.
+  - R is also skipped when exhaustion is found right after a `pause_turn`: a reserve user message after a paused
+    server turn is untested.
 - **Outcome.** A journal staged in R commits through the normal path: config-reload hash check, `AgentConflict`, and
   valuation if the signal moves. The outcome is `completed`, with `summary_json.reserve = { reason: "<which budget>" }`
   and `error` null.
