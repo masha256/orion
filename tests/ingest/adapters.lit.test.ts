@@ -346,3 +346,66 @@ describe("LIT exchange fees per UTC day, from Lighter's exchangeMetrics", () => 
     expect(getAdapter('lit.exchange_fees_daily').needsRpc).toBe(false);
   });
 });
+
+// Shapes read on 2026-10-23 from app.lighter.xyz/stats: the page names its index bundle, the bundle names the
+// exchange-stats chunk, and the chunk holds the revenue-kind Set and the helper returning Robinhood's split.
+describe("LIT's Robinhood revenue split, from Lighter's app bundle", () => {
+  const APP = 'https://app.lighter.xyz';
+  const HTML = '<!doctype html><html><head><script type="module" crossorigin src="/assets/index-AAA.js"></script></head></html>';
+  const INDEX = 'const a=()=>import("./exchange-stats-BBB.js");export{a};';
+  const KINDS = '[`maker_fee`,`taker_fee`,`transfer_fee`,`withdraw_fee`]';
+  const chunk = (set = 'q', fn = 'zz', arg = 'e', n = '.5', kinds = KINDS) => `${set}=new Set(${kinds});function ${fn}(${arg}){return ${set}.has(${arg})?${n}:1}`;
+  const read = (c: string, html = HTML, index = INDEX) => {
+    const http = fakeHttp({ [`${APP}/stats`]: html, [`${APP}/assets/index-AAA.js`]: index, [`${APP}/assets/exchange-stats-BBB.js`]: c });
+    return { http, result: getAdapter('lit.app_fee_share').run(sourceCtx({ nowIso: '2026-10-23T12:00:00.000Z', http }), {}) };
+  };
+  const level = async (p: Promise<unknown>) => {
+    const v = (await p) as { kind: string; value: number; observedAt: string; source: string; detail: string };
+    if (v.kind !== 'level') throw new Error('expected a level');
+    return v;
+  };
+
+  it('reads the split from the app chunk', async () => {
+    const r = read(`var x=1;${chunk()};var y=2;`);
+    const v = await level(r.result);
+    expect(v).toMatchObject({ value: 0.5, observedAt: '2026-10-23T12:00:00.000Z', source: 'api' });
+    expect(v.detail).toContain('exchange-stats-BBB.js');
+    expect(r.http.calls.map((c) => c.url)).toEqual([`${APP}/stats`, `${APP}/assets/index-AAA.js`, `${APP}/assets/exchange-stats-BBB.js`]);
+    expect(getAdapter('lit.app_fee_share').needsRpc).toBe(false);
+  });
+
+  it('parses a rebuild with new names', async () => {
+    expect((await level(read(chunk('Xy', 'k9', 't', '0.5', '["withdraw_fee","maker_fee",\'taker_fee\',"transfer_fee"]')).result)).value).toBe(0.5);
+  });
+
+  it('refuses two candidate helpers', async () => {
+    await expect(read(`${chunk()};function z2(t){return q.has(t)?.5:1}`).result).rejects.toThrow(/2 /);
+    await expect(read(`${chunk()};${chunk('r', 'z3', 'u', '.4')}`).result).rejects.toThrow(/2 /);
+  });
+
+  it('refuses no candidate', async () => {
+    await expect(read('q=new Set([`maker_fee`,`taker_fee`,`transfer_fee`,`withdraw_fee`]);function zz(e){return e}').result).rejects.toThrow(/0 /);
+    // A helper on some other Set does not count.
+    await expect(read('q=new Set([`a`]);function zz(e){return q.has(e)?.5:1}').result).rejects.toThrow(/0 /);
+  });
+
+  it('refuses a value outside (0,1]', async () => {
+    await expect(read(chunk('q', 'zz', 'e', '1.2')).result).rejects.toThrow(/outside \(0, 1\]/);
+    await expect(read(chunk('q', 'zz', 'e', '0')).result).rejects.toThrow(/outside \(0, 1\]/);
+  });
+
+  it('refuses when the chunk name is missing', async () => {
+    await expect(read(chunk(), HTML, 'export{};').result).rejects.toThrow(/exchange-stats/);
+    await expect(read(chunk(), '<html></html>').result).rejects.toThrow(/index-/);
+  });
+
+  it('the Set must hold all four revenue kinds', async () => {
+    await expect(read(chunk('q', 'zz', 'e', '.5', '[`maker_fee`,`taker_fee`,`transfer_fee`]')).result).rejects.toThrow(/0 /);
+    await expect(read(chunk('q', 'zz', 'e', '.5', '[`maker_fee`,`taker_fee`,`transfer_fee`,`withdraw_fee`,`liquidation_fee`]')).result).rejects.toThrow(/0 /);
+  });
+
+  it('refuses a transport without text reads', async () => {
+    const http = { getJson: async () => ({}), postJson: async () => ({}) };
+    await expect(getAdapter('lit.app_fee_share').run(sourceCtx({ http }), {})).rejects.toThrow(/getText/);
+  });
+});

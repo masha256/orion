@@ -272,6 +272,58 @@ async function exchangeFeesDaily(ctx: SourceContext, params: Record<string, unkn
   return { kind: 'daily_series', points, detail: `lighter exchangeMetrics ${new URL(api).host} ${kinds.join('+')} (${points.length} days)` };
 }
 
+/** Lighter's revenue kinds: the fees a Robinhood-instance split applies to. */
+const REVENUE_KINDS = ['maker_fee', 'taker_fee', 'transfer_fee', 'withdraw_fee'];
+
+/** A text read through the run's transport; a transport without one (a JSON-only fake) is refused, not guessed around. */
+function getText(ctx: SourceContext, url: string): Promise<string> {
+  if (!ctx.http.getText) throw new Error(`${url}: this HTTP transport has no getText (text reads), which this adapter needs`);
+  return ctx.http.getText(url);
+}
+
+/** The one distinct match of `re` in `body`, or a refusal naming `what`. */
+function single(body: string, re: RegExp, what: string, where: string): string {
+  const found = [...new Set(body.match(re) ?? [])];
+  if (found.length !== 1) throw new Error(`${where}: ${found.length} ${what} references (${found.join(', ') || 'none'}); expected exactly one`);
+  return found[0];
+}
+
+const escapeRe = (s: string) => s.replace(/[$]/g, '\\$&');
+
+/**
+ * The share of Robinhood-instance revenue Lighter's own app applies (0.5 on 2026-10-23), read from the app's
+ * exchange-stats chunk: the page names its `index-<hash>.js`, that names `exchange-stats-<hash>.js`, and the chunk holds
+ * a Set of exactly the four revenue kinds and one helper `return <set>.has(<arg>)?<n>:1`. Minified names change with
+ * each build, so only the shape is matched; zero or two-plus helpers, or `<n>` outside (0, 1], is refused. Monitor-only:
+ * the revenue stream's `share` is config, and this reading is the watch on it.
+ */
+async function appFeeShare(ctx: SourceContext, params: Record<string, unknown>): Promise<SourceValue> {
+  const url = text(params, 'url', 'https://app.lighter.xyz/stats');
+  const origin = new URL(url).origin;
+  const html = await getText(ctx, url);
+  const indexPath = single(html, /\/assets\/index-[A-Za-z0-9_-]+\.js/g, 'index-<hash>.js bundle', url);
+  const index = await getText(ctx, `${origin}${indexPath}`);
+  const chunkName = single(index, /exchange-stats-[A-Za-z0-9_-]+\.js/g, 'exchange-stats-<hash>.js chunk', indexPath);
+  const chunkUrl = `${origin}/assets/${chunkName}`;
+  const chunk = await getText(ctx, chunkUrl);
+
+  const sets: string[] = [];
+  for (const m of chunk.matchAll(/([\w$]+)=new Set\(\[([^\]]*)\]\)/g)) {
+    const items = m[2].split(',').map((x) => x.trim().replace(/^[`'"]|[`'"]$/g, ''));
+    if (items.length === REVENUE_KINDS.length && new Set(items).size === items.length && REVENUE_KINDS.every((k) => items.includes(k))) sets.push(m[1]);
+  }
+  const candidates: string[] = [];
+  for (const set of new Set(sets)) {
+    for (const m of chunk.matchAll(new RegExp(`return ${escapeRe(set)}\\.has\\(([\\w$]+)\\)\\?([0-9.]+):1`, 'g'))) candidates.push(m[2]);
+  }
+  if (candidates.length !== 1) {
+    throw new Error(`${chunkName}: ${candidates.length} revenue-split helpers (return <set of ${REVENUE_KINDS.join(', ')}>.has(x)?n:1); expected exactly one`);
+  }
+  const share = Number(candidates[0]);
+  if (!Number.isFinite(share) || share <= 0 || share > 1) throw new Error(`${chunkName}: the revenue split ${candidates[0]} is outside (0, 1]`);
+  return { kind: 'level', value: share, observedAt: ctx.nowIso, source: 'api', detail: `lighter app ${chunkName} revenue split ${share}` };
+}
+
 export const litAdapters: AdapterDef[] = [
   { name: 'lit.treasury_buys_daily', needsRpc: false, run: treasuryBuysDaily },
   {
@@ -280,6 +332,12 @@ export const litAdapters: AdapterDef[] = [
     paramsDoc: `kinds: string[] (required, no duplicates; each one of ${EXCHANGE_KINDS.join(', ')}): Lighter exchangeMetrics kinds summed per UTC day; api?: string (default ${DEFAULT_API}; the Robinhood instance is https://api.rh.lighter.xyz/api/v1); days?: 1..30 (default 7; the run's --backfill-days overrides it)`,
     validateParams: validateExchangeFeesParams,
     run: exchangeFeesDaily,
+  },
+  {
+    name: 'lit.app_fee_share',
+    needsRpc: false,
+    paramsDoc: "url?: string (default https://app.lighter.xyz/stats): the Lighter app page whose exchange-stats chunk holds the Robinhood revenue split",
+    run: appFeeShare,
   },
   {
     name: 'lit.unlocks_next_year',
