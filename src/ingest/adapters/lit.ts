@@ -324,6 +324,71 @@ async function appFeeShare(ctx: SourceContext, params: Record<string, unknown>):
   return { kind: 'level', value: share, observedAt: ctx.nowIso, source: 'api', detail: `lighter app ${chunkName} revenue split ${share}` };
 }
 
+const DEFAULT_EXPLORER = 'https://explorer.elliot.ai/api';
+const STAKING_KEYS = ['field', 'api', 'explorer'];
+
+function validateStakingParams(params: Record<string, unknown>): string[] {
+  const issues: string[] = [];
+  for (const k of Object.keys(params)) if (!STAKING_KEYS.includes(k)) issues.push(`unknown key "${k}" (${STAKING_KEYS.join(', ')})`);
+  if (params.field !== 'staked' && params.field !== 'apr') issues.push(`field: staked or apr, not ${JSON.stringify(params.field ?? null)}`);
+  for (const k of ['api', 'explorer']) if (params[k] !== undefined && typeof params[k] !== 'string') issues.push(`${k}: a string`);
+  return issues;
+}
+
+/**
+ * Lighter's LIT staking pool (an L2 account named by `/systemConfig.staking_pool_index`). `staked`: the pool's LIT
+ * balance, the asset matched by symbol, never by position. `apr`: the newest completed UTC day's reward transfers into
+ * the pool (explorer account logs, `L2TransferV2` to the pool in LIT) x 365 / the staked balance read in the same run;
+ * a newest reward day more than 2 days old is refused (the rewards stopped, or the explorer lags). Monitor-only levels.
+ */
+async function stakingPool(ctx: SourceContext, params: Record<string, unknown>): Promise<SourceValue> {
+  const issues = validateStakingParams(params);
+  if (issues.length > 0) throw new Error(`params: ${issues.join('; ')}`);
+  const api = text(params, 'api', DEFAULT_API).replace(/\/$/, '');
+  const explorer = text(params, 'explorer', DEFAULT_EXPLORER).replace(/\/$/, '');
+
+  const config = (await ctx.http.getJson(`${api}/systemConfig`)) as { staking_pool_index?: unknown };
+  const pool = toFiniteNumber(config?.staking_pool_index);
+  if (pool === null || !Number.isSafeInteger(pool) || pool < 0) throw new Error(`systemConfig: no staking_pool_index in Lighter's reply (${JSON.stringify(config?.staking_pool_index ?? null)})`);
+
+  const reply = (await ctx.http.getJson(`${api}/account?by=index&value=${pool}`)) as { accounts?: { assets?: unknown }[] };
+  const accountAssets = reply?.accounts?.[0]?.assets;
+  if (!Array.isArray(accountAssets)) throw new Error(`account ${pool}: Lighter's reply has no assets list`);
+  const lit = (accountAssets as Record<string, unknown>[]).filter((a) => a?.symbol === 'LIT');
+  if (lit.length !== 1) throw new Error(`account ${pool}: ${lit.length} LIT assets; expected exactly one`);
+  const staked = amount(lit[0].balance, `account ${pool}: the LIT balance`);
+  if (params.field === 'staked') return { kind: 'level', value: staked, observedAt: ctx.nowIso, source: 'api', detail: `lighter account ${pool} (staking pool) LIT balance` };
+
+  if (staked <= 0) throw new Error(`account ${pool}: staked LIT is ${staked}; no reward rate`);
+  const logsUrl = `${explorer}/accounts/${pool}/logs`;
+  const logs = await ctx.http.getJson(logsUrl);
+  if (!Array.isArray(logs)) throw new Error(`${logsUrl}: the reply is not a list of logs`);
+  const todayStart = Math.floor(Date.parse(ctx.nowIso) / MS_PER_DAY) * MS_PER_DAY;
+  const byDay = new Map<number, number>();
+  for (const l of logs as Record<string, unknown>[]) {
+    if (l?.pubdata_type !== 'L2TransferV2') continue;
+    const t = (l.pubdata as { l2_transfer_pubdata_v2?: Record<string, unknown> } | undefined)?.l2_transfer_pubdata_v2;
+    if (!t || String(t.to_account_index) !== String(pool) || t.asset_index !== 'LIT') continue;
+    const at = typeof l.time === 'string' ? Date.parse(l.time) : Number.NaN;
+    if (Number.isNaN(at)) throw new Error(`${logsUrl}: a reward transfer has no readable time (${JSON.stringify(l.time ?? null)})`);
+    const dayMs = Math.floor(at / MS_PER_DAY) * MS_PER_DAY;
+    if (dayMs >= todayStart) continue;
+    byDay.set(dayMs, (byDay.get(dayMs) ?? 0) + amount(t.amount, `${logsUrl}: a reward amount`));
+  }
+  if (byDay.size === 0) throw new Error(`${logsUrl}: no LIT reward transfer into the pool before today`);
+  const newest = Math.max(...byDay.keys());
+  const day = new Date(newest).toISOString().slice(0, 10);
+  if (todayStart - newest > 2 * MS_PER_DAY) throw new Error(`${logsUrl}: the newest reward day ${day} is older than 2 days`);
+  const rewards = byDay.get(newest)!;
+  return {
+    kind: 'level',
+    value: (rewards * 365) / staked,
+    observedAt: ctx.nowIso,
+    source: 'api',
+    detail: `lighter staking pool ${pool}: ${rewards.toFixed(2)} LIT rewards on ${day} x 365 / ${(staked / 1e6).toFixed(2)}M staked`,
+  };
+}
+
 export const litAdapters: AdapterDef[] = [
   { name: 'lit.treasury_buys_daily', needsRpc: false, run: treasuryBuysDaily },
   {
@@ -338,6 +403,13 @@ export const litAdapters: AdapterDef[] = [
     needsRpc: false,
     paramsDoc: "url?: string (default https://app.lighter.xyz/stats): the Lighter app page whose exchange-stats chunk holds the Robinhood revenue split",
     run: appFeeShare,
+  },
+  {
+    name: 'lit.staking_pool',
+    needsRpc: false,
+    paramsDoc: `field: staked | apr (required): the staking pool's LIT balance, or the newest completed day's LIT rewards x 365 / that balance; api?: string (default ${DEFAULT_API}); explorer?: string (default ${DEFAULT_EXPLORER})`,
+    validateParams: validateStakingParams,
+    run: stakingPool,
   },
   {
     name: 'lit.unlocks_next_year',

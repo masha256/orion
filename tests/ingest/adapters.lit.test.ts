@@ -409,3 +409,93 @@ describe("LIT's Robinhood revenue split, from Lighter's app bundle", () => {
     await expect(getAdapter('lit.app_fee_share').run(sourceCtx({ http }), {})).rejects.toThrow(/getText/);
   });
 });
+
+// Shapes read on 2026-10-23: Lighter's systemConfig names the staking pool account, its account reply lists the pool's
+// assets, and the explorer's account logs list the daily LIT reward transfers into it (time an ISO string).
+describe("LIT's staking pool, from Lighter's API and explorer", () => {
+  const POOL = 281474976624800;
+  const EXPLORER = 'https://explorer.elliot.ai/api';
+  const STAKED = '110921638.78926387';
+  const reward = (time: string, amount: string, over: { to?: string; asset?: string; type?: string } = {}) => ({
+    tx_type: 'L2Transfer',
+    time,
+    pubdata_type: over.type ?? 'L2TransferV2',
+    pubdata: { l2_transfer_pubdata_v2: { from_account_index: '733613', to_account_index: over.to ?? String(POOL), asset_index: over.asset ?? 'LIT', amount } },
+  });
+  const assets = [{ symbol: 'USDC', balance: '5' }, { symbol: 'LIT', balance: STAKED }];
+  const read = (field: unknown, o: { config?: unknown; assets?: unknown; logs?: unknown } = {}) => {
+    const http = fakeHttp({
+      [`${API}/systemConfig`]: o.config ?? { staking_pool_index: POOL },
+      [`${API}/account?by=index&value=${POOL}`]: { code: 200, accounts: [{ index: POOL, assets: o.assets ?? assets }] },
+      [`${EXPLORER}/accounts/${POOL}/logs`]: o.logs ?? [],
+    });
+    return { http, result: getAdapter('lit.staking_pool').run(sourceCtx({ nowIso: '2026-10-23T12:00:00.000Z', http }), { field }) };
+  };
+  const level = async (p: Promise<unknown>) => {
+    const v = (await p) as { kind: string; value: number; observedAt: string; source: string; detail: string };
+    if (v.kind !== 'level') throw new Error('expected a level');
+    return v;
+  };
+
+  it('staked reads LIT by symbol', async () => {
+    const v = await level(read('staked').result);
+    expect(v).toMatchObject({ value: 110921638.78926387, observedAt: '2026-10-23T12:00:00.000Z', source: 'api' });
+    expect(v.detail).toContain(String(POOL));
+    expect(getAdapter('lit.staking_pool').needsRpc).toBe(false);
+  });
+
+  it('refuses no LIT asset', async () => {
+    await expect(read('staked', { assets: [{ symbol: 'USDC', balance: '5' }] }).result).rejects.toThrow(/0 LIT assets/);
+  });
+
+  it('refuses two LIT assets', async () => {
+    await expect(read('staked', { assets: [...assets, { symbol: 'LIT', balance: '1' }] }).result).rejects.toThrow(/2 LIT assets/);
+  });
+
+  it('refuses a missing staking_pool_index', async () => {
+    await expect(read('staked', { config: {} }).result).rejects.toThrow(/staking_pool_index/);
+    await expect(read('apr', { config: { staking_pool_index: 'x' } }).result).rejects.toThrow(/staking_pool_index/);
+  });
+
+  it("apr is the newest completed day's rewards x 365 / staked", async () => {
+    const logs = [
+      reward('2026-10-23T08:00:01.546Z', '99999'), // today: not completed
+      reward('2026-10-22T18:00:01.135Z', '18000.37'),
+      reward('2026-10-22T19:00:00.000Z', '328'),
+      reward('2026-10-21T18:00:01.950Z', '18825.34620310'),
+    ];
+    const r = read('apr', { logs });
+    const v = await level(r.result);
+    expect(v.value).toBeCloseTo((18328.37 * 365) / 110921638.78926387, 10);
+    expect(v.value).toBeCloseTo(0.0603, 4);
+    expect(v.detail).toContain('2026-10-22');
+    expect(r.http.calls.map((c) => c.url)).toContain(`${EXPLORER}/accounts/${POOL}/logs`);
+  });
+
+  it('apr refuses a newest reward older than 2 days', async () => {
+    await expect(read('apr', { logs: [reward('2026-10-20T18:00:00.000Z', '18000')] }).result).rejects.toThrow(/2026-10-20.*older than 2 days/);
+    await expect(read('apr', { logs: [] }).result).rejects.toThrow(/no LIT reward/);
+    // Two days back is still fresh.
+    expect((await level(read('apr', { logs: [reward('2026-10-21T18:00:00.000Z', '18000')] }).result)).value).toBeGreaterThan(0);
+  });
+
+  it('apr ignores transfers to other accounts and other assets', async () => {
+    const logs = [
+      reward('2026-10-22T18:00:00.000Z', '18328.37'),
+      reward('2026-10-22T18:00:01.000Z', '5000000', { to: '733613' }),
+      reward('2026-10-22T18:00:02.000Z', '5000000', { asset: 'USDC' }),
+      reward('2026-10-22T18:00:03.000Z', '5000000', { type: 'L2Withdraw' }),
+    ];
+    expect((await level(read('apr', { logs }).result)).value).toBeCloseTo(0.0603, 4);
+  });
+
+  it('validateParams refuses a field other than staked|apr', () => {
+    const v = (params: Record<string, unknown>) => getAdapter('lit.staking_pool').validateParams!(params);
+    expect(v({ field: 'staked' })).toEqual([]);
+    expect(v({ field: 'apr', api: API, explorer: EXPLORER })).toEqual([]);
+    for (const field of [undefined, 'apy', 3]) expect(v({ field }), String(field)).toEqual([expect.stringMatching(/^field: staked or apr/)]);
+    expect(v({ field: 'apr', explorer: 1 })).toEqual(['explorer: a string']);
+    expect(v({ field: 'apr', pool: 1 })).toEqual(['unknown key "pool" (field, api, explorer)']);
+    for (const word of ['field', 'api', 'explorer']) expect(getAdapter('lit.staking_pool').paramsDoc).toContain(word);
+  });
+});
