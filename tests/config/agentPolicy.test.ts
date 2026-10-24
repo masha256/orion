@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { agentBand, budgetsFor, calendarEvents, DEFAULT_BUDGETS, driverDeviationPct, keyBounds, maxStepFraction, provisionalMovePct } from '../../src/config/agentPolicy.js';
+import { agentBand, budgetsFor, calendarEvents, DEFAULT_BUDGETS, driverDeviationPct, inputUnitsTenths, keyBounds, maxStepFraction, provisionalMovePct } from '../../src/config/agentPolicy.js';
 import { parseAssetYaml } from '../../src/config/load.js';
 import type { OrionError } from '../../src/types.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
@@ -44,7 +44,7 @@ describe('agent settings', () => {
     expect(maxStepFraction(asset)).toBe(0.25);
     expect(provisionalMovePct(asset)).toBe(25);
     expect(budgetsFor(asset, 'deep')).toEqual(DEFAULT_BUDGETS.deep);
-    expect(budgetsFor(asset, 'bootstrap')).toEqual({ requests: 60, inputTokens: 3_000_000, outputTokens: 100_000, webSearches: 30, webFetches: 30, proposals: 2 });
+    expect(budgetsFor(asset, 'bootstrap')).toEqual({ requests: 60, inputUnits: 3_000_000, outputTokens: 100_000, webSearches: 30, webFetches: 30, proposals: 2 });
   });
 
   it('applies partial overrides per run type and per field', () => {
@@ -55,6 +55,20 @@ describe('agent settings', () => {
     expect(provisionalMovePct(asset)).toBe(40);
     expect(budgetsFor(asset, 'weekly')).toEqual({ ...DEFAULT_BUDGETS.weekly, requests: 5, webSearches: 0 });
     expect(budgetsFor(asset, 'triage')).toEqual(DEFAULT_BUDGETS.triage);
+  });
+
+  it('reads an input_tokens override as input units', () => {
+    const asset = parseAssetYaml(`${MINI_ASSET_YAML}agent:\n  budgets:\n    weekly: { input_tokens: 2000000 }\n`).config;
+    expect(budgetsFor(asset, 'weekly')).toEqual({ ...DEFAULT_BUDGETS.weekly, inputUnits: 2_000_000 });
+  });
+
+  it('keeps the default numbers', () => {
+    expect([DEFAULT_BUDGETS.weekly, DEFAULT_BUDGETS.triage, DEFAULT_BUDGETS.deep, DEFAULT_BUDGETS.bootstrap, DEFAULT_BUDGETS.disclosure].map((b) => b.inputUnits))
+      .toEqual([600_000, 500_000, 2_000_000, 3_000_000, 1_200_000]);
+  });
+
+  it('weights input in tenths, exactly', () => {
+    expect(inputUnitsTenths({ inputTokens: 10, cacheReadTokens: 600, cacheWriteTokens: 400 })).toBe(5700);
   });
 
   it('rejects a step fraction outside (0, 1], an unknown budget field, and a non-positive move threshold', () => {

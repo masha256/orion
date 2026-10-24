@@ -1,9 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { runLoop, type LoopInput } from '../../src/agent/loop.js';
 import { webTools, type ModelMessageParam } from '../../src/agent/model.js';
 import { fetchedPagesFrom } from '../../src/agent/research.js';
 import { DEFAULT_BUDGETS } from '../../src/config/agentPolicy.js';
-import { calls, say, scriptedModel, text, thinking, toolUse, webFetch, type ScriptStep } from '../helpers/fakeModel.js';
+import type { RunType } from '../../src/types.js';
+import { calls, journalCall, say, scriptedModel, text, thinking, toolUse, webFetch, type ScriptStep } from '../helpers/fakeModel.js';
 
 class RateLimitError extends Error {}
 
@@ -37,7 +39,7 @@ describe('the tool-use loop', () => {
     expect(h.model.toolResults(1)).toEqual([
       {
         tool_use_id: 'a', is_error: false, result: { ok: 'get_drivers' },
-        budget: { requests_left: 24, input_tokens_left: 599_900, output_tokens_left: 39_950, web_searches_left: 5, web_fetches_left: 5 },
+        budget: { requests_left: 24, input_units_left: 599_900, output_tokens_left: 39_950, web_searches_left: 5, web_fetches_left: 5 },
       },
     ]);
     expect(result.usage).toMatchObject({ requests: 3, inputTokens: 300, outputTokens: 150 });
@@ -91,12 +93,51 @@ describe('the tool-use loop', () => {
     expect(h.model.requests).toHaveLength(2);
   });
 
-  it('counts cache reads and writes toward the input budget, and output toward its own', async () => {
+  it('counts input in weighted units: uncached x1, cache writes x1.25, cache reads x0.1', async () => {
+    // 10 + 400 x 1.25 + 600 x 0.1 = 570 units. 600 x 0.1 is 60.00000000000001 in a double, hence the count in tenths.
     const cached = { ...calls(toolUse('get_drivers', {})), usage: { input_tokens: 10, cache_read_input_tokens: 600, cache_creation_input_tokens: 400, output_tokens: 5 } };
-    const input = await harness([cached, cached], { budgets: { ...DEFAULT_BUDGETS.weekly, inputTokens: 1000 } }).run();
-    expect(input).toMatchObject({ stop: 'budget_exhausted', detail: 'input tokens (1000)', usage: { inputTokens: 10, cacheReadTokens: 600, cacheWriteTokens: 400 } });
+    const atCap = harness([cached, cached], { budgets: { ...DEFAULT_BUDGETS.weekly, inputUnits: 570 } });
+    const input = await atCap.run();
+    expect(input).toMatchObject({ stop: 'budget_exhausted', detail: 'input units (570)', usage: { inputTokens: 10, cacheReadTokens: 600, cacheWriteTokens: 400 } });
+    expect(atCap.model.requests).toHaveLength(1);
+    const underCap = harness([cached, calls(journalCall()), say('Done.')], { budgets: { ...DEFAULT_BUDGETS.weekly, inputUnits: 571 } });
+    await underCap.run();
+    expect(underCap.model.requests).toHaveLength(2); // one unit under the cap: the second request goes out (its own 100 then spend the rest)
+    expect(underCap.model.toolResults(1)[0].budget.input_units_left).toBe(1);
     const output = await harness([{ ...cached, usage: { output_tokens: 70 } }, cached], { budgets: { ...DEFAULT_BUDGETS.weekly, outputTokens: 60 } }).run();
     expect(output).toMatchObject({ stop: 'budget_exhausted', detail: 'output tokens (60)' });
+  });
+
+  it('never reports negative input units left', async () => {
+    const huge = { ...calls(toolUse('get_drivers', {}, 'a')), usage: { input_tokens: 10_000_000 } };
+    const h = harness([huge], { budgets: { ...DEFAULT_BUDGETS.weekly, inputUnits: 600_000 } });
+    expect(await h.run()).toMatchObject({ stop: 'budget_exhausted', detail: 'input units (600000)' });
+    const results = (h.messages.at(-1) as { content: { content: string }[] }).content;
+    expect((JSON.parse(results[0].content.split('\n\nbudget: ')[1]) as Record<string, number>).input_units_left).toBe(0);
+  });
+
+  it('lets the three live budget stops run on under units (AERO #44, VVV #17, #31)', async () => {
+    type Row = [number, number, number, number, number, number];
+    const fixture = JSON.parse(readFileSync(new URL('../fixtures/agent/budget-incidents.json', import.meta.url), 'utf8')) as {
+      incidents: { run: number; runType: RunType; rows: Row[] }[];
+    };
+    expect(fixture.incidents.map((i) => i.run)).toEqual([17, 31, 44]);
+    for (const incident of fixture.incidents) {
+      const budgets = DEFAULT_BUDGETS[incident.runType];
+      // (a) The fixture reproduces the incident: raw input crossed the cap on the last request, not before.
+      const raw = incident.rows.map(([input, read, write]) => input + read + write);
+      const before = raw.slice(0, -1).reduce((a, b) => a + b, 0);
+      expect(before, `run ${incident.run}`).toBeLessThan(budgets.inputUnits);
+      expect(before + raw.at(-1)!, `run ${incident.run}`).toBeGreaterThanOrEqual(budgets.inputUnits);
+      // (b) Under units the same requests leave room to write the journal.
+      const steps: ScriptStep[] = incident.rows.map(([input, read, write, output, searches, fetches]) => ({
+        ...calls(toolUse('get_drivers', {})),
+        usage: { input_tokens: input, cache_read_input_tokens: read, cache_creation_input_tokens: write, output_tokens: output, server_tool_use: { web_search_requests: searches, web_fetch_requests: fetches } },
+      }));
+      const h = harness([...steps, calls(journalCall()), say('Done.')], { budgets });
+      expect(await h.run(), `run ${incident.run}`).toMatchObject({ stop: 'finished' });
+      expect(h.model.requests, `run ${incident.run}`).toHaveLength(incident.rows.length + 2);
+    }
   });
 
   it('reminds once when the model stops without a journal entry, then gives up', async () => {

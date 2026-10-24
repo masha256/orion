@@ -462,7 +462,7 @@ describe('a disclosure run', () => {
     expect(pack.run).toMatchObject({ type: 'disclosure', budgets: DEFAULT_BUDGETS.disclosure });
     expect(pack.document).toMatchObject({ id: doc.id, kind: 'post', sha256: doc.sha256, text: POST });
     // 25 requests, 3 searches, 5 fetches: the web tools carry the disclosure budget's limits.
-    expect(DEFAULT_BUDGETS.disclosure).toEqual({ requests: 25, inputTokens: 1_200_000, outputTokens: 40_000, webSearches: 3, webFetches: 5, proposals: 5 });
+    expect(DEFAULT_BUDGETS.disclosure).toEqual({ requests: 25, inputUnits: 1_200_000, outputTokens: 40_000, webSearches: 3, webFetches: 5, proposals: 5 });
     expect(model.requests[0].tools.find((t) => 'name' in t && t.name === 'web_search')).toMatchObject({ max_uses: 3 });
     expect(model.requests[0].tools.find((t) => 'name' in t && t.name === 'web_fetch')).toMatchObject({ max_uses: 5 });
   });

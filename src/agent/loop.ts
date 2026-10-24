@@ -1,4 +1,4 @@
-import type { RunBudgets } from '../config/agentPolicy.js';
+import { inputUnitsTenths, type RunBudgets } from '../config/agentPolicy.js';
 import type { Effort } from '../config/personas.js';
 import { ZERO_USAGE, type AgentUsage } from '../db/agentRuns.js';
 import type { ModelClient, ModelMessage, ModelMessageParam, ModelTool } from './model.js';
@@ -45,11 +45,9 @@ export interface LoopResult {
   responses: ResponseMeta[];
 }
 
-const inputSpent = (u: AgentUsage): number => u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens;
-
 function exhausted(usage: AgentUsage, budgets: RunBudgets): string | null {
   if (usage.requests >= budgets.requests) return `requests (${budgets.requests})`;
-  if (inputSpent(usage) >= budgets.inputTokens) return `input tokens (${budgets.inputTokens})`;
+  if (inputUnitsTenths(usage) >= budgets.inputUnits * 10) return `input units (${budgets.inputUnits})`;
   if (usage.outputTokens >= budgets.outputTokens) return `output tokens (${budgets.outputTokens})`;
   // STRICTLY greater, unlike the budgets above. `max_uses` bounds one request's server-side loop, not the run's total,
   // so without this a 25-request run could search 125 times. Reaching the limit exactly is a run doing precisely what
@@ -66,7 +64,7 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
   const done = (stop: LoopStop, detail: string | null = null): LoopResult => ({ stop, detail, usage, responses });
   const budgetLeft = () => ({
     requests_left: Math.max(0, budgets.requests - usage.requests),
-    input_tokens_left: Math.max(0, budgets.inputTokens - inputSpent(usage)),
+    input_units_left: Math.max(0, Math.floor((budgets.inputUnits * 10 - inputUnitsTenths(usage)) / 10)),
     output_tokens_left: Math.max(0, budgets.outputTokens - usage.outputTokens),
     web_searches_left: Math.max(0, budgets.webSearches - usage.webSearches),
     web_fetches_left: Math.max(0, budgets.webFetches - usage.webFetches),
