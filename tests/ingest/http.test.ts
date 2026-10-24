@@ -175,4 +175,27 @@ describe('http transport', () => {
     expect(await cached.getJson('https://x.test/info')).toEqual({ n: 3 });
     expect(h.calls.map((c) => [c.method, c.body])).toEqual([['POST', '{"type":"a"}'], ['POST', '{"type":"b"}'], ['GET', undefined]]);
   });
+  it('getText returns the body as text, with the same retries, and refuses a 4xx', async () => {
+    const h = harness([{ status: 503 }, { status: 200, body: '<html>hi</html>' }, { status: 404 }]);
+    expect(await h.http.getText!('https://x.test/page', { 'x-key': 'k' })).toBe('<html>hi</html>');
+    expect(h.calls.map((c) => c.method)).toEqual(['GET', 'GET']);
+    expect(h.calls[0].headers).toMatchObject({ 'x-key': 'k' });
+    expect(h.calls[0].headers.accept).not.toBe('application/json');
+    await expect(h.http.getText!('https://x.test/gone')).rejects.toThrow(/HTTP 404/);
+  });
+
+  it("spaces Lighter's RH API, explorer and app hosts 400 ms apart", () => {
+    for (const host of ['api.rh.lighter.xyz', 'explorer.elliot.ai', 'app.lighter.xyz']) expect(DEFAULT_HTTP_OPTIONS.hostSpacingMs[host]).toBe(400);
+  });
+
+  it('caches a text read once per URL, apart from a JSON read of the same URL', async () => {
+    const h = harness([{ status: 200, body: 'a' }, ok({ n: 1 })]);
+    const cached = withRunCache(h.http);
+    expect(await cached.getText!('https://x.test/a')).toBe('a');
+    expect(await cached.getText!('https://x.test/a')).toBe('a');
+    expect(await cached.getJson('https://x.test/a')).toEqual({ n: 1 });
+    expect(h.calls).toHaveLength(2);
+    const bare = withRunCache({ getJson: async () => 1, postJson: async () => 1 });
+    expect(bare.getText).toBeUndefined();
+  });
 });

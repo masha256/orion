@@ -28,5 +28,11 @@ export function fakeHttp(routes: Record<string, Route>): FakeHttp {
     async postJson(url, body, headers = {}) {
       return answer('POST', url, headers, body);
     },
+    /** A text read answers a string route; any other route is a test bug, so it throws. */
+    async getText(url, headers = {}) {
+      const v = answer('GET', url, headers);
+      if (typeof v !== 'string') throw new Error(`fakeHttp: the route for ${url} is not text`);
+      return v;
+    },
   };
 }

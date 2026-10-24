@@ -202,8 +202,85 @@ function inTranches<R extends { unlocked: number }>(rows: R[], at: (rows: R[], t
   return (remaining / tr.count) * due;
 }
 
+/** Lighter's exchangeMetrics kinds this adapter may sum: the four revenue kinds, liquidations and the two buyback series. */
+const EXCHANGE_KINDS = ['maker_fee', 'taker_fee', 'transfer_fee', 'withdraw_fee', 'liquidation_fee', 'buyback', 'buyback_usdc'];
+const EXCHANGE_FEES_KEYS = ['api', 'kinds', 'days'];
+
+export function validateExchangeFeesParams(params: Record<string, unknown>): string[] {
+  const issues: string[] = [];
+  for (const k of Object.keys(params)) if (!EXCHANGE_FEES_KEYS.includes(k)) issues.push(`unknown key "${k}" (${EXCHANGE_FEES_KEYS.join(', ')})`);
+  if (params.api !== undefined && typeof params.api !== 'string') issues.push('api: a string');
+  const kinds = params.kinds;
+  if (!Array.isArray(kinds) || kinds.length === 0 || !kinds.every((x) => typeof x === 'string')) {
+    issues.push(`kinds: a non-empty list of exchangeMetrics kinds (${EXCHANGE_KINDS.join(', ')})`);
+  } else {
+    const dup = kinds.filter((k, i) => kinds.indexOf(k) !== i);
+    if (dup.length > 0) issues.push(`kinds: duplicate ${[...new Set(dup)].join(', ')}`);
+    const unknown = kinds.filter((k) => !EXCHANGE_KINDS.includes(k));
+    if (unknown.length > 0) issues.push(`kinds: unknown ${unknown.join(', ')} (${EXCHANGE_KINDS.join(', ')})`);
+  }
+  if (params.days !== undefined && !intIn(params.days, 1, 30)) issues.push(`days: an integer 1..30, not ${JSON.stringify(params.days)}`);
+  return issues;
+}
+
+/**
+ * Fees per completed UTC day from Lighter's own exchangeMetrics (`period=all`, one request per kind), summed over
+ * `kinds`. Lighter lists every day from a kind's first day, zeros included, so a day before a kind's first day counts 0
+ * for it, and a day missing at or after it is refused (an outage gap, never a 0 that understates revenue). Today's
+ * partial day is dropped. Days: the run's `--backfill-days` when given, else `params.days` (default 7), starting no
+ * earlier than the first day any kind lists.
+ */
+async function exchangeFeesDaily(ctx: SourceContext, params: Record<string, unknown>): Promise<SourceValue> {
+  const issues = validateExchangeFeesParams(params);
+  if (issues.length > 0) throw new Error(`params: ${issues.join('; ')}`);
+  const api = text(params, 'api', DEFAULT_API).replace(/\/$/, '');
+  const kinds = params.kinds as string[];
+  const days = ctx.backfillDays ?? number(params, 'days', 7);
+  const todayStart = Math.floor(Date.parse(ctx.nowIso) / MS_PER_DAY) * MS_PER_DAY;
+  const windowStart = todayStart - days * MS_PER_DAY;
+
+  const perKind = new Map<string, { byDay: Map<number, number>; firstMs: number }>();
+  for (const kind of kinds) {
+    const reply = (await ctx.http.getJson(`${api}/exchangeMetrics?period=all&kind=${encodeURIComponent(kind)}`)) as { metrics?: unknown };
+    if (!reply || !Array.isArray(reply.metrics)) throw new Error(`exchangeMetrics ${kind}: Lighter's reply has no metrics list`);
+    const byDay = new Map<number, number>();
+    let firstMs = Number.POSITIVE_INFINITY;
+    for (const m of reply.metrics as Record<string, unknown>[]) {
+      const ms = Math.floor((amount(m.timestamp, `exchangeMetrics ${kind}: a timestamp`) * 1000) / MS_PER_DAY) * MS_PER_DAY;
+      if (ms >= todayStart) continue;
+      const value = amount(m.data, `exchangeMetrics ${kind}: the data of ${new Date(ms).toISOString().slice(0, 10)}`);
+      byDay.set(ms, (byDay.get(ms) ?? 0) + value);
+      firstMs = Math.min(firstMs, ms);
+    }
+    perKind.set(kind, { byDay, firstMs });
+  }
+
+  const earliest = Math.min(...[...perKind.values()].map((k) => k.firstMs));
+  const points: { day: string; value: number }[] = [];
+  for (let ms = Math.max(windowStart, earliest); ms < todayStart; ms += MS_PER_DAY) {
+    const day = new Date(ms).toISOString().slice(0, 10);
+    let value = 0;
+    for (const [kind, k] of perKind) {
+      if (ms < k.firstMs) continue;
+      const v = k.byDay.get(ms);
+      if (v === undefined) throw new Error(`exchangeMetrics ${kind}: ${day} missing`);
+      value += v;
+    }
+    points.push({ day, value });
+  }
+  if (points.length === 0) throw new Error(`exchangeMetrics ${kinds.join('+')}: no completed day in the last ${days} days`);
+  return { kind: 'daily_series', points, detail: `lighter exchangeMetrics ${new URL(api).host} ${kinds.join('+')} (${points.length} days)` };
+}
+
 export const litAdapters: AdapterDef[] = [
   { name: 'lit.treasury_buys_daily', needsRpc: false, run: treasuryBuysDaily },
+  {
+    name: 'lit.exchange_fees_daily',
+    needsRpc: false,
+    paramsDoc: `kinds: string[] (required, no duplicates; each one of ${EXCHANGE_KINDS.join(', ')}): Lighter exchangeMetrics kinds summed per UTC day; api?: string (default ${DEFAULT_API}; the Robinhood instance is https://api.rh.lighter.xyz/api/v1); days?: 1..30 (default 7; the run's --backfill-days overrides it)`,
+    validateParams: validateExchangeFeesParams,
+    run: exchangeFeesDaily,
+  },
   {
     name: 'lit.unlocks_next_year',
     needsRpc: false,

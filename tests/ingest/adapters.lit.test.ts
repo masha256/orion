@@ -245,3 +245,104 @@ describe("LIT unlocks over the next year, on the issuer's own tranche schedule",
     await expect(read('2026-10-23T12:00:00.000Z', { allocations: ['Team'], tranches: { first: '2027-01-29', every_months: 0, count: 36 } })).rejects.toThrow(/tranches\.every_months/);
   });
 });
+
+// Shape read on 2026-10-23 from Lighter's exchangeMetrics: one row per UTC day from the kind's first day, `timestamp`
+// the day's start in seconds, `data` the day's total.
+describe("LIT exchange fees per UTC day, from Lighter's exchangeMetrics", () => {
+  const NOW23 = '2026-10-23T12:00:00.000Z';
+  const today23 = Date.parse('2026-10-23T00:00:00Z');
+  const RH = 'https://api.rh.lighter.xyz/api/v1';
+  const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  /** `days` completed days ending yesterday (plus today's partial row), value `f(daysAgo)`. */
+  const metrics = (days: number, f: (ago: number) => unknown, skipAgo: number[] = []) => {
+    const rows: { timestamp: number; data: unknown }[] = [];
+    for (let ago = days; ago >= 0; ago--) if (!skipAgo.includes(ago)) rows.push({ timestamp: (today23 - ago * DAY) / 1000, data: ago === 0 ? 999_999 : f(ago) });
+    return { code: 200, metrics: rows };
+  };
+  const route = (byKind: Record<string, unknown>) => (url: string) => {
+    const u = new URL(url);
+    expect(u.searchParams.get('period')).toBe('all');
+    const kind = u.searchParams.get('kind')!;
+    if (!(kind in byKind)) throw new Error(`test bug: no kind ${kind}`);
+    return structuredClone(byKind[kind]);
+  };
+  const read = (byKind: Record<string, unknown>, params: Record<string, unknown>, backfillDays?: number, api = API) => {
+    const http = fakeHttp({ [`${api}/exchangeMetrics`]: route(byKind) });
+    const ctx = sourceCtx({ nowIso: NOW23, http, ...(backfillDays !== undefined ? { backfillDays } : {}) });
+    return { http, result: getAdapter('lit.exchange_fees_daily').run(ctx, params) };
+  };
+  const series = async (p: Promise<unknown>) => {
+    const v = (await p) as { kind: string; points: { day: string; value: number }[]; detail: string };
+    if (v.kind !== 'daily_series') throw new Error('expected a series');
+    return v;
+  };
+
+  it('sums the kinds per UTC day and drops today', async () => {
+    const v = await series(read({ maker_fee: metrics(5, (a) => 100 * a), taker_fee: metrics(5, (a) => a) }, { kinds: ['maker_fee', 'taker_fee'], days: 5 }).result);
+    expect(v.points).toEqual([5, 4, 3, 2, 1].map((a) => ({ day: dayOf(today23 - a * DAY), value: 101 * a })));
+    expect(v.points.some((p) => p.day === '2026-10-23')).toBe(false);
+    expect(v.detail).toBe('lighter exchangeMetrics mainnet.zklighter.elliot.ai maker_fee+taker_fee (5 days)');
+  });
+
+  it("a day before a kind's first day counts 0 for that kind", async () => {
+    const v = await series(read({ maker_fee: metrics(5, () => 10), taker_fee: metrics(3, () => 1) }, { kinds: ['maker_fee', 'taker_fee'], days: 5 }).result);
+    expect(v.points.map((p) => p.value)).toEqual([10, 10, 11, 11, 11]);
+  });
+
+  it("refuses a day missing inside a kind's range", async () => {
+    const r = read({ maker_fee: metrics(5, () => 10), taker_fee: metrics(5, () => 1, [3]) }, { kinds: ['maker_fee', 'taker_fee'], days: 5 });
+    await expect(r.result).rejects.toThrow(`exchangeMetrics taker_fee: ${dayOf(today23 - 3 * DAY)} missing`);
+  });
+
+  it('refuses a non-numeric data', async () => {
+    const r = read({ maker_fee: metrics(5, (a) => (a === 2 ? 'x' : 1)) }, { kinds: ['maker_fee'], days: 5 });
+    await expect(r.result).rejects.toThrow(/maker_fee/);
+    await expect(read({ maker_fee: { code: 200 } }, { kinds: ['maker_fee'] }).result).rejects.toThrow(/no metrics list/);
+  });
+
+  it('refuses a window with no completed day', async () => {
+    // Only today's partial row: nothing completed to report.
+    await expect(read({ maker_fee: metrics(0, () => 1) }, { kinds: ['maker_fee'] }).result).rejects.toThrow(/no completed day/);
+  });
+
+  it('returns the last --backfill-days completed days', async () => {
+    const long = metrics(400, () => 2);
+    const deep = await series(read({ maker_fee: long }, { kinds: ['maker_fee'] }, 362).result);
+    expect(deep.points.length).toBe(362);
+    expect(deep.points[0].day).toBe(dayOf(today23 - 362 * DAY));
+    expect(deep.points.at(-1)!.day).toBe('2026-10-22');
+    const routine = await series(read({ maker_fee: long }, { kinds: ['maker_fee'] }).result);
+    expect(routine.points.length).toBe(7);
+  });
+
+  it('uses params.api', async () => {
+    const r = read({ maker_fee: metrics(9, () => 1) }, { api: RH, kinds: ['maker_fee'] }, undefined, RH);
+    const v = await series(r.result);
+    expect(r.http.calls.length).toBe(1);
+    expect(r.http.calls.every((c) => c.url.startsWith(`${RH}/exchangeMetrics?period=all&kind=maker_fee`))).toBe(true);
+    expect(v.detail).toContain('api.rh.lighter.xyz');
+  });
+
+  it('validateParams refuses empty, duplicate and unknown kinds, and days outside 1..30', () => {
+    const v = (params: Record<string, unknown>) => getAdapter('lit.exchange_fees_daily').validateParams!(params);
+    expect(v({ kinds: [] })).toHaveLength(1);
+    expect(v({})).toHaveLength(1);
+    expect(v({ kinds: ['maker_fee', 'maker_fee'] })).toEqual([expect.stringMatching(/duplicate.*maker_fee/)]);
+    const unknown = v({ kinds: ['volume'] });
+    expect(unknown).toHaveLength(1);
+    expect(unknown[0]).toContain('volume');
+    expect(unknown[0]).toContain('maker_fee, taker_fee, transfer_fee, withdraw_fee, liquidation_fee, buyback, buyback_usdc');
+    expect(v({ kinds: ['maker_fee'], days: 0 })).toEqual([expect.stringMatching(/^days/)]);
+    expect(v({ kinds: ['maker_fee'], days: 31 })).toEqual([expect.stringMatching(/^days/)]);
+    expect(v({ kinds: ['maker_fee'], days: 2.5 })).toEqual([expect.stringMatching(/^days/)]);
+    expect(v({ kinds: ['maker_fee'], api: 5 })).toEqual(['api: a string']);
+    expect(v({ kinds: ['maker_fee'], kind: 'x' })).toEqual(['unknown key "kind" (api, kinds, days)']);
+    expect(v({ api: RH, kinds: ['maker_fee', 'taker_fee', 'transfer_fee', 'withdraw_fee'], days: 30 })).toEqual([]);
+  });
+
+  it('paramsDoc mentions api, kinds and days', () => {
+    const doc = getAdapter('lit.exchange_fees_daily').paramsDoc!;
+    for (const word of ['api', 'kinds', 'days']) expect(doc).toContain(word);
+    expect(getAdapter('lit.exchange_fees_daily').needsRpc).toBe(false);
+  });
+});

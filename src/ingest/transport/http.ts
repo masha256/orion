@@ -2,6 +2,9 @@ export interface HttpTransport {
   getJson(url: string, headers?: Record<string, string>): Promise<unknown>;
   /** POST `body` as JSON and parse the JSON reply, with GET's retries, timeout, and errors. For adapters: no declarative source posts. */
   postJson(url: string, body: unknown, headers?: Record<string, string>): Promise<unknown>;
+  /** GET the body as text (an HTML page, a JS bundle), with getJson's retries, timeout, spacing and errors. Optional, so a
+   * transport fake need not implement it; an adapter that needs it refuses a transport without it. */
+  getText?(url: string, headers?: Record<string, string>): Promise<string>;
 }
 
 export class HttpError extends Error {
@@ -46,7 +49,14 @@ export const DEFAULT_HTTP_OPTIONS: HttpOptions = {
   defaultSpacingMs: 250,
   // Keyless CoinGecko allows about two rapid requests and then answers 429.
   // Lighter's public API answers 429 after about 150 rapid requests (2026-10-16); LIT's trade history is paged 100 at a time.
-  hostSpacingMs: { 'api.coingecko.com': 2500, 'mainnet.zklighter.elliot.ai': 400 },
+  // Its Robinhood instance, explorer and app are spaced the same (2026-10-23).
+  hostSpacingMs: {
+    'api.coingecko.com': 2500,
+    'mainnet.zklighter.elliot.ai': 400,
+    'api.rh.lighter.xyz': 400,
+    'explorer.elliot.ai': 400,
+    'app.lighter.xyz': 400,
+  },
   // Hyperliquid's info API serves its 300 KB spot meta at tens of KB a second on a slow link.
   hostTimeoutMs: { 'api.hyperliquid.xyz': 60_000 },
 };
@@ -77,7 +87,7 @@ export function createHttpTransport(deps: HttpDeps, options: Partial<HttpOptions
     lastStart.set(host, deps.now());
   };
 
-  const request = async (method: 'GET' | 'POST', url: string, headers: Record<string, string>, body?: string): Promise<unknown> => {
+  const request = async (method: 'GET' | 'POST', url: string, headers: Record<string, string>, body?: string, asText = false): Promise<unknown> => {
     const host = new URL(url).host;
     let failure = new HttpError(`${url}: no attempt was made`, null);
     for (let attempt = 1; attempt <= o.attempts; attempt++) {
@@ -86,7 +96,7 @@ export function createHttpTransport(deps: HttpDeps, options: Partial<HttpOptions
       let res: HttpResponseLike;
       let text: string | undefined;
       try {
-        res = await deps.fetch(url, { method, headers: { accept: 'application/json', ...headers }, body, signal: AbortSignal.timeout(timeoutMsFor(o, host)) });
+        res = await deps.fetch(url, { method, headers: { accept: asText ? '*/*' : 'application/json', ...headers }, body, signal: AbortSignal.timeout(timeoutMsFor(o, host)) });
         // Reading the body can fail the same way the request itself can (a timeout or reset mid-read);
         // it belongs inside the same retry path, not after it.
         if (res.status >= 200 && res.status < 300) text = await res.text();
@@ -96,6 +106,7 @@ export function createHttpTransport(deps: HttpDeps, options: Partial<HttpOptions
         continue;
       }
       if (res.status >= 200 && res.status < 300) {
+        if (asText) return text!;
         try {
           return JSON.parse(text!) as unknown;
         } catch {
@@ -121,6 +132,7 @@ export function createHttpTransport(deps: HttpDeps, options: Partial<HttpOptions
 
   return {
     getJson: (url, headers = {}) => request('GET', url, headers),
+    getText: async (url, headers = {}) => (await request('GET', url, headers, undefined, true)) as string,
     // The body is serialised once, here, so a retry posts the same bytes.
     postJson: (url, body, headers = {}) => request('POST', url, { 'content-type': 'application/json', ...headers }, JSON.stringify(body)),
   };
@@ -148,5 +160,6 @@ export function withRunCache(inner: HttpTransport): HttpTransport {
   return {
     getJson: (url, headers) => once(`GET ${url}`, () => inner.getJson(url, headers)),
     postJson: (url, body, headers) => once(`POST ${url} ${JSON.stringify(body)}`, () => inner.postJson(url, body, headers)),
+    ...(inner.getText ? { getText: (url: string, headers?: Record<string, string>) => once(`TEXT ${url}`, () => inner.getText!(url, headers)) as Promise<string> } : {}),
   };
 }
