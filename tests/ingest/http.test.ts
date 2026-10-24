@@ -184,8 +184,22 @@ describe('http transport', () => {
     await expect(h.http.getText!('https://x.test/gone')).rejects.toThrow(/HTTP 404/);
   });
 
-  it("spaces Lighter's RH API, explorer and app hosts 400 ms apart", () => {
-    for (const host of ['api.rh.lighter.xyz', 'explorer.elliot.ai', 'app.lighter.xyz']) expect(DEFAULT_HTTP_OPTIONS.hostSpacingMs[host]).toBe(400);
+  it("spaces Lighter's RH API, explorer and app hosts 400 ms apart, each host on its own clock", async () => {
+    const hosts = ['api.rh.lighter.xyz', 'explorer.elliot.ai', 'app.lighter.xyz'];
+    for (const host of hosts) expect(DEFAULT_HTTP_OPTIONS.hostSpacingMs[host]).toBe(400);
+    // Two back-to-back reads per host through the default options: the second waits out the 400 ms, and the first read
+    // of the next host waits for nothing (only the default 250 ms applies to an unlisted host).
+    const h = harness(Array.from({ length: 8 }, () => ok({})));
+    for (const host of hosts) {
+      await h.http.getJson(`https://${host}/a`);
+      await h.http.getJson(`https://${host}/b`);
+    }
+    expect(h.sleeps).toEqual([400, 400, 400]);
+    const at = (host: string) => h.calls.filter((c) => new URL(c.url).host === host).map((c) => c.at);
+    for (const host of hosts) expect(at(host)[1] - at(host)[0], host).toBe(400);
+    await h.http.getJson('https://unlisted.test/a');
+    await h.http.getJson('https://unlisted.test/b');
+    expect(h.sleeps.at(-1)).toBe(250);
   });
 
   it('caches a text read once per URL, apart from a JSON read of the same URL', async () => {

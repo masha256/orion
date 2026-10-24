@@ -82,10 +82,14 @@ describe('tickAsset', () => {
     const logs = [{ blockNumber: BigInt(Math.ceil((Date.parse('2026-09-17T12:00:00Z') / 1000 - GENESIS_TS) / 2)), logIndex: 0, txHash: '0xa', from: POOL, value: 3n * 10n ** 18n }];
     world({ loaded: watchAsset({ above: 20, levels: false }), logs });
     attempted('deep');
+    const firingRows = () => (h.db.prepare('SELECT COUNT(*) AS n FROM trigger_firings').get() as { n: number }).n;
+    const before = firingRows();
     const { report } = await tick();
     expect(report.ingest!.watch).toEqual([{ metric: 'flow_usd.revenue', rule: 'above', value: 30, previous: null, day: '2026-09-17' }]);
     expect(report.ingest!.anomalies_raised).toEqual([]);
     expect(report.triggers_fired).toEqual([]);
+    // The tick is where triggers are evaluated and recorded: no trigger_firings row comes from the watch.
+    expect(firingRows()).toBe(before);
     expect(report.agent).toBeNull();
     expect(TickReportSchema.parse(report)).toEqual(report);
   });

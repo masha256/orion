@@ -43,16 +43,17 @@ function seedDaily(db: ReturnType<typeof openDb>, metricKey: string, lastDay: st
   }
 }
 
-describe('revenue streams: config', () => {
-  const messageOf = (yaml: string) => {
-    try {
-      parseAssetYaml(yaml);
-    } catch (err) {
-      return (err as Error).message;
-    }
-    return '';
-  };
+/** parseAssetYaml's refusal message, or '' when the config parses. */
+const messageOf = (yaml: string) => {
+  try {
+    parseAssetYaml(yaml);
+  } catch (err) {
+    return (err as Error).message;
+  }
+  return '';
+};
 
+describe('revenue streams: config', () => {
   it('accepts a daily and a periodic stream, and adding a stream is config only', () => {
     expect(parseAssetYaml(streamsYaml()).config.reporting!.revenue!.map((s) => [s.id, s.settlement])).toEqual([['trading', 'daily'], ['reserve', 'periodic']]);
   });
@@ -72,20 +73,17 @@ describe('revenue streams: config', () => {
 });
 
 describe('revenue streams: share', () => {
-  const messageOf = (yaml: string) => {
-    try {
-      parseAssetYaml(yaml);
-    } catch (err) {
-      return (err as Error).message;
-    }
-    return '';
+  /** The trading stream (named, not the first `settlement: daily }` in the text) with a share. */
+  const withShare = (share: string) => {
+    const yaml = streamsYaml().replace('metric: flow_usd.trading, settlement: daily }', `metric: flow_usd.trading, settlement: daily, share: ${share} }`);
+    if (yaml === streamsYaml()) throw new Error('test bug: the trading stream was not found');
+    return yaml;
   };
-  const withShare = (share: string) => streamsYaml().replace('settlement: daily }', `settlement: daily, share: ${share} }`);
 
   it('accepts a share in (0, 1] on a metric stream; without one the stream has none', () => {
     expect(parseAssetYaml(withShare('0.5')).config.reporting!.revenue![0].share).toBe(0.5);
     expect(parseAssetYaml(withShare('1')).config.reporting!.revenue![0].share).toBe(1);
-    expect(parseAssetYaml(streamsYaml()).config.reporting!.revenue![0].share).toBeUndefined();
+    expect('share' in parseAssetYaml(streamsYaml()).config.reporting!.revenue![0]).toBe(false);
   });
 
   it('refuses a share of 0 or above 1', () => {

@@ -122,15 +122,13 @@ describe('fetchAsset: watches', () => {
     expect(second.watch.filter((f) => f.rule === 'above')).toEqual([]); // the flow day was reported by the first fetch
   });
 
-  it('no anomaly and no trigger firing', async () => {
+  it('no anomaly (triggers are the tick\'s: tests/app/tick.test.ts asserts no trigger firing)', async () => {
     const h = world();
     const anomalies = count(h.db, 'anomalies');
-    const firings = count(h.db, 'trigger_firings');
     const r = await fetch(h);
     expect(r.watch.length).toBeGreaterThan(0);
     expect(r.anomalies).toEqual([]);
     expect(count(h.db, 'anomalies')).toBe(anomalies);
-    expect(count(h.db, 'trigger_firings')).toBe(firings);
   });
 
   it('dry run computes firings and writes nothing', async () => {
@@ -148,10 +146,11 @@ describe('fetchAsset: watches', () => {
     const [stored] = listFetchRuns(h.db, 'mini', 1);
     expect(stored.detail.watch).toEqual(fired.watch);
 
-    const quiet = await fetch(world({ db: h.db, apr: 0.06 })); // inside the band; the flow day is already reported
+    const quiet = await fetch(world({ db: h.db, apr: 0.06, now: new Date(NOW.getTime() + 30 * 60_000) })); // a later reading, inside the band; the flow day is already reported
     expect(quiet.watch).toEqual([]);
     const [latest] = listFetchRuns(h.db, 'mini', 1);
     expect(latest.id).toBe(quiet.fetchRunId);
+    expect(latest.id).not.toBe(stored.id);
     expect(Object.keys(latest.detail)).toEqual(['sources']);
   });
 });

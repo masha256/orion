@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
@@ -6,6 +8,7 @@ import { structuralNotes } from '../../src/agent/describe.js';
 import { Ledger } from '../../src/agent/ledger.js';
 import { AGENT_TOOLS, runTool, type ToolContext } from '../../src/agent/tools/index.js';
 import { updateAsset } from '../../src/app/update.js';
+import { buildProgram } from '../../src/cli/program.js';
 import { budgetsFor } from '../../src/config/agentPolicy.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
 import { loadPersona } from '../../src/config/personas.js';
@@ -177,6 +180,15 @@ describe('assets/lit.yaml', () => {
     // Every new series is monitor-only (the valuation is unchanged), the four watches as approved.
     const added = ['flow_usd.fees_core', 'flow_usd.fees_rh', 'flow_usd.rh_buyback', 'rh_fee_account_usd', 'rh_revenue_share_app', 'staked_tokens_reported', 'staking_apr'];
     for (const key of added) expect(config.metrics[key], key).toMatchObject({ monitor_only: true, staleness_days: config.metrics[key].type === 'flow' ? 5 : 3 });
+    expect(Object.fromEntries(added.map((k) => [k, [config.metrics[k].type, config.metrics[k].unit]]))).toEqual({
+      'flow_usd.fees_core': ['flow', 'usd'],
+      'flow_usd.fees_rh': ['flow', 'usd'],
+      'flow_usd.rh_buyback': ['flow', 'usd'],
+      rh_fee_account_usd: ['level', 'usd'],
+      rh_revenue_share_app: ['level', 'ratio'],
+      staked_tokens_reported: ['level', 'tokens'],
+      staking_apr: ['level', 'ratio'],
+    });
     expect(Object.fromEntries(added.filter((k) => config.metrics[k].watch).map((k) => [k, config.metrics[k].watch]))).toEqual({
       'flow_usd.rh_buyback': { above: 1000 },
       rh_fee_account_usd: { change_pct: 5 },
@@ -285,6 +297,8 @@ describe('assets/lit.yaml', () => {
       ['core', undefined, expect.closeTo(100_000 * 365, -2)],
       ['robinhood', 0.5, expect.closeTo(20_000 * 365, -2)],
     ]);
+    // Core carries no share key at all (toEqual reads an absent key and an undefined one alike).
+    expect('share' in rep.revenue!.streams[0]).toBe(false);
     expect(rep.revenue!.streams[1].grossAnnualized).toBeCloseTo(40_000 * 365, -2);
     expect('grossAnnualized' in rep.revenue!.streams[0]).toBe(false);
     expect(rep.revenue!.annualized).toBeCloseTo(120_000 * 365, -2);
@@ -293,6 +307,32 @@ describe('assets/lit.yaml', () => {
     expect(rep.supply).toMatchObject({ burnedPerYear: expect.closeTo(25_000 * 365, -3) });
     // Unlocks (about 133M a year) swamp the burn (9.1M) in tokens.
     expect(rep.supply!.netPerYear).toBeGreaterThan(0);
+  });
+
+  it('orion report yield lit --json carries the same streams, shares and totals (what the coinrevs feed reads)', async () => {
+    const w = world();
+    const home = mkdtempSync(join(tmpdir(), 'orion-lit-report-'));
+    const lines: string[] = [];
+    const orion = (...args: string[]) => buildProgram({ home, stdout: (l) => lines.push(l), now: () => NOW, stderr: () => undefined }).parseAsync(args, { from: 'user' });
+    await orion('init');
+    writeFileSync(join(home, 'assets', 'lit.yaml'), readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8'));
+    const db = openDb(join(home, 'orion.db'));
+    await fetchAsset(db, { config, hash: 'test' }, NOW, w.deps);
+    db.close();
+    lines.length = 0;
+    await orion('report', 'yield', 'lit', '--json');
+    const out = JSON.parse(lines.join('\n'));
+    expect(out.day).toBe('2026-10-15');
+    expect(out.revenue.basis).toBe('streams');
+    expect(out.revenue.streams.map((s: Record<string, unknown>) => [s.id, s.share ?? null, 'share' in s])).toEqual([['core', null, false], ['robinhood', 0.5, true]]);
+    expect(out.revenue.streams[0].annualized).toBeCloseTo(100_000 * 365, -2);
+    expect(out.revenue.streams[1].annualized).toBeCloseTo(20_000 * 365, -2);
+    expect(out.revenue.streams[1].grossAnnualized).toBeCloseTo(40_000 * 365, -2);
+    expect('grossAnnualized' in out.revenue.streams[0]).toBe(false);
+    expect(out.revenue.annualized).toBeCloseTo(120_000 * 365, -2);
+    expect(out.volume.annualized).toBeCloseTo(140_000 * 365, -2);
+    expect(out.marketCap).toBeCloseTo(PRICE * 250_000_000, 0);
+    expect(out.fdv).toBeCloseTo(PRICE * 981_909_280, 0);
   });
 
   it('get_drivers marks staked_ratio structural with the staked_supply note, as the analyst pack does (Ruling 13)', async () => {

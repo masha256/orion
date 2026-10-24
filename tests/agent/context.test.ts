@@ -120,12 +120,15 @@ describe('the context pack', () => {
         staker_emission_share: 'no emissions',
         emission_rate_now: '1B minted at launch; unlocks move tokens already in total supply',
       });
-      // LIT's notes on a report: staked_ratio carries the note beside its value.
-      const report = computeDrivers(w.loaded.config, miniObservations(), AS_OF, []);
-      const d = describeDrivers(report, AS_OF, structuralNotes(lit.config)).drivers as Record<string, any>;
+      // A constant staked_supply's note on a report: staked_ratio carries it beside its value. The mini asset with LIT's
+      // shape (a constant staked_supply carrying LIT's note) gets its own notes, read from its own config.
+      expect(constantStaked).not.toBe(AGENT_ASSET_YAML);
+      const constantConfig = parseAssetYaml(constantStaked).config;
+      expect(structuralNotes(constantConfig).staked_ratio).toBe(LIT_STAKED_NOTE);
+      const report = computeDrivers(constantConfig, miniObservations(), AS_OF, []);
+      const d = describeDrivers(report, AS_OF, structuralNotes(constantConfig)).drivers as Record<string, any>;
       expect(d.staked_ratio).toMatchObject({ value: 0.5, structural: LIT_STAKED_NOTE });
       // In the pack, now and at the previous run.
-      expect(constantStaked).not.toBe(AGENT_ASSET_YAML);
       const id = startAgentRun(w.db, { assetId: 'mini', persona: 'analyst', runType: 'weekly', trigger: 'manual', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: AS_OF });
       finishAgentRun(w.db, id, { outcome: 'completed', endedAt: '2026-06-30T00:05:00Z', usage: ZERO_USAGE, error: null, summary: null, transcript: [] });
       const p = buildContextPack(w.db, parseAssetYaml(constantStaked), w.ledger, { runType: 'weekly', budgets: DEFAULT_BUDGETS.weekly, now: new Date('2026-06-30T12:00:00.000Z'), trigger: {} }) as Record<string, any>;
@@ -224,6 +227,7 @@ describe('the context pack', () => {
           { id: 'core', metric: 'flow_usd.fees_core' },
           { id: 'robinhood', metric: 'flow_usd.fees_rh', share: 0.5 },
         ]);
+        expect('share' in p.revenue_streams[0]).toBe(false);
       }
     });
 
