@@ -72,7 +72,7 @@ function assumptions(): AssumptionValues {
 describe('assets/aero.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'aero', symbol: 'AERO', supply_basis: 'effective_total' });
-    expect(config.holder_flows).toEqual([{ id: 'fees', kind: 'fee_share', capture_rule: 'contractual', recipient_base: 'locked', metric: 'flow_usd.fees', window_days: 90 }]);
+    expect(config.holder_flows).toEqual([{ id: 'fees', kind: 'fee_share', capture_rule: 'contractual', recipient_base: 'locked', metric: 'flow_usd.fees', window_days: 91 }]);
     expect(config.modules.map((m) => [m.id, m.weight])).toEqual([['hc', 0.6], ['fm_holder_flow', 0.4]]);
     expect(requiredAssumptionKeys(config)).toEqual([
       'capture_ramp_years.fees', 'capture_rate_terminal.fees', 'discount_rate_base', 'growth_fade_years', 'multiple.fm_holder_flow', 'regime_multiplier', 'rev_growth_y1', 'staked_ratio_horizon', 'terminal_growth',
@@ -85,7 +85,8 @@ describe('assets/aero.yaml', () => {
     expect(config.metrics.dominance_share_1y.source).toEqual({ type: 'defillama_share', parent: 'parent#aerodrome', category: 'Dexs', overview: 'dexs', chain: 'Base', window: '1y' });
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/aero.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/aero.yaml`, 'utf8')).hash).toBe('d13ba5733eceae83d166a79f1ebda277cbb315068be1a3126b3365766341d4c7');
+    // Re-pinned 2026-10-26: window 90 -> 91 days on every asset (Mike), backfill_days 90 -> 100.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/aero.yaml`, 'utf8')).hash).toBe('3109d0d74849fcc9c26818a35bd14ce3ae11365a9fd5529058548cd7b522f79b');
   });
 
   it('plans the source map of the spec: no transfer scan, one API-series flow, one derived level, two adapters', () => {
@@ -123,14 +124,14 @@ describe('assets/aero.yaml', () => {
     expect(value('staker_emission_share')).toBeLessThan(0.11);
     expect(value('emission_rate_annual')).toBeGreaterThan(245e6);
     expect(value('emission_rate_annual')).toBeLessThan(262e6);
-    // The writer keeps only the backfill window (backfill_days 90 on a first run, no cursor): 2026-06-25 to 2026-09-22, 90 of the 100 days.
-    expect(listActiveObservations(w.db, 'aero', 'flow_usd.fees')).toHaveLength(90);
-    // The run rate: the last 90 complete days summed and scaled to a year, written for every day with a full window: only 2026-09-22.
+    // The writer keeps only the backfill window (backfill_days 100 on a first run, no cursor): all 100 of the 100 days.
+    expect(listActiveObservations(w.db, 'aero', 'flow_usd.fees')).toHaveLength(100);
+    // The run rate: the last 91 complete days summed and scaled to a year, written for every day with a full window: days 91 to 100.
     const revenue = listActiveObservations(w.db, 'aero', 'revenue_run_rate_usd');
-    expect(revenue).toHaveLength(1);
+    expect(revenue).toHaveLength(10);
     expect(revenue.at(-1)!.value).toBeGreaterThan(160e6);
     expect(revenue.at(-1)!.value).toBeLessThan(180e6);
-    expect(revenue.at(-1)).toMatchObject({ source: 'api', sourceDetail: 'derived flow_annualized(flow_usd.fees, 90d)' });
+    expect(revenue.at(-1)).toMatchObject({ source: 'api', sourceDetail: 'derived flow_annualized(flow_usd.fees, 91d)' });
     const checked = r.sources.flatMap((s) => s.crossChecks);
     expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]); // total: CoinGecko's, 2 percent
     expect(w.rpc.stats.multicall).toBeLessThanOrEqual(5); // levels, and two per adapter (the epoch, then the voting power at its start)

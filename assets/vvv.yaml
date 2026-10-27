@@ -16,7 +16,7 @@ contracts:
   buyback_safe: "0x35FB3b67C57849bF57eB24B061EeF0b5e560DC57" # discretionary: roughly monthly buybacks of 9k to 27k VVV
 
 # ORION_BASE_RPC_URL is optional: https://mainnet.base.org is the default for Base.
-ingest: { chain_id: 8453, rpc_url_env: ORION_BASE_RPC_URL, backfill_days: 90 }
+ingest: { chain_id: 8453, rpc_url_env: ORION_BASE_RPC_URL, backfill_days: 100 }
 
 external_ids:
   coingecko: venice-token
@@ -183,7 +183,7 @@ metrics:
     source: { type: defillama, slug: venice, data_type: dailyRevenue, backfill_days: 365 }
 
 holder_flows:
-  - { id: burn, kind: burn, capture_rule: discretionary, recipient_base: all, metric: flow_usd.burn, window_days: 90 }
+  - { id: burn, kind: burn, capture_rule: discretionary, recipient_base: all, metric: flow_usd.burn, window_days: 91 }
 
 # Weights calibrated by the user on 2026-09-19 ("balanced"): the market prices VVV mostly on company
 # revenue today, so the revenue multiple gets the largest single weight, but 60% still rests on cash
@@ -243,7 +243,7 @@ peer_set: []
 
 # Report-only holder yield and growth (orion report yield). Burns: no haircut.
 reporting:
-  window_days: 90
+  window_days: 91
   haircuts: { burn: 0 }
   revenue_disclosed: revenue_run_rate_usd
   # Revenue (Mike, 2026-10-12) = Venice's disclosed business revenue (the latest annual run rate). DefiLlama's dailyRevenue

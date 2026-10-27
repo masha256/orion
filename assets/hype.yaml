@@ -77,7 +77,7 @@ metrics:
 
   # DefiLlama's holders revenue for the hyperliquid parent (perps, spot orderbook, HLP): 99 percent of protocol trading fees,
   # excluding builder fees and deployer shares, converted to HYPE by the fund, plus HIP-1 auction burns. Revenue and holders
-  # revenue are the same series for HYPE. Backfilled ten days beyond the 90-day window so the first fetch writes the run rate
+  # revenue are the same series for HYPE. Backfilled nine days beyond the 91-day window so the first fetch writes the run rate
   # even when DefiLlama has not posted the newest day yet.
   flow_usd.af_buyback:
     type: flow
@@ -87,14 +87,15 @@ metrics:
     critical: true
     source: { type: defillama, slug: hyperliquid, data_type: dailyHoldersRevenue, backfill_days: 100 }
 
-  # The last 90 days of the buyback flow scaled to a year: HYPE's revenue IS its holder flow, so the window matches the holder
-  # flow's (window_days 90) and the measured capture is 1 by construction.
+  # The last 91 days (13 weeks) of the buyback flow scaled to a year: HYPE's revenue IS its holder flow, so the window matches
+  # the holder flow's (window_days 91) and the measured capture is 1 by construction. 91 days on every asset (Mike,
+  # 2026-10-26: one interval for all; was 90 until then).
   revenue_run_rate_usd:
     type: level
     unit: usd
     staleness_days: 5
     critical: true
-    source: { type: derived, name: flow_annualized, params: { metric: flow_usd.af_buyback, days: 90 } }
+    source: { type: derived, name: flow_annualized, params: { metric: flow_usd.af_buyback, days: 91 } }
 
 # burn, chosen by the user on 2026-09-24: the fund's HYPE is burned per the docs and behaves so as long as nobody can spend it;
 # the engine shrinks the supply forecast by the fund's purchases. programmatic: the split is protocol code, changed only by
@@ -144,7 +145,7 @@ metrics:
   dominance_share_1y: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: defillama_share, parent: "parent#hyperliquid", category: Derivatives, overview: fees, window: 1y } }
 
 holder_flows:
-  - { id: af_buyback, kind: burn, capture_rule: programmatic, recipient_base: all, metric: flow_usd.af_buyback, window_days: 90 }
+  - { id: af_buyback, kind: burn, capture_rule: programmatic, recipient_base: all, metric: flow_usd.af_buyback, window_days: 91 }
 
 # Chosen by the user on 2026-09-24: the discounted buyback flow carries most of the weight, the market's multiple on that flow
 # the rest. No revenue multiple: it would price the same dollars twice. Structural: the agent may only propose changes here.
@@ -186,7 +187,7 @@ peer_set: []
 # Report-only holder yield and growth (orion report yield). The fund buys and holds, but stays a burn here as in the
 # valuation (Mike, 2026-10-10: keep the two layers in sync), so no haircut.
 reporting:
-  window_days: 90
+  window_days: 91
   haircuts: { af_buyback: 0, reserve_yield: 0 }
   # Revenue (Mike, 2026-10-12) = trading fees (DefiLlama dailyRevenue, a labelled proxy) + the USDC reserve yield (paid
   # every 30 days). The reserve yield is new (2026-08-26): growth is shown with and without it. It funds the Fund's

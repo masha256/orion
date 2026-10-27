@@ -11,7 +11,7 @@ contracts:
   minter: "0xeB018363F0a9Af8f91F06FEe6613a751b2A33FE5" # from AERO.minter(); in its tail regime since weekly() reached TAIL_START
   team: "0xBDE0c70BdC242577c52dFAD53389F82fd149EA5a"
 
-ingest: { chain_id: 8453, rpc_url_env: ORION_BASE_RPC_URL, backfill_days: 90 }
+ingest: { chain_id: 8453, rpc_url_env: ORION_BASE_RPC_URL, backfill_days: 100 }
 
 external_ids:
   coingecko: aerodrome-finance
@@ -82,15 +82,15 @@ metrics:
     cadence: daily
     staleness_days: 4
     critical: true
-    source: { type: defillama, slug: aerodrome, data_type: dailyHoldersRevenue, backfill_days: 90 }
+    source: { type: defillama, slug: aerodrome, data_type: dailyHoldersRevenue, backfill_days: 100 }
 
-  # The last 90 days of fees to lockers, scaled to a year: AERO's revenue IS its holder flow, so the window matches the holder flow's (window_days 90) and the measured capture is 1 by construction. A 30-day window let one 7.9M USD day (2026-09-09) double the run rate.
+  # The last 91 days (13 weekly epochs) of fees to lockers, scaled to a year (Mike, 2026-10-26: 91 days on every asset; was 90): AERO's revenue IS its holder flow, so the window matches the holder flow's (window_days 91) and the measured capture is 1 by construction. A 30-day window let one 7.9M USD day (2026-09-09) double the run rate.
   revenue_run_rate_usd:
     type: level
     unit: usd
     staleness_days: 5
     critical: true
-    source: { type: derived, name: flow_annualized, params: { metric: flow_usd.fees, days: 90 } }
+    source: { type: derived, name: flow_annualized, params: { metric: flow_usd.fees, days: 91 } }
 
   # Category share from DefiLlama's free overview, grouped by parentProtocol (Mike, 2026-10-17): monitor_only, never a
   # driver, never in the grade; the analyst reads it as a durability input.
@@ -100,7 +100,7 @@ metrics:
   dominance_share_1y: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: defillama_share, parent: "parent#aerodrome", category: Dexs, overview: dexs, chain: Base, window: 1y } }
 
 holder_flows:
-  - { id: fees, kind: fee_share, capture_rule: contractual, recipient_base: locked, metric: flow_usd.fees, window_days: 90 }
+  - { id: fees, kind: fee_share, capture_rule: contractual, recipient_base: locked, metric: flow_usd.fees, window_days: 91 }
 
 # Chosen by the user on 2026-09-23: the discounted fee flow to lockers carries most of the weight, the market's multiple
 # on that flow the rest. Structural: the agent may only propose changes here.
@@ -143,7 +143,7 @@ peer_set: []
 # Report-only holder yield and growth (orion report yield). AERO's fees arrive as the pools' own tokens, many long-tail:
 # 2 percent. Protocol revenue waits for the post-migration rebuild (reminder 2026-11-05).
 reporting:
-  window_days: 90
+  window_days: 91
   haircuts: { fees: 0.02 }
   # Income statement (Mike, 2026-10-11): all fees go to veAERO voters; the protocol keeps none (revisit at the rebuild).
   income:

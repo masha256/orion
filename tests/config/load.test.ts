@@ -123,8 +123,9 @@ describe('metric watch', () => {
 
   it('an asset without watch/share keeps its hash', () => {
     const asset = (id: string) => parseAssetYaml(readFileSync(fileURLToPath(new URL(`../../assets/${id}.yaml`, import.meta.url)), 'utf8')).hash;
-    expect(asset('vvv')).toBe('979829372427f0f8ad9aedc21d8dd15ac178143ede8c9d8cc8f44d17e48775c4');
-    expect(asset('hype')).toBe('181f84a5a610cb762d632385b9f027d8c77870ead15dbb076fd736a60666883a');
-    expect(asset('aero')).toBe('d13ba5733eceae83d166a79f1ebda277cbb315068be1a3126b3365766341d4c7');
+    // Re-pinned 2026-10-26: window 90 -> 91 days on every asset (Mike); no watch/share key involved.
+    expect(asset('vvv')).toBe('125526e9ab5b41f57386f85ca45102f3ec0f372eec4a690a12c65a05be9cff3b');
+    expect(asset('hype')).toBe('531b976f594f609e01d52f10690845f2bf1e8030590d23f414183fd83c6cb1be');
+    expect(asset('aero')).toBe('3109d0d74849fcc9c26818a35bd14ce3ae11365a9fd5529058548cd7b522f79b');
   });
 });

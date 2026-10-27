@@ -260,7 +260,8 @@ reporting:
       },
       income: {
         revenue: { annualized: 80e6, growth: g(null, null, null, null, 'a disclosed level: see revenue') },
-        holders: { annualized: 1460, growth: g(360, null, null, null, 'needs 180 complete days of every flow') },
+        // 2026-10-26: vvv.yaml's window 90 -> 91 days (Mike): 4 a day over 91 days, and growth needs 2 x 91.
+        holders: { annualized: 1460, growth: g(364, null, null, null, 'needs 182 complete days of every flow') },
         protocol: { annualized: 79998540, growth: g(null, null, null, null, 'a disclosed level less daily flows') },
         costs: { annualized: 0 },
         payoutRatio: 0.00001825,

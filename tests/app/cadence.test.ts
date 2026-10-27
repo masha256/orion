@@ -57,7 +57,8 @@ describe('cadence config', () => {
   it('leaves the config hashes where they were: no schema default was added', () => {
     // Pinned on main 3e1d547 before sub-project 4; re-pinned 2026-10-12 for the effective_supply -> total_supply rename, and again for the revenue streams (VVV's revenue is its disclosures), and for 73464de (VVV revenue_run_rate_usd staleness 60 -> 90). A schema change that adds a default moves these; a deliberate edit of assets/vvv.yaml moves the second, and then this pin is updated on purpose.
     expect(parseAssetYaml(MINI_ASSET_YAML).hash).toBe('9b7c93a3ff62133541f28620f8f5079fc5055c8e2405d2374a9b559d62456f30');
-    expect(parseAssetYaml(readFileSync(join(process.cwd(), 'assets', 'vvv.yaml'), 'utf8')).hash).toBe('979829372427f0f8ad9aedc21d8dd15ac178143ede8c9d8cc8f44d17e48775c4');
+    // Re-pinned 2026-10-26: vvv.yaml window 90 -> 91 days (Mike: one interval on every asset); no schema default added.
+    expect(parseAssetYaml(readFileSync(join(process.cwd(), 'assets', 'vvv.yaml'), 'utf8')).hash).toBe('125526e9ab5b41f57386f85ca45102f3ec0f372eec4a690a12c65a05be9cff3b');
     expect(asset.agent).toBeUndefined();
     expect(asset.review_triggers).toEqual({});
   });
