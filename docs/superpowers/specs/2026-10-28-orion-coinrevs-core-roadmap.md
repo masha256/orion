@@ -1,6 +1,6 @@
 # Orion as the coinrevs data core: roadmap and decisions
 
-Status: decisions recorded 2026-10-28 (Mike, Slack DM). This file is the umbrella record; each phase gets its own
+Status: decisions recorded 2026-10-28 (Mike, Slack DM); decisions 8-9 revised and 10-12 added the same day (Slack #orion-dev). This file is the umbrella record; each phase gets its own
 design spec, plan and followups note under `docs/superpowers/`.
 
 ## Goal
@@ -40,14 +40,19 @@ Comparison with other platforms (DefiLlama, Token Terminal, Artemis) is a separa
 | 5 | Builder / referral / partner shares passing through the protocol | **Included** in revenue, then cost of revenue (matches DefiLlama's boundary). |
 | 6 | Wrappers (cvxCRV, sdCRV, yCRV) | Revenue = all veCRV yield flowing through the wrapper; cost of revenue = none; paid to holders = what wrapper holders receive; protocol income = the platform's cut. |
 | 7 | Derived gross revenue | **Allowed**, labelled "derived", where the protocol's share is fixed and covers every pool (gross = protocol fee / share, e.g. UNI v2 x6, Curve DEX x2). |
-| 8 | Postgres hosting | **Prod: DigitalOcean managed Postgres.** Two DO servers: one for the prod website, one for prod + staging Orion. Dev stays on the current host with a local Postgres install. |
-| 9 | Staging | On the prod Orion server as a **separate Unix user** (one user for prod, one for staging), so staging mirrors prod exactly: same layout relative to the user's home, own `.env`, own schedule, own database and database role on the managed Postgres cluster. Raymond deploys over SSH from the dev host. |
+| 8 | Postgres hosting | **Revised 2026-10-28:** prod + staging Orion and their Postgres run on Mike's own server on the same LAN as the dev host (quad-core i7, 16 GB RAM, SSD, on a UPS), Postgres local to that box. The coinrevs website stays on DigitalOcean. (Originally: DO managed Postgres + an Orion droplet.) |
+| 9 | Staging | On the Orion server as a **separate Unix user** (one for prod, one for staging): same layout under each home, own `.env`, own schedule, own database and role on the local Postgres. Raymond deploys over SSH from the dev host (unchanged by the 10-28 revision). |
+| 10 | Data path to the site | **Orion pushes** a versioned snapshot to the site after every refresh (authenticated HTTPS endpoint or a small site-side DB); nothing connects into the LAN, and the site serves the last snapshot if Orion is down. |
+| 11 | Scheduling and assets | **One `orion daemon` per environment** (long-lived service, own scheduler, jobs table) refreshes every active asset; no cron job or script per asset. Asset definitions stay YAML in git (reviewed, released); an asset registry table holds state: active / paused (who, when, why), last run. `orion asset pause <a> --reason` / `resume`. A paused asset is skipped and listed as paused in the report. |
+| 12 | Cadence and the live site | **Nightly full refresh** after the UTC day closes (flows, income statement, snapshot push) plus **hourly** supply and watch-item reads (latest-only, not stored as history). The site computes multiples from Orion's per-token figures and its own live price (fetched and cached server-side, 30-60 s; CoinGecko paid plan, attribution). |
 
 ## Phases
 
 - **Phase 1: remove the valuation layer** (SQLite, no change to any reported number). Spec:
    `2026-10-28-orion-phase1-remove-valuation-design.md`.
-- **Phase 1.5: platform.** Dev / staging / prod split with a release process. On the Orion DO host, users `orion-prod` and
+- **Phase 1.5: platform.** (Revised by decisions 8 and 10-12: Mike's LAN server with local Postgres, not DO; one daemon
+   with an asset registry replaces timers/cron; the site gets pushed snapshots, not a read-only DB role.) Dev / staging /
+   prod split with a release process. On the Orion host, users `orion-prod` and
    `orion-stage` (names to confirm) each run a tagged release from their own home, never a working tree; the same deploy
    script serves both, taking the user as its target. Each environment has its own Postgres database and role, and the
    staging role has no rights on the prod database. Secrets live in each user's `.env` (mode 600). Raymond deploys over
@@ -67,7 +72,8 @@ Comparison with other platforms (DefiLlama, Token Terminal, Artemis) is a separa
    CAKE; PUMP (fee accounts on Solana; unlock schedule as a cited manual schedule); AERO (with the post-merger rebuild);
    HYPE (Assistance Fund balance change via the Hyperliquid API; revenue ~ AF buys / 0.99 + reserve yield). Each asset's
    DefiLlama rows are deleted when its replacement is live (decision 1).
-- **Phase 5: site interface**: a versioned read-only export (views on the read-only role or a JSON snapshot) carrying the
+- **Phase 5: site interface**: a versioned export pushed to the site (decision 10; the read-only-role option is dropped)
+   with per-token figures for the site's live-price layer (decision 12) carrying the
    income statement, holder flow by bucket, net holder yield after dilution, supply, provenance and change log.
 - **Phase 4: comparison tool** (separate repo, internal only): reads Orion read-only, pulls other platforms, reports
    divergences with causes. Its third-party figures are never republished on the site without a licence.

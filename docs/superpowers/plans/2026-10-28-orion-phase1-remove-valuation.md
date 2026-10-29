@@ -376,6 +376,8 @@ Any other file holding an old hash: stop and report.
    Under D3(b) the same for `revenue_run_rate_usd` on the 12 assets.
 9. Update the 13 `orion-<asset>` cron prompts together (cron-job-administration skill) to the text in
    `docs/ops/hermes-daily-job.md`; fire one asset's job by hand and confirm the Slack layout and `ingest.outcome: ok`.
+   Interim only (Mike, 2026-10-28): Phase 1.5 replaces the 13 per-asset jobs with one Orion daemon that posts to Slack
+   itself, so keep this to the minimum prompt edit that reads the v2 report; no per-asset job redesign, no new scripts.
 10. D4 (with Mike's go): one paid disclosure dry run on the stored LIT Q3 post via the watcher's `--dry-run` path.
 11. Watch the next morning's 13 runs; push `main` (HTTPS) and report the remote sha.
 
