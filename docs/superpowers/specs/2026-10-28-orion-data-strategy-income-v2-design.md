@@ -2,7 +2,8 @@
 
 Status: draft for review (2026-10-28, kanban t_1697d7dc). Umbrella: `2026-10-28-orion-coinrevs-core-roadmap.md`
 (branch `feat/coinrevs-core` @ e666b87): standing rules 1-5, decisions 1 and 5-7, Phase 2 section. Nothing here is
-built. Decisions Mike owes are collected in §11.
+built. Decisions Mike owes are collected in §11. Amended 2026-10-28 (Mike): §7 adds per-token figures for the site's
+live-price layer.
 
 Figures below are from `report yield <a> --json` (report day 2026-10-27, LIT 2026-10-26) run with the main dist
 (34a9f9d) against a `.backup` copy of the live DB in a scratch home. They are 91-day windows annualized, in $M.
@@ -311,6 +312,14 @@ provenance summary, so the site can label a number without a second lookup.
 ```
 
 (The LIT figures above are today's numbers under v2: revenue 49.27 = Core 33.11 + Robinhood gross 16.16; cost 8.08.)
+
+**Per-token figures for a live site (Mike, 2026-10-28).** The site computes multiples and yields from a live price, so
+`incomeStatement` also carries `perToken`: `revenue`, `grossProfit`, `holderFlow` (total and `byBucket`) and `dilution`,
+each = annualized USD / `circulatingSupply` (and `/ totalSupply` as `perTokenFdv`), with `circulatingSupply`,
+`totalSupply` and `supplyAsOf`. The site then shows price / revenue-per-token (= market cap / revenue) and holder
+flow-per-token / price (= holder yield) against its own live price. Every snapshot also states the price each USD figure
+used (`priceBasis`: Orion's end-of-day price per flow day, its source and day), so a live multiple never silently mixes
+bases. `multiples` and `yields` above stay, computed at Orion's day-end price, as the audited reference.
 
 The tick's Slack holder-yield block (Phase 1) switches to: revenue, gross profit, holder flow by bucket, net holder
 yield, multiples, scope, and any `third_party`/`not_measured` flags.
