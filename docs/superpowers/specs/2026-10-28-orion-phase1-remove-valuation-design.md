@@ -1,6 +1,6 @@
 # Orion Phase 1: remove the valuation layer
 
-Status: approved with Mike's answers (Slack #orion-dev, 2026-10-28, "go t_41314404 as recommended"): (1) the Slack report
+Status: plan approved 2026-10-28 (D1-D5 all (a), subagent-driven; see the plan). Spec approved with Mike's answers (Slack #orion-dev, 2026-10-28, "go t_41314404 as recommended"): (1) the Slack report
 keeps the proposed contents in this order: watch alerts, failed sources, open anomalies, a short holder-yield summary;
 (2) anomalies are handled by hand, no paid triage run, the `open_anomaly` trigger path goes; (3) the persona / coverage
 machinery stays for now (the disclosure run needs it); simplifying it is revisited in Phase 2. Corrections from the

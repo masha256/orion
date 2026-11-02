@@ -67,7 +67,9 @@ Readers outside the code this phase deletes, at main 34a9f9d:
 | `flow_tokens.burn` (VVV) | vvv:116 | none today (informational, matches Venice's burn history) | **stays** (not valuation). |
 | `price_usd`, `total_supply`, `circulating_supply`, `staked_supply`, `locked_supply`, `emission_rate_annual` | all | `src/report/load.ts:104-109` | **stay**; the first four non-optional ones stay required by the schema. |
 
-## Decisions owed (Mike) before execution
+## Decisions (Mike, 2026-10-28, Slack #orion-dev)
+
+**Ruled:** D1 (a), D2 (a), D3 (a), D4 (a), D5 (a); execution subagent-driven. The options as they were put:
 
 - **D1 `staker_emission_share`.** (a, recommended) keep on all 13 unchanged and drop it from the schema's required list
   only; Phase 2's dilution line for staked holders decides its future. Costs two on-chain reads a day (VVV, AERO), no
@@ -85,8 +87,7 @@ Readers outside the code this phase deletes, at main 34a9f9d:
   both at rollout with the note "valuation layer removed (Phase 1)". (b) leave them pending; they show in the inbox
   forever and `approve` refuses them.
 
-The plan below is written for D1(a), D2(a), D3(a); the alternative is one extra step in Task 5 or the rollout, noted
-where it applies.
+The plan below is written for D1(a), D2(a), D3(a), which Mike picked; the (b) notes in Task 5 and the rollout do not apply.
 
 ## File structure
 
