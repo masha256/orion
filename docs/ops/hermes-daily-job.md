@@ -15,14 +15,14 @@ The scheduled agent runs `run-daily.sh`, reads the tick report it prints, and me
    When node is not on that PATH, set `ORION_NODE=/absolute/path/to/node` in the job's environment.
 5. Schedule the job once a day, any time after 00:05 UTC; a slot well clear of midnight (the live server: 05:05 to 06:05 America/Los_Angeles, 5 minutes apart per asset) lets every source post the previous day and needs no change at DST. Give it a 150-minute timeout: longer than the run lock's two hours. A tick takes under a few minutes (a first fetch backfills longer). A tick killed by the scheduler prints no report and leaves the asset locked for up to two hours, until the next tick takes the lock over.
 
-`run-daily.sh` contract: stdout is the tick report as one JSON line; stderr is the fetch summary, progress lines, or the error; exit code `0` the fetch ran (ingest `ok` or `partial`) and the holder-yield report was built, or `run_in_progress`; `1` nothing fetched (the ingest threw); `2` the fetch ran but the report could not be built for the latest complete day (`report_error`). Orion keeps every report in `ticks.jsonl`; the tick writes no `signals.jsonl` any more (the file, where it exists, holds only old lines). The script keeps stderr in `tick.log`.
+`run-daily.sh` contract: stdout is the tick report as one JSON line; stderr is the fetch summary, progress lines, or the error; exit code `0` the fetch ran (ingest `ok` or `partial`) and the holder-yield report was built, or `run_in_progress`; `1` nothing fetched (the ingest threw); `2` the fetch ran but the report could not be built (`report_error` `report_unavailable`), or was built for a day more than 4 days behind the tick (`report_error` `report_stale`: a report flow has stopped). Orion keeps every report in `ticks.jsonl`; the tick writes no `signals.jsonl` any more (the file, where it exists, holds only old lines). The script keeps stderr in `tick.log`.
 
 The tick report, `schema_version: 2` (strict: unknown keys are refused):
 
 - `tick_id`, `asset`, `started_at`, `ended_at`, `outcome` (`completed`, `run_in_progress`, `error`), `lock` (who holds the asset's lock, on `run_in_progress`), `error` (`{ code, message }` when the ingest threw).
 - `ingest`: `fetch_run_id`, `outcome`, `sources_failed`, `anomalies_raised` (`id`, `kind`, `metric`, `severity`), and `watch` (present only when a watched monitor-only metric moved: `metric`, `rule`, `value`, `previous`, `day`). Null when nothing was fetched.
-- `holder_yield`: the asset's `report yield` numbers for its latest complete day, copied unrounded: `day`, `window_days`, `price`, `market_cap`, `fdv`, `revenue_annualized`, `revenue_growth_annualized`, `payout_ratio`, `flows` (`id`, `bucket` `burn`/`hold`/`cash`, `net` USD a year, `yield`), `yields` (`cash`, `buyback`, `shareholder`, `dilution`, `net_shareholder`, as fractions), `multiple`, `holder_flow_growth_annualized`. Any number may be null (a window not yet complete). Null when the report could not be built.
-- `report_error`: `{ code: "report_unavailable", message }` when the fetch ran but the report could not be built (a new asset with no complete day, a report flow that stopped).
+- `holder_yield`: the asset's `report yield` numbers for its latest complete day, copied unrounded: `day`, `window_days`, `price`, `market_cap`, `fdv`, `revenue_annualized`, `revenue_growth_annualized`, `payout_ratio`, `flows` (`id`, `bucket` `burn`/`hold`/`cash`, `net` USD a year, `yield`), `yields` (`cash`, `buyback`, `shareholder`, `dilution`, `net_shareholder`, as fractions), `multiple`, `holder_flow_growth_annualized`. Any number may be null (a window not yet complete). Null when the report could not be built (`report_unavailable`); still filled in when the report is `report_stale` (the numbers are real, just old).
+- `report_error`: `{ code, message }`, null on a normal tick. `report_unavailable`: the fetch ran but no report could be built (a new asset with no stored day for every report flow); `holder_yield` is null. `report_stale`: the report was built, but its day is more than 4 whole UTC days behind the tick (`REPORT_STALE_DAYS`; the normal lag is 2 days, 3 for LIT), so a report flow has stopped; `holder_yield` is kept, for that old day.
 - `inbox`: `observations`, `proposals`, `anomalies` awaiting the owner, built after the lock is released.
 
 Gone from v1: `signal`, `triggers_fired`, `triggers_recorded`, `triggers_standing`, `agent`, `agent_would_run`.
@@ -46,8 +46,11 @@ STEP 2. Read the result. stdout is one JSON line: the tick report (schema_versio
 - Exit 0 with report.outcome "completed": a normal tick. report.holder_yield has the day's numbers.
 - Exit 0 with report.outcome "run_in_progress": another Orion run (a disclosure run) held the asset's lock; nothing ran
   today. report.lock says who. Retry once after 30 minutes: the lock is released when the other run ends.
-- Exit 2: the fetch ran but the holder-yield report could not be built; report.report_error says why, and the rest of the
-  report (ingest, watch, inbox) is filled in. Do not retry.
+- Exit 2: the fetch ran but the holder-yield report is missing or stale; report.report_error says which, and the rest of
+  the report (ingest, watch, inbox) is filled in. Do not retry.
+  - report_error.code "report_unavailable": no report could be built; report.holder_yield is null.
+  - report_error.code "report_stale": a report flow has stopped, so the report is for a day more than 4 days old;
+    report.holder_yield is still filled in, for that old day.
 - Exit 1, with or without a report line: nothing was fetched; report.outcome is "error" and report.error says why, when
   there is a report line. Wait 10 minutes and retry ONCE. If it fails again, report the failure.
 - Any other outcome (timeout, script missing, empty stdout): report it as a failure, with what you saw.
@@ -86,8 +89,9 @@ percent. A null prints "n/a". Market cap, FDV and revenue may be printed in K/M/
     revenue <revenue_annualized>/yr (growth <revenue_growth_annualized>/yr) | payout ratio <payout_ratio>
     yields: cash <cash> | buyback <buyback> | shareholder <shareholder> | dilution <dilution> | net <net_shareholder>
     multiple <multiple>x | holder-flow growth <holder_flow_growth_annualized>/yr
-When report.holder_yield is null and report.report_error is set, print instead:
-    HOLDER YIELD VVV unavailable: <report_error.code>: <report_error.message>
+When report.report_error is set, print this line right after the block's first line (report_stale, the block is still
+printed, with its old day) or in place of the whole block (report_unavailable, report.holder_yield is null):
+    HOLDER YIELD VVV <report_error.code>: <report_error.message>
 
 Make the message an ALERT (first line starts with "ORION ALERT", then the parts above, then the relevant stderr lines
 quoted verbatim: the tick's stderr carries no model text, only source names, ids, numbers, and Orion's own messages; a

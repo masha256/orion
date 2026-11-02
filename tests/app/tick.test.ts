@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { tickAsset, type TickDeps, type TickResult } from '../../src/app/tick.js';
+import { REPORT_STALE_DAYS, tickAsset, type TickDeps, type TickResult } from '../../src/app/tick.js';
 import { summarizeHolderYield, TickReportSchema } from '../../src/app/tickReport.js';
 import { parseAssetYaml, type LoadedAsset } from '../../src/config/load.js';
 import { raiseAnomaly } from '../../src/db/anomalies.js';
@@ -28,10 +28,10 @@ function world(over: Parameters<typeof harness>[0] = {}) {
 }
 
 /** Daily fee rows before the days the fetch backfills (it scans three), so the week and the week before it are complete. */
-function seedFees(lastDay: string, days: number, value: number) {
+function seedFees(lastDay: string, days: number, value: number, metricKey = 'flow_usd.fees') {
   for (let i = 0; i < days; i++) {
     const day = addDays(lastDay, -i);
-    insertObservation(h.db, { assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, source: 'onchain', fetchedAt: NOW.toISOString() });
+    insertObservation(h.db, { assetId: 'mini', metricKey, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, source: 'onchain', fetchedAt: NOW.toISOString() });
   }
 }
 
@@ -71,7 +71,7 @@ describe('tickAsset', () => {
   });
 
   it('tick: report unavailable -> exit 2, report still emitted', async () => {
-    // A report flow with no stored day (a new asset, or a flow that stopped): the fetch works, the report cannot be built.
+    // A report flow with no stored day (a new asset): the fetch works, the report cannot be built.
     const volume = '  flow_usd.volume: { type: flow, unit: usd, staleness_days: 45, monitor_only: true }\nholder_flows:';
     const yaml = watchAssetYaml({ above: 20, levels: false }).replace('holder_flows:', volume);
     const logs = [{ blockNumber: BigInt(Math.ceil((Date.parse('2026-09-17T12:00:00Z') / 1000 - GENESIS_TS) / 2)), logIndex: 0, txHash: '0xa', from: POOL, value: 3n * 10n ** 18n }];
@@ -84,6 +84,36 @@ describe('tickAsset', () => {
     expect(report.ingest!.watch).toEqual([{ metric: 'flow_usd.revenue', rule: 'above', value: 30, previous: null, day: '2026-09-17' }]);
     expect(report.inbox.anomalies.map((x) => x.id)).toEqual([a.id]);
     expect(TickReportSchema.parse(report)).toEqual(report);
+  });
+
+  /** The mini asset plus a monitor-only report flow (volume) the fetch never writes: the flow that can stop. */
+  function volumeWorld() {
+    const volume = '  flow_usd.volume: { type: flow, unit: usd, staleness_days: 45, monitor_only: true }\nholder_flows:';
+    world({ loaded: reportAsset(watchAssetYaml({ above: 1000, levels: false }).replace('holder_flows:', volume), '  volume: [flow_usd.volume]\n') });
+  }
+
+  it('tick: a report flow that stopped -> exit 2, report_stale, holder_yield still filled', async () => {
+    volumeWorld();
+    seedFees('2026-09-15', 12, 2);
+    seedFees(addDays('2026-09-19', -6), 12, 5, 'flow_usd.volume'); // the volume flow stopped six days before the tick
+    const { report, exitCode } = await tick();
+    expect(exitCode).toBe(2);
+    expect(report).toMatchObject({ outcome: 'completed', error: null, ingest: { outcome: 'ok' }, report_error: { code: 'report_stale' } });
+    expect(report.holder_yield).toEqual(summarizeHolderYield(loadHolderYieldReport(h.db, h.loaded.config)));
+    expect(report.holder_yield!.day).toBe('2026-09-13');
+    expect(report.report_error!.message).toBe('holder-yield report day 2026-09-13 is 6 days behind the tick (2026-09-19); a report flow has stopped');
+    expect(progress).toContain(`report stale: ${report.report_error!.message}`);
+    expect(TickReportSchema.parse(report)).toEqual(report);
+  });
+
+  it('tick: a report day exactly REPORT_STALE_DAYS behind the tick is not stale -> exit 0, report_error null', async () => {
+    expect(REPORT_STALE_DAYS).toBe(4);
+    volumeWorld();
+    seedFees('2026-09-15', 12, 2);
+    seedFees(addDays('2026-09-19', -REPORT_STALE_DAYS), 12, 5, 'flow_usd.volume');
+    const { report, exitCode } = await tick();
+    expect(exitCode).toBe(0);
+    expect(report).toMatchObject({ outcome: 'completed', report_error: null, holder_yield: { day: '2026-09-15' } });
   });
 
   it('tick: lock held -> outcome run_in_progress, exit 0, lock.holder set', async () => {

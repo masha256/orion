@@ -2,8 +2,9 @@ import type { LoadedAsset } from '../config/load.js';
 import type { Db } from '../db/connection.js';
 import { getRunLock } from '../db/runLocks.js';
 import { fetchAsset, type FetchDeps, type FetchResult } from '../ingest/run.js';
+import { dayStartMs, utcDay } from '../ingest/time.js';
 import { loadHolderYieldReport } from '../report/load.js';
-import { OrionError } from '../types.js';
+import { MS_PER_DAY, OrionError } from '../types.js';
 import { buildInbox, emptyInbox } from './inbox.js';
 import { lockHolder, withRunLock } from './lock.js';
 import { summarizeHolderYield, tickId, type TickReport } from './tickReport.js';
@@ -19,8 +20,21 @@ export interface TickDeps {
 
 export interface TickResult {
   report: TickReport;
-  /** 0: the fetch ran and the report was built, or `run_in_progress`; 1: nothing fetched (the ingest threw); 2: the fetch ran but the report could not be built. */
+  /** 0: the fetch ran and the report was built, or `run_in_progress`; 1: nothing fetched (the ingest threw); 2: the fetch ran but the report could not be built (`report_unavailable`) or is more than REPORT_STALE_DAYS old (`report_stale`). */
   exitCode: 0 | 1 | 2;
+}
+
+/**
+ * A holder-yield report day more than this many whole UTC days behind the tick means a report flow has stopped: the
+ * report is still built (for the oldest flow's last day) but it is `report_stale`, exit 2. Normal lags measured on live
+ * data (tick at 2026-11-02 ~04:00 UTC): 2 days for 12 assets, 3 for LIT (the Lighter API runs a day behind). Four leaves a
+ * day of slack over LIT; raise it if a source's normal lag grows.
+ */
+export const REPORT_STALE_DAYS = 4;
+
+/** Whole UTC days from `day` to the UTC date of `at`. */
+function daysBehind(day: string, at: Date): number {
+  return Math.round((dayStartMs(utcDay(at.getTime())) - dayStartMs(day)) / MS_PER_DAY);
 }
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -70,6 +84,15 @@ export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps): Pr
       } catch (err) {
         report.report_error = { code: 'report_unavailable', message: message(err).slice(0, 300) };
         deps.onProgress?.(`report unavailable: ${report.report_error.message}`);
+        return;
+      }
+      // A stopped flow still yields a report, for its last day: the numbers are real but old, and a frozen block with no
+      // alert would be a quiet failure. The block is kept; the error makes it exit 2.
+      const lag = daysBehind(report.holder_yield.day, started);
+      if (lag > REPORT_STALE_DAYS) {
+        const today = utcDay(started.getTime());
+        report.report_error = { code: 'report_stale', message: `holder-yield report day ${report.holder_yield.day} is ${lag} days behind the tick (${today}); a report flow has stopped`.slice(0, 300) };
+        deps.onProgress?.(`report stale: ${report.report_error.message}`);
       }
     }, {
       onTakeover: (n) => deps.onProgress?.(`took over an expired run lock; ${n} stuck run(s) marked abandoned`),

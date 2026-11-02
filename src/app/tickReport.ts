@@ -71,10 +71,14 @@ export const TickReportSchema = z.strictObject({
     .nullable(),
   /**
    * The asset's `report yield` summary for its latest complete day, field for field and unrounded. Null when the report
-   * could not be built (see `report_error`), when the tick never reached it, or when the asset has no `reporting` block.
+   * could not be built (`report_unavailable`), when the tick never reached it, or when the asset has no `reporting` block.
+   * Kept, with `report_error` `report_stale`, when the report's day is more than REPORT_STALE_DAYS behind the tick.
    */
   holder_yield: TickHolderYieldSchema.nullable(),
-  /** Set when the fetch ran but the report could not be built: `report_unavailable`, with the reason (capped). */
+  /**
+   * Set when the fetch ran but the report could not be built (`report_unavailable`, `holder_yield` null), or was built for
+   * a day more than REPORT_STALE_DAYS behind the tick (`report_stale`, `holder_yield` kept). Message capped at 300.
+   */
   report_error: ErrorSchema.nullable(),
   /** What awaits the user after this tick, computed last, outside the lock, so a tick that never got the lock still lists it. */
   inbox: InboxSchema,
