@@ -77,7 +77,7 @@ psql_file_as_postgres "$here/sql/dev-roles.sql"
 echo "== self-check"
 dev_psql() { (cd / && runuser -u "$OS_USER" -- psql -X -qAt -v ON_ERROR_STOP=1 -U orion_dev "$@"); }
 dev_psql_as_postgres() { (cd / && runuser -u "$OS_USER" -- psql -X -qAt -U postgres -d postgres -c 'select 1'); }
-check_version() { dev_psql -d orion_dev -c 'select version()' | grep -q "^PostgreSQL $PG_MAJOR\."; }
+check_version() { local v; v=$(dev_psql -d orion_dev -c 'select version()') && [[ $v == "PostgreSQL $PG_MAJOR."* ]]; }
 check_schema() {
   local s="selfcheck_$$"
   dev_psql -d orion_test -c "create schema $s" -c "drop schema $s"

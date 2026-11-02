@@ -121,4 +121,6 @@ orion_test|orion_dev" postgres \
     sql_pg_restart_with "" ""
   fi
 
+  # shellcheck source=SCRIPTDIR/sql-host.sh
+  source "$here/sql-host.sh"
 fi

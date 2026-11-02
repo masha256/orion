@@ -106,11 +106,12 @@ show_diff() {
   diff -U0 "$1" "$2" | sed -n -e '/^+++/d' -e '/^---/d' -e 's/^\([+-]\)/    \1 /p' || true
 }
 
-# write_file <path> <mode> <user:group>  (content on stdin)
+# write_file <path> <mode> <user:group> [quiet]  (content on stdin)
 # Writes only when the content differs (atomically: temp file in the same directory, chmod/chown, rename); fixes
-# mode/owner when only those differ. A dry run prints a summary and the changed lines.
+# mode/owner when only those differ. A dry run prints a summary and the changed lines ("quiet": the summary only, for
+# long templates and scripts).
 write_file() {
-  local path=$1 mode=$2 owner=$3 state new tmp added removed
+  local path=$1 mode=$2 owner=$3 quiet=${4:-} state new tmp added removed
   new=$(mktemp)
   cat >"$new"
   CHANGED=0
@@ -129,16 +130,16 @@ write_file() {
       added=$(diff "$path" "$new" | grep -c '^>' || true)
       removed=$(diff "$path" "$new" | grep -c '^<' || true)
       log_do "update $path (+$added -$removed lines; $mode $owner)"
-      ((DRY_RUN)) && show_diff "$path" "$new"
+      ((DRY_RUN)) && [[ -z $quiet ]] && show_diff "$path" "$new"
       ;;
     absent)
       log_do "create $path ($(wc -l <"$new") lines; $mode $owner)"
-      ((DRY_RUN)) && show_diff /dev/null "$new"
+      ((DRY_RUN)) && [[ -z $quiet ]] && show_diff /dev/null "$new"
       ;;
     unknown | unreadable)
       ((DRY_RUN)) || { rm -f "$new"; die "cannot read $path"; }
       log_do "write $path if it differs ($(wc -l <"$new") lines; $mode $owner; current file not readable without root)"
-      show_diff /dev/null "$new"
+      [[ -z $quiet ]] && show_diff /dev/null "$new"
       ;;
   esac
   CHANGED=1
@@ -151,11 +152,11 @@ write_file() {
   mv -f "$tmp" "$path"
 }
 
-# write_file_once <path> <mode> <user:group>  (content on stdin)
+# write_file_once <path> <mode> <user:group> [quiet]  (content on stdin)
 # Creates the file only if it does not exist; an existing file is never rewritten (it may hold what Mike filled in),
 # only its mode/owner are corrected.
 write_file_once() {
-  local path=$1 mode=$2 owner=$3 state
+  local path=$1 mode=$2 owner=$3 quiet=${4:-} state
   state=$(path_state "$path")
   CHANGED=0
   case $state in
@@ -165,7 +166,7 @@ write_file_once() {
       ((CHANGED)) || log_ok "$path exists (kept; never overwritten)"
       ;;
     absent)
-      write_file "$path" "$mode" "$owner"
+      write_file "$path" "$mode" "$owner" "$quiet"
       ;;
     unknown)
       cat >/dev/null
@@ -317,6 +318,8 @@ pg_apply() {
   else
     log_ok "$PG_SERVICE running with current configuration"
   fi
+  PG_RESTART_NEEDED=0
+  PG_RELOAD_NEEDED=0
   # postgresql.service starts every cluster whose start.conf says auto (the package default)
   run_quiet_enable postgresql.service
 }

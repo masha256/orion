@@ -1,0 +1,36 @@
+# pgBackRest configuration for Orion (spec §10.1, plan 1.5a ruling R2). /etc/pgbackrest/pgbackrest.conf, root:postgres 640.
+# Created once by scripts/provision/orion-host.sh and never overwritten. Replace every REPLACE_ME, then run
+#   sudo ./orion-host.sh --hostname <h> ... --enable-backups --dump-recipient <age public key>
+# which refuses while any REPLACE_ME remains. Keep the cipher passphrase in Mike's password manager too: without it
+# the backups cannot be decrypted (key custody, spec §10.1).
+
+[global]
+# repo 1: DigitalOcean Spaces bucket (S3 API), encrypted client-side
+repo1-type=s3
+# e.g. fra1.digitaloceanspaces.com (no https://)
+repo1-s3-endpoint=REPLACE_ME
+# e.g. orion-backups
+repo1-s3-bucket=REPLACE_ME
+# the Spaces region, e.g. fra1
+repo1-s3-region=REPLACE_ME
+# Spaces access key id and secret
+repo1-s3-key=REPLACE_ME
+repo1-s3-key-secret=REPLACE_ME
+repo1-s3-uri-style=host
+repo1-path=/pgbackrest
+repo1-cipher-type=aes-256-cbc
+# a long random passphrase, e.g. from: openssl rand -base64 48
+repo1-cipher-pass=REPLACE_ME
+# 4 weekly fulls and their WAL (about 4-5 weeks of PITR)
+repo1-retention-full-type=count
+repo1-retention-full=4
+@REPO2@
+compress-type=zst
+start-fast=y
+process-max=2
+log-level-console=info
+log-level-file=detail
+
+[orion]
+pg1-path=/var/lib/postgresql/18/main
+pg1-socket-path=/var/run/postgresql

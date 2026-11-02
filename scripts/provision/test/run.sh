@@ -121,6 +121,193 @@ run_case dev-no-user nonzero env -u SUDO_USER "$dev" --dry-run --force-os --os-u
 expect dev-no-user 'no-such-user-orion-test'
 run_case dev-bad-flag nonzero "$dev" --dry-run --force-os --no-such-flag
 
+# --- orion-host.sh ------------------------------------------------------------------------------------------------
+host=$prov/orion-host.sh
+hn=$(uname -n)
+ssh-keygen -q -t ed25519 -N '' -C test-stage -f "$tmp/stage_key" && ssh-keygen -q -t ed25519 -N '' -C test-prod -f "$tmp/prod_key"
+recipient=age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq # syntactically valid; not anyone's key
+printf '[global]\nrepo1-s3-key=REPLACE_ME\n' >"$tmp/pgbr-placeholder.conf"
+printf '[global]\nrepo1-s3-key=filled\n' >"$tmp/pgbr-filled.conf"
+H=(env -u SSH_CONNECTION SSH_CLIENT="192.168.0.201 50000 22" "$host" --dry-run --force-os --hostname "$hn")
+
+run_case host-os nonzero env -u SSH_CLIENT "$host" --dry-run --hostname "$hn" --ssh-from 192.168.0.201
+expect host-os "resolute"
+expect_not host-os '^would: '
+
+run_case host 0 "${H[@]}" --ssh-from 192.168.0.201 --ssh-from 100.109.70.114 \
+  --deploy-key-stage "$tmp/stage_key.pub" --deploy-key-prod "$tmp/prod_key.pub" --nut
+for re in \
+  '/etc/apt/sources\.list\.d/pgdg\.sources' \
+  'apt-get install .*postgresql-18 .*postgresql-client-18 .*pgbackrest .*python3-venv .*ufw .*age' \
+  'nut-client' \
+  'nodejs\.org/dist/v26\.13\.0/node-v26\.13\.0-linux-x64\.tar\.xz' \
+  'sha256 d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997' \
+  '/opt/node-v26\.13\.0' \
+  'ln -sfn node-v26\.13\.0 /opt/node-v26' \
+  'useradd .*orion-prod$' \
+  'useradd .*orion-stage$' \
+  'enable-linger orion-prod' \
+  'enable-linger orion-stage' \
+  '/home/orion-prod/releases' \
+  '/home/orion-stage/shared$' \
+  '/home/orion-prod/home/publish' \
+  '/home/orion-stage/\.config/systemd/user' \
+  '/home/orion-prod/deploys\.log' \
+  'create /home/orion-prod/shared/\.env .*600' \
+  'create /home/orion-stage/shared/\.env .*600' \
+  'ssh-keygen .*-t ed25519 .*orion-prod@.* publish.* -f /home/orion-prod/shared/publish_ed25519' \
+  'ssh-keygen .*orion-stage@.*/home/orion-stage/shared/publish_ed25519' \
+  'genpkey .*ed25519.*/home/orion-prod/shared/snapshot-sign\.key' \
+  'genpkey .*ed25519.*/home/orion-stage/shared/snapshot-sign\.key' \
+  '/home/orion-prod/\.ssh/authorized_keys .*600' \
+  '^ *\+ restrict,command="/usr/local/bin/orion-remote" ssh-ed25519 [A-Za-z0-9+/=]+ test-prod$' \
+  '^ *\+ restrict,command="/usr/local/bin/orion-remote" ssh-ed25519 [A-Za-z0-9+/=]+ test-stage$' \
+  'create /usr/local/bin/orion-remote .*755 root:root' \
+  "shared_buffers = 2GB" \
+  "listen_addresses = ''" \
+  '^ *\+ *local +orion_prod +orion_prod,orion_prod_ro +peer +map=prod$' \
+  '^ *\+ *local +orion_stage +orion_stage +peer +map=stage$' \
+  '^ *\+ *local +all +postgres +peer$' \
+  '^ *\+ *local +all +all +reject$' \
+  '^ *\+ *prod +orion-prod +orion_prod$' \
+  '^ *\+ *prod +orion-prod +orion_prod_ro$' \
+  '^ *\+ *stage +orion-stage +orion_stage$' \
+  'ensure role orion_prod ' \
+  'ensure role orion_stage ' \
+  'ensure role orion_prod_ro ' \
+  'ensure database orion_prod ' \
+  'ensure database orion_stage ' \
+  'REVOKE CONNECT.*FROM PUBLIC' \
+  'schema orion in orion_prod' \
+  'create /etc/pgbackrest/pgbackrest\.conf .*640 root:postgres' \
+  'backups not enabled' \
+  'ufw default deny incoming|ufw default deny incoming' \
+  'ufw allow from 192\.168\.0\.201 to any port 22 proto tcp' \
+  'ufw allow from 100\.109\.70\.114 to any port 22 proto tcp' \
+  'ufw --force enable' \
+  'SKIP: .*orion-stage -> orion_prod' \
+  'SKIP: SET ROLE orion_prod as orion_stage is refused' \
+  'SKIP: orion_prod_ro cannot write' \
+  'SKIP: pgbackrest check'; do
+  expect host "$re"
+done
+expect_not host '^do: '
+expect_not host 'BEGIN OPENSSH PRIVATE KEY|PRIVATE KEY'
+expect_before host 'ufw allow from 100\.109' 'ufw --force enable'
+
+run_case host-noufw 0 env -u SSH_CLIENT "$host" --dry-run --force-os --hostname "$hn"
+expect host-noufw 'ufw step skipped'
+expect host-noufw 'no --deploy-key-stage'
+expect_not host-noufw '(would|do): ufw '
+
+# R3: an SSH caller outside --ssh-from is refused before any change (no would: line at all)
+run_case host-lockout nonzero env SSH_CLIENT="10.9.9.9 50000 22" "$host" --dry-run --force-os --hostname "$hn" \
+  --ssh-from 192.168.0.201 --ssh-from 100.109.70.114
+expect host-lockout 'refusing to enable ufw.*10\.9\.9\.9'
+expect_not host-lockout '^(would|do): '
+run_case host-cidr 0 env SSH_CLIENT="192.168.0.77 50000 22" "$host" --dry-run --force-os --hostname "$hn" \
+  --ssh-from 192.168.0.0/24
+expect host-cidr 'ufw allow from 192\.168\.0\.0/24 to any port 22'
+run_case host-v6mapped 0 env SSH_CLIENT="::ffff:192.168.0.201 50000 22" "$host" --dry-run --force-os \
+  --hostname "$hn" --ssh-from 192.168.0.201
+run_case host-bad-cidr nonzero "${H[@]}" --ssh-from 192.168.0.300
+expect_not host-bad-cidr '^(would|do): '
+run_case host-wrong-hostname nonzero "${H[@]}" --hostname not-this-host-x --ssh-from 192.168.0.201
+expect host-wrong-hostname 'not-this-host-x'
+run_case host-no-hostname nonzero env -u SSH_CLIENT "$host" --dry-run --force-os
+run_case host-private-key nonzero "${H[@]}" --deploy-key-prod "$tmp/prod_key"
+expect_not host-private-key '^(would|do): '
+
+# R2: --enable-backups refuses while placeholders remain or the conf is missing, or without a recipient
+run_case host-backups-placeholder nonzero env ORION_PROVISION_PGBACKREST_CONF="$tmp/pgbr-placeholder.conf" \
+  "${H[@]}" --enable-backups --dump-recipient "$recipient"
+expect host-backups-placeholder 'REPLACE_ME'
+expect_not host-backups-placeholder '^(would|do): '
+run_case host-backups-missing nonzero env ORION_PROVISION_PGBACKREST_CONF="$tmp/no-such.conf" \
+  "${H[@]}" --enable-backups --dump-recipient "$recipient"
+run_case host-backups-no-recipient nonzero env ORION_PROVISION_PGBACKREST_CONF="$tmp/pgbr-filled.conf" \
+  "${H[@]}" --enable-backups
+run_case host-backups-bad-recipient nonzero env ORION_PROVISION_PGBACKREST_CONF="$tmp/pgbr-filled.conf" \
+  "${H[@]}" --enable-backups --dump-recipient age1short
+run_case host-backups 0 env ORION_PROVISION_PGBACKREST_CONF="$tmp/pgbr-filled.conf" \
+  "${H[@]}" --ssh-from 192.168.0.201 --enable-backups --dump-recipient "$recipient"
+for re in \
+  'no REPLACE_ME left' \
+  "create /etc/orion/dump-recipient" \
+  "^ *\+ $recipient\$" \
+  'pgbackrest --stanza=orion stanza-create' \
+  'conf\.d/orion-backup\.conf' \
+  '^ *\+ archive_mode = on$' \
+  "^ *\+ archive_command = 'pgbackrest --stanza=orion archive-push %p'\$" \
+  '^ *\+ archive_timeout = 300$' \
+  'create /usr/local/sbin/orion-pg-dump .*755 root:root' \
+  '^ *\+ OnCalendar=Sun \*-\*-\* 09:00:00 UTC$' \
+  '^ *\+ OnCalendar=Mon\.\.Sat \*-\*-\* 09:00:00 UTC$' \
+  '^ *\+ OnCalendar=\*-\*-\* 08:30:00 UTC$' \
+  '^ *\+ User=postgres$' \
+  'orion-backup-full\.timer' \
+  'enable --now orion-backup-diff\.timer' \
+  'enable --now orion-pg-dump\.timer' \
+  'systemctl daemon-reload' \
+  'SKIP: pgbackrest check'; do
+  expect host-backups "$re"
+done
+expect_before host-backups 'stanza-create' 'orion-backup\.conf'
+
+# --- orion-remote (R1): only "status" runs; caller text never reaches a shell --------------------------------------
+fakebin=$tmp/fakebin
+mkdir -p "$fakebin" "$tmp/rhome"
+marker=$tmp/PWNED
+for c in id touch sh bash rm; do
+  printf '#!/bin/sh\necho evaluated >"%s"\n' "$marker" >"$fakebin/$c"
+  chmod +x "$fakebin/$c"
+done
+printf '#!/bin/sh\nexit 0\n' >"$fakebin/pg_isready"
+chmod +x "$fakebin/pg_isready"
+remote() { # remote <case name> <SSH_ORIGINAL_COMMAND>
+  local rpath="$fakebin:/usr/bin:/bin"
+  env -i HOME="$tmp/rhome" PATH="$rpath" SSH_CLIENT="192.168.0.201 50000 22" SSH_ORIGINAL_COMMAND="$2" \
+    /bin/bash "$prov/files/orion-remote" >"$tmp/$1.out" 2>&1
+}
+remote_case() { # remote_case <name> <want exit> <command>
+  local rc
+  rm -f "$marker"
+  remote "$1" "$3"
+  rc=$?
+  if [[ $rc == "$2" ]]; then ok "orion-remote $1: exit $rc"; else bad "orion-remote $1: exit $rc, wanted $2" "$(tr '\n' '|' <"$tmp/$1.out")"; fi
+  if [[ -e $marker ]]; then bad "orion-remote $1: caller text was evaluated"; else ok "orion-remote $1: nothing evaluated"; fi
+}
+remote_case r-status 0 'status'
+expect r-status '^env: unknown'
+expect r-status "^host: $hn\$"
+expect r-status '^current: none$'
+expect r-status '^postgres: accepting connections$'
+remote_case r-semicolon 64 'status; id'
+remote_case r-and 64 'status && touch x'
+# shellcheck disable=SC2016  # the literal text is the point
+remote_case r-subst 64 '$(id)'
+# shellcheck disable=SC2016
+remote_case r-backticks 64 '`id`'
+remote_case r-quotes 64 "status 'x' \"y\""
+remote_case r-install 64 'install x'
+expect r-install "orion-remote: 'install' not available yet \(Phase 1\.5c\)"
+remote_case r-newline 64 "status
+id"
+remote_case r-empty 64 ''
+remote_case r-glob 64 '*'
+remote_case r-redirect 64 'status >/tmp/x'
+if [[ $(wc -l <"$tmp/rhome/remote.log") -eq 11 ]]; then ok "orion-remote: every call logged (11 lines)"; else bad "orion-remote: every call logged" "$(wc -l <"$tmp/rhome/remote.log") lines"; fi
+if grep -q 'result=ok' "$tmp/rhome/remote.log" && [[ $(grep -c 'result=refused' "$tmp/rhome/remote.log") -eq 10 ]]; then
+  ok "orion-remote: log has 1 ok and 10 refusals"
+else
+  bad "orion-remote: log has 1 ok and 10 refusals"
+fi
+if [[ $(grep -c . "$tmp/rhome/remote.log") -eq $(wc -l <"$tmp/rhome/remote.log") ]] && ! grep -q $'\x1b' "$tmp/rhome/remote.log"; then
+  ok "orion-remote: one line per call, no control characters in the log"
+else
+  bad "orion-remote: one line per call, no control characters in the log"
+fi
+
 # --- optional: the SQL files against a throwaway cluster ----------------------------------------------------------
 if [[ -n ${PG_BINDIR:-} ]]; then
   # shellcheck source=SCRIPTDIR/sql.sh
