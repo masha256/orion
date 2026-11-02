@@ -17,7 +17,7 @@ export interface Step {
   }>;
   stop_details?: { type: 'refusal'; category: string | null; explanation: string | null };
 }
-export type ScriptStep = Step | Error | ((request: ModelRequest) => Step | Error);
+export type ScriptStep = Step | Error | ((request: ModelRequest) => Step | Error | Promise<Step | Error>);
 
 let nextToolUseId = 1;
 
@@ -59,7 +59,7 @@ export function scriptedModel(script: ScriptStep[]): ScriptedModel {
       requests.push({ ...request, messages: structuredClone(request.messages) });
       const next = script[i++];
       if (next === undefined) throw new Error(`the script has ${script.length} steps but the loop asked for step ${i}`);
-      const step = typeof next === 'function' ? next(request) : next;
+      const step = typeof next === 'function' ? await next(request) : next;
       if (step instanceof Error) throw step;
       return {
         id: `msg_${i}`, type: 'message', role: 'assistant', model: step.model ?? request.model, content: step.content,

@@ -161,7 +161,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
     // 1. Range: completed UTC days only.
     const lastMidnightSec = Math.floor(latest.timestamp / SECONDS_PER_DAY) * SECONDS_PER_DAY;
     const lastCompleteDay = utcDay(lastMidnightSec * 1000 - MS_PER_DAY);
-    const cursor = getCursor(db, asset.id, group.scanKey);
+    const cursor = await getCursor(db, asset.id, group.scanKey);
     const startDay = cursor && !args.rescan ? addDays(cursor.lastDay, 1) : utcDay(args.now.getTime() - args.backfillDays * MS_PER_DAY);
     if (startDay > lastCompleteDay) {
       outcome.notes.push(`no completed day to scan: the last complete day is ${lastCompleteDay} and the scan is already there`);
@@ -336,7 +336,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
             });
             ids.set(m.metricKey, o.id);
           }
-          advanceCursor(t, asset.id, group.scanKey, { lastBlock: Number(next.number) - 1, lastDay: day }, nowIso);
+          await advanceCursor(t, asset.id, group.scanKey, { lastBlock: Number(next.number) - 1, lastDay: day }, nowIso);
         }, { lockAsset: asset.id });
       }
       for (const m of group.members) {

@@ -52,12 +52,12 @@ describe('context', () => {
   });
 
   it('separates open anomalies from acknowledged ones, which are read-only, and carries the --anomaly target and the note', async () => {
-    const raise = (dedupeKey: string, severity: 'degrading' | 'advisory') =>
-      raiseAnomaly(w.db, { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey, severity, detail: { check: 11 }, seenAt: AS_OF });
-    const open = raise('a', 'degrading');
-    const acked = raise('b', 'advisory');
-    decideAnomaly(w.db, acked.id, 'acknowledged', 'known lag', AS_OF);
-    decideAnomaly(w.db, raise('c', 'advisory').id, 'resolved', 'fixed', AS_OF);
+    const raise = async (dedupeKey: string, severity: 'degrading' | 'advisory') =>
+      await raiseAnomaly(w.db, { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey, severity, detail: { check: 11 }, seenAt: AS_OF });
+    const open = await raise('a', 'degrading');
+    const acked = await raise('b', 'advisory');
+    await decideAnomaly(w.db, acked.id, 'acknowledged', 'known lag', AS_OF);
+    await decideAnomaly(w.db, (await raise('c', 'advisory')).id, 'resolved', 'fixed', AS_OF);
     const p = await pack({ anomalyId: open.id, note: 'Venice announced a new burn policy' });
     expect(p.anomalies.open.map((a: { id: number }) => a.id)).toEqual([open.id]);
     expect(p.anomalies.acknowledged_read_only).toMatchObject([{ id: acked.id, read_only: true, note: 'known lag', occurrences: 1 }]);

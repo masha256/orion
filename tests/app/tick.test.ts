@@ -76,7 +76,7 @@ describe('tickAsset', () => {
     const yaml = watchAssetYaml({ above: 20, levels: false }).replace('holder_flows:', volume);
     const logs = [{ blockNumber: BigInt(Math.ceil((Date.parse('2026-09-17T12:00:00Z') / 1000 - GENESIS_TS) / 2)), logIndex: 0, txHash: '0xa', from: POOL, value: 3n * 10n ** 18n }];
     world({ loaded: reportAsset(yaml, '  volume: [flow_usd.volume]\n'), logs });
-    const a = raiseAnomaly(h.db, { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey: 'x', severity: 'advisory', detail: { check: 1 }, seenAt: NOW.toISOString() });
+    const a = await raiseAnomaly(h.db, { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey: 'x', severity: 'advisory', detail: { check: 1 }, seenAt: NOW.toISOString() });
     const { report, exitCode } = await tick();
     expect(exitCode).toBe(2);
     expect(report).toMatchObject({ outcome: 'completed', error: null, holder_yield: null, report_error: { code: 'report_unavailable' }, ingest: { outcome: 'ok' } });
@@ -143,7 +143,7 @@ describe('tickAsset', () => {
   });
 
   it('tick: an open anomaly starts nothing', async () => {
-    const a = raiseAnomaly(h.db, { assetId: 'mini', kind: 'source_failure_streak', metricKey: '', dedupeKey: 'cg', severity: 'degrading', detail: {}, seenAt: NOW.toISOString() });
+    const a = await raiseAnomaly(h.db, { assetId: 'mini', kind: 'source_failure_streak', metricKey: '', dedupeKey: 'cg', severity: 'degrading', detail: {}, seenAt: NOW.toISOString() });
     const { report, exitCode } = await tick();
     expect(exitCode).toBe(0);
     expect(agentRuns()).toBe(0);

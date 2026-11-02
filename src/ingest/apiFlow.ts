@@ -77,7 +77,7 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
   // 1. Range: completed UTC days only, from the cursor (less the revision window) or the backfill start.
   const lastCompleteDay = addDays(utcDay(args.now.getTime()), -1);
   const windowStart = utcDay(args.now.getTime() - args.backfillDays * MS_PER_DAY);
-  const cursor = getCursor(db, asset.id, args.scanKey);
+  const cursor = await getCursor(db, asset.id, args.scanKey);
   const byDay = new Map(args.points.map((p) => [p.day, p.value]));
   const stored = await storedApiDays(db, asset.id, metricKey);
   // The days to read: with a cursor, the last revisionDays written days (a revised value supersedes the day's row) plus
@@ -184,7 +184,7 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
       if (newest === null || day > newest) newest = day;
     }
     // The cursor never moves backwards; lastBlock is meaningless for an API series.
-    if (!dryRun && newest !== null) advanceCursor(h, asset.id, args.scanKey, { lastBlock: 0, lastDay: newest }, nowIso);
+    if (!dryRun && newest !== null) await advanceCursor(h, asset.id, args.scanKey, { lastBlock: 0, lastDay: newest }, nowIso);
   };
   // IMMEDIATE: each insert reads for rows to supersede before it writes. A deferred transaction takes the write lock
   // only at its first write, and another connection's commit in between fails it with SQLITE_BUSY_SNAPSHOT, which

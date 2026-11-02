@@ -42,7 +42,7 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     expect(await byDay(h)).toEqual({ '2026-09-15': 100, '2026-09-16': 110, '2026-09-18': 130, '2026-09-19': 140 });
     expect((await listActiveObservations(h.db, 'hype', METRIC))[0]).toMatchObject({ periodDays: 1, source: 'api', status: 'confirmed', sourceDetail: `${LLAMA_HYPE}?dataType=dailyHoldersRevenue` });
     expect(r.written.map((w) => w.observedAt.slice(0, 10))).toEqual(['2026-09-15', '2026-09-16', '2026-09-18', '2026-09-19']);
-    expect(getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)).toEqual({ lastBlock: 0, lastDay: '2026-09-18' });
+    expect(await getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)).toEqual({ lastBlock: 0, lastDay: '2026-09-18' });
   });
 
   it('writes nothing new the next day, supersedes a day the source revised, and picks up a day that appeared late', async () => {
@@ -69,7 +69,7 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     expect((await byDay(h))['2026-09-15']).toBe(100);
     const rescan = await fetch(world({ ...SERIES, '2026-09-14': 101 }, { db: h.db }), { backfillDays: 10 });
     expect(rescan.written.map((w) => [w.observedAt.slice(0, 10), w.value])).toEqual([['2026-09-15', 101]]);
-    expect(getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)!.lastDay).toBe('2026-09-18'); // never moves backwards
+    expect((await getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`))!.lastDay).toBe('2026-09-18'); // never moves backwards
   });
 
   it('refuses to write over a manual row without --adopt, writes nothing on a dry run, and retires it with --adopt', async () => {
@@ -85,7 +85,7 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     expect(dry.written.map((w) => w.observationId)).toEqual([null, null, null, null]);
     expect(source(dry).notes.join('\n')).toMatch(new RegExp(`--adopt would reject #${manual.id}`));
     expect(await listActiveObservations(h.db, 'hype', METRIC)).toHaveLength(1);
-    expect(getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)).toBeNull();
+    expect(await getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)).toBeNull();
 
     const adopted = await fetch(h, { adopt: true });
     expect(source(adopted)).toMatchObject({ status: 'ok', retiredObservationIds: [manual.id] });
@@ -98,7 +98,7 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     expect(source(r)).toMatchObject({ status: 'failed', metricsWritten: [] });
     expect(source(r).error).toMatch(/2026-09-15: -5 is negative/);
     expect(await listActiveObservations(h.db, 'hype', METRIC)).toEqual([]);
-    expect(getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)).toBeNull();
+    expect(await getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)).toBeNull();
   });
 
   it('--adopt retires a manual row that overlaps only unchanged days, so nothing is counted twice', async () => {
@@ -134,7 +134,7 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     const later = new Date('2026-09-22T12:00:00.000Z');
     const r2 = await fetch(world({ '2026-09-14': 100, '2026-09-15': 110, '2026-09-17': 130, '2026-09-18': 140, '2026-09-19': 150, '2026-09-20': 160, '2026-09-21': 170 }, { db: h.db, now: later }));
     expect(r2.written.map((w) => w.observedAt.slice(0, 10))).toEqual(['2026-09-20', '2026-09-21', '2026-09-22']);
-    expect(getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)!.lastDay).toBe('2026-09-21');
+    expect((await getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`))!.lastDay).toBe('2026-09-21');
     expect(source(r2).notes.join('\n')).toMatch(/skipped: 2026-09-16/);
     const r3 = await fetch(world({ '2026-09-14': 100, '2026-09-15': 110, '2026-09-16': 120, '2026-09-17': 130, '2026-09-18': 140, '2026-09-19': 150, '2026-09-20': 160, '2026-09-21': 170 }, { db: h.db, now: later }));
     expect(r3.written.map((w) => [w.observedAt.slice(0, 10), w.value])).toEqual([['2026-09-17', 120]]);
@@ -176,7 +176,7 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     expect(source(first)).toMatchObject({ status: 'ok' });
     const afterFirst = await byDay(h);
     expect(afterFirst).toEqual({ '2026-09-18': 130, '2026-09-19': 140 });
-    expect(getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)!.lastDay).toBe('2026-09-18');
+    expect((await getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`))!.lastDay).toBe('2026-09-18');
     // The 90-day window makes 09-14 and 09-15 gap days: 09-14 cannot be stored and stays a gap, 09-15 is taken.
     for (let run = 0; run < 2; run++) {
       const r = await fetch(world(S, { db: h.db }));

@@ -75,7 +75,7 @@ describe('fetchAsset: levels', () => {
     expect(r.startedAt).toBe(NOW.toISOString());
     expect(r.endedAt).toBe(new Date(NOW.getTime() + 5000).toISOString());
 
-    const [logged] = listFetchRuns(h.db, 'mini', 5);
+    const [logged] = await listFetchRuns(h.db, 'mini', 5);
     expect(logged.id).toBe(r.fetchRunId);
     expect(logged.outcome).toBe('ok');
     expect(logged.detail.sources).toEqual(r.sources);
@@ -96,7 +96,7 @@ describe('fetchAsset: levels', () => {
     expect((await listActiveObservations(h.db, 'mini', 'price_usd'))[0].value).toBe(10); // the primary value is still stored
 
     await fetchAsset(h.db, h.loaded, new Date(NOW.getTime() + 86_400_000), h.deps);
-    const [open] = listAnomalies(h.db, { assetId: 'mini' });
+    const [open] = await listAnomalies(h.db, { assetId: 'mini' });
     expect(open.occurrences).toBe(2);
     expect(open.id).toBe(r.anomalies[0].id);
   });
@@ -105,13 +105,13 @@ describe('fetchAsset: levels', () => {
     const h = harness({ routes: { [STATS]: { price: 11, supply: { totalBaseUnit: (100n * 10n ** 18n).toString() } } } });
     const first = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     expect(first.anomalies[0]).toMatchObject({ status: 'open' });
-    decideAnomaly(h.db, first.anomalies[0].id!, 'acknowledged', 'venice lags', NOW.toISOString());
+    await decideAnomaly(h.db, first.anomalies[0].id!, 'acknowledged', 'venice lags', NOW.toISOString());
 
     const dry = await fetchAsset(h.db, h.loaded, new Date(NOW.getTime() + 86_400_000), h.deps, { dryRun: true });
     expect(dry.anomalies[0]).toMatchObject({ id: null, kind: 'cross_check_mismatch', status: 'acknowledged' });
     const real = await fetchAsset(h.db, h.loaded, new Date(NOW.getTime() + 86_400_000), h.deps);
     expect(real.anomalies[0]).toMatchObject({ id: first.anomalies[0].id, status: 'acknowledged' });
-    expect(listAnomalies(h.db, { assetId: 'mini' })).toEqual([]); // nothing reopened
+    expect(await listAnomalies(h.db, { assetId: 'mini' })).toEqual([]); // nothing reopened
   });
 
   it('raises an advisory anomaly when the metric is not critical', async () => {

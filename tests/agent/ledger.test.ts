@@ -13,8 +13,8 @@ let priceId: number;
 
 const CITATION = { source: 'doc:1', quotedText: 'the API lags by design, every day', locator: '12:33', docSha256: 'd'.repeat(64), docKind: 'transcript' as const };
 const count = (table: string): number => (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
-const anomaly = () =>
-  raiseAnomaly(db, {
+const anomaly = async () =>
+  await raiseAnomaly(db, {
     assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey: 'x', severity: 'degrading', detail: {}, seenAt: '2026-09-19T00:00:00Z',
   });
 const research = (over: Partial<Parameters<Ledger['stageObservation']>[0]> = {}) =>
@@ -81,11 +81,11 @@ describe('commit', () => {
   });
 
   it('resolves anomalies as the persona, with the evidence in the note', async () => {
-    const a = anomaly();
+    const a = await anomaly();
     ledger.stageResolution({ anomalyId: a.id, note: 'sources agree again', evidence: [priceId] });
     const summary = await commit();
     expect(summary.resolvedAnomalyIds).toEqual([a.id]);
-    expect(getAnomaly(db, a.id)).toMatchObject({ status: 'resolved', decidedBy: 'analyst', note: `sources agree again [evidence: #${priceId}]` });
+    expect(await getAnomaly(db, a.id)).toMatchObject({ status: 'resolved', decidedBy: 'analyst', note: `sources agree again [evidence: #${priceId}]` });
   });
 
   it('writes proposals and the journal, and its summary has no assumption set version', async () => {
@@ -160,12 +160,12 @@ describe('the world changes mid-run', () => {
   };
 
   it('conflicts when the anomaly was decided during the run, and never withdraws an acknowledgement', async () => {
-    const a = anomaly();
+    const a = await anomaly();
     stageEverything();
     ledger.stageResolution({ anomalyId: a.id, note: 'cleared', evidence: [priceId] });
-    decideAnomaly(db, a.id, 'acknowledged', 'known lag', '2026-09-19T12:00:00Z');
+    await decideAnomaly(db, a.id, 'acknowledged', 'known lag', '2026-09-19T12:00:00Z');
     await expect(commit()).rejects.toThrow(/anomaly \d+ is no longer open \(acknowledged\)/);
-    expect(getAnomaly(db, a.id)).toMatchObject({ status: 'acknowledged', note: 'known lag' });
+    expect(await getAnomaly(db, a.id)).toMatchObject({ status: 'acknowledged', note: 'known lag' });
     nothingWritten();
   });
 
@@ -184,14 +184,14 @@ describe('the world changes mid-run', () => {
 
   it('conflicts on evidence that cites a staged id this run never staged, and rolls back the rows already inserted', async () => {
     stageEverything();
-    ledger.stageResolution({ anomalyId: anomaly().id, note: 'cleared', evidence: [-9] });
+    ledger.stageResolution({ anomalyId: (await anomaly()).id, note: 'cleared', evidence: [-9] });
     await expect(commit()).rejects.toThrow(AgentConflict);
     nothingWritten();
   });
 
   it('a degrading anomaly opened during the run blocks nothing: there is no assumption change to block', async () => {
     stageEverything();
-    anomaly();
+    await anomaly();
     expect((await commit()).journalId).not.toBeNull();
   });
 });

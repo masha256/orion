@@ -86,7 +86,7 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   }
   const targetDoc: CitableDoc = { id: document.id, kind: document.kind, sha256: document.sha256, text: document.text };
   if (opts.anomalyId !== undefined) {
-    const target = getAnomaly(db, opts.anomalyId);
+    const target = await getAnomaly(db, opts.anomalyId);
     if (!target || target.assetId !== asset.id) throw new OrionError('anomaly_not_found', `no anomaly ${opts.anomalyId} on ${asset.id}`);
     if (target.status !== 'open') throw new OrionError('anomaly_not_open', `anomaly ${opts.anomalyId} is already ${target.status}`);
   }

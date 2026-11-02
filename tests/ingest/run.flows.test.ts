@@ -37,7 +37,7 @@ describe('fetchAsset: flows', () => {
     expect(r.anomalies[0]).toMatchObject({ kind: 'unlisted_sender', metricKey: 'flow_usd.fees', dedupeKey: STRANGER, severity: 'degrading' });
     expect(r.anomalies[0].detail).toMatchObject({ sender: STRANGER, transfers: 2, tokens: 11, first: { tx: '0xtx0', day: '2026-09-17' }, last: { tx: '0xtx1', day: '2026-09-18' } });
     expect((await listActiveObservations(h.db, 'mini', 'flow_tokens.fees')).map((o) => o.value)).toEqual([0, 0, 0]); // excluded from the flow
-    expect(listAnomalies(h.db, { assetId: 'mini' })).toHaveLength(1);
+    expect(await listAnomalies(h.db, { assetId: 'mini' })).toHaveLength(1);
   });
 
   it('forces a re-scan when --backfill-days is given, and resumes from the cursor otherwise', async () => {

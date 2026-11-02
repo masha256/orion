@@ -174,9 +174,15 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
 
   // How far back an adapter that pages an API's history reads: --backfill-days, or the asset's backfill on the first fetch
   // of an adapter flow (no cursor yet), so a new asset's first routine run fills its window instead of its last few days.
-  const firstAdapterFlow = plan.batches.some((b) =>
-    b.requests.some((r) => r.role === 'primary' && r.source.type === 'adapter' && asset.metrics[r.metricKey].type === 'flow' && !getCursor(db, asset.id, `${b.sourceId}>${r.metricKey}`)),
-  );
+  let firstAdapterFlow = false;
+  scan: for (const b of plan.batches) {
+    for (const r of b.requests) {
+      if (r.role === 'primary' && r.source.type === 'adapter' && asset.metrics[r.metricKey].type === 'flow' && !(await getCursor(db, asset.id, `${b.sourceId}>${r.metricKey}`))) {
+        firstAdapterFlow = true;
+        break scan;
+      }
+    }
+  }
   const historyDays = opts.backfillDays ?? (firstAdapterFlow ? (asset.ingest?.backfill_days ?? DEFAULT_API_FLOW_BACKFILL_DAYS) : undefined);
   const ctx: SourceContext = {
     asset, nowIso: startedAt, http: withRunCache(deps.http), rpc, block, env: deps.env, contract: contractResolver(asset),
@@ -195,14 +201,14 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   };
   const written: WrittenObservation[] = [];
   const anomalies: RaisedAnomaly[] = [];
-  const raise = (a: Omit<RaisedAnomaly, 'id' | 'status'>): void => {
+  const raise = async (a: Omit<RaisedAnomaly, 'id' | 'status'>): Promise<void> => {
     if (dryRun) {
       // Nothing is written; report what a real run would do: an acknowledged condition stays acknowledged.
-      const standing = findStandingAnomaly(db, { assetId: asset.id, ...a });
+      const standing = await findStandingAnomaly(db, { assetId: asset.id, ...a });
       anomalies.push({ id: null, status: standing?.status === 'acknowledged' ? 'acknowledged' : 'open', ...a });
       return;
     }
-    const row = raiseAnomaly(db, { assetId: asset.id, ...a, seenAt: startedAt });
+    const row = await raiseAnomaly(db, { assetId: asset.id, ...a, seenAt: startedAt });
     anomalies.push({ id: row.id, status: row.status === 'acknowledged' ? 'acknowledged' : 'open', ...a });
   };
 
@@ -353,7 +359,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
         metricKey: r.metricKey, sourceId: batch.sourceId, label: 'level', primary, check, diffPct: cmp.diffPct, tolerancePct: r.tolerancePct, ok: cmp.ok,
       });
       if (!cmp.ok) {
-        raise({
+        await raise({
           kind: 'cross_check_mismatch', metricKey: r.metricKey, dedupeKey: batch.sourceId, severity: def.critical ? 'degrading' : 'advisory',
           detail: {
             primary, check, diff_pct: cmp.diffPct, tolerance_pct: r.tolerancePct,
@@ -385,7 +391,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       const first = transfers[0];
       const last = transfers[transfers.length - 1];
       for (const metricKey of unlistedAnomalyMetrics(loaded, group)) {
-        raise({
+        await raise({
           kind: 'unlisted_sender', metricKey, dedupeKey: sender, severity: 'degrading',
           detail: {
             sender, transfers: transfers.length, tokens: transfers.reduce((s, t) => s + t.tokens, 0),
@@ -425,7 +431,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       }
       const bad = months.filter((m) => !m.ok);
       if (bad.length > 0) {
-        raise({
+        await raise({
           kind: 'cross_check_mismatch', metricKey: r.metricKey, dedupeKey: batch.sourceId, severity: def.critical ? 'degrading' : 'advisory',
           detail: {
             months: bad.map((m) => ({ month: m.month, primary: m.primary, check: m.check, diff_pct: m.diffPct })),
@@ -511,7 +517,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       const index = dryRun ? [...stored, ...derivedIndex] : stored; // a real run has already stored them
       const finding = checkRevenueStale(revenue.observedAt, index, REVENUE_STALE_MOVE_PCT);
       if (finding) {
-        raise({ kind: 'revenue_disclosure_stale', metricKey: STD_METRICS.revenue, dedupeKey: revenue.observedAt, severity: 'advisory', detail: finding.detail });
+        await raise({ kind: 'revenue_disclosure_stale', metricKey: STD_METRICS.revenue, dedupeKey: revenue.observedAt, severity: 'advisory', detail: finding.detail });
       }
     }
   }
@@ -527,9 +533,9 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   };
   for (const outcome of outcomes.values()) {
     if (outcome.status !== 'failed' || monitorOnly(outcome.sourceId)) continue;
-    const previous = recentSourceStatuses(db, asset.id, outcome.sourceId, 2);
+    const previous = await recentSourceStatuses(db, asset.id, outcome.sourceId, 2);
     if (previous.length === 2 && previous.every((s) => s === 'failed')) {
-      raise({
+      await raise({
         kind: 'source_failure_streak', metricKey: '', dedupeKey: outcome.sourceId, severity: 'advisory',
         detail: { source: outcome.sourceId, error: outcome.error, consecutive_failures_at_least: 3 },
       });
@@ -540,6 +546,6 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   const outcome: FetchOutcome = sources.every((s) => s.status === 'ok') ? 'ok' : sources.every((s) => s.status === 'failed') ? 'failed' : 'partial';
   const watch = evaluateWatches(asset, watchBefore, written, previousLevelIn(watchBefore));
   const endedAt = deps.now().toISOString();
-  const fetchRunId = dryRun ? null : insertFetchRun(db, { assetId: asset.id, startedAt, endedAt, outcome, detail: { sources, ...(watch.length > 0 ? { watch } : {}) } });
+  const fetchRunId = dryRun ? null : await insertFetchRun(db, { assetId: asset.id, startedAt, endedAt, outcome, detail: { sources, ...(watch.length > 0 ? { watch } : {}) } });
   return { assetId: asset.id, dryRun, fetchRunId, outcome, startedAt, endedAt, sources, written, anomalies, watch };
 }

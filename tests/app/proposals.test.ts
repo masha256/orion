@@ -38,8 +38,8 @@ const codeOf = async (fn: () => unknown): Promise<string | undefined> => {
   }
   return undefined;
 };
-const anomaly = () =>
-  raiseAnomaly(w.db, { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey: 'x', severity: 'degrading', detail: {}, seenAt: AS_OF });
+const anomaly = async () =>
+  await raiseAnomaly(w.db, { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey: 'x', severity: 'degrading', detail: {}, seenAt: AS_OF });
 
 describe('a proposal row that is not what the agent files', () => {
   it('refuses an asset id that is not an asset id, before any file path is built from it', async () => {
@@ -69,18 +69,18 @@ describe('proposals', () => {
 
 describe('approving anomaly proposals', () => {
   it('acknowledges with the user\'s note, else the proposal\'s, and withdraws an acknowledgement by resolving', async () => {
-    const a = anomaly();
+    const a = await anomaly();
     await approve(file({ kind: 'acknowledge_anomaly', anomalyId: a.id, note: 'lags by design' }, { status: 'open' }).id);
-    expect(getAnomaly(w.db, a.id)).toMatchObject({ status: 'acknowledged', note: 'lags by design', decidedBy: null });
+    expect(await getAnomaly(w.db, a.id)).toMatchObject({ status: 'acknowledged', note: 'lags by design', decidedBy: null });
     const { result } = await approve(file({ kind: 'withdraw_acknowledgement', anomalyId: a.id, note: 'it has grown' }, { status: 'acknowledged' }).id, 'agreed, look again');
     expect(result).toEqual({ kind: 'anomaly', anomalyId: a.id, status: 'resolved' });
-    expect(getAnomaly(w.db, a.id)).toMatchObject({ status: 'resolved', note: 'agreed, look again' });
+    expect(await getAnomaly(w.db, a.id)).toMatchObject({ status: 'resolved', note: 'agreed, look again' });
   });
 
   it('is stale when the anomaly is no longer in the status it was filed against', async () => {
-    const a = anomaly();
+    const a = await anomaly();
     const p = file({ kind: 'acknowledge_anomaly', anomalyId: a.id, note: 'n' }, { status: 'open' });
-    decideAnomaly(w.db, a.id, 'resolved', 'fixed', AS_OF);
+    await decideAnomaly(w.db, a.id, 'resolved', 'fixed', AS_OF);
     expect(await codeOf(() => approve(p.id))).toBe('stale_proposal');
   });
 });

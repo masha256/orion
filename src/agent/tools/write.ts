@@ -121,7 +121,7 @@ const resolveAnomaly = defineTool({
     'Acknowledged anomalies are read-only to you.',
   input: z.strictObject({ id: z.number().int(), note: z.string().max(MAX_RATIONALE), evidence: z.array(z.number().int()) }),
   async run(ctx, input) {
-    const anomaly = getAnomaly(ctx.db, input.id);
+    const anomaly = await getAnomaly(ctx.db, input.id);
     if (!anomaly || anomaly.assetId !== ctx.loaded.config.id) refuse('anomaly_not_found', `no anomaly ${input.id} on ${ctx.loaded.config.id}`);
     const a = anomaly!;
     if (a.status === 'acknowledged') {
@@ -302,7 +302,7 @@ const proposeChange = defineTool({
       case 'acknowledge_anomaly':
       case 'withdraw_acknowledgement': {
         if (input.anomaly_id === undefined) refuse('invalid_input', `${input.kind} needs anomaly_id`);
-        const anomaly = getAnomaly(ctx.db, input.anomaly_id as number);
+        const anomaly = await getAnomaly(ctx.db, input.anomaly_id as number);
         if (!anomaly || anomaly.assetId !== asset.id) refuse('anomaly_not_found', `no anomaly ${input.anomaly_id} on ${asset.id}`);
         const needed = input.kind === 'acknowledge_anomaly' ? 'open' : 'acknowledged';
         if (anomaly!.status !== needed) refuse('wrong_anomaly_status', `anomaly ${anomaly!.id} is ${anomaly!.status}; ${input.kind} needs it ${needed}`);

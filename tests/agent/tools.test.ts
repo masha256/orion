@@ -18,8 +18,8 @@ const NINE = [
   'get_observations', 'get_anomalies', 'get_journal', 'get_flow_total', 'resolve_anomaly', 'record_provisional_observation', 'propose_change',
   'write_journal', 'record_dev_finding',
 ];
-const anomaly = (severity: 'degrading' | 'advisory', dedupeKey = 'x') =>
-  raiseAnomaly(w.db, { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey, severity, detail: {}, seenAt: AS_OF });
+const anomaly = async (severity: 'degrading' | 'advisory', dedupeKey = 'x') =>
+  await raiseAnomaly(w.db, { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey, severity, detail: {}, seenAt: AS_OF });
 /** Reads revenue observations so their ids count as shown, and returns the seeded revenue id. */
 const seeRevenue = async (): Promise<number> => {
   await w.call('get_observations', { metric: 'revenue_run_rate_usd' });
@@ -76,7 +76,7 @@ describe('read tools', () => {
 describe('resolve_anomaly', () => {
   it('stages a resolution with its evidence', async () => {
     const e = [await seeRevenue()];
-    const open = anomaly('degrading', 'a');
+    const open = await anomaly('degrading', 'a');
     expect(await w.call('resolve_anomaly', { id: open.id, note: 'sources agree again', evidence: e })).toEqual({ isError: false, result: { staged: true, anomaly_id: open.id } });
     expect([...w.ledger.resolvedAnomalyIds()]).toEqual([open.id]);
   });
@@ -84,14 +84,14 @@ describe('resolve_anomaly', () => {
   it('leaves the user\'s acknowledgement alone, and refuses one that is already resolved or belongs elsewhere', async () => {
     await seeRevenue();
     const e = [w.ids.revenue_run_rate_usd];
-    const acked = anomaly('degrading', 'a');
-    decideAnomaly(w.db, acked.id, 'acknowledged', 'known lag', AS_OF);
+    const acked = await anomaly('degrading', 'a');
+    await decideAnomaly(w.db, acked.id, 'acknowledged', 'known lag', AS_OF);
     expect((await w.call('resolve_anomaly', { id: acked.id, note: 'n', evidence: e })).result.refused).toBe('acknowledged_is_read_only');
-    const done = anomaly('degrading', 'b');
-    decideAnomaly(w.db, done.id, 'resolved', 'fixed', AS_OF);
+    const done = await anomaly('degrading', 'b');
+    await decideAnomaly(w.db, done.id, 'resolved', 'fixed', AS_OF);
     expect((await w.call('resolve_anomaly', { id: done.id, note: 'n', evidence: e })).result.refused).toBe('anomaly_not_open');
     expect((await w.call('resolve_anomaly', { id: 999, note: 'n', evidence: e })).result.refused).toBe('anomaly_not_found');
-    const open = anomaly('degrading', 'c');
+    const open = await anomaly('degrading', 'c');
     expect((await w.call('resolve_anomaly', { id: open.id, note: 'n', evidence: [] })).result.refused).toBe('evidence_required');
     expect((await w.call('resolve_anomaly', { id: open.id, note: ' ', evidence: e })).result.refused).toBe('invalid_input');
   });
@@ -324,11 +324,11 @@ describe('propose_change', () => {
   });
 
   it('proposes acknowledging an open anomaly and withdrawing an acknowledgement, each against the right status', async () => {
-    const open = anomaly('degrading', 'a');
+    const open = await anomaly('degrading', 'a');
     expect((await propose({ kind: 'withdraw_acknowledgement', anomaly_id: open.id })).result.refused).toBe('wrong_anomaly_status');
     expect((await propose({ kind: 'acknowledge_anomaly', anomaly_id: open.id })).isError).toBe(false);
     expect(w.ledger.proposals()[0]).toMatchObject({ change: { kind: 'acknowledge_anomaly', anomalyId: open.id, note: 'because' }, filedAgainst: { status: 'open' }, effect: null });
-    decideAnomaly(w.db, open.id, 'acknowledged', 'ok', AS_OF);
+    await decideAnomaly(w.db, open.id, 'acknowledged', 'ok', AS_OF);
     expect((await propose({ kind: 'withdraw_acknowledgement', anomaly_id: open.id })).isError).toBe(false);
     expect((await propose({ kind: 'acknowledge_anomaly' })).result.refused).toBe('invalid_input');
   });
@@ -349,30 +349,30 @@ describe('propose_change', () => {
   });
 
   it('checks evidence when it is given', async () => {
-    const open = anomaly('degrading', 'a');
+    const open = await anomaly('degrading', 'a');
     expect((await propose({ kind: 'acknowledge_anomaly', anomaly_id: open.id, evidence: [w.ids.revenue_run_rate_usd] })).result.refused).toBe('evidence_not_shown');
     await seeRevenue();
     expect((await propose({ kind: 'acknowledge_anomaly', anomaly_id: open.id, evidence: [w.ids.revenue_run_rate_usd] })).isError).toBe(false);
   });
 
   it('refuses a duplicate of a pending or a staged proposal, and stops at the run\'s proposal budget', async () => {
-    const open = anomaly('degrading', 'a');
+    const open = await anomaly('degrading', 'a');
     insertProposal(w.db, {
       assetId: 'mini', persona: 'analyst', agentRunId: null, change: { kind: 'acknowledge_anomaly', anomalyId: open.id, note: 'because' },
       filedAgainst: { status: 'open' }, rationale: 'because', evidence: [], effect: null, createdAt: AS_OF,
     });
     expect((await propose({ kind: 'acknowledge_anomaly', anomaly_id: open.id })).result.refused).toBe('duplicate_proposal');
-    const other = anomaly('advisory', 'b');
+    const other = await anomaly('advisory', 'b');
     expect((await propose({ kind: 'acknowledge_anomaly', anomaly_id: other.id })).isError).toBe(false);
     expect(await propose({ kind: 'acknowledge_anomaly', anomaly_id: other.id })).toMatchObject({ isError: true, result: { refused: 'duplicate_proposal', staged_in_this_run: true } });
 
     w.ctx.budgets = { ...w.ctx.budgets, proposals: 1 };
-    const third = anomaly('advisory', 'c');
+    const third = await anomaly('advisory', 'c');
     expect((await propose({ kind: 'acknowledge_anomaly', anomaly_id: third.id })).result.refused).toBe('proposal_budget');
   });
 
   it('sees through wording: the same decision re-filed in other words is the same proposal', async () => {
-    const open = anomaly('degrading', 'a');
+    const open = await anomaly('degrading', 'a');
     insertProposal(w.db, {
       assetId: 'mini', persona: 'analyst', agentRunId: null, change: { kind: 'acknowledge_anomaly', anomalyId: open.id, note: 'the API lags by design' },
       filedAgainst: { status: 'open' }, rationale: 'the API lags by design', evidence: [], effect: null, createdAt: AS_OF,
@@ -381,13 +381,13 @@ describe('propose_change', () => {
       .toMatchObject({ isError: true, result: { refused: 'duplicate_proposal' } });
 
     // And the same again for one staged earlier in this run.
-    const other = anomaly('advisory', 'b');
+    const other = await anomaly('advisory', 'b');
     expect((await propose({ kind: 'acknowledge_anomaly', anomaly_id: other.id, rationale: 'first wording' })).isError).toBe(false);
     expect(await propose({ kind: 'acknowledge_anomaly', anomaly_id: other.id, rationale: 'quite different wording' }))
       .toMatchObject({ isError: true, result: { refused: 'duplicate_proposal', staged_in_this_run: true } });
 
     // A different anomaly is a different proposal, however similar the words.
-    const third = anomaly('advisory', 'c');
+    const third = await anomaly('advisory', 'c');
     expect((await propose({ kind: 'acknowledge_anomaly', anomaly_id: third.id, rationale: 'first wording' })).isError).toBe(false);
   });
 
@@ -481,7 +481,7 @@ describe('propose_change', () => {
 
 describe('model-authored text', () => {
   it('is stripped of control characters before it is staged, with newlines kept', async () => {
-    const open = anomaly('advisory');
+    const open = await anomaly('advisory');
     await w.call('propose_change', { kind: 'acknowledge_anomaly', anomaly_id: open.id, rationale: ' lags\u0007 by design\nand steady ', citations: [DOC_CITE] });
     expect(w.ledger.proposals()[0].rationale).toBe('lags by design\nand steady');
     await w.call('write_journal', { thesis: 'steady\u0007', open_questions: ['what\u0000 next?', ' \u0007 '], summary: 'review\u001Bed' });
@@ -497,7 +497,7 @@ describe('model-authored text', () => {
   it('is refused as ordinary invalid input when it is too long, so the model can shorten it and retry', async () => {
     await seeRevenue();
     const e = [w.ids.revenue_run_rate_usd];
-    const resolve = (note: string) => w.call('resolve_anomaly', { id: anomaly('advisory').id, note, evidence: e });
+    const resolve = async (note: string) => w.call('resolve_anomaly', { id: (await anomaly('advisory')).id, note, evidence: e });
     expect((await resolve('n'.repeat(2001))).result.refused).toBe('invalid_input');
     expect((await resolve('n'.repeat(2000))).isError).toBe(false);
     expect((await research({ quoted_text: QUOTE + 'x'.repeat(601) })).result.refused).toBe('invalid_input');

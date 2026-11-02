@@ -87,15 +87,16 @@ function fromRow(r: Row): FetchRun {
   };
 }
 
-export function insertFetchRun(db: Db, run: Omit<FetchRun, 'id'>): number {
-  const info = db
-    .prepare('INSERT INTO fetch_runs (asset_id, started_at, ended_at, outcome, detail_json) VALUES (?, ?, ?, ?, ?)')
-    .run(run.assetId, run.startedAt, run.endedAt, run.outcome, JSON.stringify(run.detail));
-  return Number(info.lastInsertRowid);
+export async function insertFetchRun(db: Db, run: Omit<FetchRun, 'id'>): Promise<number> {
+  const inserted = await db.run<{ id: number }>(
+    'INSERT INTO fetch_runs (asset_id, started_at, ended_at, outcome, detail_json) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+    [run.assetId, run.startedAt, run.endedAt, run.outcome, JSON.stringify(run.detail)],
+  );
+  return Number(inserted.rows[0].id);
 }
 
-export function listFetchRuns(db: Db, assetId: string, limit: number): FetchRun[] {
-  const rows = db.prepare('SELECT * FROM fetch_runs WHERE asset_id = ? ORDER BY id DESC LIMIT ?').all(assetId, limit) as Row[];
+export async function listFetchRuns(db: Db, assetId: string, limit: number): Promise<FetchRun[]> {
+  const rows = await db.all<Row>('SELECT * FROM fetch_runs WHERE asset_id = $1 ORDER BY id DESC LIMIT $2', [assetId, limit]);
   return rows.map(fromRow);
 }
 
@@ -104,9 +105,9 @@ export function listFetchRuns(db: Db, assetId: string, limit: number): FetchRun[
  * source (a --metric run, say) and 'skipped' entries are passed over: a source that was not
  * attempted neither extends nor breaks a failure streak.
  */
-export function recentSourceStatuses(db: Db, assetId: string, sourceId: string, limit: number): SourceStatus[] {
+export async function recentSourceStatuses(db: Db, assetId: string, sourceId: string, limit: number): Promise<SourceStatus[]> {
   const out: SourceStatus[] = [];
-  const rows = db.prepare('SELECT * FROM fetch_runs WHERE asset_id = ? ORDER BY id DESC').iterate(assetId) as IterableIterator<Row>;
+  const rows = await db.all<Row>('SELECT * FROM fetch_runs WHERE asset_id = $1 ORDER BY id DESC', [assetId]);
   for (const row of rows) {
     const entry = fromRow(row).detail.sources.find((s) => s.sourceId === sourceId);
     if (!entry || entry.status === 'skipped') continue;

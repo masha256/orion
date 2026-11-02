@@ -143,12 +143,12 @@ describe('fetchAsset: watches', () => {
   it('fetch_runs.detail_json.watch is stored when non-empty and absent when empty', async () => {
     const h = world();
     const fired = await fetch(h);
-    const [stored] = listFetchRuns(h.db, 'mini', 1);
+    const [stored] = await listFetchRuns(h.db, 'mini', 1);
     expect(stored.detail.watch).toEqual(fired.watch);
 
     const quiet = await fetch(world({ db: h.db, apr: 0.06, now: new Date(NOW.getTime() + 30 * 60_000) })); // a later reading, inside the band; the flow day is already reported
     expect(quiet.watch).toEqual([]);
-    const [latest] = listFetchRuns(h.db, 'mini', 1);
+    const [latest] = await listFetchRuns(h.db, 'mini', 1);
     expect(latest.id).toBe(quiet.fetchRunId);
     expect(latest.id).not.toBe(stored.id);
     expect(Object.keys(latest.detail)).toEqual(['sources']);

@@ -71,10 +71,10 @@ export async function approveProposal(db: Db, home: string, id: number, opts: { 
       case 'acknowledge_anomaly':
       case 'withdraw_acknowledgement': {
         const needed = change.kind === 'acknowledge_anomaly' ? 'open' : 'acknowledged';
-        const anomaly = getAnomaly(t, change.anomalyId);
+        const anomaly = await getAnomaly(t, change.anomalyId);
         if (!anomaly || anomaly.status !== needed) stale(id, `anomaly ${change.anomalyId} is ${anomaly?.status ?? 'missing'}, not ${needed}`);
         const status = change.kind === 'acknowledge_anomaly' ? 'acknowledged' : 'resolved';
-        decideAnomaly(t, change.anomalyId, status, note ?? change.note, nowIso);
+        await decideAnomaly(t, change.anomalyId, status, note ?? change.note, nowIso);
         result = { kind: 'anomaly', anomalyId: change.anomalyId, status };
         break;
       }

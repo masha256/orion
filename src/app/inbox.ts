@@ -116,7 +116,7 @@ export async function buildInbox(db: Db, asset: AssetConfig, nowIso: string): Pr
   const proposals = listProposals(db, { assetId: asset.id }).map((p) => ({
     id: p.id, kind: p.change.kind, persona: p.persona, agent_run_id: p.agentRunId, filed_at: p.createdAt, effect: p.effect,
   }));
-  const anomalies = listAnomalies(db, { assetId: asset.id }).map((a) => ({
+  const anomalies = (await listAnomalies(db, { assetId: asset.id })).map((a) => ({
     id: a.id, kind: a.kind, metric: a.metricKey, severity: a.severity, occurrences: a.occurrences, first_seen_at: a.firstSeenAt, last_seen_at: a.lastSeenAt,
     reading: readingOf(a.detail) as Record<string, unknown>,
   }));

@@ -34,10 +34,10 @@ const getAnomalies = defineTool({
     'Open anomalies for the asset. include_decided adds resolved and acknowledged ones. An acknowledged anomaly is the user\'s standing ' +
     'decision and is read-only to you.',
   input: z.strictObject({ include_decided: z.boolean().optional() }),
-  run(ctx, input) {
+  async run(ctx, input) {
     const staged = ctx.ledger.resolvedAnomalyIds();
     return {
-      anomalies: listAnomalies(ctx.db, { assetId: ctx.loaded.config.id, includeDecided: input.include_decided }).map((a) => describeAnomaly(a, staged.has(a.id))),
+      anomalies: (await listAnomalies(ctx.db, { assetId: ctx.loaded.config.id, includeDecided: input.include_decided })).map((a) => describeAnomaly(a, staged.has(a.id))),
     };
   },
 });

@@ -45,8 +45,8 @@ const stakedCall = () =>
 /** Revenue allows provisional data, so in a disclosure run a figure for it is filed as an observation proposal. */
 const revenueCall = (source = 'doc:1') =>
   toolUse('record_provisional_observation', { metric: 'revenue_run_rate_usd', value: 1100, observed_at: '2026-06-28', citation_url: source, quoted_text: QUOTE });
-const anomaly = (dedupeKey = 'x') =>
-  raiseAnomaly(w.db, { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey, severity: 'degrading', detail: { primary: 10, check: 12 }, seenAt: AS_OF });
+const anomaly = async (dedupeKey = 'x') =>
+  await raiseAnomaly(w.db, { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey, severity: 'degrading', detail: { primary: 10, check: 12 }, seenAt: AS_OF });
 
 describe('run', () => {
   it('a disclosure run needs no assumption set', async () => {
@@ -74,7 +74,7 @@ describe('run', () => {
   });
 
   it('sends the persona, the rules, the run type, both disclosure skills sorted by name, and the nine tools with the web tools', async () => {
-    const a = anomaly();
+    const a = await anomaly();
     // The pack's observations may be cited without reading them again.
     await run([calls(toolUse('resolve_anomaly', { id: a.id, note: 'sources agree again', evidence: [w.ids.price_usd] })), calls(journalCall()), say('Done.')]);
     expect(model.toolResults(1)[0]).toMatchObject({ is_error: false, result: { staged: true } });
@@ -106,7 +106,7 @@ describe('run', () => {
   });
 
   it('carries --anomaly and --note as pack context, and resolves that anomaly when the evidence supports it', async () => {
-    const a = anomaly();
+    const a = await anomaly();
     const result = await run(
       [calls(toolUse('resolve_anomaly', { id: a.id, note: 'the check source has caught up', evidence: [w.ids.price_usd] })), calls(journalCall()), say('Done.')],
       { anomalyId: a.id, note: 'see https://status.example.com' },
@@ -114,7 +114,7 @@ describe('run', () => {
     expect(result.run).toMatchObject({
       outcome: 'completed', triggerDetail: { anomalyId: a.id, note: 'see https://status.example.com', docId: w.doc.id, docSha256: w.doc.sha256 },
     });
-    expect(getAnomaly(w.db, a.id)).toMatchObject({ status: 'resolved', decidedBy: 'analyst' });
+    expect(await getAnomaly(w.db, a.id)).toMatchObject({ status: 'resolved', decidedBy: 'analyst' });
     expect(result.committed!.resolvedAnomalyIds).toEqual([a.id]);
     expect(packOf().trigger).toEqual({ anomaly: expect.objectContaining({ id: a.id, detail: { primary: 10, check: 12 } }), unverified_note: 'see https://status.example.com' });
   });
@@ -196,15 +196,15 @@ describe('runs that do not finish cleanly', () => {
   });
 
   it('ends as conflict when the user decides the anomaly it resolved mid-run, and leaves the user\'s decision alone', async () => {
-    const a = anomaly();
-    const userAcknowledges = () => {
-      decideAnomaly(w.db, a.id, 'acknowledged', 'known lag', AS_OF);
+    const a = await anomaly();
+    const userAcknowledges = async () => {
+      await decideAnomaly(w.db, a.id, 'acknowledged', 'known lag', AS_OF);
       return calls(journalCall());
     };
     const result = await run([calls(toolUse('resolve_anomaly', { id: a.id, note: 'cleared', evidence: [w.ids.price_usd] })), userAcknowledges, say('Done.')]);
     expect(result.run.outcome).toBe('conflict');
     expect(result.run.error).toMatch(/anomaly \d+ is no longer open \(acknowledged\)/);
-    expect(getAnomaly(w.db, a.id)).toMatchObject({ status: 'acknowledged', note: 'known lag' });
+    expect(await getAnomaly(w.db, a.id)).toMatchObject({ status: 'acknowledged', note: 'known lag' });
     expect(count('journal')).toBe(0);
   });
 
@@ -279,8 +279,8 @@ describe('preflight', () => {
       assetId: 'hype', kind: 'post', sourceUrl: 'https://x.com/hype/status/1', sourceId: null, title: null, publishedAt: AS_OF, addedAt: AS_OF, meta: {},
       text: 'Hype said something else entirely about its revenue.\n',
     }).doc;
-    const decided = anomaly('decided');
-    decideAnomaly(w.db, decided.id, 'resolved', 'fixed', AS_OF);
+    const decided = await anomaly('decided');
+    await decideAnomaly(w.db, decided.id, 'resolved', 'fixed', AS_OF);
     expect(await codeOf(run([], { runType: 'weekly' as never }))).toBe('invalid_run_type');
     expect(await codeOf(run([], { docId: undefined }))).toBe('disclosure_needs_doc');
     expect(await codeOf(run([], { docId: 999 }))).toBe('doc_not_found');

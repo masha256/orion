@@ -45,8 +45,8 @@ export async function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledg
 
   const observations = await eligibleObservations(db, asset, nowIso);
   ledger.markShown(observations.map((o) => o.id));
-  const anomalies = listAnomalies(db, { assetId: asset.id, includeDecided: true });
-  const target = input.trigger.anomalyId === undefined ? null : getAnomaly(db, input.trigger.anomalyId);
+  const anomalies = await listAnomalies(db, { assetId: asset.id, includeDecided: true });
+  const target = input.trigger.anomalyId === undefined ? null : await getAnomaly(db, input.trigger.anomalyId);
   const doc = input.document;
 
   return {
@@ -74,7 +74,7 @@ export async function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledg
     journal: listJournal(db, asset.id, { limit: 3 }),
     // Dated claims earlier runs filed, whose date (`by`, or a range's `to`) is within 30 days of now either way.
     catalysts_due: await catalystsDue(db, asset.id, input.now),
-    source_failures: listFetchRuns(db, asset.id, FETCH_RUNS).flatMap((run) =>
+    source_failures: (await listFetchRuns(db, asset.id, FETCH_RUNS)).flatMap((run) =>
       run.detail.sources.filter((s) => s.status === 'failed').map((s) => ({ fetch_run_started_at: run.startedAt, source: s.sourceId, error: s.error })),
     ),
     // The text is the stored text verbatim; the label says how far to trust it.

@@ -221,7 +221,7 @@ export class Ledger {
     return db.tx(async (t): Promise<CommitSummary> => {
       try {
         for (const r of this.resolutions.values()) {
-          const current = getAnomaly(t, r.anomalyId);
+          const current = await getAnomaly(t, r.anomalyId);
           // decideAnomaly would also resolve an ACKNOWLEDGED anomaly, which withdraws the user's decision. Never let that through.
           if (!current || current.status !== 'open') throw new AgentConflict(`anomaly ${r.anomalyId} is no longer open (${current?.status ?? 'missing'})`);
         }
@@ -253,7 +253,7 @@ export class Ledger {
         const resolvedAnomalyIds: number[] = [];
         for (const r of this.resolutions.values()) {
           const cited = remap(r.evidence).map((id) => `#${id}`).join(', ');
-          decideAnomaly(t, r.anomalyId, 'resolved', `${r.note} [evidence: ${cited}]`, nowIso, this.persona);
+          await decideAnomaly(t, r.anomalyId, 'resolved', `${r.note} [evidence: ${cited}]`, nowIso, this.persona);
           resolvedAnomalyIds.push(r.anomalyId);
         }
 

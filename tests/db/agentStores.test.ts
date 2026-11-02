@@ -201,13 +201,13 @@ describe('journal', () => {
 });
 
 describe('anomaly decisions', () => {
-  it('records who decided: a persona, or null for the user', () => {
-    const raise = (dedupeKey: string) =>
-      raiseAnomaly(db, {
+  it('records who decided: a persona, or null for the user', async () => {
+    const raise = async (dedupeKey: string) =>
+      await raiseAnomaly(db, {
         assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey, severity: 'degrading', detail: {}, seenAt: '2026-09-18T00:00:00Z',
       });
-    const byAgent = decideAnomaly(db, raise('a').id, 'resolved', 'cleared', '2026-09-19T00:00:00Z', 'analyst');
-    const byUser = decideAnomaly(db, raise('b').id, 'acknowledged', 'known lag', '2026-09-19T00:00:00Z');
+    const byAgent = await decideAnomaly(db, (await raise('a')).id, 'resolved', 'cleared', '2026-09-19T00:00:00Z', 'analyst');
+    const byUser = await decideAnomaly(db, (await raise('b')).id, 'acknowledged', 'known lag', '2026-09-19T00:00:00Z');
     expect(byAgent.decidedBy).toBe('analyst');
     expect(byUser.decidedBy).toBeNull();
   });

@@ -36,7 +36,7 @@ export interface PeriodicArgs {
   dryRun: boolean;
   outcome: SourceOutcome;
   validate: (value: number) => string | null;
-  raise: (a: Omit<RaisedAnomaly, 'id' | 'status'>) => void;
+  raise: (a: Omit<RaisedAnomaly, 'id' | 'status'>) => Promise<void>;
 }
 
 const daysBetween = (from: string, to: string) => Math.round((dayStartMs(to) - dayStartMs(from)) / MS_PER_DAY);
@@ -76,13 +76,13 @@ export async function writePeriodicPayments(args: PeriodicArgs): Promise<Written
   for (const d of args.due) {
     const late = daysBetween(d.dueDay, today);
     if (late > LATE_DAYS) {
-      args.raise({ kind: 'revenue_payment', metricKey, dedupeKey: `late:${d.from}`, severity: 'advisory', detail: { period: [d.from, d.to], due_day: d.dueDay, days_late: late, paid: false, threshold_days: LATE_DAYS } });
+      await args.raise({ kind: 'revenue_payment', metricKey, dedupeKey: `late:${d.from}`, severity: 'advisory', detail: { period: [d.from, d.to], due_day: d.dueDay, days_late: late, paid: false, threshold_days: LATE_DAYS } });
     }
   }
   for (const p of args.payments) {
     const late = daysBetween(p.dueDay, p.paidAt.slice(0, 10));
     if (late > LATE_DAYS) {
-      args.raise({ kind: 'revenue_payment', metricKey, dedupeKey: `late:${p.from}`, severity: 'advisory', detail: { period: [p.from, p.to], due_day: p.dueDay, paid_at: p.paidAt, days_late: late, paid: true, threshold_days: LATE_DAYS } });
+      await args.raise({ kind: 'revenue_payment', metricKey, dedupeKey: `late:${p.from}`, severity: 'advisory', detail: { period: [p.from, p.to], due_day: p.dueDay, paid_at: p.paidAt, days_late: late, paid: true, threshold_days: LATE_DAYS } });
     }
   }
   // Off accrual: each payment against the previous period's daily rate times its days.
@@ -92,7 +92,7 @@ export async function writePeriodicPayments(args: PeriodicArgs): Promise<Written
     const accrued = (prev.p.value / prev.periodDays) * cur.periodDays;
     const diffPct = accrued > 0 ? (cur.p.value / accrued - 1) * 100 : null;
     if (diffPct !== null && Math.abs(diffPct) > ACCRUAL_TOLERANCE_PCT) {
-      args.raise({
+      await args.raise({
         kind: 'revenue_payment', metricKey, dedupeKey: `accrual:${cur.p.from}`, severity: 'advisory',
         detail: { period: [cur.p.from, cur.p.to], paid: cur.p.value, accrued, diff_pct: diffPct, tolerance_pct: ACCRUAL_TOLERANCE_PCT, basis: `the ${prev.p.from} to ${prev.p.to} period's daily rate` },
       });
@@ -102,7 +102,7 @@ export async function writePeriodicPayments(args: PeriodicArgs): Promise<Written
   if (args.expectedPayers.length > 0) {
     for (const payer of args.payers) {
       if (!args.expectedPayers.includes(payer)) {
-        args.raise({ kind: 'revenue_payment', metricKey, dedupeKey: `payer:${payer}`, severity: 'advisory', detail: { payer, expected: args.expectedPayers, note: 'an address other than the configured treasury funded the payments' } });
+        await args.raise({ kind: 'revenue_payment', metricKey, dedupeKey: `payer:${payer}`, severity: 'advisory', detail: { payer, expected: args.expectedPayers, note: 'an address other than the configured treasury funded the payments' } });
       }
     }
   }

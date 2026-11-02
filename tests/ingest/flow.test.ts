@@ -98,7 +98,7 @@ describe('scanFlowGroup', () => {
     const h = world();
     const group = buildPlan(h.loaded.config).flowGroups[0];
     await scanFlowGroup(await argsFor(h));
-    expect(getCursor(h.db, 'mini', group.scanKey)).toEqual({
+    expect(await getCursor(h.db, 'mini', group.scanKey)).toEqual({
       lastDay: '2026-09-18', lastBlock: Number(h.rpc.blockAtOrAfter(ms('2026-09-19T00:00:00Z') / 1000)) - 1,
     });
 
@@ -123,7 +123,7 @@ describe('scanFlowGroup', () => {
     expect(broken.outcome.status).toBe('failed');
     expect(broken.outcome.error).toMatch(/eth_getLogs failed.*rate limited/);
     expect(await rows(h.db, 'flow_tokens.fees')).toEqual([['2026-09-17', 102]]);
-    expect(getCursor(h.db, 'mini', buildPlan(h.loaded.config).flowGroups[0].scanKey)!.lastDay).toBe('2026-09-16');
+    expect((await getCursor(h.db, 'mini', buildPlan(h.loaded.config).flowGroups[0].scanKey))!.lastDay).toBe('2026-09-16');
 
     const resumed = await scanFlowGroup(await argsFor(h));
     expect(resumed.written.map((w) => w.observedAt.slice(0, 10))).not.toContain('2026-09-17');
@@ -180,7 +180,7 @@ describe('scanFlowGroup', () => {
     ]);
     expect(r.outcome.notes.join(' ')).toMatch(/--adopt/);
     expect((await listActiveObservations(h.db, 'mini')).map((o) => o.id)).toEqual([manual.id]); // no member of the group was written
-    expect(getCursor(h.db, 'mini', buildPlan(h.loaded.config).flowGroups[0].scanKey)).toBeNull();
+    expect(await getCursor(h.db, 'mini', buildPlan(h.loaded.config).flowGroups[0].scanKey)).toBeNull();
     expect(h.rpc.stats.logRanges).toEqual([]);
   });
 
@@ -216,7 +216,7 @@ describe('scanFlowGroup', () => {
     const h = world();
     const r = await scanFlowGroup(await argsFor(h, { dryRun: true }));
     expect(await listActiveObservations(h.db, 'mini')).toEqual([]);
-    expect(getCursor(h.db, 'mini', buildPlan(h.loaded.config).flowGroups[0].scanKey)).toBeNull();
+    expect(await getCursor(h.db, 'mini', buildPlan(h.loaded.config).flowGroups[0].scanKey)).toBeNull();
     expect(r.written).toHaveLength(9);
     expect(r.written.every((w) => w.observationId === null)).toBe(true);
     expect(r.daily.get('flow_usd.fees')![0]).toEqual({ day: '2026-09-16', value: 1020 });
