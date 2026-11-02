@@ -2,12 +2,13 @@
 # Daily Orion tick, for a scheduler (cron, or an agent's cron) to call. Usage: ./run-daily.sh [asset]
 #
 #   stdout     the tick report, one JSON line (nothing only when orion itself could not start)
-#   stderr     the fetch and signal summaries, the agent run's progress, or the error
-#   exit code  orion tick's own: 0 completed (signal ok or degraded) or run_in_progress, 2 signal blocked, 1 no signal
+#   stderr     the fetch summary, progress lines, or the error
+#   exit code  orion tick's own: 0 fetched and the holder-yield report built (or run_in_progress), 1 nothing fetched,
+#              2 fetched but the report could not be built for the latest complete day
 #
-# orion tick keeps the report in <ORION_HOME>/ticks.jsonl and every signal in <ORION_HOME>/signals.jsonl itself;
+# orion tick keeps the report in <ORION_HOME>/ticks.jsonl itself (it writes no signals file and starts no agent run);
 # this script keeps stderr in <ORION_HOME>/tick.log. Needs no environment. ORION_HOME defaults to this directory;
-# secrets (RPC, CoinGecko, ANTHROPIC_API_KEY for the agent) belong in <ORION_HOME>/.env, which orion reads itself.
+# secrets (RPC, CoinGecko) belong in <ORION_HOME>/.env, which orion reads itself.
 # Set ORION_NODE to node's absolute path when the scheduler's PATH does not have it.
 
 asset="${1:-vvv}"

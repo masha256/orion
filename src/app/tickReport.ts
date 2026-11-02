@@ -1,17 +1,54 @@
 import { appendFileSync } from 'node:fs';
 import { z } from 'zod';
-import { TRIGGER_KINDS } from '../db/triggerFirings.js';
-import { RUN_TYPES, WATCH_RULES } from '../types.js';
+import type { HolderYieldReport } from '../report/holderYield.js';
+import { WATCH_RULES } from '../types.js';
 import { InboxSchema } from './inbox.js';
 
 const ErrorSchema = z.strictObject({ code: z.string(), message: z.string() });
+const num = z.number().nullable();
+
+/** The holder-yield block of a tick report: a copy of what `report yield` computes, never a number of its own. */
+export const TickHolderYieldSchema = z.strictObject({
+  day: z.string(),
+  window_days: z.number().int(),
+  price: num,
+  market_cap: num,
+  fdv: num,
+  revenue_annualized: num,
+  revenue_growth_annualized: num,
+  payout_ratio: num,
+  flows: z.array(z.strictObject({ id: z.string(), bucket: z.enum(['burn', 'hold', 'cash']), net: num, yield: num })),
+  yields: z.strictObject({ cash: num, buyback: num, shareholder: num, dilution: num, net_shareholder: num }),
+  multiple: num,
+  holder_flow_growth_annualized: num,
+});
+
+export type TickHolderYield = z.infer<typeof TickHolderYieldSchema>;
+
+/** The tick's holder-yield block from the report's own numbers: copied, never rounded or recomputed. */
+export function summarizeHolderYield(r: HolderYieldReport): TickHolderYield {
+  return {
+    day: r.day,
+    window_days: r.windowDays,
+    price: r.price,
+    market_cap: r.marketCap,
+    fdv: r.fdv,
+    revenue_annualized: r.revenue?.annualized ?? r.income?.revenue.annualized ?? null,
+    revenue_growth_annualized: r.revenue?.growth.annualized ?? r.income?.revenue.growth.annualized ?? null,
+    payout_ratio: r.income?.payoutRatio ?? null,
+    flows: r.flows.map((f) => ({ id: f.id, bucket: f.bucket, net: f.net, yield: f.yield })),
+    yields: { cash: r.yields.cash, buyback: r.yields.buyback, shareholder: r.yields.shareholder, dilution: r.yields.dilution, net_shareholder: r.yields.netShareholder },
+    multiple: r.yields.multiple,
+    holder_flow_growth_annualized: r.holderFlowGrowth.annualized,
+  };
+}
 
 /**
  * What one `orion tick` did, for the scheduler's reader. Ids, kinds, counts, and Orion's own codes and numbers only:
- * nothing a model wrote or a page said. Validated before it is written, as a signal is.
+ * nothing a model wrote or a page said. Validated before it is written.
  */
 export const TickReportSchema = z.strictObject({
-  schema_version: z.literal(1),
+  schema_version: z.literal(2),
   tick_id: z.string(),
   asset: z.string(),
   started_at: z.string(),
@@ -32,45 +69,14 @@ export const TickReportSchema = z.strictObject({
         .optional(),
     })
     .nullable(),
-  signal: z
-    .strictObject({
-      signal_id: z.string(),
-      status: z.enum(['ok', 'degraded', 'blocked']),
-      grade: z.enum(['A', 'B', 'C', 'D']),
-      expected_target_12m: z.number().nullable(),
-      target_delta_pct: z.number().nullable(),
-      cause: z.enum(['data', 'assumptions', 'config', 'both', 'none']),
-    })
-    .nullable(),
-  /** Fired this tick; under `triggers_recorded: false`, what would have fired. */
-  triggers_fired: z.array(z.strictObject({ kind: z.enum(TRIGGER_KINDS), key: z.string(), detail: z.record(z.string(), z.unknown()) })),
-  triggers_recorded: z.boolean(),
-  /** Instances that fired on an earlier tick and still hold; agent_run_id null means no run ever got a row for it. */
-  triggers_standing: z.array(z.strictObject({ kind: z.enum(TRIGGER_KINDS), key: z.string(), agent_run_id: z.number().int().nullable() })),
-  agent: z
-    .strictObject({
-      run_type: z.enum(RUN_TYPES),
-      trigger_kind: z.enum(['schedule', 'trigger']),
-      /** Null when the run never got a row: it threw at preflight. */
-      run_id: z.number().int().nullable(),
-      outcome: z.string().nullable(),
-      usage: z
-        .strictObject({ requests: z.number().int(), input_tokens: z.number().int(), output_tokens: z.number().int(), web_searches: z.number().int(), web_fetches: z.number().int() })
-        .nullable(),
-      /** What the run wrote, by count; `assumption_set_version` is the new set's version when it changed assumptions. Null when nothing was committed. */
-      committed: z
-        .strictObject({ assumption_set_version: z.number().int().nullable(), observations: z.number().int(), anomalies_resolved: z.number().int(), journal: z.number().int() })
-        .nullable(),
-      proposals: z.array(z.strictObject({ id: z.number().int(), kind: z.string() })),
-      signal_id: z.string().nullable(),
-      error: ErrorSchema.nullable(),
-      /** The budget whose exhaustion sent the run its one reserve request (e.g. `input units (600000)`); absent when it was not sent. */
-      reserve: z.string().optional(),
-    })
-    .nullable(),
-  /** Set under `--no-agent` or `agent.cadence.enabled: false`: the run tick would have started. */
-  agent_would_run: z.strictObject({ run_type: z.enum(RUN_TYPES), trigger_kind: z.enum(['schedule', 'trigger']) }).nullable(),
-  /** What awaits the user after this tick, computed last so rows the day's run recorded are in the day's message. */
+  /**
+   * The asset's `report yield` summary for its latest complete day, field for field and unrounded. Null when the report
+   * could not be built (see `report_error`), when the tick never reached it, or when the asset has no `reporting` block.
+   */
+  holder_yield: TickHolderYieldSchema.nullable(),
+  /** Set when the fetch ran but the report could not be built: `report_unavailable`, with the reason (capped). */
+  report_error: ErrorSchema.nullable(),
+  /** What awaits the user after this tick, computed last, outside the lock, so a tick that never got the lock still lists it. */
   inbox: InboxSchema,
   error: ErrorSchema.nullable(),
 });

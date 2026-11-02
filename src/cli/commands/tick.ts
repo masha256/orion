@@ -3,42 +3,30 @@ import type { Command } from 'commander';
 import { tickAsset } from '../../app/tick.js';
 import { emitTickReport } from '../../app/tickReport.js';
 import { loadAsset } from '../../config/load.js';
-import { emitSignal } from '../../signals/emit.js';
-import { fetchSummary, ingestDepsFor, modelClientFor, signalSummary, withDbAsync, type CliContext } from '../util.js';
+import { fetchSummary, ingestDepsFor, withDbAsync, type CliContext } from '../util.js';
 
-/** The two files tick always appends to, under ORION_HOME: the delivery path for the scheduler's reader. */
-export const SIGNALS_FILE = 'signals.jsonl';
+/** The file tick always appends its report to, under ORION_HOME: the delivery path for the scheduler's reader. */
 export const TICKS_FILE = 'ticks.jsonl';
 
 export function registerTick(program: Command, ctx: CliContext): void {
   program
     .command('tick <asset>')
     .description(
-      'the scheduled entry point: ingest, valuation and signal, trigger evaluation, then the one agent run that is due or triggered; ' +
-        'stdout is the tick report (one JSON line), appended to ticks.jsonl; signals go to signals.jsonl; exit 0 completed or run_in_progress, 2 blocked, 1 no signal',
+      'the scheduled entry point: lock, ingest (anomaly checks, watch rules), the holder-yield report for the latest complete day, unlock; starts no agent run; ' +
+        'stdout is the tick report (one JSON line), appended to ticks.jsonl; ' +
+        'exit 0 fetched and reported (or run_in_progress), 1 nothing fetched, 2 fetched but the report could not be built',
     )
-    .option('--no-agent', 'evaluate the triggers without recording them and start no agent run; the report says what would have run')
     .option('--json', 'accepted for consistency; tick always writes JSON')
-    .action(async (assetId: string, opts: { agent: boolean }) => {
+    .action(async (assetId: string) => {
       const loaded = loadAsset(ctx.home, assetId);
-      const signalsFile = join(ctx.home, SIGNALS_FILE);
       const { report, exitCode } = await withDbAsync(ctx, (db) =>
-        tickAsset(
-          db, loaded,
-          {
-            home: ctx.home, now: ctx.now, fetchDeps: ingestDepsFor(ctx), modelClient: () => modelClientFor(ctx), reload: () => loadAsset(ctx.home, assetId),
-            onSignal: (signal) => {
-              emitSignal(signal, { write: () => undefined, outFile: signalsFile });
-              // The rationale is model text; the tick's stderr is read by a second agent and carries none.
-              for (const line of signalSummary(signal, { rationale: false })) ctx.stderr?.(line);
-            },
-            onFetch: (fetch) => {
-              for (const line of fetchSummary(fetch)) ctx.stderr?.(line);
-            },
-            onProgress: (line) => ctx.stderr?.(line),
+        tickAsset(db, loaded, {
+          home: ctx.home, now: ctx.now, fetchDeps: ingestDepsFor(ctx),
+          onFetch: (fetch) => {
+            for (const line of fetchSummary(fetch)) ctx.stderr?.(line);
           },
-          { noAgent: !opts.agent },
-        ),
+          onProgress: (line) => ctx.stderr?.(line),
+        }),
       );
       emitTickReport(report, {
         write: ctx.stdout, outFile: join(ctx.home, TICKS_FILE),

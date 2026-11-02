@@ -3,14 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
-import { emitTickReport, tickId, TickReportSchema, type TickReport } from '../../src/app/tickReport.js';
+import { emitTickReport, summarizeHolderYield, tickId, TickReportSchema, type TickReport } from '../../src/app/tickReport.js';
+import type { Growth, HolderYieldReport, IncomeStatement, RevenueReport } from '../../src/report/holderYield.js';
 
 /** A minimal but schema-valid report: `run_in_progress`, lock set, everything else at its empty/absent value. */
 function minimalReport(): TickReport {
   return {
-    schema_version: 1, tick_id: 'tick_mini_20260919T120005Z', asset: 'mini', started_at: '2026-09-19T12:00:05.000Z', ended_at: '2026-09-19T12:00:05.000Z',
+    schema_version: 2, tick_id: 'tick_mini_20260919T120005Z', asset: 'mini', started_at: '2026-09-19T12:00:05.000Z', ended_at: '2026-09-19T12:00:05.000Z',
     outcome: 'run_in_progress', lock: { holder: 'tick pid 1', acquired_at: '2026-09-19T12:00:00.000Z' },
-    ingest: null, signal: null, triggers_fired: [], triggers_recorded: false, triggers_standing: [], agent: null, agent_would_run: null, inbox: { observations: [], proposals: [], anomalies: [] }, error: null,
+    ingest: null, holder_yield: null, report_error: null, inbox: { observations: [], proposals: [], anomalies: [] }, error: null,
   };
 }
 
@@ -67,16 +68,55 @@ describe('emitTickReport', () => {
   });
 });
 
+const growth = (annualized: number | null): Growth => ({ current: null, prior: null, change: null, annualized });
+
+/** A report with every field summarizeHolderYield reads set to a distinct, unrounded value. */
+function holderYieldReport(over: Partial<HolderYieldReport> = {}): HolderYieldReport {
+  return {
+    asset: 'mini', day: '2026-09-18', windowDays: 30, price: 1.2345678, marketCap: 600.123, fdv: 1000.987,
+    flows: [
+      { id: 'fees', metric: 'flow_usd.fees', bucket: 'cash', recipientBase: 'all', haircut: 0.01, gross: 120, net: 118.8, yield: 0.0123456789, growth: growth(0.5) },
+      { id: 'burn', metric: 'flow_usd.burn', bucket: 'burn', recipientBase: 'all', haircut: 0, gross: null, net: null, yield: null, growth: growth(null) },
+    ],
+    buckets: { burn: null, hold: null, cash: null },
+    yields: { cash: 0.011, buyback: 0.022, shareholder: 0.033, dilution: 0.004, netShareholder: 0.029, multiple: 30.303, pegTrailing: null },
+    holderFlowGrowth: growth(0.4567),
+    supply: null, income: null, revenue: null, volume: null, revenueDisclosed: null, notes: [],
+    ...over,
+  };
+}
+const income = (annualized: number, growthAnnualized: number, payoutRatio: number): IncomeStatement =>
+  ({ revenue: { annualized, growth: growth(growthAnnualized) }, payoutRatio } as unknown as IncomeStatement);
+const revenue = (annualized: number | null, growthAnnualized: number | null): RevenueReport =>
+  ({ basis: 'streams', streams: [], annualized, growth: growth(growthAnnualized), growthExNew: null, excludedFromExNew: [] } as unknown as RevenueReport);
+
+describe('summarizeHolderYield', () => {
+  it('copies field for field, unrounded, and reads revenue from the income statement when there are no streams', () => {
+    expect(summarizeHolderYield(holderYieldReport({ income: income(5000.5, 0.25, 0.75) }))).toEqual({
+      day: '2026-09-18', window_days: 30, price: 1.2345678, market_cap: 600.123, fdv: 1000.987,
+      revenue_annualized: 5000.5, revenue_growth_annualized: 0.25, payout_ratio: 0.75,
+      flows: [{ id: 'fees', bucket: 'cash', net: 118.8, yield: 0.0123456789 }, { id: 'burn', bucket: 'burn', net: null, yield: null }],
+      yields: { cash: 0.011, buyback: 0.022, shareholder: 0.033, dilution: 0.004, net_shareholder: 0.029 },
+      multiple: 30.303, holder_flow_growth_annualized: 0.4567,
+    });
+  });
+
+  it('prefers the revenue streams over the income statement, and gives null without either', () => {
+    const both = summarizeHolderYield(holderYieldReport({ income: income(5000.5, 0.25, 0.75), revenue: revenue(7000, 0.1) }));
+    expect(both).toMatchObject({ revenue_annualized: 7000, revenue_growth_annualized: 0.1, payout_ratio: 0.75 });
+    expect(summarizeHolderYield(holderYieldReport())).toMatchObject({ revenue_annualized: null, revenue_growth_annualized: null, payout_ratio: null });
+  });
+});
+
 describe('TickReportSchema', () => {
-  it('accepts agent.reserve as an optional string and still accepts a report without it', () => {
-    const agent: NonNullable<TickReport['agent']> = {
-      run_type: 'weekly', trigger_kind: 'schedule', run_id: 1, outcome: 'completed', usage: null, committed: null, proposals: [], signal_id: null, error: null,
-    };
-    const without: TickReport = { ...minimalReport(), outcome: 'completed', lock: null, agent };
-    const withReserve: TickReport = { ...without, agent: { ...agent, reserve: 'input units (600000)' } };
-    expect(TickReportSchema.parse(without)).toEqual(without);
-    expect(TickReportSchema.parse(withReserve)).toEqual(withReserve);
-    expect(() => TickReportSchema.parse({ ...without, agent: { ...agent, reserve: 600000 } })).toThrow(ZodError);
+  it('accepts a holder_yield block and a report_error, and refuses an extra key in either', () => {
+    const holder_yield = summarizeHolderYield(holderYieldReport());
+    const ok: TickReport = { ...minimalReport(), outcome: 'completed', lock: null, holder_yield };
+    expect(TickReportSchema.parse(ok)).toEqual(ok);
+    const unavailable: TickReport = { ...minimalReport(), outcome: 'completed', lock: null, report_error: { code: 'report_unavailable', message: 'mini: no stored day' } };
+    expect(TickReportSchema.parse(unavailable)).toEqual(unavailable);
+    expect(() => TickReportSchema.parse({ ...ok, holder_yield: { ...holder_yield, target: 1 } })).toThrow(ZodError);
+    expect(() => TickReportSchema.parse({ ...unavailable, report_error: { code: 'x', message: 'y', detail: 1 } })).toThrow(ZodError);
   });
 });
 

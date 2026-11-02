@@ -132,14 +132,17 @@ describe('the Hermes job doc', () => {
         id: 41, metric: 'revenue_run_rate_usd', value: 120_000_000, observed_at: '2026-09-15T00:00:00.000Z', period_days: null, unit: 'usd',
         citation_url: 'https://venice.ai/blog/emissions-update', recorded_by: { persona: 'ai-infra-analyst', agent_run_id: 9 }, move_pct: 20,
       }],
-      proposals: [{ id: 12, kind: 'assumption_value', persona: 'ai-infra-analyst', agent_run_id: 9, filed_at: '2026-09-21T00:10:00.000Z', effect: { '6m': { from: 24.75, to: 25.9 }, '12m': { from: 35.06, to: 37.1 } } }],
+      proposals: [{ id: 12, kind: 'config', persona: 'ai-infra-analyst', agent_run_id: 9, filed_at: '2026-09-21T00:10:00.000Z', effect: null }],
       anomalies: [{
         id: 7, kind: 'cross_check_mismatch', metric: 'price_usd', severity: 'degrading', occurrences: 3, first_seen_at: '2026-09-19T00:05:00.000Z', last_seen_at: '2026-09-21T00:05:00.000Z',
         reading: { primary: 27.46, check: 28.6, diff_pct: 4.15, tolerance_pct: 2, primary_source: 'coingecko', check_source: 'http_json:https://outerface.venice.ai/api/app/vvv/vvv_stats' },
       }],
     };
     const doc = readFileSync(fileURLToPath(new URL('../../docs/ops/hermes-daily-job.md', import.meta.url)), 'utf8');
-    const block = ['    DECISIONS', ...inboxLines(InboxSchema.parse(example)).map((line) => `    ${line}`),
+    // The job prints the open anomalies first, then proposals, then observations: each kind's lines exactly as inboxLines prints them.
+    const of = (part: Partial<Inbox>): string[] => inboxLines(InboxSchema.parse({ observations: [], proposals: [], anomalies: [], ...part }));
+    const lines = [...of({ anomalies: example.anomalies }), ...of({ proposals: example.proposals }), ...of({ observations: example.observations })];
+    const block = ['    DECISIONS', ...lines.map((line) => `    ${line}`),
       '    reply: confirm <id> | reject <id> | approve <id> [note] | decline <id> <note> | ack <id> <note> | resolve <id> <note>'].join('\n') + '\n';
     expect(doc).toContain(block);
     expect(doc).toContain('"nothing to decide"');
