@@ -86,17 +86,17 @@ export interface StartAgentRunInput {
   startedAt: string;
 }
 
-export function startAgentRun(db: Db, input: StartAgentRunInput): number {
-  const info = db
-    .prepare(
-      `INSERT INTO agent_runs (asset_id, persona, run_type, trigger_kind, trigger_detail_json, outcome, dry_run, config_hash, model, started_at)
-       VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)`,
-    )
-    .run(
+export async function startAgentRun(db: Db, input: StartAgentRunInput): Promise<number> {
+  const inserted = await db.run<{ id: number }>(
+    `INSERT INTO agent_runs (asset_id, persona, run_type, trigger_kind, trigger_detail_json, outcome, dry_run, config_hash, model, started_at)
+     VALUES ($1, $2, $3, $4, $5, 'running', $6, $7, $8, $9)
+     RETURNING id`,
+    [
       input.assetId, input.persona, input.runType, input.trigger, JSON.stringify(input.triggerDetail), input.dryRun ? 1 : 0,
       input.configHash, input.model, new Date(input.startedAt).toISOString(),
-    );
-  return Number(info.lastInsertRowid);
+    ],
+  );
+  return Number(inserted.rows[0].id);
 }
 
 export interface FinishAgentRunInput {
@@ -114,46 +114,48 @@ export interface FinishAgentRunInput {
  * once. "Finished" means its transcript exists, not that its outcome left `running`: a lock takeover marks a run as
  * abandoned without a transcript, and if that process was alive after all, its one finish must still record what happened.
  */
-export function finishAgentRun(db: Db, id: number, input: FinishAgentRunInput): AgentRun {
-  // IMMEDIATE: the already-finished check reads before anything is written, and a deferred transaction would take the
-  // write lock only afterwards. Another connection committing in between would fail this one outright, leaving the run
-  // row `running` although its domain writes are live.
-  db.transaction(() => {
-    const finished = db.prepare('SELECT 1 FROM agent_transcripts WHERE run_id = ?').get(id);
-    if (finished) throw new OrionError('agent_run_already_finished', `agent run ${id} was already finished; its record and transcript are not rewritten`);
-    const u = input.usage;
-    db.prepare(
-      `UPDATE agent_runs SET outcome = ?, ended_at = ?, requests = ?, input_tokens = ?, cache_read_tokens = ?, cache_write_tokens = ?,
-         output_tokens = ?, web_searches = ?, web_fetches = ?, error = ?, summary_json = ? WHERE id = ?`,
-    ).run(
-      input.outcome, new Date(input.endedAt).toISOString(), u.requests, u.inputTokens, u.cacheReadTokens, u.cacheWriteTokens,
-      u.outputTokens, u.webSearches, u.webFetches, input.error, input.summary === null ? null : JSON.stringify(input.summary), id,
-    );
-    db.prepare(
-      'INSERT INTO agent_transcripts (run_id, messages_json) VALUES (?, ?)',
-    ).run(id, JSON.stringify(input.transcript));
-  }).immediate();
-  return getAgentRun(db, id)!;
+export async function finishAgentRun(db: Db, id: number, input: FinishAgentRunInput): Promise<AgentRun> {
+  const run = await db.one<{ asset_id: string }>('SELECT asset_id FROM agent_runs WHERE id = $1', [id]);
+  // In one transaction: the already-finished check reads before anything is written, and another writer finishing the
+  // run in between must not leave it finished twice (or the row `running` although its domain writes are live).
+  await db.tx(
+    async (t) => {
+      const finished = await t.one('SELECT 1 FROM agent_transcripts WHERE run_id = $1', [id]);
+      if (finished) throw new OrionError('agent_run_already_finished', `agent run ${id} was already finished; its record and transcript are not rewritten`);
+      const u = input.usage;
+      await t.run(
+        `UPDATE agent_runs SET outcome = $1, ended_at = $2, requests = $3, input_tokens = $4, cache_read_tokens = $5, cache_write_tokens = $6,
+           output_tokens = $7, web_searches = $8, web_fetches = $9, error = $10, summary_json = $11 WHERE id = $12`,
+        [
+          input.outcome, new Date(input.endedAt).toISOString(), u.requests, u.inputTokens, u.cacheReadTokens, u.cacheWriteTokens,
+          u.outputTokens, u.webSearches, u.webFetches, input.error, input.summary === null ? null : JSON.stringify(input.summary), id,
+        ],
+      );
+      await t.run('INSERT INTO agent_transcripts (run_id, messages_json) VALUES ($1, $2)', [id, JSON.stringify(input.transcript)]);
+    },
+    // No row: the insert below fails on its foreign key, as before; there is no asset to lock.
+    run ? { lockAsset: run.asset_id } : {},
+  );
+  return (await getAgentRun(db, id))!;
 }
 
-export function getAgentRun(db: Db, id: number): AgentRun | null {
-  const row = db.prepare('SELECT * FROM agent_runs WHERE id = ?').get(id) as Row | undefined;
+export async function getAgentRun(db: Db, id: number): Promise<AgentRun | null> {
+  const row = await db.one<Row>('SELECT * FROM agent_runs WHERE id = $1', [id]);
   return row ? fromRow(row) : null;
 }
 
-export function getTranscript(db: Db, runId: number): unknown | null {
-  const row = db.prepare('SELECT messages_json FROM agent_transcripts WHERE run_id = ?').get(runId) as { messages_json: string } | undefined;
+export async function getTranscript(db: Db, runId: number): Promise<unknown | null> {
+  const row = await db.one<{ messages_json: string }>('SELECT messages_json FROM agent_transcripts WHERE run_id = $1', [runId]);
   return row ? (JSON.parse(row.messages_json) as unknown) : null;
 }
 
 /** Newest first. */
-export function listAgentRuns(db: Db, filter: { assetId?: string; limit?: number } = {}): AgentRun[] {
+export async function listAgentRuns(db: Db, filter: { assetId?: string; limit?: number } = {}): Promise<AgentRun[]> {
   const limit = filter.limit ?? 20;
-  const rows = (
+  const rows =
     filter.assetId === undefined
-      ? db.prepare('SELECT * FROM agent_runs ORDER BY id DESC LIMIT ?').all(limit)
-      : db.prepare('SELECT * FROM agent_runs WHERE asset_id = ? ORDER BY id DESC LIMIT ?').all(filter.assetId, limit)
-  ) as Row[];
+      ? await db.all<Row>('SELECT * FROM agent_runs ORDER BY id DESC LIMIT $1', [limit])
+      : await db.all<Row>('SELECT * FROM agent_runs WHERE asset_id = $1 ORDER BY id DESC LIMIT $2', [filter.assetId, limit]);
   return rows.map(fromRow);
 }
 
@@ -161,9 +163,10 @@ export function listAgentRuns(db: Db, filter: { assetId?: string; limit?: number
  * A killed process leaves a `running` row behind. The run lock decides when that has happened (its holder's lock expired
  * and was taken over); this marks the rows. Returns how many were marked.
  */
-export function abandonRunningRuns(db: Db, assetId: string, nowIso: string): number {
-  const info = db
-    .prepare("UPDATE agent_runs SET outcome = 'error', error = 'abandoned', ended_at = ? WHERE asset_id = ? AND outcome = 'running'")
-    .run(new Date(nowIso).toISOString(), assetId);
-  return info.changes;
+export async function abandonRunningRuns(db: Db, assetId: string, nowIso: string): Promise<number> {
+  const result = await db.run(
+    "UPDATE agent_runs SET outcome = 'error', error = 'abandoned', ended_at = $1 WHERE asset_id = $2 AND outcome = 'running'",
+    [new Date(nowIso).toISOString(), assetId],
+  );
+  return result.rowCount;
 }

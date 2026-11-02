@@ -88,45 +88,46 @@ function fromRow(r: Row): Proposal {
   };
 }
 
-export function insertProposal(db: Db, input: NewProposal): Proposal {
-  const info = db
-    .prepare(
-      `INSERT INTO proposals (asset_id, persona, agent_run_id, kind, change_json, filed_against_json, rationale, evidence_json, effect_json, citations_json, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
-    )
-    .run(
+export async function insertProposal(db: Db, input: NewProposal): Promise<Proposal> {
+  const inserted = await db.run<{ id: number }>(
+    `INSERT INTO proposals (asset_id, persona, agent_run_id, kind, change_json, filed_against_json, rationale, evidence_json, effect_json, citations_json, status, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11)
+     RETURNING id`,
+    [
       // Stored as written, not canonically: a config edit's value is later written into the YAML, and its key order should be the author's.
       input.assetId, input.persona, input.agentRunId, input.change.kind, JSON.stringify(input.change), JSON.stringify(input.filedAgainst ?? null),
       input.rationale, JSON.stringify(input.evidence), input.effect === null ? null : JSON.stringify(input.effect),
       input.citations === undefined || input.citations.length === 0 ? null : JSON.stringify(input.citations),
       new Date(input.createdAt).toISOString(),
-    );
-  return getProposal(db, Number(info.lastInsertRowid))!;
+    ],
+  );
+  return (await getProposal(db, Number(inserted.rows[0].id)))!;
 }
 
-export function getProposal(db: Db, id: number): Proposal | null {
-  const row = db.prepare('SELECT * FROM proposals WHERE id = ?').get(id) as Row | undefined;
+export async function getProposal(db: Db, id: number): Promise<Proposal | null> {
+  const row = await db.one<Row>('SELECT * FROM proposals WHERE id = $1', [id]);
   return row ? fromRow(row) : null;
 }
 
 /** Newest first. Pending only, unless `includeDecided`. */
-export function listProposals(db: Db, filter: { assetId?: string; includeDecided?: boolean } = {}): Proposal[] {
+export async function listProposals(db: Db, filter: { assetId?: string; includeDecided?: boolean } = {}): Promise<Proposal[]> {
   const where: string[] = [];
   const params: string[] = [];
   if (filter.assetId !== undefined) {
-    where.push('asset_id = ?');
     params.push(filter.assetId);
+    where.push(`asset_id = $${params.length}`);
   }
   if (!filter.includeDecided) where.push("status = 'pending'");
   const sql = `SELECT * FROM proposals ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC`;
-  return (db.prepare(sql).all(...params) as Row[]).map(fromRow);
+  return (await db.all<Row>(sql, params)).map(fromRow);
 }
 
 /** The most recently decided proposals for an asset, newest decision first: what the agent learns the user's mind from. */
-export function recentlyDecidedProposals(db: Db, assetId: string, limit: number): Proposal[] {
-  const rows = db
-    .prepare("SELECT * FROM proposals WHERE asset_id = ? AND status != 'pending' ORDER BY decided_at DESC, id DESC LIMIT ?")
-    .all(assetId, limit) as Row[];
+export async function recentlyDecidedProposals(db: Db, assetId: string, limit: number): Promise<Proposal[]> {
+  const rows = await db.all<Row>(
+    "SELECT * FROM proposals WHERE asset_id = $1 AND status != 'pending' ORDER BY decided_at DESC, id DESC LIMIT $2",
+    [assetId, limit],
+  );
   return rows.map(fromRow);
 }
 
@@ -141,18 +142,24 @@ export function proposalIdentity(change: ProposalChange): string {
 }
 
 /** A pending proposal for the asset that decides the same thing, if any. Canonical JSON makes key order irrelevant. */
-export function findPendingDuplicate(db: Db, assetId: string, change: ProposalChange): Proposal | null {
-  const rows = db.prepare("SELECT * FROM proposals WHERE asset_id = ? AND kind = ? AND status = 'pending' ORDER BY id").all(assetId, change.kind) as Row[];
+export async function findPendingDuplicate(db: Db, assetId: string, change: ProposalChange): Promise<Proposal | null> {
+  const rows = await db.all<Row>("SELECT * FROM proposals WHERE asset_id = $1 AND kind = $2 AND status = 'pending' ORDER BY id", [assetId, change.kind]);
   const wanted = proposalIdentity(change);
   return rows.map(fromRow).find((p) => proposalIdentity(p.change) === wanted) ?? null;
 }
 
 /** Decisions are final. */
-export function decideProposal(db: Db, id: number, status: 'approved' | 'rejected', note: string | null, nowIso: string): Proposal {
-  const current = getProposal(db, id);
-  if (!current) throw new OrionError('proposal_not_found', `no proposal with id ${id}`);
-  if (current.status !== 'pending') throw new OrionError('proposal_not_pending', `proposal ${id} is already ${current.status}`);
-  const text = note === null || note.trim() === '' ? null : note.trim();
-  db.prepare('UPDATE proposals SET status = ?, decision_note = ?, decided_at = ? WHERE id = ?').run(status, text, new Date(nowIso).toISOString(), id);
-  return getProposal(db, id)!;
+export async function decideProposal(db: Db, id: number, status: 'approved' | 'rejected', note: string | null, nowIso: string): Promise<Proposal> {
+  const found = await getProposal(db, id);
+  if (!found) throw new OrionError('proposal_not_found', `no proposal with id ${id}`);
+  return db.tx(
+    async (t) => {
+      const current = (await getProposal(t, id))!; // rows are never deleted
+      if (current.status !== 'pending') throw new OrionError('proposal_not_pending', `proposal ${id} is already ${current.status}`);
+      const text = note === null || note.trim() === '' ? null : note.trim();
+      await t.run('UPDATE proposals SET status = $1, decision_note = $2, decided_at = $3 WHERE id = $4', [status, text, new Date(nowIso).toISOString(), id]);
+      return (await getProposal(t, id))!;
+    },
+    { lockAsset: found.assetId },
+  );
 }

@@ -63,10 +63,10 @@ export async function agentWorld(yaml: string = AGENT_ASSET_YAML): Promise<Agent
       assetId: o.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, source: o.source, fetchedAt: o.fetchedAt,
     })).id;
   }
-  const doc = insertDocument(db, {
+  const doc = (await insertDocument(db, {
     assetId: 'mini', kind: 'post', sourceUrl: 'https://x.com/mini/status/1', sourceId: null, title: null, publishedAt: '2026-06-29T00:00:00.000Z',
     addedAt: AS_OF, meta: {}, text: DOC_TEXT,
-  }).doc;
+  })).doc;
   const ledger = new Ledger('mini', 'analyst');
   const pages: FetchedPage[] = [{ url: PAGE_URL, text: PAGE_TEXT }];
   const target = citable(doc);
@@ -99,13 +99,13 @@ Instructions for ${name}.
 `;
 
 /** A temp ORION_HOME with one persona and the two disclosure skills, and the persona assigned to the mini asset in `db`. */
-export function agentHome(db: Db): string {
+export async function agentHome(db: Db): Promise<string> {
   const home = mkdtempSync(join(tmpdir(), 'orion-agent-'));
   mkdirSync(join(home, 'personas'));
   mkdirSync(join(home, 'skills'));
   writeFileSync(join(home, 'personas', 'analyst.md'), PERSONA_MD);
   writeFileSync(join(home, 'skills', 'disclosure-review.md'), skillMd('disclosure-review', 'disclosure'));
   writeFileSync(join(home, 'skills', 'disclosure-research.md'), skillMd('disclosure-research', 'disclosure'));
-  assignPersona(db, 'mini', 'analyst', AS_OF);
+  await assignPersona(db, 'mini', 'analyst', AS_OF);
   return home;
 }

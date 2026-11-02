@@ -101,7 +101,7 @@ export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps): Pr
     });
   } catch (err) {
     if (!(err instanceof OrionError) || err.code !== 'run_in_progress') throw err;
-    const lock = getRunLock(db, asset.id);
+    const lock = await getRunLock(db, asset.id);
     report.outcome = 'run_in_progress';
     report.lock = lock ? { holder: lock.holder, acquired_at: lock.acquiredAt } : { holder: 'unknown', acquired_at: started.toISOString() };
     deps.onProgress?.(err.message);

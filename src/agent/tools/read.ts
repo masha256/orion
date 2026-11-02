@@ -46,8 +46,8 @@ const getJournal = defineTool({
   name: 'get_journal',
   description: 'Earlier journal entries for this asset, newest first. Pass before_id to page back past the entries in your context pack.',
   input: z.strictObject({ limit: z.number().int().min(1).max(20).optional(), before_id: z.number().int().optional() }),
-  run(ctx, input) {
-    return { entries: listJournal(ctx.db, ctx.loaded.config.id, { limit: input.limit ?? 5, beforeId: input.before_id }) };
+  async run(ctx, input) {
+    return { entries: await listJournal(ctx.db, ctx.loaded.config.id, { limit: input.limit ?? 5, beforeId: input.before_id }) };
   },
 });
 

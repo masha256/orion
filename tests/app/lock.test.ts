@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { lockHolder, withRunLock } from '../../src/app/lock.js';
 import { getAgentRun, startAgentRun } from '../../src/db/agentRuns.js';
-import { openDb, type Db, type OrionDb } from '../../src/db/connection.js';
+import { openDb, type Db, type OrionDb, type SqlParam } from '../../src/db/connection.js';
 import { getRunLock, LOCK_TTL_MS } from '../../src/db/runLocks.js';
 
 const T0 = new Date('2026-09-21T00:00:00.000Z');
@@ -25,29 +25,29 @@ afterEach(() => {
 describe('withRunLock', () => {
   it('holds the lock while the body runs and releases it after, returning the body\'s value', async () => {
     const value = await withRunLock(A, 'mini', 'tick pid 1', T0, async () => {
-      expect(getRunLock(B, 'mini')!.holder).toBe('tick pid 1');
+      expect((await getRunLock(B, 'mini'))!.holder).toBe('tick pid 1');
       await expect(withRunLock(B, 'mini', 'agent run pid 2', later(1), async () => 'never')).rejects.toMatchObject({ code: 'run_in_progress' });
       return 42;
     });
     expect(value).toBe(42);
-    expect(getRunLock(B, 'mini')).toBeNull();
+    expect(await getRunLock(B, 'mini')).toBeNull();
   });
 
   it('releases the lock when the body throws, and rethrows', async () => {
     await expect(withRunLock(A, 'mini', 'tick pid 1', T0, async () => { throw new Error('boom'); })).rejects.toThrow('boom');
-    expect(getRunLock(A, 'mini')).toBeNull();
+    expect(await getRunLock(A, 'mini')).toBeNull();
   });
 
   it('takes over an expired lock, abandons the stuck run, and tells the caller', async () => {
-    const stuck = startAgentRun(A, { assetId: 'mini', persona: 'p', runType: 'deep', trigger: 'schedule', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: T0.toISOString() });
+    const stuck = await startAgentRun(A, { assetId: 'mini', persona: 'p', runType: 'deep', trigger: 'schedule', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: T0.toISOString() });
     let abandoned = 0;
     await withRunLock(A, 'mini', 'tick pid 1', T0, async () => {
       // The holder dies here: never releases. The next tick arrives after the TTL.
       await withRunLock(B, 'mini', 'tick pid 2', later(LOCK_TTL_MS), async () => undefined, { onTakeover: (n) => (abandoned = n) });
     });
     expect(abandoned).toBe(1);
-    expect(getAgentRun(A, stuck)).toMatchObject({ outcome: 'error', error: 'abandoned' });
-    expect(getRunLock(A, 'mini')).toBeNull(); // pid 2 released its own; pid 1's release found nothing of its own
+    expect(await getAgentRun(A, stuck)).toMatchObject({ outcome: 'error', error: 'abandoned' });
+    expect(await getRunLock(A, 'mini')).toBeNull(); // pid 2 released its own; pid 1's release found nothing of its own
   });
 
   it('a release that throws never masks the body\'s outcome, and is reported', async () => {
@@ -55,10 +55,10 @@ describe('withRunLock', () => {
     const failingDb = new Proxy(A, {
       get(target, prop) {
         const v = Reflect.get(target, prop);
-        if (prop !== 'prepare') return typeof v === 'function' ? v.bind(target) : v;
-        return (sql: string) => {
+        if (prop !== 'run') return typeof v === 'function' ? v.bind(target) : v;
+        return async (sql: string, params?: readonly SqlParam[]) => {
           if (sql.startsWith('DELETE FROM run_locks')) throw new Error('simulated: database is locked');
-          return target.prepare(sql);
+          return target.run(sql, params);
         };
       },
     }) as Db;
@@ -71,7 +71,7 @@ describe('withRunLock', () => {
       },
     });
     expect(value).toBe(42);
-    expect(getRunLock(B, 'mini')!.holder).toBe('tick pid 1'); // the row leaked
+    expect((await getRunLock(B, 'mini'))!.holder).toBe('tick pid 1'); // the row leaked
 
     // Body throws 'boom'; release also throws (use a different asset to avoid run_in_progress)
     await expect(

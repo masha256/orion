@@ -64,26 +64,26 @@ const fromRow = (r: Row): JournalEntry => ({
 });
 
 /** Append-only. */
-export function insertJournalEntry(db: Db, input: NewJournalEntry): JournalEntry {
-  const info = db
-    .prepare('INSERT INTO journal (asset_id, persona, agent_run_id, created_at, thesis, open_questions_json, summary, catalysts_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(
+export async function insertJournalEntry(db: Db, input: NewJournalEntry): Promise<JournalEntry> {
+  const inserted = await db.run<{ id: number }>(
+    'INSERT INTO journal (asset_id, persona, agent_run_id, created_at, thesis, open_questions_json, summary, catalysts_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
+    [
       input.assetId, input.persona, input.agentRunId, new Date(input.createdAt).toISOString(), input.thesis,
       JSON.stringify(input.openQuestions), input.summary,
       // NULL when there are none, like an old row (and like proposals.citations_json).
       input.catalysts && input.catalysts.length > 0 ? JSON.stringify(input.catalysts) : null,
-    );
-  const row = db.prepare('SELECT * FROM journal WHERE id = ?').get(Number(info.lastInsertRowid)) as Row;
+    ],
+  );
+  const row = (await db.one<Row>('SELECT * FROM journal WHERE id = $1', [Number(inserted.rows[0].id)]))!;
   return fromRow(row);
 }
 
 /** Newest first. `beforeId` pages backwards through older entries. */
-export function listJournal(db: Db, assetId: string, opts: { limit?: number; beforeId?: number } = {}): JournalEntry[] {
+export async function listJournal(db: Db, assetId: string, opts: { limit?: number; beforeId?: number } = {}): Promise<JournalEntry[]> {
   const limit = opts.limit ?? 3;
-  const rows = (
+  const rows =
     opts.beforeId === undefined
-      ? db.prepare('SELECT * FROM journal WHERE asset_id = ? ORDER BY id DESC LIMIT ?').all(assetId, limit)
-      : db.prepare('SELECT * FROM journal WHERE asset_id = ? AND id < ? ORDER BY id DESC LIMIT ?').all(assetId, opts.beforeId, limit)
-  ) as Row[];
+      ? await db.all<Row>('SELECT * FROM journal WHERE asset_id = $1 ORDER BY id DESC LIMIT $2', [assetId, limit])
+      : await db.all<Row>('SELECT * FROM journal WHERE asset_id = $1 AND id < $2 ORDER BY id DESC LIMIT $3', [assetId, opts.beforeId, limit]);
   return rows.map(fromRow);
 }

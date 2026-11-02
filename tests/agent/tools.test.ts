@@ -357,7 +357,7 @@ describe('propose_change', () => {
 
   it('refuses a duplicate of a pending or a staged proposal, and stops at the run\'s proposal budget', async () => {
     const open = await anomaly('degrading', 'a');
-    insertProposal(w.db, {
+    await insertProposal(w.db, {
       assetId: 'mini', persona: 'analyst', agentRunId: null, change: { kind: 'acknowledge_anomaly', anomalyId: open.id, note: 'because' },
       filedAgainst: { status: 'open' }, rationale: 'because', evidence: [], effect: null, createdAt: AS_OF,
     });
@@ -373,7 +373,7 @@ describe('propose_change', () => {
 
   it('sees through wording: the same decision re-filed in other words is the same proposal', async () => {
     const open = await anomaly('degrading', 'a');
-    insertProposal(w.db, {
+    await insertProposal(w.db, {
       assetId: 'mini', persona: 'analyst', agentRunId: null, change: { kind: 'acknowledge_anomaly', anomalyId: open.id, note: 'the API lags by design' },
       filedAgainst: { status: 'open' }, rationale: 'the API lags by design', evidence: [], effect: null, createdAt: AS_OF,
     });

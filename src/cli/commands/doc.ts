@@ -95,8 +95,8 @@ export function registerDoc(program: Command, ctx: CliContext): void {
           const text = readDocFile(opts.file);
           if (kind === 'machine_transcript') checkTranscript(text);
           const meta = parseMeta(opts.meta);
-          const { doc: stored, existing } = await withDb(ctx, (db) =>
-            insertDocument(db, {
+          const { doc: stored, existing } = await withDb(ctx, async (db) =>
+            await insertDocument(db, {
               assetId, kind, sourceUrl: opts.url, sourceId: opts.sourceId ?? null, title: opts.title ?? null,
               publishedAt: opts.publishedAt ?? null, addedAt: ctx.now().toISOString(), meta, text,
             }),

@@ -257,17 +257,18 @@ export class Ledger {
           resolvedAnomalyIds.push(r.anomalyId);
         }
 
-        const proposalIds = this.stagedProposals.map(
-          (p) =>
-            insertProposal(t, {
-              assetId: this.assetId, persona: this.persona, agentRunId: ctx.agentRunId, change: p.change, filedAgainst: p.filedAgainst,
-              rationale: p.rationale, evidence: remap(p.evidence), effect: p.effect, citations: p.citations,
-              createdAt: nowIso,
-            }).id,
-        );
+        const proposalIds: number[] = [];
+        for (const p of this.stagedProposals) {
+          const row = await insertProposal(t, {
+            assetId: this.assetId, persona: this.persona, agentRunId: ctx.agentRunId, change: p.change, filedAgainst: p.filedAgainst,
+            rationale: p.rationale, evidence: remap(p.evidence), effect: p.effect, citations: p.citations,
+            createdAt: nowIso,
+          });
+          proposalIds.push(row.id);
+        }
 
         const journalId = this.stagedJournal
-          ? insertJournalEntry(t, { assetId: this.assetId, persona: this.persona, agentRunId: ctx.agentRunId, createdAt: nowIso, ...this.stagedJournal }).id
+          ? (await insertJournalEntry(t, { assetId: this.assetId, persona: this.persona, agentRunId: ctx.agentRunId, createdAt: nowIso, ...this.stagedJournal })).id
           : null;
 
         // Written nowhere: the run summary carries them. Remapped like every other evidence list, so a committed finding cites real rows.

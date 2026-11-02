@@ -10,13 +10,13 @@ import { acquireRunLock, releaseRunLock } from '../db/runLocks.js';
 export async function withRunLock<T>(
   db: Db, assetId: string, holder: string, now: Date, fn: () => Promise<T>, opts: { onTakeover?: (abandoned: number) => void; onReleaseError?: (err: unknown) => void } = {},
 ): Promise<T> {
-  const { abandoned, tookOver } = acquireRunLock(db, assetId, holder, now.toISOString());
+  const { abandoned, tookOver } = await acquireRunLock(db, assetId, holder, now.toISOString());
   if (tookOver) opts.onTakeover?.(abandoned);
   try {
     return await fn();
   } finally {
     try {
-      releaseRunLock(db, assetId, holder);
+      await releaseRunLock(db, assetId, holder);
     } catch (err) {
       opts.onReleaseError?.(err);
     }

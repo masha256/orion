@@ -76,8 +76,8 @@ describe('commit', () => {
       sourceDetail: 'research:analyst:run none', fetchedAt: NOW.toISOString(),
     });
     expect(summary.observationIds).toEqual([row.id]);
-    expect(listProposals(db)[0].evidence).toEqual([row.id, priceId]); // the order the proposal gave, the staged id remapped
-    expect(listProposals(db)[0].effect).toBeNull();
+    expect((await listProposals(db))[0].evidence).toEqual([row.id, priceId]); // the order the proposal gave, the staged id remapped
+    expect((await listProposals(db))[0].effect).toBeNull();
   });
 
   it('resolves anomalies as the persona, with the evidence in the note', async () => {
@@ -98,9 +98,9 @@ describe('commit', () => {
     const summary = await commit();
     expect(Object.keys(summary)).toEqual(['observationIds', 'resolvedAnomalyIds', 'proposalIds', 'journalId', 'devFindings']);
     expect(summary).toMatchObject({ observationIds: [], resolvedAnomalyIds: [] });
-    expect(listJournal(db, 'mini')).toHaveLength(1);
-    expect(listJournal(db, 'mini')[0]).toMatchObject({ id: summary.journalId, thesis: 'steady, still', persona: 'analyst' });
-    expect(listProposals(db)[0]).toMatchObject({ id: summary.proposalIds[0], persona: 'analyst', status: 'pending', citations: [CITATION] });
+    expect(await listJournal(db, 'mini')).toHaveLength(1);
+    expect((await listJournal(db, 'mini'))[0]).toMatchObject({ id: summary.journalId, thesis: 'steady, still', persona: 'analyst' });
+    expect((await listProposals(db))[0]).toMatchObject({ id: summary.proposalIds[0], persona: 'analyst', status: 'pending', citations: [CITATION] });
     expect(count('assumption_sets') + count('assumption_changes')).toBe(0);
   });
 

@@ -97,12 +97,12 @@ function verifyProposalCitations(ctx: ToolContext, input: { source: string; quot
  * Stages a proposal after the checks every kind shares: the run's proposal budget, and no duplicate of a pending or staged
  * one. Its effect is null: the 6m/12m target move a proposal used to carry went with the valuation.
  */
-function fileProposal(ctx: ToolContext, filed: Omit<StagedProposal, 'effect'>): Record<string, unknown> {
+async function fileProposal(ctx: ToolContext, filed: Omit<StagedProposal, 'effect'>): Promise<Record<string, unknown>> {
   const p: StagedProposal = { ...filed, effect: null };
   if (ctx.ledger.proposals().length >= ctx.budgets.proposals) {
     refuse('proposal_budget', `this run may file at most ${ctx.budgets.proposals} proposals`);
   }
-  const pending = findPendingDuplicate(ctx.db, ctx.loaded.config.id, p.change);
+  const pending = await findPendingDuplicate(ctx.db, ctx.loaded.config.id, p.change);
   const same = proposalIdentity(p.change);
   if (pending || ctx.ledger.proposals().some((s) => proposalIdentity(s.change) === same)) {
     refuse('duplicate_proposal', 'an identical proposal is already pending', pending ? { proposal_id: pending.id } : { staged_in_this_run: true });
@@ -229,7 +229,7 @@ const recordProvisionalObservation = defineTool({
           : inForce === null
           ? `${input.metric} is critical and there is no confirmed value to compare ${input.value} against`
           : `${input.metric} is critical and ${input.value} is more than ${PROVISIONAL_MOVE_PCT}% from the last confirmed value (${inForce})`;
-      const staged = fileProposal(ctx, {
+      const staged = await fileProposal(ctx, {
         change, filedAgainst: { inForce }, rationale: note ? `${note} (${why})` : why, evidence: [], citations: [verified.citation],
       });
       return { recorded: false, converted_to_proposal: staged, reason: `${why}; it cannot be cited as evidence until the user approves it` };

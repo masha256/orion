@@ -72,14 +72,14 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   if (!(RUNNABLE_RUN_TYPES as readonly string[]).includes(opts.runType)) {
     throw new OrionError('invalid_run_type', `run type must be one of ${RUNNABLE_RUN_TYPES.join(', ')}, got ${String(opts.runType)}`);
   }
-  const coverage = getCoverage(db, asset.id);
+  const coverage = await getCoverage(db, asset.id);
   if (!coverage) throw new OrionError('no_persona_assigned', `no persona covers ${asset.id}; run "orion persona assign ${asset.id} <name>"`);
   const persona = loadPersona(deps.home, coverage.persona);
   const skills = skillsFor(deps.home, opts.runType);
   const note = opts.note?.trim() || undefined;
   if (opts.docId === undefined) throw new OrionError('disclosure_needs_doc', 'a disclosure run needs --doc <id>');
   // Another asset's document is not found: the run may only ever cite its own asset's document.
-  const document = getDocument(db, opts.docId);
+  const document = await getDocument(db, opts.docId);
   if (!document || document.assetId !== asset.id) throw new OrionError('doc_not_found', `no document ${opts.docId} on ${asset.id}`);
   if (opts.assetYaml === undefined) {
     throw new OrionError('disclosure_needs_asset_yaml', `a disclosure run needs the text of assets/${asset.id}.yaml for its pack`);
@@ -96,7 +96,7 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   const budgets = budgetsFor(asset, opts.runType);
   const system = buildSystemPrompt(persona, skills, opts.runType);
   const configHash = sha256([loaded.hash, persona.hash, ...skills.map((s) => s.hash), TOOL_LAYER_VERSION, sha256(OPERATING_RULES)].join('\n'));
-  const runId = startAgentRun(db, {
+  const runId = await startAgentRun(db, {
     assetId: asset.id, persona: persona.name, runType: opts.runType, trigger: 'manual',
     triggerDetail: {
       ...(opts.anomalyId !== undefined ? { anomalyId: opts.anomalyId } : {}),
@@ -173,8 +173,8 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   }
 
   const staged = ledger.preview();
-  const finish = (transcript: unknown): AgentRun =>
-    finishAgentRun(db, runId, {
+  const finish = async (transcript: unknown): Promise<AgentRun> =>
+    await finishAgentRun(db, runId, {
       outcome, endedAt: deps.now().toISOString(), usage, error,
       summary: {
         committed, staged,
@@ -186,11 +186,11 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
 
   let run: AgentRun;
   try {
-    run = finish({ system, tools: tools.map((t) => ('name' in t ? t.name : t.type)), messages, responses });
+    run = await finish({ system, tools: tools.map((t) => ('name' in t ? t.name : t.type)), messages, responses });
   } catch (err) {
     // The run row matters more than the transcript: left `running`, the next lock takeover calls it `error/abandoned`
     // while its writes are live. Try once more with a transcript that cannot itself be the problem. A second failure is real.
-    run = finish({ error: err instanceof Error ? err.message : String(err), note: 'the full transcript could not be stored' });
+    run = await finish({ error: err instanceof Error ? err.message : String(err), note: 'the full transcript could not be stored' });
   }
   return { run, staged, committed };
 }

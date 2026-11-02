@@ -24,7 +24,7 @@ const stale = (id: number, what: string): never => {
 const same = (a: unknown, b: unknown): boolean => canonicalJson(a ?? null) === canonicalJson(b ?? null);
 
 async function pending(db: Db, id: number): Promise<Proposal> {
-  const p = getProposal(db, id);
+  const p = await getProposal(db, id);
   if (!p) throw new OrionError('proposal_not_found', `no proposal with id ${id}`);
   if (p.status !== 'pending') throw new OrionError('proposal_not_pending', `proposal ${id} is already ${p.status}`);
   return p;
@@ -113,7 +113,7 @@ export async function approveProposal(db: Db, home: string, id: number, opts: { 
         break;
       }
     }
-    return { proposal: decideProposal(t, id, 'approved', note, nowIso), result };
+    return { proposal: await decideProposal(t, id, 'approved', note, nowIso), result };
   }, { lockAsset: p.assetId });
 }
 
@@ -156,7 +156,7 @@ async function approveConfig(db: Db, home: string, p: Proposal, note: string | n
   const changes = edits.map((e, i) => ({ path: e.path, from: current[i], to: e.value }));
   // The file already holds every proposed value: an earlier approve renamed the file and died before recording it.
   if (edits.every((e, i) => same(current[i], e.value))) {
-    return { proposal: decideProposal(db, p.id, 'approved', note, nowIso), result: { kind: 'config', file, changes } };
+    return { proposal: await decideProposal(db, p.id, 'approved', note, nowIso), result: { kind: 'config', file, changes } };
   }
   edits.forEach((e, i) => {
     if (!same(current[i], filed[i])) stale(p.id, `${e.path.join(' > ')} was ${JSON.stringify(filed[i])} when it was filed and is ${JSON.stringify(current[i])} now`);
@@ -172,7 +172,7 @@ async function approveConfig(db: Db, home: string, p: Proposal, note: string | n
 
   // 5. Mark it approved. If that fails, put the original text back, and never let a failed restore hide why.
   try {
-    return { proposal: decideProposal(db, p.id, 'approved', note, nowIso), result: { kind: 'config', file, changes } };
+    return { proposal: await decideProposal(db, p.id, 'approved', note, nowIso), result: { kind: 'config', file, changes } };
   } catch (err) {
     try {
       writeAtomically(file, original);

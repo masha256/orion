@@ -24,8 +24,8 @@ beforeEach(async () => {
   writeFileSync(yamlPath, AGENT_ASSET_YAML.trimStart());
 });
 
-const file = (change: ProposalChange, filedAgainst: unknown, over: Partial<NewProposal> = {}) =>
-  insertProposal(w.db, {
+const file = async (change: ProposalChange, filedAgainst: unknown, over: Partial<NewProposal> = {}) =>
+  await insertProposal(w.db, {
     assetId: 'mini', persona: 'analyst', agentRunId: null, change, filedAgainst, rationale: 'usage is accelerating',
     evidence: [w.ids.revenue_run_rate_usd], effect: null, createdAt: AS_OF, ...over,
   });
@@ -43,11 +43,11 @@ const anomaly = async () =>
 
 describe('a proposal row that is not what the agent files', () => {
   it('refuses an asset id that is not an asset id, before any file path is built from it', async () => {
-    const p = file({ kind: 'config', edits: [{ path: ['symbol'], value: 'EVIL' }] }, ['MINI'], { assetId: '../evil' });
+    const p = await file({ kind: 'config', edits: [{ path: ['symbol'], value: 'EVIL' }] }, ['MINI'], { assetId: '../evil' });
     expect(await codeOf(() => approve(p.id))).toBe('invalid_proposal');
-    expect(getProposal(w.db, p.id)!.status).toBe('pending');
+    expect((await getProposal(w.db, p.id))!.status).toBe('pending');
     // The database kinds are refused just as early: the check runs before anything reads or writes.
-    const value = file({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 }, { assetId: 'MINI/../..' });
+    const value = await file({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 }, { assetId: 'MINI/../..' });
     expect(await codeOf(() => approve(value.id))).toBe('invalid_proposal');
     expect(existsSync(join(home, 'assets', '..', 'evil.yaml'))).toBe(false);
   });
@@ -57,10 +57,10 @@ describe('proposals', () => {
   it('approving a stored assumption_value proposal throws proposal_kind_retired; rejecting it works', async () => {
     // VVV #1 and CAKE #4 are such rows: pending assumption_value proposals from the valuation era, with a 6m/12m effect.
     const effect = { '6m': { from: 10, to: 11 }, '12m': { from: 10, to: 12 } };
-    const p = file({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 }, { effect });
+    const p = await file({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 }, { effect });
     expect(await codeOf(() => approve(p.id, 'agreed'))).toBe('proposal_kind_retired');
     await expect(approve(p.id)).rejects.toThrow(/assumption/);
-    expect(getProposal(w.db, p.id)).toMatchObject({ status: 'pending', effect });
+    expect(await getProposal(w.db, p.id)).toMatchObject({ status: 'pending', effect });
     expect(w.db.prepare('SELECT COUNT(*) AS n FROM assumption_sets').get()).toEqual({ n: 0 });
     expect(await rejectProposal(w.db, p.id, 'assumption values are retired', NOW)).toMatchObject({ status: 'rejected', decisionNote: 'assumption values are retired', effect });
     expect(await codeOf(() => approve(p.id))).toBe('proposal_not_pending');
@@ -70,16 +70,16 @@ describe('proposals', () => {
 describe('approving anomaly proposals', () => {
   it('acknowledges with the user\'s note, else the proposal\'s, and withdraws an acknowledgement by resolving', async () => {
     const a = await anomaly();
-    await approve(file({ kind: 'acknowledge_anomaly', anomalyId: a.id, note: 'lags by design' }, { status: 'open' }).id);
+    await approve((await file({ kind: 'acknowledge_anomaly', anomalyId: a.id, note: 'lags by design' }, { status: 'open' })).id);
     expect(await getAnomaly(w.db, a.id)).toMatchObject({ status: 'acknowledged', note: 'lags by design', decidedBy: null });
-    const { result } = await approve(file({ kind: 'withdraw_acknowledgement', anomalyId: a.id, note: 'it has grown' }, { status: 'acknowledged' }).id, 'agreed, look again');
+    const { result } = await approve((await file({ kind: 'withdraw_acknowledgement', anomalyId: a.id, note: 'it has grown' }, { status: 'acknowledged' })).id, 'agreed, look again');
     expect(result).toEqual({ kind: 'anomaly', anomalyId: a.id, status: 'resolved' });
     expect(await getAnomaly(w.db, a.id)).toMatchObject({ status: 'resolved', note: 'agreed, look again' });
   });
 
   it('is stale when the anomaly is no longer in the status it was filed against', async () => {
     const a = await anomaly();
-    const p = file({ kind: 'acknowledge_anomaly', anomalyId: a.id, note: 'n' }, { status: 'open' });
+    const p = await file({ kind: 'acknowledge_anomaly', anomalyId: a.id, note: 'n' }, { status: 'open' });
     await decideAnomaly(w.db, a.id, 'resolved', 'fixed', AS_OF);
     expect(await codeOf(() => approve(p.id))).toBe('stale_proposal');
   });
@@ -91,13 +91,13 @@ describe('approving observation proposals', () => {
       assetId: 'mini', metricKey: 'staked_supply', observedAt: '2026-06-29T12:00:00Z', value: 80, source: 'manual', status: 'provisional',
       citationUrl: 'https://example.com', fetchedAt: AS_OF,
     });
-    const confirmed = await approve(file({ kind: 'confirm_observation', observationId: provisional.id, note: 'n' }, { status: 'provisional', active: true }).id);
+    const confirmed = await approve((await file({ kind: 'confirm_observation', observationId: provisional.id, note: 'n' }, { status: 'provisional', active: true })).id);
     expect(confirmed.result).toMatchObject({ kind: 'observation', action: 'confirmed' });
     expect((await listActiveObservations(w.db, 'mini', 'staked_supply')).at(-1)).toMatchObject({ value: 80, status: 'confirmed' });
 
-    await approve(file({ kind: 'reject_observation', observationId: w.ids.price_usd, note: 'n' }, { status: 'confirmed', active: true }).id);
+    await approve((await file({ kind: 'reject_observation', observationId: w.ids.price_usd, note: 'n' }, { status: 'confirmed', active: true })).id);
     expect((await getObservationsByIds(w.db, [w.ids.price_usd]))[0].status).toBe('rejected');
-    const again = file({ kind: 'reject_observation', observationId: w.ids.price_usd, note: 'again' }, { status: 'confirmed', active: true });
+    const again = await file({ kind: 'reject_observation', observationId: w.ids.price_usd, note: 'again' }, { status: 'confirmed', active: true });
     expect(await codeOf(() => approve(again.id))).toBe('stale_proposal');
   });
 
@@ -106,14 +106,14 @@ describe('approving observation proposals', () => {
       kind: 'observation', metricKey: 'revenue_run_rate_usd', value: 2000, observedAt: '2026-06-28T00:00:00.000Z', periodDays: null,
       citationUrl: 'https://news.example.com/big', quotedText: 'reports annualized revenue of $2,000',
     };
-    const p = file(change, { inForce: 1000 }, { agentRunId: null });
+    const p = await file(change, { inForce: 1000 }, { agentRunId: null });
     const { result } = await approve(p.id);
     const row = (await getObservationsByIds(w.db, [(result as { observationId: number }).observationId]))[0];
     expect(row).toMatchObject({
       value: 2000, status: 'confirmed', source: 'manual', citationUrl: 'https://news.example.com/big', quotedText: 'reports annualized revenue of $2,000',
       sourceDetail: `research:analyst:run none; approved proposal #${p.id}`,
     });
-    const late = file({ ...change, value: 2100 }, { inForce: 1000 });
+    const late = await file({ ...change, value: 2100 }, { inForce: 1000 });
     expect(await codeOf(() => approve(late.id))).toBe('stale_proposal'); // 2000 is in force now
   });
 
@@ -123,7 +123,7 @@ describe('approving observation proposals', () => {
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-20', value: 1250, source: 'manual', status: 'provisional',
       citationUrl: 'https://news.example.com/earlier', fetchedAt: AS_OF,
     });
-    const p = file(
+    const p = await file(
       {
         kind: 'observation', metricKey: 'revenue_run_rate_usd', value: 2000, observedAt: '2026-06-28T00:00:00.000Z', periodDays: null,
         citationUrl: 'https://news.example.com/big', quotedText: 'reports annualized revenue of $2,000',
@@ -138,13 +138,13 @@ describe('approving observation proposals', () => {
       kind: 'observation', metricKey: 'revenue_run_rate_usd', value: 2000, observedAt: '2026-06-10T00:00:00.000Z', periodDays: null,
       citationUrl: 'https://news.example.com/big', quotedText: 'reports annualized revenue of $2,000',
     };
-    const p = file(change, { inForce: 1000 });
+    const p = await file(change, { inForce: 1000 });
     const users = await insertObservation(w.db, {
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-10', value: 900, source: 'manual', fetchedAt: AS_OF,
     });
     expect(await codeOf(() => approve(p.id))).toBe('stale_proposal');
     expect((await getObservationsByIds(w.db, [users.id]))[0]).toMatchObject({ supersededBy: null, status: 'confirmed' });
-    expect(getProposal(w.db, p.id)!.status).toBe('pending');
+    expect((await getProposal(w.db, p.id))!.status).toBe('pending');
   });
 });
 
@@ -153,7 +153,7 @@ describe('approving a config proposal', () => {
 
   it('edits the YAML in place, changing only the edited line, and reports old and new values', async () => {
     const before = readFileSync(yamlPath, 'utf8');
-    const p = file(stalenessEdit, [7]);
+    const p = await file(stalenessEdit, [7]);
     const { proposal, result } = await approve(p.id);
     expect(proposal.status).toBe('approved');
     expect(result).toEqual({ kind: 'config', file: yamlPath, changes: [{ path: ['metrics', 'staked_supply', 'staleness_days'], from: 7, to: 14 }] });
@@ -165,7 +165,7 @@ describe('approving a config proposal', () => {
   });
 
   it('is stale when the file no longer holds what the proposal was filed against', async () => {
-    const p = file(stalenessEdit, [10]);
+    const p = await file(stalenessEdit, [10]);
     const before = readFileSync(yamlPath, 'utf8');
     expect(await codeOf(() => approve(p.id))).toBe('stale_proposal');
     expect(readFileSync(yamlPath, 'utf8')).toBe(before);
@@ -174,12 +174,12 @@ describe('approving a config proposal', () => {
   it('refuses an edit that would break the config, and leaves the file untouched', async () => {
     // The real loader is the check: the asset must still parse after the edit.
     const before = readFileSync(yamlPath, 'utf8');
-    const weights = file({ kind: 'config', edits: [{ path: ['holder_flows', 'fees', 'metric'], value: 'price_usd' }] }, ['flow_usd.fees']);
+    const weights = await file({ kind: 'config', edits: [{ path: ['holder_flows', 'fees', 'metric'], value: 'price_usd' }] }, ['flow_usd.fees']);
     expect(await codeOf(() => approve(weights.id))).toBe('invalid_asset_config');
-    const inverted = file({ kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'staleness_days'], value: -1 }] }, [7]);
+    const inverted = await file({ kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'staleness_days'], value: -1 }] }, [7]);
     expect(await codeOf(() => approve(inverted.id))).toBe('invalid_asset_config');
     expect(readFileSync(yamlPath, 'utf8')).toBe(before);
-    expect(getProposal(w.db, weights.id)!.status).toBe('pending');
+    expect((await getProposal(w.db, weights.id))!.status).toBe('pending');
   });
 
   it('proposals: approving a config proposal that edits assumptions is refused (invalid_asset_config)', async () => {
@@ -196,19 +196,19 @@ describe('approving a config proposal', () => {
       ['supply_basis', 'effective_total'],
     ];
     for (const [key, value] of removed) {
-      const p = file({ kind: 'config', edits: [{ path: [key], value }] }, [null]);
+      const p = await file({ kind: 'config', edits: [{ path: [key], value }] }, [null]);
       await expect(approve(p.id), key).rejects.toThrow(expect.objectContaining({ code: 'invalid_asset_config', message: expect.stringContaining(`Unrecognized key: "${key}"`) }));
-      expect(getProposal(w.db, p.id)!.status).toBe('pending');
+      expect((await getProposal(w.db, p.id))!.status).toBe('pending');
     }
     // A path below a removed key has no parent in today's file: refused before any edit.
-    const band = file({ kind: 'config', edits: [{ path: ['assumptions', 'rev_growth_y1', 'base'], value: { min: 0, max: 2 } }] }, [{ min: 0, max: 1 }]);
+    const band = await file({ kind: 'config', edits: [{ path: ['assumptions', 'rev_growth_y1', 'base'], value: { min: 0, max: 2 } }] }, [{ min: 0, max: 1 }]);
     expect(await codeOf(() => approve(band.id))).toBe('invalid_path');
     expect(readFileSync(yamlPath, 'utf8')).toBe(before);
   });
 
   it('restores the file when marking the proposal approved fails', async () => {
     const before = readFileSync(yamlPath, 'utf8');
-    const p = file(stalenessEdit, [7]);
+    const p = await file(stalenessEdit, [7]);
     w.db.exec("CREATE TRIGGER fail_decide BEFORE UPDATE ON proposals BEGIN SELECT RAISE(ABORT, 'disk full'); END;");
     await expect(approve(p.id)).rejects.toThrow(/disk full/);
     expect(readFileSync(yamlPath, 'utf8')).toBe(before);
@@ -216,24 +216,24 @@ describe('approving a config proposal', () => {
 
   it('never applies an edit under agent: or id, whoever wrote the proposal row: the agent cannot raise its own limits', async () => {
     const before = readFileSync(yamlPath, 'utf8');
-    const step = file({ kind: 'config', edits: [{ path: ['agent', 'max_step_fraction'], value: 1 }] }, [null]);
-    const budgets = file({ kind: 'config', edits: [{ path: ['agent'], value: { budgets: { weekly: { proposals: 9999 } } } }] }, [null]);
-    const rename = file({ kind: 'config', edits: [{ path: ['id'], value: 'other' }] }, ['mini']);
+    const step = await file({ kind: 'config', edits: [{ path: ['agent', 'max_step_fraction'], value: 1 }] }, [null]);
+    const budgets = await file({ kind: 'config', edits: [{ path: ['agent'], value: { budgets: { weekly: { proposals: 9999 } } } }] }, [null]);
+    const rename = await file({ kind: 'config', edits: [{ path: ['id'], value: 'other' }] }, ['mini']);
     for (const p of [step, budgets, rename]) {
       expect(await codeOf(() => approve(p.id))).toBe('path_not_proposable');
-      expect(getProposal(w.db, p.id)!.status).toBe('pending');
+      expect((await getProposal(w.db, p.id))!.status).toBe('pending');
     }
     expect(readFileSync(yamlPath, 'utf8')).toBe(before);
   });
 
   it('refuses a proposal whose filed-against record does not line up with its edits', async () => {
-    expect(await codeOf(() => approve(file(stalenessEdit, []).id))).toBe('invalid_proposal');
-    expect(await codeOf(() => approve(file(stalenessEdit, { value: 0 }).id))).toBe('invalid_proposal');
+    expect(await codeOf(async () => approve((await file(stalenessEdit, [])).id))).toBe('invalid_proposal');
+    expect(await codeOf(async () => approve((await file(stalenessEdit, { value: 0 })).id))).toBe('invalid_proposal');
   });
 
   it('marks a proposal approved without rewriting when the file already holds every proposed value', async () => {
     // A crash after the rename and before the status write leaves exactly this state.
-    const p = file(stalenessEdit, [7]);
+    const p = await file(stalenessEdit, [7]);
     writeFileSync(yamlPath, readFileSync(yamlPath, 'utf8').replace('staked_supply: { type: level, unit: tokens, staleness_days: 7 }', 'staked_supply: { type: level, unit: tokens, staleness_days: 14 }'));
     const applied = readFileSync(yamlPath, 'utf8');
     expect((await approve(p.id)).proposal.status).toBe('approved');
@@ -241,16 +241,16 @@ describe('approving a config proposal', () => {
   });
 
   it('leaves no temp file behind, and reports a missing asset file as such', async () => {
-    await approve(file(stalenessEdit, [7]).id);
+    await approve((await file(stalenessEdit, [7])).id);
     expect(existsSync(`${yamlPath}.tmp`)).toBe(false);
-    const orphan = file(stalenessEdit, [7], { assetId: 'ghost' });
+    const orphan = await file(stalenessEdit, [7], { assetId: 'ghost' });
     expect(await codeOf(() => approve(orphan.id))).toBe('asset_not_found');
   });
 });
 
 describe('rejecting, and deciding twice', () => {
   it('needs a note, keeps it, and makes the decision final', async () => {
-    const p = file({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 });
+    const p = await file({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 });
     expect(await codeOf(() => rejectProposal(w.db, p.id, '  ', NOW))).toBe('note_required');
     expect(await rejectProposal(w.db, p.id, 'wait for the Q3 disclosure', NOW)).toMatchObject({ status: 'rejected', decisionNote: 'wait for the Q3 disclosure' });
     expect(await codeOf(() => approve(p.id))).toBe('proposal_not_pending');

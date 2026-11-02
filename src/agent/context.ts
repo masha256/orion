@@ -68,10 +68,10 @@ export async function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledg
       acknowledged_read_only: anomalies.filter((a) => a.status === 'acknowledged').map((a) => describeAnomaly(a)),
     },
     proposals: {
-      pending: listProposals(db, { assetId: asset.id }).map(describeProposal),
-      recently_decided: recentlyDecidedProposals(db, asset.id, DECIDED_PROPOSALS).map(describeProposal),
+      pending: (await listProposals(db, { assetId: asset.id })).map(describeProposal),
+      recently_decided: (await recentlyDecidedProposals(db, asset.id, DECIDED_PROPOSALS)).map(describeProposal),
     },
-    journal: listJournal(db, asset.id, { limit: 3 }),
+    journal: await listJournal(db, asset.id, { limit: 3 }),
     // Dated claims earlier runs filed, whose date (`by`, or a range's `to`) is within 30 days of now either way.
     catalysts_due: await catalystsDue(db, asset.id, input.now),
     source_failures: (await listFetchRuns(db, asset.id, FETCH_RUNS)).flatMap((run) =>
@@ -113,7 +113,7 @@ async function catalystsDue(db: Db, assetId: string, now: Date): Promise<DueCata
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const window = CATALYST_WINDOW_DAYS * MS_PER_DAY;
   const seen = new Set<string>();
-  return listJournal(db, assetId, { limit: CATALYST_ENTRIES }).flatMap((entry) =>
+  return (await listJournal(db, assetId, { limit: CATALYST_ENTRIES })).flatMap((entry) =>
     entry.catalysts
       .filter((c) => {
         const at = Date.parse(`${c.by ?? c.to}T00:00:00Z`);

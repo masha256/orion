@@ -55,8 +55,8 @@ const withDb = async <T>(fn: (db: ReturnType<typeof openDb>) => T | Promise<T>):
 const revenueId = async () => await withDb((db) => (db.prepare("SELECT id FROM observations WHERE metric_key = 'revenue_run_rate_usd'").get() as { id: number }).id);
 const fileProposal = async (change: ProposalChange, filedAgainst: unknown, effect: unknown = null) => {
   const evidence = [await revenueId()];
-  return await withDb((db) =>
-    insertProposal(db, {
+  return await withDb(async (db) =>
+    await insertProposal(db, {
       assetId: 'mini', persona: 'analyst', agentRunId: null, change, filedAgainst, rationale: 'because', evidence, effect: effect as never, createdAt: AS_OF,
     }),
   );
@@ -301,13 +301,13 @@ describe('orion agent run', () => {
 
   it('agent runs: list and show read a stored weekly run', async () => {
     // A row the valuation era wrote: a weekly run that changed an assumption and moved the signal.
-    await withDb((db) => {
-      const id = startAgentRun(db, {
+    await withDb(async (db) => {
+      const id = await startAgentRun(db, {
         assetId: 'mini', persona: 'analyst', runType: 'weekly', trigger: 'schedule', triggerDetail: { firings: [] }, dryRun: false, configHash: 'a'.repeat(64),
         model: 'claude-opus-5-5', startedAt: '2026-06-01T00:00:00.000Z',
       });
       const change = { key: 'rev_growth_y1', scenario: 'base', start: 0, value: 0.2, rationale: 'usage is accelerating', evidence: [1] };
-      finishAgentRun(db, id, {
+      await finishAgentRun(db, id, {
         outcome: 'completed', endedAt: '2026-06-01T00:05:00.000Z', usage: { requests: 3, inputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 150, webSearches: 0, webFetches: 0 },
         error: null,
         summary: {
@@ -384,14 +384,14 @@ describe('orion proposals', () => {
   });
 
   it('shows each citation with its locator and the label of its document', async () => {
-    const doc = await withDb((db) =>
-      insertDocument(db, {
+    const doc = await withDb(async (db) =>
+      (await insertDocument(db, {
         assetId: 'mini', kind: 'machine_transcript', sourceUrl: 'https://x.com/mini/status/1', sourceId: null, title: null, publishedAt: AS_OF,
         addedAt: AS_OF, meta: { asr_model: 'whisper-large-v3' }, text: '[12:33] revenue reached $1,100 in September\n',
-      }).doc,
+      })).doc,
     );
-    const p = await withDb((db) =>
-      insertProposal(db, {
+    const p = await withDb(async (db) =>
+      await insertProposal(db, {
         assetId: 'mini', persona: 'analyst', agentRunId: null, change: { kind: 'acknowledge_anomaly', anomalyId: 1, note: 'lags' },
         filedAgainst: { status: 'open' }, rationale: 'because', evidence: [], effect: null, createdAt: AS_OF,
         citations: [

@@ -17,7 +17,7 @@ const MISMATCH = { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'pr
 async function world() {
   const db = openDb(':memory:');
   const asset = parseAssetYaml(MINI_ASSET_YAML).config;
-  const runId = startAgentRun(db, { assetId: 'mini', persona: 'analyst', runType: 'weekly', trigger: 'manual', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: T });
+  const runId = await startAgentRun(db, { assetId: 'mini', persona: 'analyst', runType: 'weekly', trigger: 'manual', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: T });
   await insertObservation(db, { assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-15', value: 1000, source: 'manual', fetchedAt: T });
   const researched = await insertObservation(db, {
     assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-15', value: 1200, source: 'manual', status: 'provisional',
@@ -27,12 +27,12 @@ async function world() {
     assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-01', periodDays: 31, value: 90, source: 'manual', status: 'provisional',
     sourceDetail: 'typed from the August report', citationUrl: 'https://example.com/aug', fetchedAt: T,
   });
-  const withEffect = insertProposal(db, {
+  const withEffect = await insertProposal(db, {
     assetId: 'mini', persona: 'analyst', agentRunId: runId, change: { kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.2 },
     filedAgainst: { value: 0 }, rationale: 'growth is faster than the band allows', evidence: [researched.id],
     effect: { '6m': { from: 10, to: 11 }, '12m': { from: 12, to: 14.5 } }, createdAt: T,
   });
-  const noEffect = insertProposal(db, {
+  const noEffect = await insertProposal(db, {
     assetId: 'mini', persona: 'analyst', agentRunId: null, change: { kind: 'reject_observation', observationId: typed.id, note: 'the August figure double counts' },
     filedAgainst: { status: 'provisional' }, rationale: 'see the note', evidence: [], effect: null, createdAt: T,
   });
@@ -104,7 +104,7 @@ describe('inbox', () => {
     // VVV #1 and CAKE #4 are pending assumption_value proposals from the valuation era, filed with a target effect. No
     // run files one now (new proposals store effect null), but the inbox must keep reading the rows that exist.
     const w = await world();
-    insertProposal(w.db, {
+    await insertProposal(w.db, {
       assetId: 'mini', persona: 'analyst', agentRunId: w.runId, change: { kind: 'assumption_value', key: 'discount_rate_base', scenario: 'bull', value: 0.09 },
       filedAgainst: { value: 0.1 }, rationale: 'r', evidence: [], effect: { blocked: ['missing_metric:revenue_run_rate_usd'] }, createdAt: T,
     });

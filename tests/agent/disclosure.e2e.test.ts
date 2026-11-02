@@ -342,8 +342,8 @@ describe('approving the config proposal on a copy of assets/lit.yaml', () => {
     await orion(h2, 'init');
     writeFileSync(join(h2, 'assets/lit.yaml'), preApprovalLitYaml());
 
-    const approved = await withDb(h2, (db) => {
-      const filed = insertProposal(db, {
+    const approved = await withDb(h2, async (db) => {
+      const filed = await insertProposal(db, {
         assetId: 'lit', persona: 'perp-exchange-analyst', agentRunId: null, change: prop.change, filedAgainst: prop.filedAgainst, rationale: prop.rationale,
         evidence: prop.evidence, effect: prop.effect, citations: prop.citations, createdAt: NOW,
       });

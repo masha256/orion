@@ -6,7 +6,7 @@ import { REPORT_STALE_DAYS, tickAsset, type TickDeps, type TickResult } from '..
 import { summarizeHolderYield, TickReportSchema } from '../../src/app/tickReport.js';
 import { parseAssetYaml, type LoadedAsset } from '../../src/config/load.js';
 import { raiseAnomaly } from '../../src/db/anomalies.js';
-import { openDb, type Db } from '../../src/db/connection.js';
+import { openDb, type Db, type SqlParam } from '../../src/db/connection.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { acquireRunLock, getRunLock } from '../../src/db/runLocks.js';
 import { addDays } from '../../src/ingest/time.js';
@@ -66,7 +66,7 @@ describe('tickAsset', () => {
     const { report, exitCode } = await tick({ fetchDeps: { ...h.deps, env: {} } });
     expect(exitCode).toBe(1);
     expect(report).toMatchObject({ outcome: 'error', error: { code: 'missing_rpc_url' }, ingest: null, holder_yield: null, report_error: null });
-    expect(getRunLock(h.db, 'mini')).toBeNull(); // released on the error path too
+    expect(await getRunLock(h.db, 'mini')).toBeNull(); // released on the error path too
     expect(TickReportSchema.parse(report)).toEqual(report);
   });
 
@@ -131,12 +131,12 @@ describe('tickAsset', () => {
     const A = openDb(join(dir, 'orion.db'));
     const B = openDb(join(dir, 'orion.db'));
     world({ db: A });
-    acquireRunLock(B, 'mini', 'agent run pid 42', NOW.toISOString());
+    await acquireRunLock(B, 'mini', 'agent run pid 42', NOW.toISOString());
     const { report, exitCode } = await tick();
     expect(exitCode).toBe(0);
     expect(report).toMatchObject({ outcome: 'run_in_progress', lock: { holder: 'agent run pid 42', acquired_at: NOW.toISOString() }, ingest: null, holder_yield: null, report_error: null, error: null });
     expect(progress).toEqual(['asset mini is locked by agent run pid 42 since 2026-09-19T12:00:00.000Z']);
-    expect(getRunLock(A, 'mini')!.holder).toBe('agent run pid 42'); // not ours to release
+    expect((await getRunLock(A, 'mini'))!.holder).toBe('agent run pid 42'); // not ours to release
     expect(TickReportSchema.parse(report)).toEqual(report);
     A.close();
     B.close();
@@ -160,20 +160,20 @@ describe('tickAsset', () => {
 
   it('holds the lock while it ingests and releases it after', async () => {
     let heldDuringFetch: string | null = null;
-    const { report } = await tick({ onFetch: () => { heldDuringFetch = getRunLock(h.db, 'mini')?.holder ?? null; } });
+    const { report } = await tick({ onFetch: async () => { heldDuringFetch = (await getRunLock(h.db, 'mini'))?.holder ?? null; } });
     expect(report.outcome).toBe('completed');
     expect(heldDuringFetch).toBe(`tick pid ${process.pid}`);
-    expect(getRunLock(h.db, 'mini')).toBeNull();
+    expect(await getRunLock(h.db, 'mini')).toBeNull();
   });
 
   it('reports a lock release that fails, and the report is unaffected', async () => {
     const proxy = new Proxy(h.db, {
       get(target, prop) {
         const v = Reflect.get(target, prop);
-        if (prop !== 'prepare') return typeof v === 'function' ? v.bind(target) : v;
-        return (sql: string) => {
+        if (prop !== 'run') return typeof v === 'function' ? v.bind(target) : v;
+        return async (sql: string, params?: readonly SqlParam[]) => {
           if (sql.startsWith('DELETE FROM run_locks')) throw new Error('simulated: database is locked');
-          return target.prepare(sql);
+          return target.run(sql, params);
         };
       },
     }) as Db;

@@ -67,15 +67,15 @@ describe('context', () => {
   });
 
   it('shows pending proposals, a stored valuation-era proposal with its effect included, how the user decided earlier ones, and the journal', async () => {
-    const file = (value: number, effect: unknown = null) =>
-      insertProposal(w.db, {
+    const file = async (value: number, effect: unknown = null) =>
+      await insertProposal(w.db, {
         assetId: 'mini', persona: 'analyst', agentRunId: null, change: { kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'bull', value },
         filedAgainst: { value: 0 }, rationale: 'r', evidence: [], effect: effect as never, createdAt: AS_OF,
       });
-    const pending = file(3, { '6m': { from: 10, to: 11 }, '12m': { from: 10, to: 12 } });
-    decideProposal(w.db, file(4).id, 'rejected', 'too aggressive before the Q3 disclosure', AS_OF);
+    const pending = await file(3, { '6m': { from: 10, to: 11 }, '12m': { from: 10, to: 12 } });
+    await decideProposal(w.db, (await file(4)).id, 'rejected', 'too aggressive before the Q3 disclosure', AS_OF);
     for (const n of [1, 2, 3, 4]) {
-      insertJournalEntry(w.db, { assetId: 'mini', persona: 'analyst', agentRunId: null, createdAt: AS_OF, thesis: `thesis ${n}`, openQuestions: [], summary: 's' });
+      await insertJournalEntry(w.db, { assetId: 'mini', persona: 'analyst', agentRunId: null, createdAt: AS_OF, thesis: `thesis ${n}`, openQuestions: [], summary: 's' });
     }
     const p = await pack();
     expect(p.proposals.pending).toMatchObject([{ id: pending.id, kind: 'assumption_value', effect: { '12m': { from: 10, to: 12 } } }]);
@@ -85,11 +85,11 @@ describe('context', () => {
 
   describe('catalysts_due', () => {
     const cite = [{ source: 'doc:1', quotedText: 'q', locator: '00:01', docSha256: 'e'.repeat(64), docKind: 'transcript' as const }];
-    const entry = (catalysts: unknown[], thesis = 't') =>
-      insertJournalEntry(w.db, { assetId: 'mini', persona: 'analyst', agentRunId: null, createdAt: AS_OF, thesis, openQuestions: [], summary: 's', catalysts: catalysts as never });
+    const entry = async (catalysts: unknown[], thesis = 't') =>
+      await insertJournalEntry(w.db, { assetId: 'mini', persona: 'analyst', agentRunId: null, createdAt: AS_OF, thesis, openQuestions: [], summary: 's', catalysts: catalysts as never });
 
     it('catalysts_due lists a catalyst whose to-date is 20 days ahead and omits one 40 days ahead', async () => {
-      const j = entry([
+      const j = await entry([
         { event: 'soon', kind: 'product', from: '2026-07-01', to: '2026-07-20', citations: cite },
         { event: 'later', kind: 'token', from: '2026-07-01', to: '2026-08-09', citations: cite },
       ]);
@@ -100,9 +100,9 @@ describe('context', () => {
 
     it('uses an inclusive 30-day window either side of now, on by or to, from the last 20 entries, newest first', async () => {
       // now is 2026-06-30: the window is 2026-05-31 .. 2026-07-30.
-      const oldest = entry([{ event: 'oldest', kind: 'other', by: '2026-07-01', citations: cite }]);
-      for (let n = 0; n < 19; n++) entry([]);
-      const first = entry([
+      const oldest = await entry([{ event: 'oldest', kind: 'other', by: '2026-07-01', citations: cite }]);
+      for (let n = 0; n < 19; n++) await entry([]);
+      const first = await entry([
         { event: 'edge past', kind: 'regulatory', by: '2026-05-31', citations: cite },
         { event: 'too old', kind: 'regulatory', by: '2026-05-30', citations: cite },
         { event: 'edge ahead', kind: 'partnership', by: '2026-07-30', citations: cite },
@@ -117,8 +117,8 @@ describe('context', () => {
     });
 
     it('lists a catalyst filed again by a later run once, under its newest entry', async () => {
-      const older = entry([{ event: 'mainnet', kind: 'product', by: '2026-07-10', citations: cite }]);
-      const newer = entry([
+      const older = await entry([{ event: 'mainnet', kind: 'product', by: '2026-07-10', citations: cite }]);
+      const newer = await entry([
         { event: 'mainnet', kind: 'product', by: '2026-07-10', citations: cite },
         { event: 'mainnet', kind: 'product', by: '2026-07-12', citations: cite }, // a new date is a different claim
       ]);
@@ -159,11 +159,11 @@ describe('context', () => {
 
 describe('the disclosure pack', () => {
   const TEXT = '[00:01] Our annualized revenue reached $1,100 in September.\n';
-  const storeDoc = (): StoredDocument =>
-    insertDocument(w.db, {
+  const storeDoc = async (): Promise<StoredDocument> =>
+    (await insertDocument(w.db, {
       assetId: 'mini', kind: 'machine_transcript', sourceUrl: 'https://x.com/mini/status/2', sourceId: 'x:2', title: 'Q3 call', publishedAt: '2026-06-29T00:00:00.000Z',
       addedAt: AS_OF, meta: { asr_model: 'whisper-large-v3' }, text: TEXT,
-    }).doc;
+    })).doc;
   // A stand-in adapter that documents its params (no real adapter does until a later task), and one that does not.
   registerAdapter({ name: 'test_documented', needsRpc: false, paramsDoc: 'market: the market id (number)', run: () => Promise.reject(new Error('not run')) });
   registerAdapter({ name: 'test_undocumented', needsRpc: false, run: () => Promise.reject(new Error('not run')) });
@@ -175,7 +175,7 @@ describe('the disclosure pack', () => {
     expect(YAML_WITH_ADAPTERS).toContain('test_documented');
     expect(YAML_WITH_ADAPTERS).toContain('test_undocumented');
     w = await agentWorld(YAML_WITH_ADAPTERS);
-    const doc = storeDoc();
+    const doc = await storeDoc();
     const p = await packFor(w.loaded, { document: doc, assetYaml: YAML_WITH_ADAPTERS });
     expect(p.document).toEqual({
       id: doc.id, kind: 'machine_transcript',
@@ -196,7 +196,7 @@ describe('the disclosure pack', () => {
 
   it('the LIT disclosure pack lists adapter_params for unlocks_next_year with the paramsDoc text', async () => {
     const lit = loadAsset(fileURLToPath(new URL('../..', import.meta.url)), 'lit');
-    const p = await packFor(lit, { document: storeDoc(), assetYaml: 'lit' });
+    const p = await packFor(lit, { document: await storeDoc(), assetYaml: 'lit' });
     expect(p.adapter_params).toContainEqual({
       metric: 'unlocks_next_year', adapter: 'lit.unlocks_next_year',
       params_doc: "allocations: string[] (DefiLlama allocation labels, required); url?: string (default https://defillama-datasets.llama.fi/emissions/lighter): the DefiLlama emissions dataset; tranches?: { first: YYYY-MM-DD, every_months: 1..12, count: 1..120 }: the issuer's own tranche schedule; each allocation's remaining amount from the schedule start is split evenly over the tranches",
@@ -220,7 +220,7 @@ describe('the disclosure pack', () => {
       'source: { type: adapter, name: lit.staking_pool, params: { field: staked } }\n    cross_checks: [ { source: { type: adapter, name: lit.staking_pool, params: { field: staked, api: "https://example.test/api/v1" } } } ]',
     );
     expect(checked).not.toBe(yaml);
-    const p = await packFor(parseAssetYaml(checked), { document: storeDoc(), assetYaml: checked });
+    const p = await packFor(parseAssetYaml(checked), { document: await storeDoc(), assetYaml: checked });
     const pairs = p.adapter_params.map((a: { metric: string; adapter: string }) => `${a.metric} ${a.adapter}`);
     expect(pairs.filter((x: string) => x === 'staked_tokens_reported lit.staking_pool')).toHaveLength(1);
     expect(new Set(pairs).size).toBe(pairs.length);

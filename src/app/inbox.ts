@@ -113,7 +113,7 @@ export async function buildInbox(db: Db, asset: AssetConfig, nowIso: string): Pr
       unit: asset.metrics[o.metricKey]?.unit ?? null, citation_url: o.citationUrl, recorded_by: recordedBy(o), move_pct: await movePct(db, asset, o, nowIso),
     });
   }
-  const proposals = listProposals(db, { assetId: asset.id }).map((p) => ({
+  const proposals = (await listProposals(db, { assetId: asset.id })).map((p) => ({
     id: p.id, kind: p.change.kind, persona: p.persona, agent_run_id: p.agentRunId, filed_at: p.createdAt, effect: p.effect,
   }));
   const anomalies = (await listAnomalies(db, { assetId: asset.id })).map((a) => ({

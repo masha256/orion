@@ -129,7 +129,7 @@ export function registerAgent(program: Command, ctx: CliContext): void {
     .action((id: string, opts: { transcript?: boolean; json?: boolean }) =>
       guarded(ctx, opts.json, async () => {
         const runId = parseNumber(id, 'id');
-        const { run, transcript } = await withDb(ctx, (db) => ({ run: getAgentRun(db, runId), transcript: opts.transcript ? getTranscript(db, runId) : undefined }));
+        const { run, transcript } = await withDb(ctx, async (db) => ({ run: await getAgentRun(db, runId), transcript: opts.transcript ? await getTranscript(db, runId) : undefined }));
         if (!run) throw new OrionError('agent_run_not_found', `no agent run with id ${runId}`);
         const cost = estimateCostUsd(run.model, run.usage);
         const staged = (run.summary?.staged ?? null) as StoredStaged | null;

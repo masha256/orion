@@ -19,7 +19,7 @@ let model: ScriptedModel;
 
 beforeEach(async () => {
   w = await agentWorld();
-  home = agentHome(w.db);
+  home = await agentHome(w.db);
 });
 
 const NINE = [
@@ -53,7 +53,7 @@ describe('run', () => {
     expect(count('assumption_sets')).toBe(0);
     const result = await run([calls(journalCall()), say('Done.')]);
     expect(result.run).toMatchObject({ outcome: 'completed', runType: 'disclosure', error: null });
-    expect(listJournal(w.db, 'mini')[0]).toMatchObject({ agentRunId: result.run.id });
+    expect((await listJournal(w.db, 'mini'))[0]).toMatchObject({ agentRunId: result.run.id });
     expect(count('assumption_sets')).toBe(0);
   });
 
@@ -65,9 +65,9 @@ describe('run', () => {
 
     const row = (await listActiveObservations(w.db, 'mini', 'staked_supply')).find((o) => o.status === 'provisional')!;
     expect(row).toMatchObject({ value: 55, source: 'manual', citationUrl: 'doc:1', quotedText: STAKED_QUOTE, sourceDetail: `research:analyst:run ${result.run.id}` });
-    const proposal = listProposals(w.db)[0];
+    const proposal = (await listProposals(w.db))[0];
     expect(proposal).toMatchObject({ agentRunId: result.run.id, status: 'pending', change: { kind: 'observation', value: 1100, citationUrl: 'doc:1' }, effect: null });
-    const journalId = listJournal(w.db, 'mini')[0].id;
+    const journalId = (await listJournal(w.db, 'mini'))[0].id;
     expect(result.committed).toEqual({ observationIds: [row.id], resolvedAnomalyIds: [], proposalIds: [proposal.id], journalId, devFindings: [] });
     expect(Object.keys(result.staged)).toEqual(['resolutions', 'observations', 'proposals', 'journal', 'devFindings']);
     expect(Object.keys(result.run.summary!)).toEqual(['committed', 'staged']);
@@ -90,11 +90,11 @@ describe('run', () => {
 
   it('keeps the transcript apart from the run row', async () => {
     const result = await run([calls(journalCall()), say('Done.')]);
-    const transcript = getTranscript(w.db, result.run.id) as { system: string; tools: string[]; messages: unknown[]; responses: unknown[] };
+    const transcript = await getTranscript(w.db, result.run.id) as { system: string; tools: string[]; messages: unknown[]; responses: unknown[] };
     expect(transcript.messages).toHaveLength(4);
     expect(transcript.responses).toHaveLength(2);
     expect(transcript.tools).toContain('web_fetch');
-    expect(JSON.stringify(getAgentRun(w.db, result.run.id))).not.toContain('context pack');
+    expect(JSON.stringify(await getAgentRun(w.db, result.run.id))).not.toContain('context pack');
   });
 
   it('a run that changes nothing writes its journal and nothing else', async () => {
@@ -125,7 +125,7 @@ describe('guardrails inside a run', () => {
     const result = await run([{ content: [...webFetch(PAGE_URL, PAGE_TEXT), revenueCall(PAGE_URL)], stop_reason: 'tool_use' }, calls(journalCall()), say('Done.')]);
     expect(model.toolResults(1)[0]).toMatchObject({ is_error: false, result: { recorded: false } });
     expect((await listActiveObservations(w.db, 'mini', 'revenue_run_rate_usd')).filter((o) => o.status === 'provisional')).toEqual([]);
-    expect(listProposals(w.db).map((p) => [p.change, p.effect])).toMatchObject([[{ kind: 'observation', value: 1100, citationUrl: PAGE_URL }, null]]);
+    expect((await listProposals(w.db)).map((p) => [p.change, p.effect])).toMatchObject([[{ kind: 'observation', value: 1100, citationUrl: PAGE_URL }, null]]);
     expect(result.committed!.proposalIds).toHaveLength(1);
   });
 
@@ -152,7 +152,7 @@ describe('runs that do not finish cleanly', () => {
     expect(result.staged.observations).toHaveLength(1);
     expect(count('journal') + count('proposals')).toBe(0);
     expect(count('observations')).toBe(7);
-    expect(getTranscript(w.db, result.run.id)).not.toBeNull();
+    expect(await getTranscript(w.db, result.run.id)).not.toBeNull();
     expect((result.run.summary as { staged: { observations: unknown[] } }).staged.observations).toHaveLength(1);
   });
 
@@ -160,7 +160,7 @@ describe('runs that do not finish cleanly', () => {
     const result = await run([{ ...calls(stakedCall()), usage: { input_tokens: 10_000_000 } }, calls(journalCall())]);
     expect(result.run).toMatchObject({ outcome: 'completed', error: null });
     expect(result.committed!.observationIds).toHaveLength(1);
-    expect(listJournal(w.db, 'mini')[0]).toMatchObject({ agentRunId: result.run.id, thesis: 'steady' });
+    expect((await listJournal(w.db, 'mini'))[0]).toMatchObject({ agentRunId: result.run.id, thesis: 'steady' });
     expect((result.run.summary as { reserve?: unknown }).reserve).toEqual({ reason: 'input units (1200000)' });
   });
 
@@ -192,7 +192,7 @@ describe('runs that do not finish cleanly', () => {
     expect((await run([{ content: [], stop_reason: 'refusal', stop_details: { type: 'refusal', category: null, explanation: null } }])).run.outcome).toBe('refused');
     expect((await run([new Error('socket hang up')])).run).toMatchObject({ outcome: 'error', error: 'Error: socket hang up' });
     expect(count('observations')).toBe(7);
-    expect(listAgentRuns(w.db)).toHaveLength(3);
+    expect(await listAgentRuns(w.db)).toHaveLength(3);
   });
 
   it('ends as conflict when the user decides the anomaly it resolved mid-run, and leaves the user\'s decision alone', async () => {
@@ -245,7 +245,7 @@ describe('runs that do not finish cleanly', () => {
     const result = await run([calls(stakedCall()), calls(journalCall()), say('Done.')]);
     expect(result.run).toMatchObject({ outcome: 'completed', error: null });
     expect(result.committed!.observationIds).toHaveLength(1);
-    expect(getTranscript(w.db, result.run.id)).toEqual({
+    expect(await getTranscript(w.db, result.run.id)).toEqual({
       error: expect.stringContaining('transcript too large'),
       note: 'the full transcript could not be stored',
     });
@@ -275,10 +275,10 @@ describe('runs that do not finish cleanly', () => {
 
 describe('preflight', () => {
   it('fails before any model call and before a run row exists', async () => {
-    const foreign = insertDocument(w.db, {
+    const foreign = (await insertDocument(w.db, {
       assetId: 'hype', kind: 'post', sourceUrl: 'https://x.com/hype/status/1', sourceId: null, title: null, publishedAt: AS_OF, addedAt: AS_OF, meta: {},
       text: 'Hype said something else entirely about its revenue.\n',
-    }).doc;
+    })).doc;
     const decided = await anomaly('decided');
     await decideAnomaly(w.db, decided.id, 'resolved', 'fixed', AS_OF);
     expect(await codeOf(run([], { runType: 'weekly' as never }))).toBe('invalid_run_type');
@@ -314,17 +314,17 @@ describe('preflight', () => {
 
 describe('a disclosure run', () => {
   it('can cite doc:<id> of its target doc and nothing else', async () => {
-    const other = insertDocument(w.db, {
+    const other = (await insertDocument(w.db, {
       assetId: 'mini', kind: 'post', sourceUrl: 'https://x.com/mini/status/2', sourceId: null, title: null, publishedAt: AS_OF, addedAt: AS_OF, meta: {},
       text: 'Mini also said its annualized revenue reached $1,100 in September, per a second post.\n',
-    }).doc;
+    })).doc;
     const result = await run([calls(revenueCall(`doc:${other.id}`)), calls(revenueCall(`doc:${w.doc.id}`)), calls(journalCall()), say('Done.')]);
     expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'doc_not_in_run', citable_docs: [`doc:${w.doc.id}`] } });
     // A figure from a disclosure run waits for the user (spec section 15, Ruling 18): on an allow_provisional metric it is a proposal.
     expect(model.toolResults(2)[0]).toMatchObject({ is_error: false, result: { recorded: false } });
     expect(result.run.outcome).toBe('completed');
     expect((await listActiveObservations(w.db, 'mini', 'revenue_run_rate_usd')).filter((o) => o.citationUrl === `doc:${w.doc.id}`)).toEqual([]);
-    expect(listProposals(w.db).map((p) => p.change)).toMatchObject([{ kind: 'observation', value: 1100, citationUrl: `doc:${w.doc.id}`, quotedText: QUOTE }]);
+    expect((await listProposals(w.db)).map((p) => p.change)).toMatchObject([{ kind: 'observation', value: 1100, citationUrl: `doc:${w.doc.id}`, quotedText: QUOTE }]);
   });
 
   it('keeps dev findings in the run summary: staged on a dry run, committed too after a commit, and in no table', async () => {
@@ -335,12 +335,12 @@ describe('a disclosure run', () => {
     });
     const dry = await run([calls(devFinding), calls(journalCall()), say('Done.')], { dryRun: true });
     expect(model.toolResults(1)[0]).toMatchObject({ is_error: false, result: { staged: true } });
-    const drySummary = getAgentRun(w.db, dry.run.id)!.summary as { committed: unknown; staged: { devFindings: { category: string; fingerprint: string }[] } };
+    const drySummary = (await getAgentRun(w.db, dry.run.id))!.summary as { committed: unknown; staged: { devFindings: { category: string; fingerprint: string }[] } };
     expect(drySummary.committed).toBeNull();
     expect(drySummary.staged.devFindings).toMatchObject([{ category: 'revenue', metricKeys: ['revenue_run_rate_usd'], fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/) }]);
 
     const done = await run([calls(devFinding), calls(journalCall()), say('Done.')]);
-    const summary = getAgentRun(w.db, done.run.id)!.summary as { committed: { devFindings: unknown[] }; staged: { devFindings: unknown[] } };
+    const summary = (await getAgentRun(w.db, done.run.id))!.summary as { committed: { devFindings: unknown[] }; staged: { devFindings: unknown[] } };
     expect(summary.committed.devFindings).toEqual(drySummary.staged.devFindings);
     expect(summary.staged.devFindings).toEqual(drySummary.staged.devFindings);
   });
@@ -348,7 +348,7 @@ describe('a disclosure run', () => {
   it('records docId and docSha256 in trigger_detail and runs under budget disclosure', async () => {
     const result = await run([calls(journalCall()), say('Done.')], { note: 'see the post' });
     expect(result.run).toMatchObject({ outcome: 'completed', runType: 'disclosure', trigger: 'manual', triggerDetail: { note: 'see the post', docId: w.doc.id, docSha256: w.doc.sha256 } });
-    expect(getAgentRun(w.db, result.run.id)!.triggerDetail).toEqual({ note: 'see the post', docId: w.doc.id, docSha256: w.doc.sha256 });
+    expect((await getAgentRun(w.db, result.run.id))!.triggerDetail).toEqual({ note: 'see the post', docId: w.doc.id, docSha256: w.doc.sha256 });
     const pack = packOf();
     expect(pack.run).toEqual({ type: 'disclosure', now: AS_OF, budgets: DEFAULT_BUDGETS.disclosure });
     expect(pack.document).toMatchObject({ id: w.doc.id, kind: 'post', sha256: w.doc.sha256, text: DOC_TEXT });

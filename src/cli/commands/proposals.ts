@@ -14,12 +14,14 @@ const DOC_SOURCE = /^doc:(\d+)$/;
 
 /** One line per citation: the source, a transcript's locator, and for a stored document its fixed label (spec 5.3). */
 async function citationLines(db: Db, p: Proposal): Promise<string[]> {
-  return p.citations.map((c) => {
+  const lines: string[] = [];
+  for (const c of p.citations) {
     const m = DOC_SOURCE.exec(c.source);
-    const doc = m ? getDocument(db, Number(m[1])) : null;
+    const doc = m ? await getDocument(db, Number(m[1])) : null;
     const label = m ? ` [${doc ? docLabel(doc) : 'document not found'}]` : '';
-    return `  citation ${c.source}${c.locator === null ? '' : ` at ${c.locator}`}${label}: "${c.quotedText}"`;
-  });
+    lines.push(`  citation ${c.source}${c.locator === null ? '' : ` at ${c.locator}`}${label}: "${c.quotedText}"`);
+  }
+  return lines;
 }
 
 function changeSummary(p: Proposal): string {
@@ -94,7 +96,7 @@ export function registerProposals(program: Command, ctx: CliContext): void {
       guarded(ctx, opts.json, async () => {
         const proposalId = parseNumber(id, 'id');
         const { p, evidence, citations } = await withDb(ctx, async (db) => {
-          const found = getProposal(db, proposalId);
+          const found = await getProposal(db, proposalId);
           return { p: found, evidence: found ? await getObservationsByIds(db, found.evidence) : [], citations: found ? await citationLines(db, found) : [] };
         });
         if (!p) throw new OrionError('proposal_not_found', `no proposal with id ${proposalId}`);

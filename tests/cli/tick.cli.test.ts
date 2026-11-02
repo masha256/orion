@@ -76,7 +76,7 @@ describe('orion tick', () => {
 
   it('exits 0 with run_in_progress when the asset is locked, and writes only the report', async () => {
     const db = openDb(join(home, 'orion.db'));
-    acquireRunLock(db, 'mini', 'agent run pid 7', NOW.toISOString());
+    await acquireRunLock(db, 'mini', 'agent run pid 7', NOW.toISOString());
     db.close();
     const report = JSON.parse(await orion('tick', 'mini')) as TickReport;
     expect(report).toMatchObject({ outcome: 'run_in_progress', lock: { holder: 'agent run pid 7' }, ingest: null, holder_yield: null });

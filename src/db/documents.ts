@@ -110,28 +110,27 @@ function checkDocument(input: NewDocument): void {
  * The insert comes first and yields to the unique index, so a second writer storing the same text at the same moment
  * (the watcher beside a hand-run `doc add`) gets the stored row back rather than a UNIQUE error.
  */
-export function insertDocument(db: Db, input: NewDocument): { doc: StoredDocument; existing: boolean } {
+export async function insertDocument(db: Db, input: NewDocument): Promise<{ doc: StoredDocument; existing: boolean }> {
   checkDocument(input);
   const text = normalizeDocText(input.text);
   const hash = sha256(text);
-  const info = db
-    .prepare(
-      'INSERT INTO documents (asset_id, kind, source_url, source_id, title, published_at, added_at, sha256, bytes, text, meta_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
-        'ON CONFLICT (asset_id, sha256) DO NOTHING',
-    )
-    .run(
+  const inserted = await db.run<{ id: number }>(
+    'INSERT INTO documents (asset_id, kind, source_url, source_id, title, published_at, added_at, sha256, bytes, text, meta_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ' +
+      'ON CONFLICT (asset_id, sha256) DO NOTHING RETURNING id',
+    [
       input.assetId, input.kind, input.sourceUrl, input.sourceId, input.title, input.publishedAt, input.addedAt, hash,
       Buffer.byteLength(text, 'utf8'), text, JSON.stringify(input.meta),
-    );
-  if (info.changes === 0) {
-    const found = db.prepare('SELECT * FROM documents WHERE asset_id = ? AND sha256 = ?').get(input.assetId, hash) as Row;
+    ],
+  );
+  if (inserted.rowCount === 0) {
+    const found = (await db.one<Row>('SELECT * FROM documents WHERE asset_id = $1 AND sha256 = $2', [input.assetId, hash]))!;
     return { doc: fromRow(found), existing: true };
   }
-  return { doc: getDocument(db, Number(info.lastInsertRowid))!, existing: false };
+  return { doc: (await getDocument(db, Number(inserted.rows[0].id)))!, existing: false };
 }
 
-export function getDocument(db: Db, id: number): StoredDocument | null {
-  const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as Row | undefined;
+export async function getDocument(db: Db, id: number): Promise<StoredDocument | null> {
+  const row = await db.one<Row>('SELECT * FROM documents WHERE id = $1', [id]);
   return row ? fromRow(row) : null;
 }
 
@@ -139,13 +138,13 @@ export function getDocument(db: Db, id: number): StoredDocument | null {
  * Newest first, without the text (`text` is ''). `supersededByNewer`: a later row of the same asset has the same source
  * URL, i.e. the document was stored again (a re-transcription) and this row is the older reading.
  */
-export function listDocuments(db: Db, opts: { assetId?: string } = {}): (StoredDocument & { supersededByNewer: boolean })[] {
+export async function listDocuments(db: Db, opts: { assetId?: string } = {}): Promise<(StoredDocument & { supersededByNewer: boolean })[]> {
+  // CASE, not a bare EXISTS: the same 0/1 on both engines (Postgres would return a boolean).
   const columns = `d.id, d.asset_id, d.kind, d.source_url, d.source_id, d.title, d.published_at, d.added_at, d.sha256, d.bytes, '' AS text, d.meta_json,
-    EXISTS (SELECT 1 FROM documents n WHERE n.asset_id = d.asset_id AND n.source_url = d.source_url AND n.id > d.id) AS superseded`;
-  const rows = (
+    CASE WHEN EXISTS (SELECT 1 FROM documents n WHERE n.asset_id = d.asset_id AND n.source_url = d.source_url AND n.id > d.id) THEN 1 ELSE 0 END AS superseded`;
+  const rows =
     opts.assetId === undefined
-      ? db.prepare(`SELECT ${columns} FROM documents d ORDER BY d.id DESC`).all()
-      : db.prepare(`SELECT ${columns} FROM documents d WHERE d.asset_id = ? ORDER BY d.id DESC`).all(opts.assetId)
-  ) as (Row & { superseded: number })[];
+      ? await db.all<Row & { superseded: number }>(`SELECT ${columns} FROM documents d ORDER BY d.id DESC`)
+      : await db.all<Row & { superseded: number }>(`SELECT ${columns} FROM documents d WHERE d.asset_id = $1 ORDER BY d.id DESC`, [opts.assetId]);
   return rows.map((r) => ({ ...fromRow(r), supersededByNewer: r.superseded === 1 }));
 }
