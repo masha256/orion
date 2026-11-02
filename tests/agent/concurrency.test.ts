@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Ledger } from '../../src/agent/ledger.js';
-import { openDb, type Db } from '../../src/db/connection.js';
+import { openDb, type Db, type OrionDb } from '../../src/db/connection.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { fetchAsset } from '../../src/ingest/run.js';
 import { harness } from '../helpers/fetchHarness.js';
@@ -16,8 +16,8 @@ import { harness } from '../helpers/fetchHarness.js';
 
 const NOW = new Date('2026-09-20T00:00:00.000Z');
 let dir: string;
-let A: Db;
-let B: Db;
+let A: OrionDb;
+let B: OrionDb;
 let ledger: Ledger;
 
 beforeEach(() => {

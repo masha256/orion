@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { finishAgentRun, getAgentRun, startAgentRun, ZERO_USAGE } from '../../src/db/agentRuns.js';
-import { openDb, type Db } from '../../src/db/connection.js';
+import { openDb, type Db, type OrionDb } from '../../src/db/connection.js';
 import { acquireRunLock, getRunLock, LOCK_TTL_MS, releaseRunLock } from '../../src/db/runLocks.js';
 import type { OrionError } from '../../src/types.js';
 
@@ -20,8 +20,8 @@ const codeOf = (fn: () => unknown): string | undefined => {
 };
 
 // Two connections to one file: what a scheduled tick and a manual command are.
-let A: Db;
-let B: Db;
+let A: OrionDb;
+let B: OrionDb;
 beforeEach(() => {
   const dir = mkdtempSync(join(tmpdir(), 'orion-locks-'));
   A = openDb(join(dir, 'orion.db'));

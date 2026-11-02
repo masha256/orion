@@ -4,14 +4,14 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { lockHolder, withRunLock } from '../../src/app/lock.js';
 import { getAgentRun, startAgentRun } from '../../src/db/agentRuns.js';
-import { openDb, type Db } from '../../src/db/connection.js';
+import { openDb, type Db, type OrionDb } from '../../src/db/connection.js';
 import { getRunLock, LOCK_TTL_MS } from '../../src/db/runLocks.js';
 
 const T0 = new Date('2026-09-21T00:00:00.000Z');
 const later = (ms: number) => new Date(T0.getTime() + ms);
 
-let A: Db;
-let B: Db;
+let A: OrionDb;
+let B: OrionDb;
 beforeEach(() => {
   const dir = mkdtempSync(join(tmpdir(), 'orion-lock-'));
   A = openDb(join(dir, 'orion.db'));
