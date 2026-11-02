@@ -157,7 +157,7 @@ const recordProvisionalObservation = defineTool({
     quoted_text: z.string().max(MAX_QUOTE),
     note: z.string().max(MAX_RATIONALE).optional(),
   }),
-  run(ctx, input) {
+  async run(ctx, input) {
     const asset = ctx.loaded.config;
     // Cleaned once, here: the CLEANED quote is what is verified against the page, and what is stored. Verifying the raw
     // text and storing the cleaned one (or the other way round) would mean the stored quote was never the checked one.
@@ -203,7 +203,7 @@ const recordProvisionalObservation = defineTool({
     const source = verified.citation.source;
 
     // The last CONFIRMED value: measuring from a provisional row would let the guard compound from run to run.
-    const inForce = valueInForce(ctx.db, asset, input.metric, now.toISOString(), { confirmedOnly: true });
+    const inForce = await valueInForce(ctx.db, asset, input.metric, now.toISOString(), { confirmedOnly: true });
     // A figure from a machine transcript may be misheard: it is never read as the value in force unconfirmed (spec
     // invariant 3). A figure from a disclosure run, whatever it cites, waits for the user too (spec section 15, Ruling 18):
     // the run reads the issuer's own claims. A provisional row is eligible on a metric that allows provisional data, so

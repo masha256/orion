@@ -8,9 +8,9 @@ export function registerInit(program: Command, ctx: CliContext): void {
     .command('init')
     .description('create the project layout and database in the Orion home directory')
     .option('--json', 'JSON output')
-    .action((opts: { json?: boolean }) => {
+    .action(async (opts: { json?: boolean }) => {
       for (const d of ['assets', 'personas', 'skills']) mkdirSync(join(ctx.home, d), { recursive: true });
-      withDb(ctx, () => undefined);
+      await withDb(ctx, () => undefined);
       output(ctx, opts.json, { home: ctx.home, db: dbPath(ctx) }, () => [`initialized ${ctx.home}`]);
     });
 }

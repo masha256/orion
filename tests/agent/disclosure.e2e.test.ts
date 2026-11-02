@@ -77,12 +77,12 @@ let before: Record<string, number>;
 let after: Record<string, number>;
 const flowIds: Record<string, { first_id: number; last_id: number }> = {};
 
-const withDb = <T>(h: string, fn: (db: Db) => T): T => {
+const withDb = async <T>(h: string, fn: (db: Db) => Promise<T> | T): Promise<T> => {
   const db = openDb(join(h, 'orion.db'));
   try {
-    return fn(db);
+    return await fn(db);
   } finally {
-    db.close();
+    await db.close();
   }
 };
 
@@ -95,7 +95,7 @@ async function orion(h: string, ...args: string[]): Promise<string> {
 }
 
 const TABLES = ['proposals', 'journal', 'observations', 'documents', 'agent_runs'] as const;
-const counts = (h: string): Record<string, number> =>
+const counts = (h: string): Promise<Record<string, number>> =>
   withDb(h, (db) => Object.fromEntries(TABLES.map((t) => [t, (db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n])));
 
 /**
@@ -210,7 +210,7 @@ beforeAll(async () => {
   cpSync(join(ROOT, 'skills'), join(home, 'skills'), { recursive: true });
   await orion(home, 'persona', 'assign', 'lit', 'perp-exchange-analyst');
 
-  withDb(home, (db) => {
+  await withDb(home, (db) => {
     seedDaily(db, 'flow_usd.buyback', BUYBACK_Q3);
     seedDaily(db, 'flow_usd.llama_revenue', LLAMA_Q3);
     const level = (metricKey: string, value: number, source: 'api' | 'onchain' = 'api') =>
@@ -226,11 +226,11 @@ beforeAll(async () => {
     '--meta', 'asr_model=faster-whisper large-v3', '--json')) as { id: number; existing: boolean };
   expect(added).toMatchObject({ id: 1, existing: false });
 
-  before = counts(home);
+  before = await counts(home);
   model = scriptedModel(script(added.id));
   rawJson = await orion(home, 'agent', 'run', 'lit', '--type', 'disclosure', '--doc', String(added.id), '--dry-run', '--json');
   result = JSON.parse(rawJson) as RunAgentResult;
-  after = counts(home);
+  after = await counts(home);
 });
 
 afterAll(() => {
@@ -342,7 +342,7 @@ describe('approving the config proposal on a copy of assets/lit.yaml', () => {
     await orion(h2, 'init');
     writeFileSync(join(h2, 'assets/lit.yaml'), preApprovalLitYaml());
 
-    const approved = withDb(h2, (db) => {
+    const approved = await withDb(h2, (db) => {
       const filed = insertProposal(db, {
         assetId: 'lit', persona: 'perp-exchange-analyst', agentRunId: null, change: prop.change, filedAgainst: prop.filedAgainst, rationale: prop.rationale,
         evidence: prop.evidence, effect: prop.effect, citations: prop.citations, createdAt: NOW,

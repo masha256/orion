@@ -53,16 +53,16 @@ export function narrowToUsable(asset: AssetConfig, observations: Observation[], 
  * CONFIRMED row: the baseline the agent's move guard measures from, so that provisional rows, the agent's own above all,
  * can never walk the baseline. Null when there is none, and always for flow and event metrics.
  */
-export function valueInForce(db: Db, asset: AssetConfig, metricKey: string, asOf: string, opts: { confirmedOnly?: boolean } = {}): number | null {
+export async function valueInForce(db: Db, asset: AssetConfig, metricKey: string, asOf: string, opts: { confirmedOnly?: boolean } = {}): Promise<number | null> {
   const def = asset.metrics[metricKey];
   if (!def || def.type === 'flow' || def.type === 'event') return null;
   const rows = opts.confirmedOnly
     ? listActiveObservations(db, asset.id, metricKey).filter((o) => o.status === 'confirmed')
-    : eligibleObservations(db, asset, asOf).filter((o) => o.metricKey === metricKey);
+    : (await eligibleObservations(db, asset, asOf)).filter((o) => o.metricKey === metricKey);
   return latestLevel(rows, asOf)?.value ?? null;
 }
 
-export function eligibleObservations(db: Db, asset: AssetConfig, asOf: string): Observation[] {
+export async function eligibleObservations(db: Db, asset: AssetConfig, asOf: string): Promise<Observation[]> {
   const active = listActiveObservations(db, asset.id).filter((o) => {
     const def = asset.metrics[o.metricKey];
     return def !== undefined && (o.status === 'confirmed' || def.allow_provisional);

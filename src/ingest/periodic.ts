@@ -41,7 +41,7 @@ export interface PeriodicArgs {
 
 const daysBetween = (from: string, to: string) => Math.round((dayStartMs(to) - dayStartMs(from)) / MS_PER_DAY);
 
-export function writePeriodicPayments(args: PeriodicArgs): WrittenObservation[] {
+export async function writePeriodicPayments(args: PeriodicArgs): Promise<WrittenObservation[]> {
   const { db, asset, metricKey, outcome, dryRun } = args;
   const nowIso = args.now.toISOString();
   const today = utcDay(args.now.getTime());
@@ -54,20 +54,21 @@ export function writePeriodicPayments(args: PeriodicArgs): WrittenObservation[] 
     const periodDays = daysBetween(p.from, p.to) + 1;
     return { p, periodDays, observedAt: new Date(dayStartMs(addDays(p.to, 1))).toISOString() };
   });
-  const write = () => {
+  /** `h` is the transaction's handle on a real run, the database itself on a dry run (which writes nothing). */
+  const write = (h: Db) => {
     for (const { p, periodDays, observedAt } of rows) {
       if (stored.get(observedAt) === p.value) continue;
       const observationId = dryRun
         ? null
-        : insertObservation(db, {
+        : insertObservation(h, {
             assetId: asset.id, metricKey, observedAt, periodDays, value: p.value, source: 'api',
             sourceDetail: `${args.detail}; covers ${p.from} to ${p.to}, paid ${p.paidAt}`, fetchedAt: nowIso,
           }).id;
       written.push({ metricKey, value: p.value, observedAt, periodDays, source: 'api', observationId });
     }
   };
-  if (dryRun) write();
-  else db.transaction(write).immediate();
+  if (dryRun) write(db);
+  else await db.tx(async (t) => write(t), { lockAsset: asset.id });
   if (written.length > 0) outcome.metricsWritten.push(metricKey);
   else outcome.notes.push(`${metricKey}: no new payment (${args.payments.length} stored${args.due.length > 0 ? `; ${args.due.map((d) => `${d.from} to ${d.to} due ${d.dueDay}`).join(', ')} unpaid` : ''})`);
 

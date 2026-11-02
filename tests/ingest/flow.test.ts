@@ -205,11 +205,11 @@ describe('scanFlowGroup', () => {
     expect(r.outcome.notes.join(' ')).toMatch(/orion data reject/);
   });
 
-  it('finds conflicts by overlap, ignoring rows that only touch the range', () => {
+  it('finds conflicts by overlap, ignoring rows that only touch the range', async () => {
     const h = world();
     const touching = insertObservation(h.db, { assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-16', periodDays: 30, value: 1, source: 'manual', fetchedAt: NOW.toISOString() });
-    expect(findFlowConflicts(h.db, 'mini', 'flow_usd.fees', ms('2026-09-16T00:00:00Z'), ms('2026-09-19T00:00:00Z'))).toEqual([]);
-    expect(findFlowConflicts(h.db, 'mini', 'flow_usd.fees', ms('2026-09-15T00:00:00Z'), ms('2026-09-19T00:00:00Z')).map((c) => c.observationId)).toEqual([touching.id]);
+    expect(await findFlowConflicts(h.db, 'mini', 'flow_usd.fees', ms('2026-09-16T00:00:00Z'), ms('2026-09-19T00:00:00Z'))).toEqual([]);
+    expect((await findFlowConflicts(h.db, 'mini', 'flow_usd.fees', ms('2026-09-15T00:00:00Z'), ms('2026-09-19T00:00:00Z'))).map((c) => c.observationId)).toEqual([touching.id]);
   });
 
   it('writes nothing on a dry run and still returns the day values', async () => {

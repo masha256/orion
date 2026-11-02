@@ -278,11 +278,11 @@ reporting:
 });
 
 describe('revenue streams: periodic settlement', () => {
-  it('spreads each payment evenly over the days it covers, and runs the unpaid days at the last period\'s daily rate, provisional', () => {
+  it('spreads each payment evenly over the days it covers, and runs the unpaid days at the last period\'s daily rate, provisional', async () => {
     const db = openDb(':memory:');
     // 300 paid for 2026-01-01 .. 01-30 (30 days): 10 a day. Report day 02-05: 6 unpaid days.
     insertObservation(db, { assetId: 'hype', metricKey: 'flow_usd.reserve', observedAt: '2026-01-31T00:00:00.000Z', periodDays: 30, value: 300, source: 'api', fetchedAt: '2026-02-06T00:00:00.000Z' });
-    const p = periodicDaily(db, 'hype', 'flow_usd.reserve', '2026-02-05');
+    const p = await periodicDaily(db, 'hype', 'flow_usd.reserve', '2026-02-05');
     expect(p.days.get('2026-01-01')).toBe(10);
     expect(p.days.get('2026-01-30')).toBe(10);
     expect(p.days.get('2025-12-31')).toBeUndefined();
@@ -290,20 +290,20 @@ describe('revenue streams: periodic settlement', () => {
     expect(p.days.get('2026-02-05')).toBe(10);
     // The next payment lands (330 for 01-31 .. 03-01): its days replace the provisional ones; nothing was stored for them.
     insertObservation(db, { assetId: 'hype', metricKey: 'flow_usd.reserve', observedAt: '2026-03-02T00:00:00.000Z', periodDays: 30, value: 330, source: 'api', fetchedAt: '2026-02-06T00:00:00.000Z' });
-    const q = periodicDaily(db, 'hype', 'flow_usd.reserve', '2026-02-05');
+    const q = await periodicDaily(db, 'hype', 'flow_usd.reserve', '2026-02-05');
     expect(q.days.get('2026-02-05')).toBe(11);
     expect(q.provisional.size).toBe(0);
   });
 
-  it('sums the streams; a stream younger than the window runs at its own days\' rate; the periodic one never holds back the report day', () => {
+  it('sums the streams; a stream younger than the window runs at its own days\' rate; the periodic one never holds back the report day', async () => {
     const asset = parseAssetYaml(streamsYaml(10, '2026-01-25')).config;
     const db = openDb(':memory:');
     seedDaily(db, 'flow_usd.trading', '2026-02-05', 40, 3);
     seedDaily(db, 'flow_usd.buyback', '2026-02-05', 40, 2);
     // Started 01-25: one payment for 01-25 .. 02-01 (8 days, 80), unpaid since: 4 provisional days to 02-05.
     insertObservation(db, { assetId: 'hype', metricKey: 'flow_usd.reserve', observedAt: '2026-02-02T00:00:00.000Z', periodDays: 8, value: 80, source: 'api', fetchedAt: '2026-02-06T00:00:00.000Z' });
-    expect(lastCompleteReportDay(db, asset)).toBe('2026-02-05');
-    const r = loadHolderYieldReport(db, asset);
+    expect(await lastCompleteReportDay(db, asset)).toBe('2026-02-05');
+    const r = await loadHolderYieldReport(db, asset);
     const v = r.revenue!;
     expect(v.basis).toBe('streams');
     expect(v.streams.map((s) => [s.id, s.basis, s.daysInWindow, s.provisionalDays, s.isNew])).toEqual([

@@ -104,7 +104,7 @@ function unlistedAnomalyMetrics(loaded: LoadedAsset, group: FlowGroup): string[]
  * day each one covers. A manual daily row is the user's replacement of a fetched day (a source artifact, say): it
  * supersedes the fetched row, so the derivation reads it in that row's place instead of seeing a gap.
  */
-function storedDailyFlow(db: Db, assetId: string, metricKey: string): Map<string, number> {
+async function storedDailyFlow(db: Db, assetId: string, metricKey: string): Promise<Map<string, number>> {
   const days = new Map<string, number>();
   for (const o of listActiveObservations(db, assetId, metricKey)) {
     if (o.periodDays === 1) days.set(utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY), o.value);
@@ -240,7 +240,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       if (result.value.kind === 'daily_series' && (r.source.type === 'defillama' || r.source.type === 'adapter') && asset.metrics[r.metricKey].type === 'flow') {
         const def = asset.metrics[r.metricKey];
         try {
-          const flow = writeApiFlow({
+          const flow = await writeApiFlow({
             db, asset, metricKey: r.metricKey, scanKey: `${batch.sourceId}>${r.metricKey}`, points: result.value.points, detail: result.value.detail, now,
             backfillDays: opts.backfillDays ?? (r.source.type === 'defillama' ? r.source.backfill_days : historyDays) ?? DEFAULT_API_FLOW_BACKFILL_DAYS, rescan: opts.backfillDays !== undefined,
             revisionDays: r.source.type === 'defillama' ? (r.source.revision_days ?? DEFILLAMA_REVISION_DAYS) : undefined,
@@ -263,10 +263,10 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
         try {
           const v = result.value;
           written.push(
-            ...writePeriodicPayments({
+            ...(await writePeriodicPayments({
               db, asset, metricKey: r.metricKey, payments: v.payments, due: v.due, payers: v.payers, expectedPayers: v.expectedPayers, detail: v.detail,
               now, dryRun, outcome, validate: (value) => validateReading(def, value), raise,
-            }),
+            })),
           );
         } catch (err) {
           if (err instanceof OrionError) throw err;
@@ -412,7 +412,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
         markFailed(outcome, `${r.metricKey}: expected a daily or monthly series, got ${result.value.kind === 'level' ? 'a level' : result.value.kind === 'schedule_steps' ? 'a schedule' : 'periodic payments'}`);
         continue;
       }
-      const days = storedDailyFlow(db, asset.id, r.metricKey);
+      const days = await storedDailyFlow(db, asset.id, r.metricKey);
       for (const p of scannedDaily.get(r.metricKey) ?? []) days.set(p.day, p.value);
       const primary = [...days.entries()].map(([day, value]) => ({ day, value }));
       const months = compareMonthly(primary, result.value, r.tolerancePct, currentMonth);
@@ -464,13 +464,15 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: ${name} cannot sum API-series and on-chain flows`);
     }
     const provenance: 'onchain' | 'api' = apiInputs > 0 ? 'api' : 'onchain';
-    const dailyOf = (m: string): Map<string, number> => {
-      const d = storedDailyFlow(db, asset.id, m);
+    const dailyOf = async (m: string): Promise<Map<string, number>> => {
+      const d = await storedDailyFlow(db, asset.id, m);
       for (const p of scannedDaily.get(m) ?? []) d.set(p.day, p.value);
       return d;
     };
-    const perFlow = flowMetrics.map(dailyOf);
-    const perMinus = minusMetrics.map(dailyOf);
+    const perFlow: Map<string, number>[] = [];
+    for (const m of flowMetrics) perFlow.push(await dailyOf(m));
+    const perMinus: Map<string, number>[] = [];
+    for (const m of minusMetrics) perMinus.push(await dailyOf(m));
     const days = new Map<string, number>();
     for (const [day] of perFlow[0]) {
       if ([...perFlow, ...perMinus].every((d) => d.has(day))) {

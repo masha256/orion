@@ -119,7 +119,7 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   let reserve: string | null = null;
 
   try {
-    const pack = buildContextPack(db, loaded, ledger, {
+    const pack = await buildContextPack(db, loaded, ledger, {
       runType: opts.runType, budgets, now: started, trigger: { anomalyId: opts.anomalyId, note }, document, assetYaml: opts.assetYaml,
     });
     messages.push({ role: 'user', content: renderContextPack(pack) });
@@ -159,7 +159,7 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
         error = `the asset config changed during the run (${loaded.hash.slice(0, 12)} -> ${current?.hash.slice(0, 12) ?? 'none'}); nothing was committed`;
       } else {
         try {
-          committed = ledger.commit(db, { agentRunId: runId, now: deps.now() });
+          committed = await ledger.commit(db, { agentRunId: runId, now: deps.now() });
         } catch (err) {
           if (!(err instanceof AgentConflict)) throw err;
           outcome = 'conflict';

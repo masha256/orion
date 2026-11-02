@@ -213,15 +213,15 @@ export class Ledger {
    * longer holds (an anomaly was decided, an observation now exists where one was staged) throws AgentConflict and rolls
    * the whole transaction back.
    */
-  commit(db: Db, ctx: { agentRunId: number | null; now: Date }): CommitSummary {
+  async commit(db: Db, ctx: { agentRunId: number | null; now: Date }): Promise<CommitSummary> {
     const nowIso = ctx.now.toISOString();
     // IMMEDIATE, not the default DEFERRED: this transaction reads before it writes, and a deferred one takes the write
     // lock only at its first write. Another connection committing in between makes SQLite refuse this one at once with
     // SQLITE_BUSY_SNAPSHOT, which busy_timeout cannot retry away. Taking the lock at BEGIN means it waits instead.
-    return db.transaction((): CommitSummary => {
+    return db.tx(async (t): Promise<CommitSummary> => {
       try {
         for (const r of this.resolutions.values()) {
-          const current = getAnomaly(db, r.anomalyId);
+          const current = getAnomaly(t, r.anomalyId);
           // decideAnomaly would also resolve an ACKNOWLEDGED anomaly, which withdraws the user's decision. Never let that through.
           if (!current || current.status !== 'open') throw new AgentConflict(`anomaly ${r.anomalyId} is no longer open (${current?.status ?? 'missing'})`);
         }
@@ -229,13 +229,13 @@ export class Ledger {
         // The agent never supersedes an observation. insertObservation would let a provisional insert retire any active
         // provisional row at the same metric and time, including one the user entered; rejecting a row is the user's call.
         for (const o of this.stagedObservations) {
-          const taken = listActiveObservations(db, this.assetId, o.metricKey).find((row) => row.observedAt === o.observedAt);
+          const taken = listActiveObservations(t, this.assetId, o.metricKey).find((row) => row.observedAt === o.observedAt);
           if (taken) throw new AgentConflict(`observation #${taken.id} of ${o.metricKey} at ${o.observedAt} already exists; the agent never supersedes one`);
         }
 
         const realId = new Map<number, number>();
         for (const o of this.stagedObservations) {
-          const row = insertObservation(db, {
+          const row = insertObservation(t, {
             assetId: this.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, source: 'manual',
             sourceDetail: `research:${this.persona}:run ${ctx.agentRunId ?? 'none'}`, status: 'provisional', citationUrl: o.citationUrl,
             quotedText: o.quotedText, fetchedAt: nowIso,
@@ -253,13 +253,13 @@ export class Ledger {
         const resolvedAnomalyIds: number[] = [];
         for (const r of this.resolutions.values()) {
           const cited = remap(r.evidence).map((id) => `#${id}`).join(', ');
-          decideAnomaly(db, r.anomalyId, 'resolved', `${r.note} [evidence: ${cited}]`, nowIso, this.persona);
+          decideAnomaly(t, r.anomalyId, 'resolved', `${r.note} [evidence: ${cited}]`, nowIso, this.persona);
           resolvedAnomalyIds.push(r.anomalyId);
         }
 
         const proposalIds = this.stagedProposals.map(
           (p) =>
-            insertProposal(db, {
+            insertProposal(t, {
               assetId: this.assetId, persona: this.persona, agentRunId: ctx.agentRunId, change: p.change, filedAgainst: p.filedAgainst,
               rationale: p.rationale, evidence: remap(p.evidence), effect: p.effect, citations: p.citations,
               createdAt: nowIso,
@@ -267,7 +267,7 @@ export class Ledger {
         );
 
         const journalId = this.stagedJournal
-          ? insertJournalEntry(db, { assetId: this.assetId, persona: this.persona, agentRunId: ctx.agentRunId, createdAt: nowIso, ...this.stagedJournal }).id
+          ? insertJournalEntry(t, { assetId: this.assetId, persona: this.persona, agentRunId: ctx.agentRunId, createdAt: nowIso, ...this.stagedJournal }).id
           : null;
 
         // Written nowhere: the run summary carries them. Remapped like every other evidence list, so a committed finding cites real rows.
@@ -279,6 +279,6 @@ export class Ledger {
         if (err instanceof OrionError) throw new AgentConflict(`${err.code}: ${err.message}`);
         throw err;
       }
-    }).immediate();
+    }, { lockAsset: this.assetId });
   }
 }

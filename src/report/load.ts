@@ -32,7 +32,7 @@ function periodicMetrics(asset: AssetConfig): Set<string> {
  * through `through`, at the last period's daily rate: provisional, and replaced when the payment lands (the payment row
  * is the only thing stored). Before the first payment there is no rate, so the unpaid days stay missing.
  */
-export function periodicDaily(db: Db, assetId: string, metricKey: string, through: string): { days: Map<string, number>; provisional: Set<string> } {
+export async function periodicDaily(db: Db, assetId: string, metricKey: string, through: string): Promise<{ days: Map<string, number>; provisional: Set<string> }> {
   const days = new Map<string, number>();
   const provisional = new Set<string>();
   const rows = listActiveObservations(db, assetId, metricKey)
@@ -55,7 +55,7 @@ export function periodicDaily(db: Db, assetId: string, metricKey: string, throug
 }
 
 /** A flow metric's stored daily rows (confirmed, active), keyed by the UTC day each covers. */
-function dailyOf(db: Db, assetId: string, metricKey: string): Map<string, number> {
+async function dailyOf(db: Db, assetId: string, metricKey: string): Promise<Map<string, number>> {
   const days = new Map<string, number>();
   for (const o of listActiveObservations(db, assetId, metricKey)) {
     if (o.status !== 'confirmed' || o.periodDays !== 1) continue;
@@ -69,12 +69,12 @@ function dailyOf(db: Db, assetId: string, metricKey: string): Map<string, number
  * covers. A series that runs a day ahead of another (HYPE's buybacks vs its revenue proxy) must not leave the slower one
  * blank in the report.
  */
-export function lastCompleteReportDay(db: Db, asset: AssetConfig): string | null {
+export async function lastCompleteReportDay(db: Db, asset: AssetConfig): Promise<string | null> {
   let last: string | null = null;
   const periodic = periodicMetrics(asset);
   for (const metric of reportFlowMetrics(asset)) {
     if (periodic.has(metric)) continue;
-    const days = [...dailyOf(db, asset.id, metric).keys()].sort();
+    const days = [...(await dailyOf(db, asset.id, metric)).keys()].sort();
     const d = days.at(-1);
     if (d === undefined) return null;
     if (last === null || d < last) last = d;
@@ -82,10 +82,10 @@ export function lastCompleteReportDay(db: Db, asset: AssetConfig): string | null
   return last;
 }
 
-export function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: string): HolderYieldReport {
+export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: string): Promise<HolderYieldReport> {
   const r = asset.reporting;
   if (!r) throw new Error(`assets/${asset.id}.yaml has no reporting block`);
-  const target = day ?? lastCompleteReportDay(db, asset);
+  const target = day ?? (await lastCompleteReportDay(db, asset));
   if (target === null) throw new Error(`${asset.id}: no stored day for every report flow yet`);
   const asOf = new Date(Date.parse(`${addDays(target, 1)}T00:00:00.000Z`) + MS_PER_DAY - 1).toISOString(); // to the end of the next day: the levels read with that day's run
   const level = (key: string): number | null => {
@@ -113,13 +113,15 @@ export function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: string):
   };
   const periodic = periodicMetrics(asset);
   const provisional = new Map<string, Set<string>>();
-  const daily = new Map(
-    reportFlowMetrics(asset).map((m) => {
-      if (!periodic.has(m)) return [m, dailyOf(db, asset.id, m)] as const;
-      const p = periodicDaily(db, asset.id, m, target);
-      provisional.set(m, p.provisional);
-      return [m, p.days] as const;
-    }),
-  );
+  const daily = new Map<string, Map<string, number>>();
+  for (const m of reportFlowMetrics(asset)) {
+    if (!periodic.has(m)) {
+      daily.set(m, await dailyOf(db, asset.id, m));
+      continue;
+    }
+    const p = await periodicDaily(db, asset.id, m, target);
+    provisional.set(m, p.provisional);
+    daily.set(m, p.days);
+  }
   return holderYieldReport({ asset, day: target, daily, provisional, levels });
 }

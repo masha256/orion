@@ -48,7 +48,7 @@ export interface AgentWorld {
   /** The run's target document, stored as document 1. */
   doc: StoredDocument;
   /** Runs a tool the way the loop does, and parses the JSON result. */
-  call: (name: string, input: unknown) => { isError: boolean; result: Record<string, unknown> };
+  call: (name: string, input: unknown) => Promise<{ isError: boolean; result: Record<string, unknown> }>;
 }
 
 export const citable = (d: Pick<StoredDocument, 'id' | 'kind' | 'sha256' | 'text'>): CitableDoc => ({ id: d.id, kind: d.kind, sha256: d.sha256, text: d.text });
@@ -75,8 +75,8 @@ export function agentWorld(yaml: string = AGENT_ASSET_YAML): AgentWorld {
     citableDocs: () => [target],
     targetDoc: target,
   };
-  const call = (name: string, input: unknown) => {
-    const outcome = runTool(AGENT_TOOLS, ctx, name, input);
+  const call = async (name: string, input: unknown) => {
+    const outcome = await runTool(AGENT_TOOLS, ctx, name, input);
     return { isError: outcome.isError, result: JSON.parse(outcome.content) as Record<string, unknown> };
   };
   return { db, loaded, ledger, ctx, ids, pages, doc, call };

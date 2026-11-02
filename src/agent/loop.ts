@@ -28,7 +28,7 @@ export interface LoopInput {
   /** The conversation, owned by the caller so its tools can read it while the loop runs. Append-only. Starts with one user message. */
   messages: ModelMessageParam[];
   budgets: RunBudgets;
-  runTool: (name: string, input: unknown) => ToolOutcome;
+  runTool: (name: string, input: unknown) => Promise<ToolOutcome>;
   /** True when the run may end: the journal entry is staged. */
   isFinished: () => boolean;
   /** Sent once, as a user message, when the model ends its turn before `isFinished`. */
@@ -116,7 +116,7 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
       return done('budget_exhausted', spent);
     }
     try {
-      for (const call of calls) input.runTool(call.name, call.input);
+      for (const call of calls) await input.runTool(call.name, call.input);
     } catch (err) {
       return done('error', errorDetail(err));
     }
@@ -161,15 +161,16 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
       // Every result goes back in ONE user message: splitting them teaches the model to stop calling tools in parallel.
       // runTool answers every EXPECTED failure as an is_error result. A throw here is a bug in a tool: end the loop as an
       // error rather than reject, so the usage and the transcript so far still reach the run record.
-      let results: { type: 'tool_result'; tool_use_id: string; is_error: boolean; content: string }[];
+      // One at a time, in order: a tool reads what the one before it staged.
+      const results: { type: 'tool_result'; tool_use_id: string; is_error: boolean; content: string }[] = [];
       try {
-        results = calls.map((call) => {
-          const outcome = input.runTool(call.name, call.input);
-          return {
+        for (const call of calls) {
+          const outcome = await input.runTool(call.name, call.input);
+          results.push({
             type: 'tool_result' as const, tool_use_id: call.id, is_error: outcome.isError,
             content: `${outcome.content}\n\nbudget: ${JSON.stringify(budgetLeft())}`,
-          };
-        });
+          });
+        }
       } catch (err) {
         return done('error', errorDetail(err));
       }

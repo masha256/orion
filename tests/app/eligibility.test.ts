@@ -66,10 +66,10 @@ describe('eligibleObservations', () => {
     db = openDb(':memory:');
   });
 
-  it('reads the stored rows narrowed to what is usable at as_of', () => {
+  it('reads the stored rows narrowed to what is usable at as_of', async () => {
     for (const o of dailyHistory()) insertObservation(db, { assetId: o.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, source: o.source, fetchedAt: o.fetchedAt });
     const asset = miniAsset();
-    const eligible = eligibleObservations(db, asset, AS_OF);
+    const eligible = await eligibleObservations(db, asset, AS_OF);
     expect(eligible.length).toBeLessThan(110);
     expect(eligible.filter((o) => o.metricKey === 'flow_usd.fees')).toHaveLength(91);
     expect(eligible.filter((o) => o.metricKey === 'price_usd')).toHaveLength(1);

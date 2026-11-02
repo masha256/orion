@@ -99,20 +99,20 @@ function recordedBy(o: Observation): Inbox['observations'][number]['recorded_by'
   return { persona: m[1], agent_run_id: m[2] === 'none' ? null : Number(m[2]) };
 }
 
-function movePct(db: Db, asset: AssetConfig, o: Observation, nowIso: string): number | null {
-  const inForce = valueInForce(db, asset, o.metricKey, nowIso, { confirmedOnly: true });
+async function movePct(db: Db, asset: AssetConfig, o: Observation, nowIso: string): Promise<number | null> {
+  const inForce = await valueInForce(db, asset, o.metricKey, nowIso, { confirmedOnly: true });
   if (inForce === null || inForce === 0) return null;
   return Math.round(((o.value - inForce) / inForce) * 100 * 1e4) / 1e4; // four decimals: a percent for a reader, not a guard
 }
 
-export function buildInbox(db: Db, asset: AssetConfig, nowIso: string): Inbox {
-  const observations = listActiveObservations(db, asset.id)
-    .filter((o) => o.status === 'provisional')
-    .sort((a, b) => b.id - a.id)
-    .map((o) => ({
+export async function buildInbox(db: Db, asset: AssetConfig, nowIso: string): Promise<Inbox> {
+  const observations: Inbox['observations'] = [];
+  for (const o of listActiveObservations(db, asset.id).filter((r) => r.status === 'provisional').sort((a, b) => b.id - a.id)) {
+    observations.push({
       id: o.id, metric: o.metricKey, value: o.value, observed_at: o.observedAt, period_days: o.periodDays,
-      unit: asset.metrics[o.metricKey]?.unit ?? null, citation_url: o.citationUrl, recorded_by: recordedBy(o), move_pct: movePct(db, asset, o, nowIso),
-    }));
+      unit: asset.metrics[o.metricKey]?.unit ?? null, citation_url: o.citationUrl, recorded_by: recordedBy(o), move_pct: await movePct(db, asset, o, nowIso),
+    });
+  }
   const proposals = listProposals(db, { assetId: asset.id }).map((p) => ({
     id: p.id, kind: p.change.kind, persona: p.persona, agent_run_id: p.agentRunId, filed_at: p.createdAt, effect: p.effect,
   }));

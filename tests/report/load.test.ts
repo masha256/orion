@@ -30,22 +30,22 @@ function seed(db: ReturnType<typeof openDb>, metricKey: string, lastDay: string,
 }
 
 describe('lastCompleteReportDay', () => {
-  it('is the newest day every report flow has, so a series a day behind is not left blank', () => {
+  it('is the newest day every report flow has, so a series a day behind is not left blank', async () => {
     const asset = parseAssetYaml(yaml).config;
     const db = openDb(':memory:');
     seed(db, 'flow_usd.buyback', '2026-10-10', 25, 2); // a day ahead
     seed(db, 'flow_usd.revenue_proxy', '2026-10-09', 25, 2);
-    expect(lastCompleteReportDay(db, asset)).toBe('2026-10-09');
-    const r = loadHolderYieldReport(db, asset);
+    expect(await lastCompleteReportDay(db, asset)).toBe('2026-10-09');
+    const r = await loadHolderYieldReport(db, asset);
     expect(r.day).toBe('2026-10-09');
     expect(r.income!.revenue.annualized).toBeCloseTo(2 * 365);
     expect(r.income!.payoutRatio).toBeCloseTo(1);
   });
 
-  it('is null while any report flow has no row', () => {
+  it('is null while any report flow has no row', async () => {
     const asset = parseAssetYaml(yaml).config;
     const db = openDb(':memory:');
     seed(db, 'flow_usd.buyback', '2026-10-10', 5, 1);
-    expect(lastCompleteReportDay(db, asset)).toBeNull();
+    expect(await lastCompleteReportDay(db, asset)).toBeNull();
   });
 });

@@ -23,7 +23,7 @@ const stale = (id: number, what: string): never => {
 
 const same = (a: unknown, b: unknown): boolean => canonicalJson(a ?? null) === canonicalJson(b ?? null);
 
-function pending(db: Db, id: number): Proposal {
+async function pending(db: Db, id: number): Promise<Proposal> {
   const p = getProposal(db, id);
   if (!p) throw new OrionError('proposal_not_found', `no proposal with id ${id}`);
   if (p.status !== 'pending') throw new OrionError('proposal_not_pending', `proposal ${id} is already ${p.status}`);
@@ -31,9 +31,9 @@ function pending(db: Db, id: number): Proposal {
 }
 
 /** Decisions are final. The note is required: the agent reads it in later runs. */
-export function rejectProposal(db: Db, id: number, note: string, now: Date): Proposal {
+export async function rejectProposal(db: Db, id: number, note: string, now: Date): Promise<Proposal> {
   if (note.trim() === '') throw new OrionError('note_required', 'a note is required: say why, so the agent learns from it');
-  pending(db, id);
+  await pending(db, id);
   return decideProposal(db, id, 'rejected', note, now.toISOString());
 }
 
@@ -43,8 +43,8 @@ export function rejectProposal(db: Db, id: number, note: string, now: Date): Pro
  * the proposal approved fails. An `assumption_value` proposal (the valuation era's kind) is refused: a stored one can
  * still be listed and rejected, never applied: nothing reads an assumption set any more.
  */
-export function approveProposal(db: Db, home: string, id: number, opts: { note?: string; now: Date }): { proposal: Proposal; result: ApproveResult } {
-  const p = pending(db, id);
+export async function approveProposal(db: Db, home: string, id: number, opts: { note?: string; now: Date }): Promise<{ proposal: Proposal; result: ApproveResult }> {
+  const p = await pending(db, id);
   // The asset id becomes part of a file path below, and it comes off a stored row. A row from an older build, or one
   // edited in the database, must not be able to steer a write out of <home>/assets. Checked before any path is built.
   if (!/^[a-z0-9-]+$/.test(p.assetId)) {
@@ -65,30 +65,30 @@ export function approveProposal(db: Db, home: string, id: number, opts: { note?:
   // IMMEDIATE: every kind below checks what the proposal was filed against before it writes, and a deferred transaction
   // takes the write lock only at that first write. A concurrent commit in between would fail this one with
   // SQLITE_BUSY_SNAPSHOT, which busy_timeout cannot retry away.
-  return db.transaction(() => {
+  return db.tx(async (t) => {
     let result: ApproveResult;
     switch (change.kind) {
       case 'acknowledge_anomaly':
       case 'withdraw_acknowledgement': {
         const needed = change.kind === 'acknowledge_anomaly' ? 'open' : 'acknowledged';
-        const anomaly = getAnomaly(db, change.anomalyId);
+        const anomaly = getAnomaly(t, change.anomalyId);
         if (!anomaly || anomaly.status !== needed) stale(id, `anomaly ${change.anomalyId} is ${anomaly?.status ?? 'missing'}, not ${needed}`);
         const status = change.kind === 'acknowledge_anomaly' ? 'acknowledged' : 'resolved';
-        decideAnomaly(db, change.anomalyId, status, note ?? change.note, nowIso);
+        decideAnomaly(t, change.anomalyId, status, note ?? change.note, nowIso);
         result = { kind: 'anomaly', anomalyId: change.anomalyId, status };
         break;
       }
 
       case 'confirm_observation':
       case 'reject_observation': {
-        const o = getObservationsByIds(db, [change.observationId])[0];
+        const o = getObservationsByIds(t, [change.observationId])[0];
         const active = o !== undefined && o.supersededBy === null && o.status !== 'rejected';
         if (!active) stale(id, `observation ${change.observationId} is no longer active`);
         if (change.kind === 'confirm_observation') {
           if (o.status !== 'provisional') stale(id, `observation ${o.id} is already ${o.status}`);
-          result = { kind: 'observation', observationId: confirmObservation(db, o.id, nowIso).id, action: 'confirmed' };
+          result = { kind: 'observation', observationId: confirmObservation(t, o.id, nowIso).id, action: 'confirmed' };
         } else {
-          rejectObservation(db, o.id);
+          rejectObservation(t, o.id);
           result = { kind: 'observation', observationId: o.id, action: 'rejected' };
         }
         break;
@@ -98,13 +98,13 @@ export function approveProposal(db: Db, home: string, id: number, opts: { note?:
         const { config } = loadAsset(home, p.assetId);
         const filed = (p.filedAgainst as { inForce: number | null }).inForce;
         // The last CONFIRMED value: the same baseline the move guard measured from when it filed this proposal.
-        const inForce = valueInForce(db, config, change.metricKey, nowIso, { confirmedOnly: true });
+        const inForce = await valueInForce(t, config, change.metricKey, nowIso, { confirmedOnly: true });
         if (inForce !== filed) stale(id, `${change.metricKey} was ${filed} when it was filed and is ${inForce} now`);
         // Approving never supersedes silently either: a confirmed insert would retire every active row at this metric and time.
         const at = new Date(change.observedAt).toISOString();
-        const taken = listActiveObservations(db, p.assetId, change.metricKey).find((o) => o.observedAt === at);
+        const taken = listActiveObservations(t, p.assetId, change.metricKey).find((o) => o.observedAt === at);
         if (taken) stale(id, `observation #${taken.id} of ${change.metricKey} at ${at} now exists (${taken.status}, value ${taken.value}); reject it first if this proposal's value should replace it`);
-        const row = insertObservation(db, {
+        const row = insertObservation(t, {
           assetId: p.assetId, metricKey: change.metricKey, observedAt: change.observedAt, periodDays: change.periodDays, value: change.value,
           source: 'manual', status: 'confirmed', citationUrl: change.citationUrl, quotedText: change.quotedText, fetchedAt: nowIso,
           sourceDetail: `research:${p.persona}:run ${p.agentRunId ?? 'none'}; approved proposal #${id}`,
@@ -113,8 +113,8 @@ export function approveProposal(db: Db, home: string, id: number, opts: { note?:
         break;
       }
     }
-    return { proposal: decideProposal(db, id, 'approved', note, nowIso), result };
-  }).immediate();
+    return { proposal: decideProposal(t, id, 'approved', note, nowIso), result };
+  }, { lockAsset: p.assetId });
 }
 
 /** Writes beside the file, then renames over it: a crash never leaves half a config, and a failure never leaves the temp file. */
@@ -131,7 +131,7 @@ function writeAtomically(file: string, text: string): void {
 
 const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-function approveConfig(db: Db, home: string, p: Proposal, note: string | null, nowIso: string): { proposal: Proposal; result: ApproveResult } {
+async function approveConfig(db: Db, home: string, p: Proposal, note: string | null, nowIso: string): Promise<{ proposal: Proposal; result: ApproveResult }> {
   if (p.change.kind !== 'config') throw new Error('not a config proposal');
   const edits = p.change.edits;
 

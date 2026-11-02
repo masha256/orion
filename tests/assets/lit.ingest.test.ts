@@ -263,7 +263,7 @@ describe('assets/lit.yaml', () => {
   it('reports the buys as the payout, the unlocks as dilution, and the market cap on circulating supply', async () => {
     const w = world();
     await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
-    const rep = loadHolderYieldReport(w.db, config);
+    const rep = await loadHolderYieldReport(w.db, config);
     expect(rep.day).toBe('2026-10-15');
     expect(rep.marketCap).toBeCloseTo(PRICE * 250_000_000, 0);
     expect(rep.fdv).toBeCloseTo(PRICE * 981_909_280, 0);

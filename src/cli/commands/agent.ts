@@ -8,7 +8,7 @@ import { lockHolder, withRunLock } from '../../app/lock.js';
 import { loadAsset } from '../../config/load.js';
 import { getAgentRun, getTranscript, listAgentRuns, type AgentRun } from '../../db/agentRuns.js';
 import { OrionError, RUNNABLE_RUN_TYPES, type RunnableRunType } from '../../types.js';
-import { guarded, modelClientFor, output, parseNumber, withDb, withDbAsync, type CliContext } from '../util.js';
+import { guarded, modelClientFor, output, parseNumber, withDb, type CliContext } from '../util.js';
 
 const isRunnable = (x: string): x is RunnableRunType => (RUNNABLE_RUN_TYPES as readonly string[]).includes(x);
 
@@ -88,7 +88,7 @@ export function registerAgent(program: Command, ctx: CliContext): void {
         const loaded = loadAsset(ctx.home, assetId);
         // The file as the user wrote it, comments included: the pack shows it.
         const assetYaml = readFileSync(join(ctx.home, 'assets', `${assetId}.yaml`), 'utf8');
-        const result = await withDbAsync(ctx, (db) =>
+        const result = await withDb(ctx, (db) =>
           withRunLock(db, assetId, lockHolder('agent run'), ctx.now(), () =>
             runAgent(db, loaded, { runType, anomalyId, note: opts.note, dryRun: opts.dryRun, docId, assetYaml }, {
               home: ctx.home, now: ctx.now, modelClient: () => modelClientFor(ctx), reload: () => loadAsset(ctx.home, assetId),
@@ -112,11 +112,11 @@ export function registerAgent(program: Command, ctx: CliContext): void {
     .option('--limit <n>', 'how many (default 20)')
     .option('--json', 'JSON output')
     .action((assetId: string | undefined, opts: { limit?: string; json?: boolean }) =>
-      guarded(ctx, opts.json, () => {
+      guarded(ctx, opts.json, async () => {
         const limit = opts.limit === undefined ? 20 : parseNumber(opts.limit, '--limit');
         // SQLite reads a negative LIMIT as "no limit": refuse it here rather than return every row.
         if (!Number.isInteger(limit) || limit < 1) throw new OrionError('invalid_limit', `--limit must be a positive whole number, got ${opts.limit}`);
-        const list = withDb(ctx, (db) => listAgentRuns(db, { assetId, limit }));
+        const list = await withDb(ctx, (db) => listAgentRuns(db, { assetId, limit }));
         output(ctx, opts.json, list, () => (list.length === 0 ? ['no agent runs'] : list.map(runLine)));
       }),
     );
@@ -127,9 +127,9 @@ export function registerAgent(program: Command, ctx: CliContext): void {
     .option('--transcript', 'include the full conversation')
     .option('--json', 'JSON output')
     .action((id: string, opts: { transcript?: boolean; json?: boolean }) =>
-      guarded(ctx, opts.json, () => {
+      guarded(ctx, opts.json, async () => {
         const runId = parseNumber(id, 'id');
-        const { run, transcript } = withDb(ctx, (db) => ({ run: getAgentRun(db, runId), transcript: opts.transcript ? getTranscript(db, runId) : undefined }));
+        const { run, transcript } = await withDb(ctx, (db) => ({ run: getAgentRun(db, runId), transcript: opts.transcript ? getTranscript(db, runId) : undefined }));
         if (!run) throw new OrionError('agent_run_not_found', `no agent run with id ${runId}`);
         const cost = estimateCostUsd(run.model, run.usage);
         const staged = (run.summary?.staged ?? null) as StoredStaged | null;

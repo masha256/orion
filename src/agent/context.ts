@@ -39,11 +39,11 @@ const CATALYST_WINDOW_DAYS = 30;
  * Everything the agent starts a run knowing, as one object. Every observation id in it is marked as shown on the ledger,
  * so the agent may cite what it was given without reading it again.
  */
-export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, input: ContextPackInput): Record<string, unknown> {
+export async function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, input: ContextPackInput): Promise<Record<string, unknown>> {
   const asset = loaded.config;
   const nowIso = input.now.toISOString();
 
-  const observations = eligibleObservations(db, asset, nowIso);
+  const observations = await eligibleObservations(db, asset, nowIso);
   ledger.markShown(observations.map((o) => o.id));
   const anomalies = listAnomalies(db, { assetId: asset.id, includeDecided: true });
   const target = input.trigger.anomalyId === undefined ? null : getAnomaly(db, input.trigger.anomalyId);
@@ -73,7 +73,7 @@ export function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledger, in
     },
     journal: listJournal(db, asset.id, { limit: 3 }),
     // Dated claims earlier runs filed, whose date (`by`, or a range's `to`) is within 30 days of now either way.
-    catalysts_due: catalystsDue(db, asset.id, input.now),
+    catalysts_due: await catalystsDue(db, asset.id, input.now),
     source_failures: listFetchRuns(db, asset.id, FETCH_RUNS).flatMap((run) =>
       run.detail.sources.filter((s) => s.status === 'failed').map((s) => ({ fetch_run_started_at: run.startedAt, source: s.sourceId, error: s.error })),
     ),
@@ -109,7 +109,7 @@ interface DueCatalyst {
  * From the last 20 journal entries, newest first; days compared at UTC midnight, both ends inclusive. A catalyst filed
  * again by a later run (the same event, kind and dates) is listed once, under the newest entry that carries it.
  */
-function catalystsDue(db: Db, assetId: string, now: Date): DueCatalyst[] {
+async function catalystsDue(db: Db, assetId: string, now: Date): Promise<DueCatalyst[]> {
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const window = CATALYST_WINDOW_DAYS * MS_PER_DAY;
   const seen = new Set<string>();

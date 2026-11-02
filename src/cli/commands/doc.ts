@@ -84,7 +84,7 @@ export function registerDoc(program: Command, ctx: CliContext): void {
     .option('--json', 'JSON output')
     .action(
       (assetId: string, opts: { url: string; file: string; kind: string; publishedAt?: string; title?: string; sourceId?: string; meta: string[]; json?: boolean }) =>
-        guarded(ctx, opts.json, () => {
+        guarded(ctx, opts.json, async () => {
           if (!isDocKind(opts.kind)) throw new OrionError('invalid_doc_kind', `--kind must be one of ${DOC_KINDS.join(', ')}, got "${opts.kind}"`);
           const kind = opts.kind;
           loadAsset(ctx.home, assetId);
@@ -95,7 +95,7 @@ export function registerDoc(program: Command, ctx: CliContext): void {
           const text = readDocFile(opts.file);
           if (kind === 'machine_transcript') checkTranscript(text);
           const meta = parseMeta(opts.meta);
-          const { doc: stored, existing } = withDb(ctx, (db) =>
+          const { doc: stored, existing } = await withDb(ctx, (db) =>
             insertDocument(db, {
               assetId, kind, sourceUrl: opts.url, sourceId: opts.sourceId ?? null, title: opts.title ?? null,
               publishedAt: opts.publishedAt ?? null, addedAt: ctx.now().toISOString(), meta, text,
@@ -113,8 +113,8 @@ export function registerDoc(program: Command, ctx: CliContext): void {
     .description('newest first; an older reading of a re-transcribed source is marked superseded_by_newer')
     .option('--json', 'JSON output')
     .action((assetId: string | undefined, opts: { json?: boolean }) =>
-      guarded(ctx, opts.json, () => {
-        const list = withDb(ctx, (db) => listDocuments(db, { assetId }));
+      guarded(ctx, opts.json, async () => {
+        const list = await withDb(ctx, (db) => listDocuments(db, { assetId }));
         output(ctx, opts.json, list.map(withoutText), () => (list.length === 0 ? ['no documents'] : list.map(docLine)));
       }),
     );
@@ -125,9 +125,9 @@ export function registerDoc(program: Command, ctx: CliContext): void {
     .option('--text', 'include the stored text')
     .option('--json', 'JSON output')
     .action((id: string, opts: { text?: boolean; json?: boolean }) =>
-      guarded(ctx, opts.json, () => {
+      guarded(ctx, opts.json, async () => {
         const docId = parseNumber(id, 'id');
-        const found = withDb(ctx, (db) => getDocument(db, docId));
+        const found = await withDb(ctx, (db) => getDocument(db, docId));
         if (!found) throw new OrionError('doc_not_found', `no document with id ${docId}`);
         const label = docLabel(found);
         output(ctx, opts.json, { ...(opts.text ? found : withoutText(found)), label }, () => [

@@ -76,16 +76,18 @@ export function registerReport(program: Command, ctx: CliContext): void {
     .description('holder yield by bucket (burn, hold, cash), yields on price, 90d-over-90d growth, protocol revenue; every asset with a reporting block when no asset is given')
     .option('--day <yyyy-mm-dd>', 'the last day the report covers (default: the newest day every holder flow has)')
     .option('--json', 'JSON output')
-    .action((assetId: string | undefined, opts: { day?: string; json?: boolean }) => {
+    .action(async (assetId: string | undefined, opts: { day?: string; json?: boolean }) => {
       if (opts.day !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(opts.day)) throw new OrionError('invalid_day', '--day must be YYYY-MM-DD');
       const ids = assetId ? [assetId] : listAssetIds(ctx.home).filter((id) => loadAsset(ctx.home, id).config.reporting !== undefined);
-      const reports = withDb(ctx, (db) =>
-        ids.map((id) => {
+      const reports = await withDb(ctx, async (db) => {
+        const out: HolderYieldReport[] = [];
+        for (const id of ids) {
           const asset = loadAsset(ctx.home, id).config;
           if (!asset.reporting) throw new OrionError('no_reporting', `assets/${id}.yaml has no reporting block`);
-          return loadHolderYieldReport(db, asset, opts.day);
-        }),
-      );
+          out.push(await loadHolderYieldReport(db, asset, opts.day));
+        }
+        return out;
+      });
       output(ctx, opts.json, assetId ? reports[0] : reports, () => reports.flatMap(reportLines));
     });
 }

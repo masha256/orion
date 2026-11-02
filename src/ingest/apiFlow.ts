@@ -52,7 +52,7 @@ export interface ApiFlowResult {
 }
 
 /** The metric's stored daily API rows, keyed by the UTC day each one covers. */
-function storedApiDays(db: Db, assetId: string, metricKey: string): Map<string, number> {
+async function storedApiDays(db: Db, assetId: string, metricKey: string): Promise<Map<string, number>> {
   const days = new Map<string, number>();
   for (const o of listActiveObservations(db, assetId, metricKey)) {
     if (o.source === 'api' && o.periodDays === 1) days.set(utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY), o.value);
@@ -61,13 +61,13 @@ function storedApiDays(db: Db, assetId: string, metricKey: string): Map<string, 
 }
 
 /** Every UTC day that an active row of the metric covers, whatever its source: a day here is not a gap. */
-function coveredDays(db: Db, assetId: string, metricKey: string): Set<string> {
+async function coveredDays(db: Db, assetId: string, metricKey: string): Promise<Set<string>> {
   const days = new Set<string>();
   for (const o of listActiveObservations(db, assetId, metricKey)) for (const d of observationDays(o.observedAt, o.periodDays)) days.add(d);
   return days;
 }
 
-export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
+export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
   const { db, asset, metricKey, outcome, dryRun } = args;
   const result: ApiFlowResult = { written: [], daily: [] };
   const nowIso = args.now.toISOString();
@@ -79,7 +79,7 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
   const windowStart = utcDay(args.now.getTime() - args.backfillDays * MS_PER_DAY);
   const cursor = getCursor(db, asset.id, args.scanKey);
   const byDay = new Map(args.points.map((p) => [p.day, p.value]));
-  const stored = storedApiDays(db, asset.id, metricKey);
+  const stored = await storedApiDays(db, asset.id, metricKey);
   // The days to read: with a cursor, the last revisionDays written days (a revised value supersedes the day's row) plus
   // any GAP day inside the backfill window, one by one: a day the series had not aggregated when the cursor passed it
   // and that no active row covers yet. A gap is retried on every run until it appears; the days between a gap and the
@@ -87,7 +87,7 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
   const startDay = cursor && !args.rescan ? addDays(cursor.lastDay, 1 - (args.revisionDays ?? REVISION_DAYS)) : windowStart;
   const gapDays: string[] = [];
   if (cursor && !args.rescan) {
-    const covered = coveredDays(db, asset.id, metricKey);
+    const covered = await coveredDays(db, asset.id, metricKey);
     const seriesFirst = [...byDay.keys()].sort()[0];
     if (seriesFirst !== undefined) {
       for (let day = seriesFirst > windowStart ? seriesFirst : windowStart; day < startDay; day = addDays(day, 1)) {
@@ -110,7 +110,7 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
   //    a manual row inside the revision window is a decision already taken (AERO's 2026-09-09 artifact, replaced by hand):
   //    its days are left alone, so a 30-day revision window does not refuse the whole series over it. A rescan still
   //    refuses it unless --adopt.
-  const allConflicts = findFlowConflicts(db, asset.id, metricKey, rangeStartMs, rangeEndMs, 'api');
+  const allConflicts = await findFlowConflicts(db, asset.id, metricKey, rangeStartMs, rangeEndMs, 'api');
   const honoured = cursor && !args.rescan && !args.adopt ? allConflicts.filter((c) => c.adoptable) : [];
   const conflicts = allConflicts.filter((c) => !honoured.includes(c));
   const manualDays = new Set<string>();
@@ -143,12 +143,13 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
   let newest: string | null = cursor && !args.rescan ? cursor.lastDay : null;
   const retired: number[] = [];
 
-  const writeDays = () => {
+  /** `h` is the transaction's handle on a real run, the database itself on a dry run (which writes nothing). */
+  const writeDays = (h: Db) => {
     // --adopt retires every overlapping manual row up front, whether or not the day it covers is rewritten: a row left
     // beside API rows for the same day would be counted twice, and the next plain fetch would be refused again.
     if (!dryRun) {
       for (const c of conflicts) {
-        rejectObservation(db, c.observationId);
+        rejectObservation(h, c.observationId);
         retired.push(c.observationId);
       }
     }
@@ -175,7 +176,7 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
       const observedAt = new Date(dayEndMs).toISOString();
       let observationId: number | null = null;
       if (!dryRun) {
-        observationId = insertObservation(db, {
+        observationId = insertObservation(h, {
           assetId: asset.id, metricKey, observedAt, periodDays: 1, value, source: 'api', sourceDetail: args.detail, fetchedAt: nowIso,
         }).id;
       }
@@ -183,13 +184,13 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
       if (newest === null || day > newest) newest = day;
     }
     // The cursor never moves backwards; lastBlock is meaningless for an API series.
-    if (!dryRun && newest !== null) advanceCursor(db, asset.id, args.scanKey, { lastBlock: 0, lastDay: newest }, nowIso);
+    if (!dryRun && newest !== null) advanceCursor(h, asset.id, args.scanKey, { lastBlock: 0, lastDay: newest }, nowIso);
   };
   // IMMEDIATE: each insert reads for rows to supersede before it writes. A deferred transaction takes the write lock
   // only at its first write, and another connection's commit in between fails it with SQLITE_BUSY_SNAPSHOT, which
   // busy_timeout cannot retry; taking the lock at BEGIN makes the other connection wait instead.
-  if (dryRun) writeDays();
-  else db.transaction(writeDays).immediate();
+  if (dryRun) writeDays(db);
+  else await db.tx(async (t) => writeDays(t), { lockAsset: asset.id });
   outcome.retiredObservationIds.push(...retired); // after the commit: a rolled-back transaction retired nothing
 
   if (result.written.length > 0) outcome.metricsWritten.push(metricKey);

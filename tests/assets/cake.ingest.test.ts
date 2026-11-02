@@ -146,7 +146,7 @@ describe('assets/cake.yaml', () => {
   it('reports the burn against emissions in tokens, and the treasury share as protocol income', async () => {
     const w = world();
     await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
-    const rep = loadHolderYieldReport(w.db, config);
+    const rep = await loadHolderYieldReport(w.db, config);
     expect(rep.day).toBe('2026-10-11');
     expect(rep.yields.buyback).toBeCloseTo((13 * 550_000 * PRICE * 365) / 91 / (335_468_299 * PRICE), 6);
     expect(rep.supply).toMatchObject({ burnedPerYear: expect.closeTo((13 * 550_000 * 365) / 91, 0) });

@@ -81,7 +81,7 @@ export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps): Pr
       // Every live asset has a reporting block; one without has no report to build, which is not a failure.
       if (!asset.reporting) return;
       try {
-        report.holder_yield = summarizeHolderYield(loadHolderYieldReport(db, asset));
+        report.holder_yield = summarizeHolderYield(await loadHolderYieldReport(db, asset));
       } catch (err) {
         report.report_error = { code: 'report_unavailable', message: message(err).slice(0, 300) };
         deps.onProgress?.(`report unavailable: ${report.report_error.message}`);
@@ -109,7 +109,7 @@ export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps): Pr
 
   // Outside the lock: a plain read, so a tick that never got the lock still reports the queue.
   try {
-    report.inbox = buildInbox(db, asset, deps.now().toISOString());
+    report.inbox = await buildInbox(db, asset, deps.now().toISOString());
   } catch (err) {
     deps.onProgress?.(`warning: the inbox could not be built (${message(err)}); the report lists nothing to decide`);
   }

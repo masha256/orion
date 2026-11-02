@@ -17,7 +17,7 @@ export interface SourceRow {
 }
 
 /** One row per metric that has a source: what feeds it, what checks it, how the last fetch went, how old its value is. */
-export function describeSources(db: Db, asset: AssetConfig, now: Date): SourceRow[] {
+export async function describeSources(db: Db, asset: AssetConfig, now: Date): Promise<SourceRow[]> {
   const runs = listFetchRuns(db, asset.id, 20);
   const nowIso = now.toISOString();
   const rows: SourceRow[] = [];

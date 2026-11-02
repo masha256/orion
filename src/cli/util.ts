@@ -45,21 +45,13 @@ export function ingestDepsFor(ctx: CliContext): FetchDeps {
   return ctx.ingestDeps ? ctx.ingestDeps() : realFetchDeps(loadEnv(ctx.home, process.env), ctx.now);
 }
 
-export async function withDbAsync<T>(ctx: CliContext, fn: (db: Db) => Promise<T>): Promise<T> {
+/** Opens the database for one command, and closes it once `fn` has settled, whether it resolved or threw. */
+export async function withDb<T>(ctx: CliContext, fn: (db: Db) => Promise<T> | T): Promise<T> {
   const db = openDb(dbPath(ctx));
   try {
     return await fn(db);
   } finally {
-    db.close();
-  }
-}
-
-export function withDb<T>(ctx: CliContext, fn: (db: Db) => T): T {
-  const db = openDb(dbPath(ctx));
-  try {
-    return fn(db);
-  } finally {
-    db.close();
+    await db.close();
   }
 }
 

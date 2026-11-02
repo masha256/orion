@@ -12,8 +12,8 @@ export function registerPersona(program: Command, ctx: CliContext): void {
     .description('personas, the assets each covers, and the skills each run type loads')
     .option('--json', 'JSON output')
     .action((opts: { json?: boolean }) =>
-      guarded(ctx, opts.json, () => {
-        const coverage = withDb(ctx, (db) => listCoverage(db));
+      guarded(ctx, opts.json, async () => {
+        const coverage = await withDb(ctx, (db) => listCoverage(db));
         const personas = listPersonaNames(ctx.home).map((name) => {
           const p = loadPersona(ctx.home, name);
           return { name: p.name, model: p.model, effort: p.effort, sectors: p.sectors, covers: coverage.filter((c) => c.persona === name).map((c) => c.assetId) };
@@ -42,10 +42,10 @@ export function registerPersona(program: Command, ctx: CliContext): void {
     .description('make a persona the lead analyst for an asset (replaces any earlier assignment)')
     .option('--json', 'JSON output')
     .action((assetId: string, name: string, opts: { json?: boolean }) =>
-      guarded(ctx, opts.json, () => {
+      guarded(ctx, opts.json, async () => {
         loadAsset(ctx.home, assetId); // both must exist before the assignment is recorded
         loadPersona(ctx.home, name);
-        const c = withDb(ctx, (db) => assignPersona(db, assetId, name, ctx.now().toISOString()));
+        const c = await withDb(ctx, (db) => assignPersona(db, assetId, name, ctx.now().toISOString()));
         output(ctx, opts.json, c, () => [`${c.persona} now covers ${c.assetId}`]);
       }),
     );

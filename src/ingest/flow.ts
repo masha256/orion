@@ -81,7 +81,7 @@ export function overlapMs(o: { observedAt: string; periodDays: number | null }, 
 }
 
 /** Active rows from a source other than the writer's own (`own`) whose period overlaps (startMs, endMs). Periods that only touch do not overlap. */
-export function findFlowConflicts(db: Db, assetId: string, metricKey: string, startMs: number, endMs: number, own: 'onchain' | 'api' = 'onchain'): FlowConflict[] {
+export async function findFlowConflicts(db: Db, assetId: string, metricKey: string, startMs: number, endMs: number, own: 'onchain' | 'api' = 'onchain'): Promise<FlowConflict[]> {
   return listActiveObservations(db, assetId, metricKey)
     .filter((o) => {
       if (o.source === own) return false;
@@ -171,7 +171,8 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
     const rangeEndMs = dayStartMs(lastCompleteDay) + MS_PER_DAY;
 
     // 2. Conflicts with rows from other sources decide whether the group runs at all.
-    const conflicts = group.members.flatMap((m) => findFlowConflicts(db, asset.id, m.metricKey, rangeStartMs, rangeEndMs));
+    const conflicts: FlowConflict[] = [];
+    for (const m of group.members) conflicts.push(...(await findFlowConflicts(db, asset.id, m.metricKey, rangeStartMs, rangeEndMs)));
     outcome.conflicts = conflicts;
     const stuck = conflicts.filter((c) => !c.adoptable);
     if (conflicts.length > 0 && (!args.adopt || stuck.length > 0)) {
@@ -320,23 +321,23 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
         // IMMEDIATE: each insert reads for rows to supersede before it writes. A deferred transaction takes the write lock
         // only at its first write, and another connection's commit in between fails it with SQLITE_BUSY_SNAPSHOT, which
         // busy_timeout cannot retry; taking the lock at BEGIN makes the other connection wait instead.
-        db.transaction(() => {
+        await db.tx(async (t) => {
           for (const m of group.members) {
             for (const c of conflicts) {
               if (c.metricKey !== m.metricKey || retired.has(c.observationId)) continue;
               if (overlapMs(c, dayEndMs - MS_PER_DAY, dayEndMs) <= 0) continue;
-              rejectObservation(db, c.observationId);
+              rejectObservation(t, c.observationId);
               retired.add(c.observationId);
               outcome.retiredObservationIds.push(c.observationId);
             }
-            const o = insertObservation(db, {
+            const o = insertObservation(t, {
               assetId: asset.id, metricKey: m.metricKey, observedAt, periodDays: 1, value: sums.get(m.metricKey)!, source: 'onchain',
               sourceDetail: detail, fetchedAt: nowIso,
             });
             ids.set(m.metricKey, o.id);
           }
-          advanceCursor(db, asset.id, group.scanKey, { lastBlock: Number(next.number) - 1, lastDay: day }, nowIso);
-        }).immediate();
+          advanceCursor(t, asset.id, group.scanKey, { lastBlock: Number(next.number) - 1, lastDay: day }, nowIso);
+        }, { lockAsset: asset.id });
       }
       for (const m of group.members) {
         const value = sums.get(m.metricKey)!;

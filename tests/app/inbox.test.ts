@@ -51,9 +51,9 @@ function world() {
 }
 
 describe('buildInbox', () => {
-  it('lists provisional rows, pending proposals, and open anomalies, with ids and numbers only', () => {
+  it('lists provisional rows, pending proposals, and open anomalies, with ids and numbers only', async () => {
     const w = world();
-    const inbox = buildInbox(w.db, w.asset, T);
+    const inbox = await buildInbox(w.db, w.asset, T);
     expect(InboxSchema.parse(inbox)).toEqual(inbox);
 
     expect(inbox.observations.map((o) => o.id)).toEqual([w.typed.id, w.researched.id]); // newest first
@@ -82,25 +82,25 @@ describe('buildInbox', () => {
     }
   });
 
-  it('measures the move from the last confirmed value at now, the move guard\'s own baseline, never from another provisional row', () => {
+  it('measures the move from the last confirmed value at now, the move guard\'s own baseline, never from another provisional row', async () => {
     const w = world();
     insertObservation(w.db, {
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-10', value: 5000, source: 'manual', status: 'provisional',
       sourceDetail: `research:analyst:run ${w.runId}`, citationUrl: 'https://example.com/earlier', fetchedAt: T,
     });
-    const inbox = buildInbox(w.db, w.asset, T);
+    const inbox = await buildInbox(w.db, w.asset, T);
     expect(inbox.observations.find((o) => o.id === w.researched.id)!.move_pct).toBe(20);
     expect(inbox.observations.find((o) => o.value === 5000)!.move_pct).toBe(400);
   });
 
-  it('is empty for an asset with nothing to decide', () => {
+  it('is empty for an asset with nothing to decide', async () => {
     const w = world();
-    expect(buildInbox(w.db, { ...w.asset, id: 'other' }, T)).toEqual(emptyInbox());
+    expect(await buildInbox(w.db, { ...w.asset, id: 'other' }, T)).toEqual(emptyInbox());
   });
 });
 
 describe('inbox', () => {
-  it('a stored proposal with a 6m/12m effect still parses', () => {
+  it('a stored proposal with a 6m/12m effect still parses', async () => {
     // VVV #1 and CAKE #4 are pending assumption_value proposals from the valuation era, filed with a target effect. No
     // run files one now (new proposals store effect null), but the inbox must keep reading the rows that exist.
     const w = world();
@@ -108,7 +108,7 @@ describe('inbox', () => {
       assetId: 'mini', persona: 'analyst', agentRunId: w.runId, change: { kind: 'assumption_value', key: 'discount_rate_base', scenario: 'bull', value: 0.09 },
       filedAgainst: { value: 0.1 }, rationale: 'r', evidence: [], effect: { blocked: ['missing_metric:revenue_run_rate_usd'] }, createdAt: T,
     });
-    const inbox = InboxSchema.parse(JSON.parse(JSON.stringify(buildInbox(w.db, w.asset, T)))) as Inbox;
+    const inbox = InboxSchema.parse(JSON.parse(JSON.stringify(await buildInbox(w.db, w.asset, T)))) as Inbox;
     expect(inbox.proposals.map((p) => p.effect)).toEqual([{ blocked: ['missing_metric:revenue_run_rate_usd'] }, null, { '6m': { from: 10, to: 11 }, '12m': { from: 12, to: 14.5 } }]);
     // Human lines never show a valuation-era effect as a live target (R16); the JSON above still carries it unchanged.
     const props = inboxLines(inbox).filter((l) => l.startsWith('prop #'));
@@ -133,9 +133,9 @@ describe('readingOf', () => {
 });
 
 describe('inboxLines', () => {
-  it('prints one line per item in the fixed forms, and one line for an empty inbox', () => {
+  it('prints one line per item in the fixed forms, and one line for an empty inbox', async () => {
     const w = world();
-    expect(inboxLines(buildInbox(w.db, w.asset, T))).toEqual([
+    expect(inboxLines(await buildInbox(w.db, w.asset, T))).toEqual([
       `obs #${w.typed.id}  flow_usd.fees  90 31d to 2026-09-01  no confirmed value  entered by hand  https://example.com/aug`,
       `obs #${w.researched.id}  revenue_run_rate_usd  1200 at 2026-09-15  +20.0% vs confirmed  by analyst run #${w.runId}  https://example.com/q3`,
       `prop #${w.noEffect.id}  reject_observation  filed 2026-09-20 by analyst  no target effect`,

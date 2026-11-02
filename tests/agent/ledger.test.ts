@@ -63,13 +63,13 @@ describe('staging', () => {
 });
 
 describe('commit', () => {
-  it('inserts staged research as provisional manual rows and remaps temporary ids in evidence', () => {
+  it('inserts staged research as provisional manual rows and remaps temporary ids in evidence', async () => {
     const staged = research();
     ledger.stageProposal({
       change: { kind: 'reject_observation', observationId: priceId, note: 'stale' }, filedAgainst: { status: 'confirmed', active: true },
       rationale: 'the post contradicts it', evidence: [staged.tempId, priceId], effect: null, citations: [],
     });
-    const summary = commit();
+    const summary = await commit();
     const row = listActiveObservations(db, 'mini', 'staked_supply')[0];
     expect(row).toMatchObject({
       value: 60, source: 'manual', status: 'provisional', citationUrl: 'doc:1', quotedText: 'staked supply stands at 60 tokens',
@@ -80,22 +80,22 @@ describe('commit', () => {
     expect(listProposals(db)[0].effect).toBeNull();
   });
 
-  it('resolves anomalies as the persona, with the evidence in the note', () => {
+  it('resolves anomalies as the persona, with the evidence in the note', async () => {
     const a = anomaly();
     ledger.stageResolution({ anomalyId: a.id, note: 'sources agree again', evidence: [priceId] });
-    const summary = commit();
+    const summary = await commit();
     expect(summary.resolvedAnomalyIds).toEqual([a.id]);
     expect(getAnomaly(db, a.id)).toMatchObject({ status: 'resolved', decidedBy: 'analyst', note: `sources agree again [evidence: #${priceId}]` });
   });
 
-  it('writes proposals and the journal, and its summary has no assumption set version', () => {
+  it('writes proposals and the journal, and its summary has no assumption set version', async () => {
     ledger.setJournal({ thesis: 'steady', openQuestions: ['Q3 revenue?'], summary: 'no change', catalysts: [] });
     ledger.setJournal({ thesis: 'steady, still', openQuestions: ['Q3 revenue?'], summary: 'no change', catalysts: [] });
     ledger.stageProposal({
       change: { kind: 'acknowledge_anomaly', anomalyId: 1, note: 'lags by design' }, filedAgainst: { status: 'open' }, rationale: 'known lag', evidence: [], effect: null,
       citations: [CITATION],
     });
-    const summary = commit();
+    const summary = await commit();
     expect(Object.keys(summary)).toEqual(['observationIds', 'resolvedAnomalyIds', 'proposalIds', 'journalId', 'devFindings']);
     expect(summary).toMatchObject({ observationIds: [], resolvedAnomalyIds: [] });
     expect(listJournal(db, 'mini')).toHaveLength(1);
@@ -125,23 +125,23 @@ describe('dev findings', () => {
       (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[]).map((t) => [t.name, count(`"${t.name}"`)]),
     );
 
-  it('dev findings survive a dry run in staged and appear in committed after a commit; nothing is written to any table', () => {
+  it('dev findings survive a dry run in staged and appear in committed after a commit; nothing is written to any table', async () => {
     ledger.stageDevFinding({ ...FINDING, evidence: [priceId] });
     const before = tableCounts();
     expect(ledger.preview().devFindings).toEqual([{ ...FINDING, evidence: [priceId] }]);
-    const summary = commit();
+    const summary = await commit();
     expect(summary.devFindings).toEqual([{ ...FINDING, evidence: [priceId] }]);
     expect(tableCounts()).toEqual(before);
   });
 
-  it('replaces a finding with the same category and sorted keys, and gives committed findings the real ids of rows staged with them', () => {
+  it('replaces a finding with the same category and sorted keys, and gives committed findings the real ids of rows staged with them', async () => {
     const staged = research();
     ledger.stageDevFinding({ ...FINDING, metricKeys: ['flow_usd.fees', 'revenue_run_rate_usd'], evidence: [priceId] });
     ledger.stageDevFinding({ ...FINDING, category: 'revenue', evidence: [priceId] });
     ledger.stageDevFinding({ ...FINDING, metricKeys: ['revenue_run_rate_usd', 'flow_usd.fees'], title: 'second', evidence: [staged.tempId] });
     expect(ledger.devFindings().map((f) => [f.category, f.title])).toEqual([['holder_flow', 'second'], ['revenue', 't']]);
     expect(ledger.preview().devFindings[0].evidence).toEqual([staged.tempId]);
-    const summary = commit();
+    const summary = await commit();
     expect(summary.devFindings[0].evidence).toEqual(summary.observationIds);
     expect(ledger.devFindings()[0].evidence).toEqual([staged.tempId]); // the staged copy is untouched
   });
@@ -159,39 +159,39 @@ describe('the world changes mid-run', () => {
     expect(count('proposals')).toBe(0);
   };
 
-  it('conflicts when the anomaly was decided during the run, and never withdraws an acknowledgement', () => {
+  it('conflicts when the anomaly was decided during the run, and never withdraws an acknowledgement', async () => {
     const a = anomaly();
     stageEverything();
     ledger.stageResolution({ anomalyId: a.id, note: 'cleared', evidence: [priceId] });
     decideAnomaly(db, a.id, 'acknowledged', 'known lag', '2026-09-19T12:00:00Z');
-    expect(() => commit()).toThrow(/anomaly \d+ is no longer open \(acknowledged\)/);
+    await expect(commit()).rejects.toThrow(/anomaly \d+ is no longer open \(acknowledged\)/);
     expect(getAnomaly(db, a.id)).toMatchObject({ status: 'acknowledged', note: 'known lag' });
     nothingWritten();
   });
 
-  it('conflicts rather than supersede an observation that already exists at the same metric and time', () => {
+  it('conflicts rather than supersede an observation that already exists at the same metric and time', async () => {
     research();
     ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's', catalysts: [] });
     const users = insertObservation(db, {
       assetId: 'mini', metricKey: 'staked_supply', observedAt: '2026-09-18', value: 50, source: 'manual', status: 'provisional',
       citationUrl: 'https://example.com/user', fetchedAt: '2026-09-19',
     });
-    expect(() => commit()).toThrow(/already exists/);
+    await expect(commit()).rejects.toThrow(/already exists/);
     const active = listActiveObservations(db, 'mini', 'staked_supply');
     expect(active.map((o) => o.id)).toEqual([users.id]);
     expect(count('journal')).toBe(0);
   });
 
-  it('conflicts on evidence that cites a staged id this run never staged, and rolls back the rows already inserted', () => {
+  it('conflicts on evidence that cites a staged id this run never staged, and rolls back the rows already inserted', async () => {
     stageEverything();
     ledger.stageResolution({ anomalyId: anomaly().id, note: 'cleared', evidence: [-9] });
-    expect(() => commit()).toThrow(AgentConflict);
+    await expect(commit()).rejects.toThrow(AgentConflict);
     nothingWritten();
   });
 
-  it('a degrading anomaly opened during the run blocks nothing: there is no assumption change to block', () => {
+  it('a degrading anomaly opened during the run blocks nothing: there is no assumption change to block', async () => {
     stageEverything();
     anomaly();
-    expect(commit().journalId).not.toBeNull();
+    expect((await commit()).journalId).not.toBeNull();
   });
 });

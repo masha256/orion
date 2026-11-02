@@ -6,7 +6,7 @@ import { describeSources } from '../../ingest/describe.js';
 import { hasSources } from '../../ingest/plan.js';
 import { fetchAsset, type FetchResult } from '../../ingest/run.js';
 import { OrionError, type ObservationSource } from '../../types.js';
-import { fetchSummary, ingestDepsFor, output, parseNumber, withDb, withDbAsync, type CliContext } from '../util.js';
+import { fetchSummary, ingestDepsFor, output, parseNumber, withDb, type CliContext } from '../util.js';
 
 interface FetchOpts {
   metric: string[];
@@ -48,7 +48,7 @@ export function registerData(program: Command, ctx: CliContext): void {
     .option('--citation <url>', 'citation url')
     .option('--quote <text>', 'quoted source text')
     .option('--json', 'JSON output')
-    .action((assetId: string, metric: string, value: string, opts: SetOpts) => {
+    .action(async (assetId: string, metric: string, value: string, opts: SetOpts) => {
       const { config } = loadAsset(ctx.home, assetId);
       const def = config.metrics[metric];
       if (!def) throw new OrionError('unknown_metric', `metric "${metric}" is not defined in assets/${assetId}.yaml`);
@@ -63,7 +63,7 @@ export function registerData(program: Command, ctx: CliContext): void {
         throw new OrionError('unexpected_period_days', `metric "${metric}" is a ${def.type} metric: --period-days applies only to flow metrics`);
       }
       const nowIso = ctx.now().toISOString();
-      const o = withDb(ctx, (db) =>
+      const o = await withDb(ctx, (db) =>
         insertObservation(db, {
           assetId,
           metricKey: metric,
@@ -84,8 +84,8 @@ export function registerData(program: Command, ctx: CliContext): void {
   data
     .command('confirm <obs_id>')
     .option('--json', 'JSON output')
-    .action((id: string, opts: { json?: boolean }) => {
-      const o = withDb(ctx, (db) => confirmObservation(db, parseNumber(id, 'obs_id'), ctx.now().toISOString()));
+    .action(async (id: string, opts: { json?: boolean }) => {
+      const o = await withDb(ctx, (db) => confirmObservation(db, parseNumber(id, 'obs_id'), ctx.now().toISOString()));
       output(ctx, opts.json, o, () => [`confirmed as #${o.id}: ${o.metricKey} = ${o.value}`]);
     });
 
@@ -93,9 +93,9 @@ export function registerData(program: Command, ctx: CliContext): void {
     .command('reject <obs_id>')
     .description('retire an active observation, confirmed or provisional; the row is kept, never deleted')
     .option('--json', 'JSON output')
-    .action((id: string, opts: { json?: boolean }) => {
+    .action(async (id: string, opts: { json?: boolean }) => {
       const n = parseNumber(id, 'obs_id');
-      withDb(ctx, (db) => rejectObservation(db, n));
+      await withDb(ctx, (db) => rejectObservation(db, n));
       output(ctx, opts.json, { rejected: n }, () => [`rejected #${n}`]);
     });
 
@@ -116,7 +116,7 @@ export function registerData(program: Command, ctx: CliContext): void {
       const ids = assetId ? [assetId] : listAssetIds(ctx.home).filter((id) => hasSources(loadAsset(ctx.home, id).config));
       const deps = ingestDepsFor(ctx);
       const results: FetchResult[] = [];
-      await withDbAsync(ctx, async (db) => {
+      await withDb(ctx, async (db) => {
         for (const id of ids) {
           results.push(
             await fetchAsset(db, loadAsset(ctx.home, id), ctx.now(), deps, {
@@ -134,9 +134,9 @@ export function registerData(program: Command, ctx: CliContext): void {
     .command('sources <asset>')
     .description('per metric: its source and cross-checks, the last fetch outcome, and the age of the value in force')
     .option('--json', 'JSON output')
-    .action((assetId: string, opts: { json?: boolean }) => {
+    .action(async (assetId: string, opts: { json?: boolean }) => {
       const { config } = loadAsset(ctx.home, assetId);
-      const rows = withDb(ctx, (db) => describeSources(db, config, ctx.now()));
+      const rows = await withDb(ctx, (db) => describeSources(db, config, ctx.now()));
       output(ctx, opts.json, rows, () =>
         rows.length === 0
           ? ['no metric has a source; everything is entered by hand']
@@ -154,8 +154,8 @@ export function registerData(program: Command, ctx: CliContext): void {
     .description('open anomalies, newest first; --all includes resolved and acknowledged ones')
     .option('--all', 'include resolved and acknowledged anomalies')
     .option('--json', 'JSON output')
-    .action((assetId: string | undefined, opts: { all?: boolean; json?: boolean }) => {
-      const list = withDb(ctx, (db) => listAnomalies(db, { assetId, includeDecided: opts.all }));
+    .action(async (assetId: string | undefined, opts: { all?: boolean; json?: boolean }) => {
+      const list = await withDb(ctx, (db) => listAnomalies(db, { assetId, includeDecided: opts.all }));
       output(ctx, opts.json, list, () => (list.length === 0 ? [opts.all ? 'no anomalies' : 'no open anomalies'] : list.map(anomalyLine)));
     });
 
@@ -168,8 +168,8 @@ export function registerData(program: Command, ctx: CliContext): void {
       .description(`close an anomaly: ${summary}`)
       .requiredOption('--note <text>', 'why')
       .option('--json', 'JSON output')
-      .action((id: string, opts: { note: string; json?: boolean }) => {
-        const a = withDb(ctx, (db) => decideAnomaly(db, parseNumber(id, 'id'), status, opts.note, ctx.now().toISOString()));
+      .action(async (id: string, opts: { note: string; json?: boolean }) => {
+        const a = await withDb(ctx, (db) => decideAnomaly(db, parseNumber(id, 'id'), status, opts.note, ctx.now().toISOString()));
         output(ctx, opts.json, a, () => [`anomaly #${a.id} ${a.status}: ${a.note}`]);
       });
   }
@@ -178,8 +178,8 @@ export function registerData(program: Command, ctx: CliContext): void {
     .command('show <asset> [metric]')
     .description('list active observations, newest first')
     .option('--json', 'JSON output')
-    .action((assetId: string, metric: string | undefined, opts: { json?: boolean }) => {
-      const list = withDb(ctx, (db) => listActiveObservations(db, assetId, metric)).reverse();
+    .action(async (assetId: string, metric: string | undefined, opts: { json?: boolean }) => {
+      const list = (await withDb(ctx, (db) => listActiveObservations(db, assetId, metric))).reverse();
       output(ctx, opts.json, list, () =>
         list.length === 0
           ? ['no active observations']

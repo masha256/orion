@@ -13,7 +13,7 @@ import { guarded, output, parseNumber, withDb, type CliContext } from '../util.j
 const DOC_SOURCE = /^doc:(\d+)$/;
 
 /** One line per citation: the source, a transcript's locator, and for a stored document its fixed label (spec 5.3). */
-function citationLines(db: Db, p: Proposal): string[] {
+async function citationLines(db: Db, p: Proposal): Promise<string[]> {
   return p.citations.map((c) => {
     const m = DOC_SOURCE.exec(c.source);
     const doc = m ? getDocument(db, Number(m[1])) : null;
@@ -81,8 +81,8 @@ export function registerProposals(program: Command, ctx: CliContext): void {
     .option('--all', 'include approved and rejected proposals')
     .option('--json', 'JSON output')
     .action((assetId: string | undefined, opts: { all?: boolean; json?: boolean }) =>
-      guarded(ctx, opts.json, () => {
-        const list = withDb(ctx, (db) => listProposals(db, { assetId, includeDecided: opts.all }));
+      guarded(ctx, opts.json, async () => {
+        const list = await withDb(ctx, (db) => listProposals(db, { assetId, includeDecided: opts.all }));
         output(ctx, opts.json, list, () => (list.length === 0 ? ['no proposals'] : list.map((p) => proposalLine(p, ctx.now()))));
       }),
     );
@@ -91,11 +91,11 @@ export function registerProposals(program: Command, ctx: CliContext): void {
     .command('show <id>')
     .option('--json', 'JSON output')
     .action((id: string, opts: { json?: boolean }) =>
-      guarded(ctx, opts.json, () => {
+      guarded(ctx, opts.json, async () => {
         const proposalId = parseNumber(id, 'id');
-        const { p, evidence, citations } = withDb(ctx, (db) => {
+        const { p, evidence, citations } = await withDb(ctx, async (db) => {
           const found = getProposal(db, proposalId);
-          return { p: found, evidence: found ? getObservationsByIds(db, found.evidence) : [], citations: found ? citationLines(db, found) : [] };
+          return { p: found, evidence: found ? getObservationsByIds(db, found.evidence) : [], citations: found ? await citationLines(db, found) : [] };
         });
         if (!p) throw new OrionError('proposal_not_found', `no proposal with id ${proposalId}`);
         output(ctx, opts.json, { ...p, evidence_observations: evidence }, () => [
@@ -116,8 +116,8 @@ export function registerProposals(program: Command, ctx: CliContext): void {
     .option('--note <text>', 'why; the agent reads it in later runs')
     .option('--json', 'JSON output')
     .action((id: string, opts: { note?: string; json?: boolean }) =>
-      guarded(ctx, opts.json, () => {
-        const outcome = withDb(ctx, (db) => approveProposal(db, ctx.home, parseNumber(id, 'id'), { note: opts.note, now: ctx.now() }));
+      guarded(ctx, opts.json, async () => {
+        const outcome = await withDb(ctx, (db) => approveProposal(db, ctx.home, parseNumber(id, 'id'), { note: opts.note, now: ctx.now() }));
         output(ctx, opts.json, outcome, () => [`proposal #${outcome.proposal.id} approved`, ...approvedLines(outcome.result)]);
       }),
     );
@@ -127,8 +127,8 @@ export function registerProposals(program: Command, ctx: CliContext): void {
     .requiredOption('--note <text>', 'why; the agent reads it in later runs')
     .option('--json', 'JSON output')
     .action((id: string, opts: { note: string; json?: boolean }) =>
-      guarded(ctx, opts.json, () => {
-        const p = withDb(ctx, (db) => rejectProposal(db, parseNumber(id, 'id'), opts.note, ctx.now()));
+      guarded(ctx, opts.json, async () => {
+        const p = await withDb(ctx, (db) => rejectProposal(db, parseNumber(id, 'id'), opts.note, ctx.now()));
         output(ctx, opts.json, p, () => [`proposal #${p.id} rejected: ${p.decisionNote}`]);
       }),
     );

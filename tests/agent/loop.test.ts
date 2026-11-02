@@ -24,7 +24,7 @@ function harness(script: ScriptStep[], over: Partial<LoopInput> = {}) {
   let finished = false;
   const input: LoopInput = {
     client: model, model: 'claude-opus-5', effort: 'high', system: 'system prompt', tools: [], messages, budgets: BUDGETS,
-    runTool: (name, toolInput) => {
+    runTool: async (name, toolInput) => {
       ran.push({ name, input: toolInput });
       if (name === 'write_journal') finished = true;
       return name === 'bad' ? { content: '{"refused":"nope","message":"no"}', isError: true } : { content: `{"ok":"${name}"}`, isError: false };
@@ -170,7 +170,7 @@ describe('the tool-use loop', () => {
   it('ends as an error when a tool throws unexpectedly, keeping the usage and the turn that asked for it', async () => {
     class ToolBug extends Error {}
     const h = harness([calls(toolUse('get_drivers', {}, 'a')), calls(toolUse('explode', {}, 'b')), say('never reached')], {
-      runTool: (name) => {
+      runTool: async (name) => {
         if (name === 'explode') throw new ToolBug('undefined is not a function');
         return { content: '{"ok":true}', isError: false };
       },
@@ -291,7 +291,7 @@ describe('the reserve request', () => {
   it('ends budget_exhausted when write_journal is refused in the reserve turn', async () => {
     const ran: string[] = [];
     const h = harness([huge(), calls(journalCall())], {
-      runTool: (name) => {
+      runTool: async (name) => {
         ran.push(name);
         return name === 'write_journal' ? { content: '{"refused":"no thesis","message":"no"}', isError: true } : { content: '{"ok":true}', isError: false };
       },
@@ -341,7 +341,7 @@ describe('the reserve request', () => {
   it('ends as an error when write_journal throws in the reserve turn, as on the main path', async () => {
     class ToolBug extends Error {}
     const h = harness([huge(), calls(journalCall())], {
-      runTool: (name) => {
+      runTool: async (name) => {
         if (name === 'write_journal') throw new ToolBug('boom');
         return { content: '{"ok":true}', isError: false };
       },

@@ -3,7 +3,7 @@ import type { Command } from 'commander';
 import { tickAsset } from '../../app/tick.js';
 import { emitTickReport } from '../../app/tickReport.js';
 import { loadAsset } from '../../config/load.js';
-import { fetchSummary, ingestDepsFor, withDbAsync, type CliContext } from '../util.js';
+import { fetchSummary, ingestDepsFor, withDb, type CliContext } from '../util.js';
 
 /** The file tick always appends its report to, under ORION_HOME: the delivery path for the scheduler's reader. */
 export const TICKS_FILE = 'ticks.jsonl';
@@ -19,7 +19,7 @@ export function registerTick(program: Command, ctx: CliContext): void {
     .option('--json', 'accepted for consistency; tick always writes JSON')
     .action(async (assetId: string) => {
       const loaded = loadAsset(ctx.home, assetId);
-      const { report, exitCode } = await withDbAsync(ctx, (db) =>
+      const { report, exitCode } = await withDb(ctx, (db) =>
         tickAsset(db, loaded, {
           home: ctx.home, now: ctx.now, fetchDeps: ingestDepsFor(ctx),
           onFetch: (fetch) => {

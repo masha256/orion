@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Ledger } from '../../src/agent/ledger.js';
-import { openDb, type Db, type OrionDb } from '../../src/db/connection.js';
+import { openDb, type Db, type OrionDb, type TxOptions } from '../../src/db/connection.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { fetchAsset } from '../../src/ingest/run.js';
 import { harness } from '../helpers/fetchHarness.js';
@@ -31,9 +31,9 @@ beforeEach(() => {
   ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's', catalysts: [] });
 });
 
-afterEach(() => {
-  A.close();
-  B.close();
+afterEach(async () => {
+  await A.close();
+  await B.close();
 });
 
 type AnyFn = (...args: unknown[]) => unknown;
@@ -61,29 +61,33 @@ function interleaving(db: Db, onFirstRead: () => void, when: (args: unknown[]) =
         };
       },
     });
-  return new Proxy(db, {
-    get(target, prop) {
-      const value = Reflect.get(target, prop) as unknown;
-      if (typeof value !== 'function') return value;
-      if (prop !== 'prepare') return (...args: unknown[]) => (value as AnyFn).apply(target, args);
-      return (...args: unknown[]) => watchStatement((value as AnyFn).apply(target, args) as object);
-    },
-  }) as Db;
+  const watch = (handle: Db): Db =>
+    new Proxy(handle, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop) as unknown;
+        if (typeof value !== 'function') return value;
+        // A transaction's statements run on its tx handle, so the handle is watched too.
+        if (prop === 'tx') return (fn: (t: Db) => Promise<unknown>, opts?: TxOptions) => target.tx((t) => fn(watch(t)), opts);
+        if (prop !== 'prepare') return (...args: unknown[]) => (value as AnyFn).apply(target, args);
+        return (...args: unknown[]) => watchStatement((value as AnyFn).apply(target, args) as object);
+      },
+    }) as Db;
+  return watch(db);
 }
 
 const otherWrite = (db: Db) =>
   insertObservation(db, { assetId: 'mini', metricKey: 'staked_supply', observedAt: '2026-09-19', value: 50, source: 'onchain', fetchedAt: '2026-09-19' });
 
 describe('Ledger.commit against a second connection', () => {
-  it('commits normally when nothing else holds the write lock, whatever the other connection wrote before it', () => {
+  it('commits normally when nothing else holds the write lock, whatever the other connection wrote before it', async () => {
     otherWrite(B);
-    const summary = ledger.commit(A, { agentRunId: null, now: NOW });
+    const summary = await ledger.commit(A, { agentRunId: null, now: NOW });
     expect(summary.observationIds).toHaveLength(1);
     expect(listActiveObservations(B, 'mini', 'revenue_run_rate_usd').map((o) => o.id)).toEqual(summary.observationIds); // the other connection sees it
     expect(listActiveObservations(B, 'mini', 'staked_supply')).toHaveLength(1);
   });
 
-  it('holds the write lock across its own reads, so the other connection cannot commit underneath it', () => {
+  it('holds the write lock across its own reads, so the other connection cannot commit underneath it', async () => {
     B.pragma('busy_timeout = 50');
     let theOtherWrite = 'never attempted';
     const watched = interleaving(A, () => {
@@ -96,13 +100,13 @@ describe('Ledger.commit against a second connection', () => {
     });
     // Deferred, this is where it comes apart: B commits against the same snapshot A just read, and A's first write is
     // then refused with SQLITE_BUSY_SNAPSHOT, which no timeout can retry away.
-    const summary = ledger.commit(watched, { agentRunId: null, now: NOW });
+    const summary = await ledger.commit(watched, { agentRunId: null, now: NOW });
     expect(summary.observationIds).toHaveLength(1);
     expect(theOtherWrite).toMatch(/database is locked/);
     expect(listActiveObservations(A, 'mini', 'staked_supply')).toHaveLength(0);
   });
 
-  it('waits for a write lock another connection holds instead of giving up the moment it wants to write', () => {
+  it('waits for a write lock another connection holds instead of giving up the moment it wants to write', async () => {
     // A DEFERRED transaction reads first and only then asks for the write lock. SQLite will not run the busy handler
     // for that upgrade (a waiting reader can deadlock), so it fails at once, and busy_timeout buys nothing. An
     // IMMEDIATE transaction asks at BEGIN, holding nothing, so the busy handler runs and it waits out the timeout.
@@ -110,7 +114,7 @@ describe('Ledger.commit against a second connection', () => {
     B.exec('BEGIN IMMEDIATE');
     otherWrite(B);
     const startedAt = Date.now();
-    expect(() => ledger.commit(A, { agentRunId: null, now: NOW })).toThrow(/database is locked/);
+    await expect(ledger.commit(A, { agentRunId: null, now: NOW })).rejects.toThrow(/database is locked/);
     const waited = Date.now() - startedAt;
     B.exec('ROLLBACK');
     expect(waited).toBeGreaterThanOrEqual(200);

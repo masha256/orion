@@ -28,8 +28,8 @@ export interface AgentTool<I = unknown> {
   name: string;
   description: string;
   input: z.ZodType<I>;
-  /** Returns a JSON-serializable result, or throws ToolRefusal. */
-  run(ctx: ToolContext, input: I): unknown;
+  /** Returns (or resolves to) a JSON-serializable result, or throws ToolRefusal. */
+  run(ctx: ToolContext, input: I): unknown | Promise<unknown>;
 }
 
 /** Erases the input type so tools of different shapes fit in one list. `runTool` validates before calling `run`. */
@@ -59,7 +59,7 @@ export interface ToolOutcome {
  * that fails the schema, a guardrail refusal, an OrionError from the code the tool calls through. Anything else is a bug
  * and propagates, which ends the run as `error`.
  */
-export function runTool(tools: AgentTool[], ctx: ToolContext, name: string, rawInput: unknown): ToolOutcome {
+export async function runTool(tools: AgentTool[], ctx: ToolContext, name: string, rawInput: unknown): Promise<ToolOutcome> {
   const fail = (refusal: Refusal): ToolOutcome => ({ content: JSON.stringify(refusal), isError: true });
   const tool = tools.find((t) => t.name === name);
   if (!tool) return fail({ refused: 'unknown_tool', message: `there is no tool named ${name}` });
@@ -69,7 +69,7 @@ export function runTool(tools: AgentTool[], ctx: ToolContext, name: string, rawI
     return fail({ refused: 'invalid_input', message: issues.join('; '), issues });
   }
   try {
-    return { content: JSON.stringify(tool.run(ctx, parsed.data)), isError: false };
+    return { content: JSON.stringify(await tool.run(ctx, parsed.data)), isError: false };
   } catch (err) {
     if (err instanceof ToolRefusal) return fail(err.refusal);
     if (err instanceof OrionError) return fail({ refused: err.code, message: err.message });

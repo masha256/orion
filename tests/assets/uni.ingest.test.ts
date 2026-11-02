@@ -145,7 +145,7 @@ describe('assets/uni.yaml', () => {
   it('reports the burn against the Labs vest as dilution, and the gross swap fees as volume', async () => {
     const w = world();
     await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
-    const rep = loadHolderYieldReport(w.db, config);
+    const rep = await loadHolderYieldReport(w.db, config);
     expect(rep.day).toBe('2026-10-10');
     const mcap = 887_216_419 * PRICE;
     expect(rep.yields.buyback).toBeCloseTo((64_000 * 365 * PRICE) / mcap, 6);
