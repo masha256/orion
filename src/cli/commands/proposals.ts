@@ -95,7 +95,7 @@ export function registerProposals(program: Command, ctx: CliContext): void {
         const proposalId = parseNumber(id, 'id');
         const { p, evidence, citations } = await withDb(ctx, async (db) => {
           const found = getProposal(db, proposalId);
-          return { p: found, evidence: found ? getObservationsByIds(db, found.evidence) : [], citations: found ? await citationLines(db, found) : [] };
+          return { p: found, evidence: found ? await getObservationsByIds(db, found.evidence) : [], citations: found ? await citationLines(db, found) : [] };
         });
         if (!p) throw new OrionError('proposal_not_found', `no proposal with id ${proposalId}`);
         output(ctx, opts.json, { ...p, evidence_observations: evidence }, () => [

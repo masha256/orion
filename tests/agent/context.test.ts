@@ -15,15 +15,15 @@ import { AGENT_ASSET_YAML, agentWorld, PERSONA_MD, type AgentWorld } from '../he
 import { AS_OF } from '../helpers/obs.js';
 
 let w: AgentWorld;
-beforeEach(() => {
-  w = agentWorld();
+beforeEach(async () => {
+  w = await agentWorld();
 });
 
 const input = (over: Partial<ContextPackInput> = {}): ContextPackInput => ({
   runType: 'disclosure', budgets: DEFAULT_BUDGETS.disclosure, now: new Date(AS_OF), trigger: {}, document: w.doc, assetYaml: AGENT_ASSET_YAML, ...over,
 });
-const pack = (trigger = {}, yaml?: string, now = AS_OF): Promise<Record<string, any>> => {
-  if (yaml) w = agentWorld(yaml);
+const pack = async (trigger = {}, yaml?: string, now = AS_OF): Promise<Record<string, any>> => {
+  if (yaml) w = await agentWorld(yaml);
   return buildContextPack(w.db, w.loaded, w.ledger, input({ trigger, now: new Date(now), ...(yaml ? { assetYaml: yaml } : {}) }));
 };
 const packFor = (loaded: LoadedAsset, over: Partial<ContextPackInput> = {}): Promise<Record<string, any>> => buildContextPack(w.db, loaded, w.ledger, input(over));
@@ -174,7 +174,7 @@ describe('the disclosure pack', () => {
   it('the disclosure pack carries the document with its label, the asset YAML text, and adapter_params', async () => {
     expect(YAML_WITH_ADAPTERS).toContain('test_documented');
     expect(YAML_WITH_ADAPTERS).toContain('test_undocumented');
-    w = agentWorld(YAML_WITH_ADAPTERS);
+    w = await agentWorld(YAML_WITH_ADAPTERS);
     const doc = storeDoc();
     const p = await packFor(w.loaded, { document: doc, assetYaml: YAML_WITH_ADAPTERS });
     expect(p.document).toEqual({

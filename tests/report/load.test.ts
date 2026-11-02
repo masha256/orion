@@ -20,10 +20,10 @@ reporting:
 `;
 
 /** Daily rows for `days` days ending on `lastDay` (a day's row is stamped at the end of the day). */
-function seed(db: ReturnType<typeof openDb>, metricKey: string, lastDay: string, days: number, value: number) {
+async function seed(db: ReturnType<typeof openDb>, metricKey: string, lastDay: string, days: number, value: number) {
   for (let i = 0; i < days; i++) {
     const day = addDays(lastDay, -i);
-    insertObservation(db, {
+    await insertObservation(db, {
       assetId: 'hype', metricKey, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, source: 'api', fetchedAt: '2026-10-11T00:00:00.000Z',
     });
   }
@@ -33,8 +33,8 @@ describe('lastCompleteReportDay', () => {
   it('is the newest day every report flow has, so a series a day behind is not left blank', async () => {
     const asset = parseAssetYaml(yaml).config;
     const db = openDb(':memory:');
-    seed(db, 'flow_usd.buyback', '2026-10-10', 25, 2); // a day ahead
-    seed(db, 'flow_usd.revenue_proxy', '2026-10-09', 25, 2);
+    await seed(db, 'flow_usd.buyback', '2026-10-10', 25, 2); // a day ahead
+    await seed(db, 'flow_usd.revenue_proxy', '2026-10-09', 25, 2);
     expect(await lastCompleteReportDay(db, asset)).toBe('2026-10-09');
     const r = await loadHolderYieldReport(db, asset);
     expect(r.day).toBe('2026-10-09');
@@ -45,7 +45,7 @@ describe('lastCompleteReportDay', () => {
   it('is null while any report flow has no row', async () => {
     const asset = parseAssetYaml(yaml).config;
     const db = openDb(':memory:');
-    seed(db, 'flow_usd.buyback', '2026-10-10', 5, 1);
+    await seed(db, 'flow_usd.buyback', '2026-10-10', 5, 1);
     expect(await lastCompleteReportDay(db, asset)).toBeNull();
   });
 });

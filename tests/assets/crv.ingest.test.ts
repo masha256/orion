@@ -119,27 +119,29 @@ describe('assets/crv.yaml', () => {
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
-    const rows = (metric: string) => listActiveObservations(w.db, 'crv', metric);
-    const value = (metric: string) => rows(metric).filter((o) => o.observedAt <= NOW.toISOString()).at(-1)!.value;
-    expect(value('price_usd')).toBe(0.3933);
-    expect(value('total_supply')).toBe(2_424_321_556);
-    expect(value('staked_supply')).toBe(840_614_647);
-    expect(value('locked_supply')).toBe(840_614_647);
-    expect(value('staker_emission_share')).toBe(0);
-    expect(rows('emission_rate_annual').map((o) => [o.observedAt > NOW.toISOString(), Math.round(o.value)])).toEqual([[false, 97_161_875], [true, 81_703_072]]);
-    expect(rows('emission_rate_annual')[1].observedAt).toBe('2027-08-12T22:17:28.000Z');
-    expect(value('vote_incentive_run_rate_usd')).toBeCloseTo(4_284_586.14 * 365 / 180, 0);
+    const rows = async (metric: string) => await listActiveObservations(w.db, 'crv', metric);
+    const value = async (metric: string) => (await rows(metric)).filter((o) => o.observedAt <= NOW.toISOString()).at(-1)!.value;
+    expect(await value('price_usd')).toBe(0.3933);
+    expect(await value('total_supply')).toBe(2_424_321_556);
+    expect(await value('staked_supply')).toBe(840_614_647);
+    expect(await value('locked_supply')).toBe(840_614_647);
+    expect(await value('staker_emission_share')).toBe(0);
+    expect((await rows('emission_rate_annual')).map((o) => [o.observedAt > NOW.toISOString(), Math.round(o.value)])).toEqual([[false, 97_161_875], [true, 81_703_072]]);
+    expect((await rows('emission_rate_annual'))[1].observedAt).toBe('2027-08-12T22:17:28.000Z');
+    expect(await value('vote_incentive_run_rate_usd')).toBeCloseTo(4_284_586.14 * 365 / 180, 0);
     // The lockers' veCRV, monitor-only: Yearn 10.74 percent of voting power, 9.92 percent of the CRV locked.
-    expect(value('ve_power.yearn') / value('ve_power_total')).toBeCloseTo(0.1074, 4);
-    expect(value('ve_locked.yearn') / value('locked_supply')).toBeCloseTo(0.0992, 4);
-    expect(['convex', 'stakedao', 'yearn'].map((k) => Math.round(value(`ve_locked.${k}`)))).toEqual([423_932_072, 119_154_691, 83_401_058]);
+    expect(await value('ve_power.yearn') / await value('ve_power_total')).toBeCloseTo(0.1074, 4);
+    expect(await value('ve_locked.yearn') / await value('locked_supply')).toBeCloseTo(0.0992, 4);
+    const locked: number[] = [];
+    for (const k of ['convex', 'stakedao', 'yearn']) locked.push(Math.round(await value(`ve_locked.${k}`)));
+    expect(locked).toEqual([423_932_072, 119_154_691, 83_401_058]);
 
     // The 100-day backfill: every day stored, weekly payouts and zero days between.
-    const fees = rows('flow_usd.fees');
+    const fees = await rows('flow_usd.fees');
     expect(fees).toHaveLength(100);
     expect(fees.filter((o) => o.value > 0).length).toBe(15); // the Wednesdays 2026-07-01 to 2026-10-07, all inside the 100 days
     expect(fees.filter((o) => o.value > 0).every((o) => new Date(o.observedAt).getUTCDay() === 4)).toBe(true); // a day's row is stamped at its end
-    expect(rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
+    expect(await rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
 
     const checked = r.sources.flatMap((s) => s.crossChecks);
     expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true], ['vote_incentive_run_rate_usd', true]]);
@@ -160,8 +162,8 @@ describe('assets/crv.yaml', () => {
     expect(chain.error!.split('; ').map((e) => e.split(':')[0])).toEqual([
       've_power.convex', 've_power.stakedao', 've_power.yearn', 've_locked.convex', 've_locked.stakedao', 've_locked.yearn',
     ]);
-    expect(listActiveObservations(w.db, 'crv', 've_power.yearn')).toEqual([]);
-    expect(listActiveObservations(w.db, 'crv', 'staked_supply')).toHaveLength(1);
+    expect(await listActiveObservations(w.db, 'crv', 've_power.yearn')).toEqual([]);
+    expect(await listActiveObservations(w.db, 'crv', 'staked_supply')).toHaveLength(1);
   });
 
   it('refuses to run without the Ethereum RPC URL', async () => {

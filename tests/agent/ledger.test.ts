@@ -24,9 +24,9 @@ const research = (over: Partial<Parameters<Ledger['stageObservation']>[0]> = {})
   });
 const commit = () => ledger.commit(db, { agentRunId: null, now: NOW });
 
-beforeEach(() => {
+beforeEach(async () => {
   db = openDb(':memory:');
-  priceId = insertObservation(db, { assetId: 'mini', metricKey: 'price_usd', observedAt: '2026-09-19', value: 10, source: 'onchain', fetchedAt: '2026-09-19' }).id;
+  priceId = (await insertObservation(db, { assetId: 'mini', metricKey: 'price_usd', observedAt: '2026-09-19', value: 10, source: 'onchain', fetchedAt: '2026-09-19' })).id;
   ledger = new Ledger('mini', 'analyst');
 });
 
@@ -70,7 +70,7 @@ describe('commit', () => {
       rationale: 'the post contradicts it', evidence: [staged.tempId, priceId], effect: null, citations: [],
     });
     const summary = await commit();
-    const row = listActiveObservations(db, 'mini', 'staked_supply')[0];
+    const row = (await listActiveObservations(db, 'mini', 'staked_supply'))[0];
     expect(row).toMatchObject({
       value: 60, source: 'manual', status: 'provisional', citationUrl: 'doc:1', quotedText: 'staked supply stands at 60 tokens',
       sourceDetail: 'research:analyst:run none', fetchedAt: NOW.toISOString(),
@@ -172,12 +172,12 @@ describe('the world changes mid-run', () => {
   it('conflicts rather than supersede an observation that already exists at the same metric and time', async () => {
     research();
     ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's', catalysts: [] });
-    const users = insertObservation(db, {
+    const users = await insertObservation(db, {
       assetId: 'mini', metricKey: 'staked_supply', observedAt: '2026-09-18', value: 50, source: 'manual', status: 'provisional',
       citationUrl: 'https://example.com/user', fetchedAt: '2026-09-19',
     });
     await expect(commit()).rejects.toThrow(/already exists/);
-    const active = listActiveObservations(db, 'mini', 'staked_supply');
+    const active = await listActiveObservations(db, 'mini', 'staked_supply');
     expect(active.map((o) => o.id)).toEqual([users.id]);
     expect(count('journal')).toBe(0);
   });

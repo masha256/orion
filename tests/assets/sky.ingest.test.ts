@@ -143,22 +143,22 @@ describe('assets/sky.yaml', () => {
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error])).toEqual([]);
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]);
 
-    const rows = (metric: string) => listActiveObservations(w.db, 'sky', metric);
-    const value = (metric: string) => rows(metric).at(-1)!.value;
-    expect(value('price_usd')).toBe(PRICE);
-    expect(value('staked_supply')).toBe(STAKED);
-    expect(value('splitter_burn_share')).toBe(0.55);
+    const rows = async (metric: string) => await listActiveObservations(w.db, 'sky', metric);
+    const value = async (metric: string) => (await rows(metric)).at(-1)!.value;
+    expect(await value('price_usd')).toBe(PRICE);
+    expect(await value('staked_supply')).toBe(STAKED);
+    expect(await value('splitter_burn_share')).toBe(0.55);
 
     const usdsScan = r.sources.find((s) => s.sourceId.startsWith('transfer_flow:usds>usds_farm'))!;
     expect(usdsScan.unlistedTransfers.map((t) => [t.from, t.tokens])).toEqual([[STRANGER, 9_000]]);
     expect(r.anomalies.map((a) => [a.kind, a.metricKey])).toEqual([['unlisted_sender', 'flow_usd.stakers']]);
-    expect(rows('flow_usd.stakers').filter((o) => o.value > 0).every((o) => o.value === 50_000)).toBe(true);
+    expect((await rows('flow_usd.stakers')).filter((o) => o.value > 0).every((o) => o.value === 50_000)).toBe(true);
     // The Safe's 500M top-up is a treasury transfer, never a buy.
-    expect(Math.max(...rows('flow_tokens.buyback').map((o) => o.value))).toBe(1_000_000);
-    expect(rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
+    expect(Math.max(...(await rows('flow_tokens.buyback')).map((o) => o.value))).toBe(1_000_000);
+    expect(await rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
 
     // Treasury net payout over 357 days, scaled to a year: 357 x 1.2M + 100M paid, less 91 x 1M bought.
-    expect(value('treasury_net_payout')).toBeCloseTo(((357 * 1_200_000 + 100_000_000 - 91_000_000) * 365) / 357, 0);
+    expect(await value('treasury_net_payout')).toBeCloseTo(((357 * 1_200_000 + 100_000_000 - 91_000_000) * 365) / 357, 0);
   });
 
   it('reports both halves as cash to stakers, and the treasury net payout as dilution', async () => {

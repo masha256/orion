@@ -114,7 +114,7 @@ function burnRun(unit: 'usd' | 'tokens', obs: Observation[], supplyNow: number, 
   const http = fakeHttp(routes(supplyNow, extra.price));
   const ctx = sourceCtx({
     asset: pump, nowIso: NOW, http, env: { ORION_SOL_RPC_URL: KEYED },
-    observations: (m) => (m === 'total_supply' ? obs : []),
+    observations: async (m) => (m === 'total_supply' ? obs : []),
     ...(extra.backfillDays !== undefined ? { backfillDays: extra.backfillDays } : {}),
   });
   return { http, result: getAdapter('solana.supply_burn_daily').run(ctx, params(unit)) };

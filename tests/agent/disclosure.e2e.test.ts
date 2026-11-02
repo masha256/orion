@@ -102,12 +102,12 @@ const counts = (h: string): Promise<Record<string, number>> =>
  * The rows ingest would have written: one confirmed `api` row per completed UTC day D, stamped at the end of D (D+1 at
  * 00:00Z), period 1 day. Equal days with the remainder on the last, so the integer total is exact.
  */
-function seedDaily(db: Db, metricKey: string, total: number): void {
+async function seedDaily(db: Db, metricKey: string, total: number): Promise<void> {
   const per = Math.floor(total / Q3_DAYS);
   for (let i = 0; i < Q3_DAYS; i++) {
     const day = addDays(Q3_FROM, i);
     const value = i === Q3_DAYS - 1 ? total - per * (Q3_DAYS - 1) : per;
-    insertObservation(db, { assetId: 'lit', metricKey, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, source: 'api', fetchedAt: NOW });
+    await insertObservation(db, { assetId: 'lit', metricKey, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, source: 'api', fetchedAt: NOW });
   }
 }
 
@@ -210,15 +210,15 @@ beforeAll(async () => {
   cpSync(join(ROOT, 'skills'), join(home, 'skills'), { recursive: true });
   await orion(home, 'persona', 'assign', 'lit', 'perp-exchange-analyst');
 
-  await withDb(home, (db) => {
-    seedDaily(db, 'flow_usd.buyback', BUYBACK_Q3);
-    seedDaily(db, 'flow_usd.llama_revenue', LLAMA_Q3);
-    const level = (metricKey: string, value: number, source: 'api' | 'onchain' = 'api') =>
-      insertObservation(db, { assetId: 'lit', metricKey, observedAt: '2026-10-23T00:00:00.000Z', value, source, fetchedAt: NOW });
-    level('unlocks_next_year', UNLOCKS_NOW);
+  await withDb(home, async (db) => {
+    await seedDaily(db, 'flow_usd.buyback', BUYBACK_Q3);
+    await seedDaily(db, 'flow_usd.llama_revenue', LLAMA_Q3);
+    const level = async (metricKey: string, value: number, source: 'api' | 'onchain' = 'api') =>
+      await insertObservation(db, { assetId: 'lit', metricKey, observedAt: '2026-10-23T00:00:00.000Z', value, source, fetchedAt: NOW });
+    await level('unlocks_next_year', UNLOCKS_NOW);
     // The levels the 2026-10-23 fetch stamped (the pack shows them as observations in force): the constants are `api`,
     // the supply read `onchain`.
-    for (const [key, value] of LEVELS_IN_FORCE) level(key, value, key === 'total_supply' ? 'onchain' : 'api');
+    for (const [key, value] of LEVELS_IN_FORCE) await level(key, value, key === 'total_supply' ? 'onchain' : 'api');
   });
 
   const added = JSON.parse(await orion(home, 'doc', 'add', 'lit', '--url', SOURCE_URL, '--file', TRANSCRIPT, '--kind', 'machine_transcript',

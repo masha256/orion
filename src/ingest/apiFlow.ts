@@ -54,7 +54,7 @@ export interface ApiFlowResult {
 /** The metric's stored daily API rows, keyed by the UTC day each one covers. */
 async function storedApiDays(db: Db, assetId: string, metricKey: string): Promise<Map<string, number>> {
   const days = new Map<string, number>();
-  for (const o of listActiveObservations(db, assetId, metricKey)) {
+  for (const o of await listActiveObservations(db, assetId, metricKey)) {
     if (o.source === 'api' && o.periodDays === 1) days.set(utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY), o.value);
   }
   return days;
@@ -63,7 +63,7 @@ async function storedApiDays(db: Db, assetId: string, metricKey: string): Promis
 /** Every UTC day that an active row of the metric covers, whatever its source: a day here is not a gap. */
 async function coveredDays(db: Db, assetId: string, metricKey: string): Promise<Set<string>> {
   const days = new Set<string>();
-  for (const o of listActiveObservations(db, assetId, metricKey)) for (const d of observationDays(o.observedAt, o.periodDays)) days.add(d);
+  for (const o of await listActiveObservations(db, assetId, metricKey)) for (const d of observationDays(o.observedAt, o.periodDays)) days.add(d);
   return days;
 }
 
@@ -144,12 +144,12 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
   const retired: number[] = [];
 
   /** `h` is the transaction's handle on a real run, the database itself on a dry run (which writes nothing). */
-  const writeDays = (h: Db) => {
+  const writeDays = async (h: Db) => {
     // --adopt retires every overlapping manual row up front, whether or not the day it covers is rewritten: a row left
     // beside API rows for the same day would be counted twice, and the next plain fetch would be refused again.
     if (!dryRun) {
       for (const c of conflicts) {
-        rejectObservation(h, c.observationId);
+        await rejectObservation(h, c.observationId);
         retired.push(c.observationId);
       }
     }
@@ -176,9 +176,9 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
       const observedAt = new Date(dayEndMs).toISOString();
       let observationId: number | null = null;
       if (!dryRun) {
-        observationId = insertObservation(h, {
+        observationId = (await insertObservation(h, {
           assetId: asset.id, metricKey, observedAt, periodDays: 1, value, source: 'api', sourceDetail: args.detail, fetchedAt: nowIso,
-        }).id;
+        })).id;
       }
       result.written.push({ metricKey, value, observedAt, periodDays: 1, source: 'api', observationId });
       if (newest === null || day > newest) newest = day;
@@ -189,7 +189,7 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
   // IMMEDIATE: each insert reads for rows to supersede before it writes. A deferred transaction takes the write lock
   // only at its first write, and another connection's commit in between fails it with SQLITE_BUSY_SNAPSHOT, which
   // busy_timeout cannot retry; taking the lock at BEGIN makes the other connection wait instead.
-  if (dryRun) writeDays(db);
+  if (dryRun) await writeDays(db);
   else await db.tx(async (t) => writeDays(t), { lockAsset: asset.id });
   outcome.retiredObservationIds.push(...retired); // after the commit: a rolled-back transaction retired nothing
 

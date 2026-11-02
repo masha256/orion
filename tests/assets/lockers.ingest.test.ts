@@ -165,17 +165,17 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
     expect(r.anomalies).toEqual([]);
-    const rows = (metric: string) => listActiveObservations(w.db, c.id, metric);
-    expect(rows('price_usd').at(-1)!.value).toBe(c.price);
-    expect(rows('total_supply').at(-1)!.value).toBe(Number(c.supply));
-    expect(rows('staked_supply').at(-1)!.value).toBe(Number(c.staked));
+    const rows = async (metric: string) => await listActiveObservations(w.db, c.id, metric);
+    expect((await rows('price_usd')).at(-1)!.value).toBe(c.price);
+    expect((await rows('total_supply')).at(-1)!.value).toBe(Number(c.supply));
+    expect((await rows('staked_supply')).at(-1)!.value).toBe(Number(c.staked));
 
     // Every stream is stored daily at the payout's value; no derived run rate any more (it fed only the valuation).
     for (const [id, [, , , , amount, , price]] of Object.entries(c.streams)) {
-      const stream = rows(`flow_usd.${id}`);
+      const stream = await rows(`flow_usd.${id}`);
       expect(stream.length).toBeGreaterThanOrEqual(91);
       expect(stream.find((o) => o.value > 0)!.value).toBeCloseTo(Number(amount) * price, 6);
     }
-    expect(rows('revenue_run_rate_usd')).toEqual([]);
+    expect(await rows('revenue_run_rate_usd')).toEqual([]);
   });
 });

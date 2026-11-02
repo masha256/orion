@@ -46,7 +46,7 @@ export async function writePeriodicPayments(args: PeriodicArgs): Promise<Written
   const nowIso = args.now.toISOString();
   const today = utcDay(args.now.getTime());
   const written: WrittenObservation[] = [];
-  const stored = new Map(listActiveObservations(db, asset.id, metricKey).filter((o) => (o.periodDays ?? 1) > 1).map((o) => [o.observedAt, o.value]));
+  const stored = new Map((await listActiveObservations(db, asset.id, metricKey)).filter((o) => (o.periodDays ?? 1) > 1).map((o) => [o.observedAt, o.value]));
 
   const rows = args.payments.map((p) => {
     const refusal = args.validate(p.value);
@@ -55,19 +55,19 @@ export async function writePeriodicPayments(args: PeriodicArgs): Promise<Written
     return { p, periodDays, observedAt: new Date(dayStartMs(addDays(p.to, 1))).toISOString() };
   });
   /** `h` is the transaction's handle on a real run, the database itself on a dry run (which writes nothing). */
-  const write = (h: Db) => {
+  const write = async (h: Db) => {
     for (const { p, periodDays, observedAt } of rows) {
       if (stored.get(observedAt) === p.value) continue;
       const observationId = dryRun
         ? null
-        : insertObservation(h, {
+        : (await insertObservation(h, {
             assetId: asset.id, metricKey, observedAt, periodDays, value: p.value, source: 'api',
             sourceDetail: `${args.detail}; covers ${p.from} to ${p.to}, paid ${p.paidAt}`, fetchedAt: nowIso,
-          }).id;
+          })).id;
       written.push({ metricKey, value: p.value, observedAt, periodDays, source: 'api', observationId });
     }
   };
-  if (dryRun) write(db);
+  if (dryRun) await write(db);
   else await db.tx(async (t) => write(t), { lockAsset: asset.id });
   if (written.length > 0) outcome.metricsWritten.push(metricKey);
   else outcome.notes.push(`${metricKey}: no new payment (${args.payments.length} stored${args.due.length > 0 ? `; ${args.due.map((d) => `${d.from} to ${d.to} due ${d.dueDay}`).join(', ')} unpaid` : ''})`);

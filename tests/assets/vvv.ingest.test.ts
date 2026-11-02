@@ -128,20 +128,20 @@ describe('assets/vvv.yaml ingestion', () => {
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
 
-    const value = (metric: string) => listActiveObservations(w.db, 'vvv', metric).at(-1)!.value;
-    expect(value('price_usd')).toBe(26.03);
-    expect(value('diem_price_usd')).toBe(1941.6);
-    expect(value('circulating_supply')).toBeCloseTo(48058904.92603289, 4);
-    expect(value('total_supply')).toBeCloseTo(81009270.24659143, 3);
-    expect(value('staked_supply')).toBeCloseTo(33941208.98799314, 3);
-    expect(value('locked_supply')).toBeCloseTo(8954489.934888212, 3);
-    expect(value('emission_rate_annual')).toBeCloseTo(2_500_000, 2);
-    expect(value('staker_emission_share')).toBeCloseTo(0.9472352918362107, 9);
-    expect(value('diem_supply')).toBeCloseTo(37713.657734473534, 6);
-    expect(value('diem_target_supply')).toBeCloseTo(40_000, 1);
-    expect(value('diem_locked_yield_share')).toBeCloseTo(0.8, 12);
-    expect(listActiveObservations(w.db, 'vvv', 'flow_tokens.burn').map((o) => o.value)).toEqual([400, 10_000]);
-    expect(listActiveObservations(w.db, 'vvv', 'flow_usd.burn_programmatic').map((o) => o.value > 0)).toEqual([true, false]);
+    const value = async (metric: string) => (await listActiveObservations(w.db, 'vvv', metric)).at(-1)!.value;
+    expect(await value('price_usd')).toBe(26.03);
+    expect(await value('diem_price_usd')).toBe(1941.6);
+    expect(await value('circulating_supply')).toBeCloseTo(48058904.92603289, 4);
+    expect(await value('total_supply')).toBeCloseTo(81009270.24659143, 3);
+    expect(await value('staked_supply')).toBeCloseTo(33941208.98799314, 3);
+    expect(await value('locked_supply')).toBeCloseTo(8954489.934888212, 3);
+    expect(await value('emission_rate_annual')).toBeCloseTo(2_500_000, 2);
+    expect(await value('staker_emission_share')).toBeCloseTo(0.9472352918362107, 9);
+    expect(await value('diem_supply')).toBeCloseTo(37713.657734473534, 6);
+    expect(await value('diem_target_supply')).toBeCloseTo(40_000, 1);
+    expect(await value('diem_locked_yield_share')).toBeCloseTo(0.8, 12);
+    expect((await listActiveObservations(w.db, 'vvv', 'flow_tokens.burn')).map((o) => o.value)).toEqual([400, 10_000]);
+    expect((await listActiveObservations(w.db, 'vvv', 'flow_usd.burn_programmatic')).map((o) => o.value > 0)).toEqual([true, false]);
 
     const checked = r.sources.flatMap((s) => s.crossChecks).map((c) => c.metricKey).sort();
     expect(checked).toEqual([

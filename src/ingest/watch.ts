@@ -12,11 +12,11 @@ export type WatchSnapshot = Map<string, Map<string, number>>;
 
 const iso = (at: string): string => new Date(at).toISOString();
 
-export function watchSnapshot(asset: AssetConfig, observations: (metricKey: string) => Observation[]): WatchSnapshot {
+export async function watchSnapshot(asset: AssetConfig, observations: (metricKey: string) => Promise<Observation[]>): Promise<WatchSnapshot> {
   const out: WatchSnapshot = new Map();
   for (const [key, def] of Object.entries(asset.metrics)) {
     if (def.watch === undefined) continue;
-    out.set(key, new Map(observations(key).map((o) => [iso(o.observedAt), o.value])));
+    out.set(key, new Map((await observations(key)).map((o) => [iso(o.observedAt), o.value])));
   }
   return out;
 }

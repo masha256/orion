@@ -104,7 +104,7 @@ const count = (db: Db, table: string) => (db.prepare(`SELECT COUNT(*) AS n FROM 
 describe('fetchAsset: watches', () => {
   it('reports the firings in the result, from the stored rows before the fetch', async () => {
     const h = world();
-    insertObservation(h.db, { assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-18T12:00:00Z', value: 9.5, source: 'api', fetchedAt: '2026-09-18T12:00:00Z' });
+    await insertObservation(h.db, { assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-18T12:00:00Z', value: 9.5, source: 'api', fetchedAt: '2026-09-18T12:00:00Z' });
     const r = await fetch(h);
     expect(r.watch).toEqual([
       { metric: 'stats_price', rule: 'change_pct', value: 10.1, previous: 9.5, day: '2026-09-19' },
@@ -137,7 +137,7 @@ describe('fetchAsset: watches', () => {
     expect(r.watch.map((f) => f.rule)).toEqual(['outside', 'above']);
     expect(r.fetchRunId).toBeNull();
     expect(count(h.db, 'fetch_runs')).toBe(0);
-    expect(listActiveObservations(h.db, 'mini')).toEqual([]);
+    expect(await listActiveObservations(h.db, 'mini')).toEqual([]);
   });
 
   it('fetch_runs.detail_json.watch is stored when non-empty and absent when empty', async () => {
@@ -165,7 +165,7 @@ describe('orion data fetch: watches', () => {
     await orion('init');
     writeFileSync(join(home, 'assets', 'mini.yaml'), watchAssetYaml({ above: 20 }));
     const db = openDb(join(home, 'orion.db'));
-    insertObservation(db, { assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-18T12:00:00Z', value: 9.5, source: 'api', fetchedAt: '2026-09-18T12:00:00Z' });
+    await insertObservation(db, { assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-18T12:00:00Z', value: 9.5, source: 'api', fetchedAt: '2026-09-18T12:00:00Z' });
     db.close();
     lines.length = 0;
     await orion('data', 'fetch', 'mini', '--dry-run');

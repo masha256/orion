@@ -33,7 +33,7 @@ describe('the constant source', () => {
     const h = harness({ loaded });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     expect(r.sources.find((s) => s.sourceId === 'constant')).toMatchObject({ status: 'ok', metricsWritten: ['staker_emission_share'] });
-    const rows = listActiveObservations(h.db, 'mini', 'staker_emission_share');
+    const rows = await listActiveObservations(h.db, 'mini', 'staker_emission_share');
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ value: 0, source: 'api', sourceDetail: 'constant: all emissions go to LP gauges', observedAt: NOW.toISOString() });
   });

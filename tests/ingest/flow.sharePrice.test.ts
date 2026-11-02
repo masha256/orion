@@ -45,11 +45,11 @@ describe('transfer_flow share_price', () => {
       now: h.deps.now(), backfillDays: 3, rescan: false, adopt: false, dryRun: false,
     });
     expect(r.outcome.status).toBe('ok');
-    const vals = (k: string) => listActiveObservations(h.db, 'mini', k).map((o) => [o.observedAt.slice(0, 10), o.value]);
+    const vals = async (k: string) => (await listActiveObservations(h.db, 'mini', k)).map((o) => [o.observedAt.slice(0, 10), o.value]);
     // 2 shares x 1.5 x 10 USD = 30; 4 x 1.5 x 10 = 60; an empty day is 0 and reads no share price.
-    expect(vals('flow_usd.fees')).toEqual([['2026-09-17', 30], ['2026-09-18', 60], ['2026-09-19', 0]]);
-    expect(vals('flow_tokens.fees')).toEqual([['2026-09-17', 2], ['2026-09-18', 4], ['2026-09-19', 0]]); // no share_price: raw shares
-    const detail = JSON.parse(listActiveObservations(h.db, 'mini', 'flow_usd.fees')[0].sourceDetail!) as { share_price?: Record<string, number> };
+    expect(await vals('flow_usd.fees')).toEqual([['2026-09-17', 30], ['2026-09-18', 60], ['2026-09-19', 0]]);
+    expect(await vals('flow_tokens.fees')).toEqual([['2026-09-17', 2], ['2026-09-18', 4], ['2026-09-19', 0]]); // no share_price: raw shares
+    const detail = JSON.parse((await listActiveObservations(h.db, 'mini', 'flow_usd.fees'))[0].sourceDetail!) as { share_price?: Record<string, number> };
     expect(detail.share_price).toEqual({ [`${STAKING}.pricePerShare`]: 1.5 });
   });
 
@@ -62,7 +62,7 @@ describe('transfer_flow share_price', () => {
     });
     expect(r.outcome.status).toBe('failed');
     expect(r.outcome.error).toMatch(/pricePerShare\(\) on 0x2222.*execution reverted/);
-    expect(listActiveObservations(h.db, 'mini', 'flow_usd.fees')).toHaveLength(0);
+    expect(await listActiveObservations(h.db, 'mini', 'flow_usd.fees')).toHaveLength(0);
   });
 
   it('is validated like any contract reference', () => {

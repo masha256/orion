@@ -10,8 +10,8 @@ import { sha256 } from '../../src/util/canonical.js';
 import { AS_OF } from '../helpers/obs.js';
 
 let w: AgentWorld;
-beforeEach(() => {
-  w = agentWorld();
+beforeEach(async () => {
+  w = await agentWorld();
 });
 
 const NINE = [
@@ -101,7 +101,7 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
   const NON_CRITICAL = AGENT_ASSET_YAML.replace('critical: true, allow_provisional: true', 'critical: false, allow_provisional: true');
 
   it('a URL citation on a non-critical allow_provisional metric becomes an observation proposal, not a live row', async () => {
-    w = agentWorld(NON_CRITICAL);
+    w = await agentWorld(NON_CRITICAL);
     const r = await research({ note: 'from the call' });
     expect(r).toMatchObject({ isError: false, result: { recorded: false } });
     expect(r.result.converted_to_proposal).toBeDefined();
@@ -129,7 +129,7 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
 
   it('files an observation proposal against the last CONFIRMED value, the baseline approve checks it against', async () => {
     // An earlier run's figure is provisional: 1250. The confirmed value is still 1000.
-    insertObservation(w.db, {
+    await insertObservation(w.db, {
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-20', value: 1250, source: 'manual', status: 'provisional',
       citationUrl: 'https://news.example.com/earlier', fetchedAt: AS_OF,
     });
@@ -158,8 +158,8 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
       '[00:01] Our annualized revenue reached $1,100 in September,\n[00:04] up from a thousand.\n' +
       '[00:09] Staked supply now stands at 55 tokens across the network.\n';
     const REVENUE_QUOTE = 'annualized revenue reached $1,100 in September, up from a thousand';
-    const withTranscript = (yaml?: string) => {
-      w = agentWorld(yaml);
+    const withTranscript = async (yaml?: string) => {
+      w = await agentWorld(yaml);
       const doc = { id: 1, kind: 'machine_transcript' as const, sha256: 'c'.repeat(64), text: TEXT };
       w.ctx.citableDocs = () => [doc];
       w.ctx.targetDoc = doc;
@@ -174,7 +174,7 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
       ['not critical', AGENT_ASSET_YAML.replace('critical: true, allow_provisional: true', 'critical: false, allow_provisional: true')],
       ['critical, a small move', AGENT_ASSET_YAML],
     ])('on an allow_provisional metric (%s), goes to the user as an observation proposal and is never in force unconfirmed', async (_label, yaml) => {
-      withTranscript(yaml);
+      await withTranscript(yaml);
       expect((await research({ citation_url: 'doc:2', quoted_text: REVENUE_QUOTE })).result.refused).toBe('doc_not_in_run');
       const r = await research({ citation_url: 'doc:1', quoted_text: REVENUE_QUOTE, note: 'Q3 call' });
       expect(r).toMatchObject({ isError: false, result: { recorded: false } });
@@ -191,7 +191,7 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
     });
 
     it('on a metric that does not allow provisional data, stages an inert row that stays out of the value in force after commit', async () => {
-      withTranscript();
+      await withTranscript();
       const r = await researchStaked();
       expect(r).toMatchObject({ isError: false, result: { recorded: true } });
       expect(r.result.note).toMatch(/^provisional; it cites a machine transcript, so it is not read as the value in force; it is listed in the inbox/);
@@ -199,11 +199,11 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
       expect(w.ledger.proposals()).toEqual([]);
       expect(await eligibleFromDocs()).toEqual([]);
       // It is stored, as a provisional row, for the user to confirm.
-      expect(listActiveObservations(w.db, 'mini', 'staked_supply').filter((o) => o.citationUrl === 'doc:1').map((o) => o.status)).toEqual(['provisional']);
+      expect((await listActiveObservations(w.db, 'mini', 'staked_supply')).filter((o) => o.citationUrl === 'doc:1').map((o) => o.status)).toEqual(['provisional']);
     });
 
     it('refuses a non-canonical doc id', async () => {
-      withTranscript();
+      await withTranscript();
       expect((await research({ citation_url: 'doc:01', quoted_text: REVENUE_QUOTE })).result.refused).toBe('doc_not_in_run');
       expect(w.ledger.proposals()).toEqual([]);
     });
@@ -235,7 +235,7 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
 
   it('takes an announced change on a FETCHED schedule only when it is dated after now, and the confirmed row governs from its date until the chain catches up', async () => {
     // The fetch owns the present: emission_rate_annual is read from the chain here, as VVV's is.
-    const fw = agentWorld(
+    const fw = await agentWorld(
       AGENT_ASSET_YAML.replace(
         'emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400 }',
         'emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400, source: { type: adapter, name: test.emission } }',
@@ -250,17 +250,17 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
 
     // What the row does once the user confirms it, with the daily on-chain reads landing beneath it.
     const asset = fw.loaded.config;
-    const onchain = (observedAt: string, value: number) =>
-      insertObservation(fw.db, { assetId: 'mini', metricKey: 'emission_rate_annual', observedAt, value, source: 'onchain', fetchedAt: observedAt });
-    onchain('2026-06-29T00:00:00Z', 10); // the seeded step is 0 at 2026-01-01; this is the chain's rate in force
-    const row = insertObservation(fw.db, {
+    const onchain = async (observedAt: string, value: number) =>
+      await insertObservation(fw.db, { assetId: 'mini', metricKey: 'emission_rate_annual', observedAt, value, source: 'onchain', fetchedAt: observedAt });
+    await onchain('2026-06-29T00:00:00Z', 10); // the seeded step is 0 at 2026-01-01; this is the chain's rate in force
+    const row = await insertObservation(fw.db, {
       assetId: 'mini', metricKey: 'emission_rate_annual', observedAt: '2026-10-01', value: 5, source: 'manual', status: 'provisional', citationUrl: PAGE_URL, fetchedAt: AS_OF,
     });
     expect(await valueInForce(fw.db, asset, 'emission_rate_annual', '2026-10-01T00:00:00Z')).toBe(10); // provisional: inert
-    confirmObservation(fw.db, row.id, AS_OF);
+    await confirmObservation(fw.db, row.id, AS_OF);
     expect(await valueInForce(fw.db, asset, 'emission_rate_annual', '2026-09-30T23:59:59Z')).toBe(10);
     expect(await valueInForce(fw.db, asset, 'emission_rate_annual', '2026-10-01T00:00:00Z')).toBe(5); // the announced step, from its effective date
-    onchain('2026-10-01T00:05:00Z', 5.5); // the chain's first read after the date is newer and governs
+    await onchain('2026-10-01T00:05:00Z', 5.5); // the chain's first read after the date is newer and governs
     expect(await valueInForce(fw.db, asset, 'emission_rate_annual', '2026-10-02T00:00:00Z')).toBe(5.5);
   });
 });
@@ -334,7 +334,7 @@ describe('propose_change', () => {
   });
 
   it('files confirming and rejecting an observation, with effect null', async () => {
-    const provisional = insertObservation(w.db, {
+    const provisional = await insertObservation(w.db, {
       assetId: 'mini', metricKey: 'staked_supply', observedAt: '2026-06-29T12:00:00Z', value: 80, source: 'manual', status: 'provisional',
       citationUrl: 'https://example.com', fetchedAt: AS_OF,
     });
@@ -627,20 +627,20 @@ describe('get_flow_total', () => {
   const Q3_START = Date.parse('2026-07-01T00:00:00Z');
   const dayOf = (i: number): string => new Date(Q3_START + i * DAY).toISOString().slice(0, 10);
   /** One daily row per Q3 day (92), observed at the end of its day, valued i + 1; `skip` leaves days out. */
-  const seedQ3 = (skip: string[] = []): number[] => {
+  const seedQ3 = async (skip: string[] = []): Promise<number[]> => {
     const ids: number[] = [];
     for (let i = 0; i < 92; i++) {
       if (skip.includes(dayOf(i))) continue;
-      ids.push(insertObservation(w.db, {
+      ids.push((await insertObservation(w.db, {
         assetId: 'mini', metricKey: FEES, observedAt: new Date(Q3_START + (i + 1) * DAY).toISOString(), periodDays: 1, value: i + 1, source: 'onchain', fetchedAt: AS_OF,
-      }).id);
+      })).id);
     }
     return ids;
   };
   const total = (over: Record<string, unknown> = {}) => w.call('get_flow_total', { metric: FEES, from: '2026-07-01', to: '2026-09-30', ...over });
 
   it('get_flow_total sums Q3 daily rows, reports missing days, and marks them shown', async () => {
-    const ids = seedQ3();
+    const ids = await seedQ3();
     const { isError, result } = await total();
     expect(isError).toBe(false);
     expect(result).toEqual({
@@ -655,7 +655,7 @@ describe('get_flow_total', () => {
   });
 
   it('reports a dropped day as missing, and a row staged in this run does not fill it', async () => {
-    seedQ3(['2026-08-15']); // day index 45, value 46
+    await seedQ3(['2026-08-15']); // day index 45, value 46
     expect((await total()).result).toMatchObject({ total: (92 * 93) / 2 - 46, days_covered: 91, days_missing: ['2026-08-15'], rows: 91 });
     const staged = w.ledger.stageObservation({
       metricKey: FEES, value: 46, observedAt: '2026-08-16T00:00:00Z', periodDays: 1, citationUrl: PAGE_URL, quotedText: QUOTE, live: true,
@@ -666,7 +666,7 @@ describe('get_flow_total', () => {
   });
 
   it('ignores a 92-day provisional row staged on top of the 92 daily rows: the total is the daily sum', async () => {
-    const ids = seedQ3();
+    const ids = await seedQ3();
     w.ledger.stageObservation({
       metricKey: FEES, value: 99_999, observedAt: '2026-10-01T00:00:00Z', periodDays: 92, citationUrl: PAGE_URL, quotedText: QUOTE, live: true,
     });
@@ -677,8 +677,8 @@ describe('get_flow_total', () => {
   });
 
   it('ignores a committed provisional row: only confirmed rows are summed', async () => {
-    seedQ3(['2026-08-15']);
-    const provisional = insertObservation(w.db, {
+    await seedQ3(['2026-08-15']);
+    const provisional = await insertObservation(w.db, {
       assetId: 'mini', metricKey: FEES, observedAt: '2026-08-16T00:00:00Z', periodDays: 1, value: 46, source: 'manual', fetchedAt: AS_OF,
       status: 'provisional', citationUrl: PAGE_URL, quotedText: QUOTE,
     });
@@ -687,13 +687,13 @@ describe('get_flow_total', () => {
   });
 
   it('refuses flow_conflict, with the ids and the days, when two confirmed rows cover the same day', async () => {
-    const ids = seedQ3();
+    const ids = await seedQ3();
     // A confirmed two-day manual row for 2026-07-01 and 2026-07-02.
-    const manual = insertObservation(w.db, {
+    const manual = await insertObservation(w.db, {
       assetId: 'mini', metricKey: FEES, observedAt: '2026-07-03T00:00:00Z', periodDays: 2, value: 7, source: 'manual', fetchedAt: AS_OF,
     });
     // It shares observed_at with the daily row for 2026-07-02, which insertObservation supersedes, so it overlaps 07-01's row only.
-    expect(listActiveObservations(w.db, 'mini', FEES).some((o) => o.id === ids[1])).toBe(false);
+    expect((await listActiveObservations(w.db, 'mini', FEES)).some((o) => o.id === ids[1])).toBe(false);
     const { isError, result } = await total();
     expect(isError).toBe(true);
     expect(result).toMatchObject({ refused: 'flow_conflict', ids: [ids[0], manual.id], days: ['2026-07-01'] });
@@ -702,13 +702,13 @@ describe('get_flow_total', () => {
   });
 
   it('leaves out superseded and rejected rows, and a row that straddles the edge of the range', async () => {
-    seedQ3(['2026-07-01']); // the straddling row below is the only row on 2026-07-01, so it overlaps nothing
-    const rejected = insertObservation(w.db, {
+    await seedQ3(['2026-07-01']); // the straddling row below is the only row on 2026-07-01, so it overlaps nothing
+    const rejected = await insertObservation(w.db, {
       assetId: 'mini', metricKey: FEES, observedAt: '2026-07-02T12:00:00Z', periodDays: 1, value: 1000, source: 'manual', fetchedAt: AS_OF,
     });
     w.db.prepare("UPDATE observations SET status = 'rejected' WHERE id = ?").run(rejected.id);
     // Noon to noon: covers 2026-06-30 and 2026-07-01, half outside July, so July leaves it out.
-    insertObservation(w.db, { assetId: 'mini', metricKey: FEES, observedAt: '2026-07-01T12:00:00Z', periodDays: 1, value: 500, source: 'manual', fetchedAt: AS_OF });
+    await insertObservation(w.db, { assetId: 'mini', metricKey: FEES, observedAt: '2026-07-01T12:00:00Z', periodDays: 1, value: 500, source: 'manual', fetchedAt: AS_OF });
     expect((await total({ from: '2026-07-01', to: '2026-07-31' })).result).toMatchObject({ total: (31 * 32) / 2 - 1, days_covered: 30, rows: 30, days_missing: ['2026-07-01'] });
     expect((await total({ from: '2026-06-30', to: '2026-07-31' })).result).toMatchObject({ total: (31 * 32) / 2 - 1 + 500, days_covered: 32, rows: 31, days_missing: [] });
   });

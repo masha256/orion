@@ -17,11 +17,11 @@ const getObservations = defineTool({
     limit: z.number().int().min(1).max(100).optional(),
     include_inactive: z.boolean().optional(),
   }),
-  run(ctx, input) {
+  async run(ctx, input) {
     if (!ctx.loaded.config.metrics[input.metric]) {
       refuse('unknown_metric', `${input.metric} is not a metric of ${ctx.loaded.config.id}`, { metrics: Object.keys(ctx.loaded.config.metrics).sort() });
     }
-    const stored = listObservations(ctx.db, ctx.loaded.config.id, input.metric, { includeInactive: input.include_inactive, limit: input.limit ?? 10 });
+    const stored = await listObservations(ctx.db, ctx.loaded.config.id, input.metric, { includeInactive: input.include_inactive, limit: input.limit ?? 10 });
     ctx.ledger.markShown(stored.map((o) => o.id));
     const staged = ctx.ledger.observationRows(ctx.now().toISOString()).filter((o) => o.metricKey === input.metric);
     return { metric: input.metric, definition: ctx.loaded.config.metrics[input.metric], observations: [...staged, ...stored].map(describeObservation) };
@@ -64,7 +64,7 @@ const getFlowTotal = defineTool({
     'ids and the days. Every summed row counts as shown, so you may cite any of them as evidence. The total is the gross ' +
     'series: a series listed in revenue_streams with a share counts only that share as the asset\'s revenue.',
   input: z.strictObject({ metric: z.string(), from: z.string(), to: z.string() }),
-  run(ctx, input) {
+  async run(ctx, input) {
     const asset = ctx.loaded.config;
     const def = asset.metrics[input.metric];
     if (!def) refuse('unknown_metric', `${input.metric} is not a metric of ${asset.id}`, { metrics: Object.keys(asset.metrics).sort() });
@@ -77,7 +77,7 @@ const getFlowTotal = defineTool({
     // Confirmed, active, committed rows only: a provisional or staged figure is a claim, not Orion's measurement.
     const coveredBy = new Map<string, number[]>();
     const summed: Observation[] = [];
-    for (const o of listActiveObservations(ctx.db, asset.id, input.metric)) {
+    for (const o of await listActiveObservations(ctx.db, asset.id, input.metric)) {
       if (o.status !== 'confirmed') continue;
       const days = observationDays(o.observedAt, o.periodDays);
       if (!days.every((d) => d >= input.from && d <= input.to)) continue;

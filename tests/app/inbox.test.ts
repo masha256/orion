@@ -14,16 +14,16 @@ const T = '2026-09-20T00:00:00.000Z';
 const MISMATCH = { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey: 'http_json:x', severity: 'degrading' } as const;
 
 /** Two provisional rows (one researched, one typed), two pending proposals, and one anomaly in each status. */
-function world() {
+async function world() {
   const db = openDb(':memory:');
   const asset = parseAssetYaml(MINI_ASSET_YAML).config;
   const runId = startAgentRun(db, { assetId: 'mini', persona: 'analyst', runType: 'weekly', trigger: 'manual', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: T });
-  insertObservation(db, { assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-15', value: 1000, source: 'manual', fetchedAt: T });
-  const researched = insertObservation(db, {
+  await insertObservation(db, { assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-15', value: 1000, source: 'manual', fetchedAt: T });
+  const researched = await insertObservation(db, {
     assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-15', value: 1200, source: 'manual', status: 'provisional',
     sourceDetail: `research:analyst:run ${runId}`, citationUrl: 'https://example.com/q3', quotedText: 'revenue reached $1,200 in the third quarter', fetchedAt: T,
   });
-  const typed = insertObservation(db, {
+  const typed = await insertObservation(db, {
     assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-01', periodDays: 31, value: 90, source: 'manual', status: 'provisional',
     sourceDetail: 'typed from the August report', citationUrl: 'https://example.com/aug', fetchedAt: T,
   });
@@ -52,7 +52,7 @@ function world() {
 
 describe('buildInbox', () => {
   it('lists provisional rows, pending proposals, and open anomalies, with ids and numbers only', async () => {
-    const w = world();
+    const w = await world();
     const inbox = await buildInbox(w.db, w.asset, T);
     expect(InboxSchema.parse(inbox)).toEqual(inbox);
 
@@ -83,8 +83,8 @@ describe('buildInbox', () => {
   });
 
   it('measures the move from the last confirmed value at now, the move guard\'s own baseline, never from another provisional row', async () => {
-    const w = world();
-    insertObservation(w.db, {
+    const w = await world();
+    await insertObservation(w.db, {
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-10', value: 5000, source: 'manual', status: 'provisional',
       sourceDetail: `research:analyst:run ${w.runId}`, citationUrl: 'https://example.com/earlier', fetchedAt: T,
     });
@@ -94,7 +94,7 @@ describe('buildInbox', () => {
   });
 
   it('is empty for an asset with nothing to decide', async () => {
-    const w = world();
+    const w = await world();
     expect(await buildInbox(w.db, { ...w.asset, id: 'other' }, T)).toEqual(emptyInbox());
   });
 });
@@ -103,7 +103,7 @@ describe('inbox', () => {
   it('a stored proposal with a 6m/12m effect still parses', async () => {
     // VVV #1 and CAKE #4 are pending assumption_value proposals from the valuation era, filed with a target effect. No
     // run files one now (new proposals store effect null), but the inbox must keep reading the rows that exist.
-    const w = world();
+    const w = await world();
     insertProposal(w.db, {
       assetId: 'mini', persona: 'analyst', agentRunId: w.runId, change: { kind: 'assumption_value', key: 'discount_rate_base', scenario: 'bull', value: 0.09 },
       filedAgainst: { value: 0.1 }, rationale: 'r', evidence: [], effect: { blocked: ['missing_metric:revenue_run_rate_usd'] }, createdAt: T,
@@ -134,7 +134,7 @@ describe('readingOf', () => {
 
 describe('inboxLines', () => {
   it('prints one line per item in the fixed forms, and one line for an empty inbox', async () => {
-    const w = world();
+    const w = await world();
     expect(inboxLines(await buildInbox(w.db, w.asset, T))).toEqual([
       `obs #${w.typed.id}  flow_usd.fees  90 31d to 2026-09-01  no confirmed value  entered by hand  https://example.com/aug`,
       `obs #${w.researched.id}  revenue_run_rate_usd  1200 at 2026-09-15  +20.0% vs confirmed  by analyst run #${w.runId}  https://example.com/q3`,

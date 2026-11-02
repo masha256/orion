@@ -81,14 +81,14 @@ export async function approveProposal(db: Db, home: string, id: number, opts: { 
 
       case 'confirm_observation':
       case 'reject_observation': {
-        const o = getObservationsByIds(t, [change.observationId])[0];
+        const o = (await getObservationsByIds(t, [change.observationId]))[0];
         const active = o !== undefined && o.supersededBy === null && o.status !== 'rejected';
         if (!active) stale(id, `observation ${change.observationId} is no longer active`);
         if (change.kind === 'confirm_observation') {
           if (o.status !== 'provisional') stale(id, `observation ${o.id} is already ${o.status}`);
-          result = { kind: 'observation', observationId: confirmObservation(t, o.id, nowIso).id, action: 'confirmed' };
+          result = { kind: 'observation', observationId: (await confirmObservation(t, o.id, nowIso)).id, action: 'confirmed' };
         } else {
-          rejectObservation(t, o.id);
+          await rejectObservation(t, o.id);
           result = { kind: 'observation', observationId: o.id, action: 'rejected' };
         }
         break;
@@ -102,9 +102,9 @@ export async function approveProposal(db: Db, home: string, id: number, opts: { 
         if (inForce !== filed) stale(id, `${change.metricKey} was ${filed} when it was filed and is ${inForce} now`);
         // Approving never supersedes silently either: a confirmed insert would retire every active row at this metric and time.
         const at = new Date(change.observedAt).toISOString();
-        const taken = listActiveObservations(t, p.assetId, change.metricKey).find((o) => o.observedAt === at);
+        const taken = (await listActiveObservations(t, p.assetId, change.metricKey)).find((o) => o.observedAt === at);
         if (taken) stale(id, `observation #${taken.id} of ${change.metricKey} at ${at} now exists (${taken.status}, value ${taken.value}); reject it first if this proposal's value should replace it`);
-        const row = insertObservation(t, {
+        const row = await insertObservation(t, {
           assetId: p.assetId, metricKey: change.metricKey, observedAt: change.observedAt, periodDays: change.periodDays, value: change.value,
           source: 'manual', status: 'confirmed', citationUrl: change.citationUrl, quotedText: change.quotedText, fetchedAt: nowIso,
           sourceDetail: `research:${p.persona}:run ${p.agentRunId ?? 'none'}; approved proposal #${id}`,

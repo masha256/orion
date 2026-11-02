@@ -107,7 +107,7 @@ async function movePct(db: Db, asset: AssetConfig, o: Observation, nowIso: strin
 
 export async function buildInbox(db: Db, asset: AssetConfig, nowIso: string): Promise<Inbox> {
   const observations: Inbox['observations'] = [];
-  for (const o of listActiveObservations(db, asset.id).filter((r) => r.status === 'provisional').sort((a, b) => b.id - a.id)) {
+  for (const o of (await listActiveObservations(db, asset.id)).filter((r) => r.status === 'provisional').sort((a, b) => b.id - a.id)) {
     observations.push({
       id: o.id, metric: o.metricKey, value: o.value, observed_at: o.observedAt, period_days: o.periodDays,
       unit: asset.metrics[o.metricKey]?.unit ?? null, citation_url: o.citationUrl, recorded_by: recordedBy(o), move_pct: await movePct(db, asset, o, nowIso),

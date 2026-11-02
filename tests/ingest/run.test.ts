@@ -55,7 +55,7 @@ describe('fetchAsset: levels', () => {
     const h = harness();
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
 
-    const obs = Object.fromEntries(listActiveObservations(h.db, 'mini').map((o) => [o.metricKey, o]));
+    const obs = Object.fromEntries((await listActiveObservations(h.db, 'mini')).map((o) => [o.metricKey, o]));
     expect(obs.price_usd).toMatchObject({ value: 10, source: 'api', observedAt: NOW.toISOString(), fetchedAt: NOW.toISOString(), status: 'confirmed' });
     expect(obs.circulating_supply.value).toBe(60);
     const blockTime = new Date((GENESIS_TS + Number(LATEST) * 2) * 1000).toISOString();
@@ -84,7 +84,7 @@ describe('fetchAsset: levels', () => {
   it('never stores a cross-check reading as an observation', async () => {
     const h = harness();
     await fetchAsset(h.db, h.loaded, NOW, h.deps);
-    expect(listActiveObservations(h.db, 'mini', 'price_usd').map((o) => o.value)).toEqual([10]);
+    expect((await listActiveObservations(h.db, 'mini', 'price_usd')).map((o) => o.value)).toEqual([10]);
   });
 
   it('raises a degrading anomaly for a mismatch on a critical metric, and counts repeats', async () => {
@@ -93,7 +93,7 @@ describe('fetchAsset: levels', () => {
     expect(r.anomalies).toHaveLength(1);
     expect(r.anomalies[0]).toMatchObject({ kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey: STATS_ID, severity: 'degrading' });
     expect(r.anomalies[0].detail).toMatchObject({ primary: 10, check: 11, tolerance_pct: 2, primary_source: 'coingecko', check_source: STATS_ID });
-    expect(listActiveObservations(h.db, 'mini', 'price_usd')[0].value).toBe(10); // the primary value is still stored
+    expect((await listActiveObservations(h.db, 'mini', 'price_usd'))[0].value).toBe(10); // the primary value is still stored
 
     await fetchAsset(h.db, h.loaded, new Date(NOW.getTime() + 86_400_000), h.deps);
     const [open] = listAnomalies(h.db, { assetId: 'mini' });
@@ -126,8 +126,8 @@ describe('fetchAsset: levels', () => {
     expect(source(r, 'coingecko')).toMatchObject({ status: 'failed', metricsWritten: [] });
     expect(source(r, 'coingecko').error).toMatch(/price_usd: HTTP 429/);
     expect(source(r, 'chain_levels').status).toBe('ok');
-    expect(listActiveObservations(h.db, 'mini', 'price_usd')).toEqual([]);
-    expect(listActiveObservations(h.db, 'mini', 'total_supply')).toHaveLength(1);
+    expect(await listActiveObservations(h.db, 'mini', 'price_usd')).toEqual([]);
+    expect(await listActiveObservations(h.db, 'mini', 'total_supply')).toHaveLength(1);
     expect(source(r, STATS_ID).notes).toContain('price_usd: cross-check skipped, the primary source gave no reading this run');
     expect(r.outcome).toBe('partial');
     expect(r.anomalies).toEqual([]);
@@ -138,7 +138,7 @@ describe('fetchAsset: levels', () => {
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     expect(source(r, 'coingecko')).toMatchObject({ status: 'failed', metricsWritten: ['circulating_supply'] });
     expect(source(r, 'coingecko').error).toMatch(/price_usd: 0 is not positive/);
-    expect(listActiveObservations(h.db, 'mini', 'price_usd')).toEqual([]);
+    expect(await listActiveObservations(h.db, 'mini', 'price_usd')).toEqual([]);
   });
 
   it('treats an implausible cross-check reading as a source failure, not as a mismatch', async () => {
@@ -178,7 +178,7 @@ describe('fetchAsset: levels', () => {
       // The last good share read is 20 days old (past its 7-day staleness): the source has been failing since.
       if (loaded.config.metrics.dominance_share) {
         const old = new Date(NOW.getTime() - 20 * 86_400_000).toISOString();
-        insertObservation(h.db, { assetId: 'mini', metricKey: 'dominance_share', observedAt: old, value: 0.3, source: 'api', fetchedAt: old });
+        await insertObservation(h.db, { assetId: 'mini', metricKey: 'dominance_share', observedAt: old, value: 0.3, source: 'api', fetchedAt: old });
       }
       const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
       return { h, r };
@@ -194,7 +194,7 @@ describe('fetchAsset: levels', () => {
     expect(source(shared.r, SHARE_ID).error).toMatch(/HTTP 503/);
     expect(shared.r.outcome).toBe('partial');
     expect(shared.r.sources.filter((s) => s.sourceId !== SHARE_ID).map((s) => [s.sourceId, s.status])).toEqual(plain.r.sources.map((s) => [s.sourceId, s.status]));
-    expect(listActiveObservations(shared.h.db, 'mini', 'dominance_share').map((o) => o.value)).toEqual([0.3]); // nothing new written
+    expect((await listActiveObservations(shared.h.db, 'mini', 'dominance_share')).map((o) => o.value)).toEqual([0.3]); // nothing new written
   });
 
   it('narrows to the requested metrics', async () => {

@@ -114,20 +114,20 @@ describe('assets/hype.yaml', () => {
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
-    const value = (metric: string) => listActiveObservations(w.db, 'hype', metric).at(-1)!.value;
-    expect(value('price_usd')).toBe(92.36);
-    expect(value('circulating_supply')).toBeCloseTo(222445714.07414138, 3);
-    expect(value('total_supply')).toBeGreaterThan(950e6);
-    expect(value('total_supply')).toBeLessThan(953e6);
-    expect(value('staked_supply')).toBeGreaterThan(430e6);
-    expect(value('staked_supply')).toBeLessThan(450e6);
-    expect(value('emission_rate_annual')).toBeGreaterThan(9.8e6);
-    expect(value('emission_rate_annual')).toBeLessThan(10.1e6);
-    expect(listActiveObservations(w.db, 'hype', 'staker_emission_share')).toEqual([]);
+    const value = async (metric: string) => (await listActiveObservations(w.db, 'hype', metric)).at(-1)!.value;
+    expect(await value('price_usd')).toBe(92.36);
+    expect(await value('circulating_supply')).toBeCloseTo(222445714.07414138, 3);
+    expect(await value('total_supply')).toBeGreaterThan(950e6);
+    expect(await value('total_supply')).toBeLessThan(953e6);
+    expect(await value('staked_supply')).toBeGreaterThan(430e6);
+    expect(await value('staked_supply')).toBeLessThan(450e6);
+    expect(await value('emission_rate_annual')).toBeGreaterThan(9.8e6);
+    expect(await value('emission_rate_annual')).toBeLessThan(10.1e6);
+    expect(await listActiveObservations(w.db, 'hype', 'staker_emission_share')).toEqual([]);
     // The writer keeps only the backfill window (backfill_days 100 on a first run, no cursor): all 100 of the 100 days.
-    expect(listActiveObservations(w.db, 'hype', 'flow_usd.af_buyback')).toHaveLength(100);
+    expect(await listActiveObservations(w.db, 'hype', 'flow_usd.af_buyback')).toHaveLength(100);
     // No derived run rate any more (it fed only the valuation).
-    expect(listActiveObservations(w.db, 'hype', 'revenue_run_rate_usd')).toEqual([]);
+    expect(await listActiveObservations(w.db, 'hype', 'revenue_run_rate_usd')).toEqual([]);
     const checked = r.sources.flatMap((s) => s.crossChecks);
     expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]); // total: CoinGecko's, 2 percent
     // Five posts: the spot meta, one clearinghouse state per subtracted address, and the validators once (the stake and emission
@@ -135,11 +135,11 @@ describe('assets/hype.yaml', () => {
     const posts = w.http.calls.filter((c) => c.url === INFO).map((c) => (c.body as { type: string }).type);
     expect(posts.filter((t) => t !== 'userFillsByTime').sort()).toEqual(['spotClearinghouseState', 'spotClearinghouseState', 'spotClearinghouseState', 'spotMetaAndAssetCtxs', 'userNonFundingLedgerUpdates', 'validatorSummaries']);
     // The reserve yield's first period (2026-08-26 .. 09-24) is not over on 09-24: nothing stored, nothing due.
-    expect(listActiveObservations(w.db, 'hype', 'flow_usd.reserve_yield')).toEqual([]);
+    expect(await listActiveObservations(w.db, 'hype', 'flow_usd.reserve_yield')).toEqual([]);
     expect(posts.filter((t) => t === 'userFillsByTime')).toHaveLength(14);
     // The direct series: 1,500 USD of buys a day (30 HYPE at 50) from 2026-09-14, the first day the fills reach, to the last
     // complete day; the sell and the other pair are left out, and the days before the API's memory are not written as zero.
-    const direct = listActiveObservations(w.db, 'hype', 'flow_usd.af_buys_direct');
+    const direct = await listActiveObservations(w.db, 'hype', 'flow_usd.af_buys_direct');
     expect(direct.map((o) => o.value)).toEqual(Array(10).fill(1500));
     expect(direct[0].observedAt).toBe('2026-09-15T00:00:00.000Z');
     expect(direct[0].source).toBe('api');
@@ -147,7 +147,7 @@ describe('assets/hype.yaml', () => {
 });
 
 describe('assets/hype.yaml: the USDC reserve yield (AQAv2), read from the ledger (Mike, 2026-10-12)', () => {
-  const ry = (db: ReturnType<typeof world>['db']) => listActiveObservations(db, 'hype', 'flow_usd.reserve_yield');
+  const ry = async (db: ReturnType<typeof world>['db']) => await listActiveObservations(db, 'hype', 'flow_usd.reserve_yield');
   const fetchAt = async (now: Date) => {
     const w = world(now);
     const r = await fetchAsset(w.db, { config, hash: 'test' }, now, w.deps, { metrics: ['flow_usd.reserve_yield'] });
@@ -159,11 +159,11 @@ describe('assets/hype.yaml: the USDC reserve yield (AQAv2), read from the ledger
     expect(r.sources.map((s) => [s.sourceId, s.status])).toEqual([['adapter:hype.reserve_yield_payments', 'ok']]);
     expect(r.anomalies).toEqual([]); // paid on 10-04, a day after the 10-03 due day; funded by the configured treasury
     // The 2-USDC sweep on the due day and the 14.58M payment the next day are one period's payment.
-    expect(ry(w.db).map((o) => [o.observedAt, o.periodDays, o.value, o.source])).toEqual([['2026-09-25T00:00:00.000Z', 30, 14580776.6853202805, 'api']]);
-    expect(ry(w.db)[0].sourceDetail).toMatch(/covers 2026-08-26 to 2026-09-24, paid 2026-10-04T00:00:00.002Z/);
+    expect((await ry(w.db)).map((o) => [o.observedAt, o.periodDays, o.value, o.source])).toEqual([['2026-09-25T00:00:00.000Z', 30, 14580776.6853202805, 'api']]);
+    expect((await ry(w.db))[0].sourceDetail).toMatch(/covers 2026-08-26 to 2026-09-24, paid 2026-10-04T00:00:00.002Z/);
     const again = await fetchAsset(w.db, { config, hash: 'test' }, new Date('2026-10-12T12:00:00.000Z'), w.deps, { metrics: ['flow_usd.reserve_yield'] });
     expect(again.written).toEqual([]);
-    expect(ry(w.db)).toHaveLength(1);
+    expect(await ry(w.db)).toHaveLength(1);
   });
 
   it('raises a late alert when a period is unpaid more than 10 days after it is due, and a payer alert for a new treasury', async () => {

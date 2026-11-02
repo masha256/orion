@@ -106,7 +106,7 @@ function unlistedAnomalyMetrics(loaded: LoadedAsset, group: FlowGroup): string[]
  */
 async function storedDailyFlow(db: Db, assetId: string, metricKey: string): Promise<Map<string, number>> {
   const days = new Map<string, number>();
-  for (const o of listActiveObservations(db, assetId, metricKey)) {
+  for (const o of await listActiveObservations(db, assetId, metricKey)) {
     if (o.periodDays === 1) days.set(utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY), o.value);
   }
   return days;
@@ -155,7 +155,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   const startedAt = now.toISOString();
   const dryRun = opts.dryRun ?? false;
   // Before anything is written: a watch compares this fetch's rows with what was stored.
-  const watchBefore = watchSnapshot(asset, (metricKey) => listActiveObservations(db, asset.id, metricKey));
+  const watchBefore = await watchSnapshot(asset, (metricKey) => listActiveObservations(db, asset.id, metricKey));
 
   let rpc: RpcTransport | null = null;
   let block: BlockRef | null = null;
@@ -180,7 +180,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   const historyDays = opts.backfillDays ?? (firstAdapterFlow ? (asset.ingest?.backfill_days ?? DEFAULT_API_FLOW_BACKFILL_DAYS) : undefined);
   const ctx: SourceContext = {
     asset, nowIso: startedAt, http: withRunCache(deps.http), rpc, block, env: deps.env, contract: contractResolver(asset),
-    observations: (metricKey) => listActiveObservations(db, asset.id, metricKey),
+    observations: async (metricKey) => await listActiveObservations(db, asset.id, metricKey),
     ...(historyDays !== undefined ? { backfillDays: historyDays } : {}),
   };
 
@@ -293,7 +293,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
           const observedAt = new Date(step.observedAt).toISOString();
           const observationId = dryRun
             ? null
-            : insertObservation(db, { assetId: asset.id, metricKey: r.metricKey, observedAt, value: step.value, source, sourceDetail: detail, fetchedAt: startedAt }).id;
+            : (await insertObservation(db, { assetId: asset.id, metricKey: r.metricKey, observedAt, value: step.value, source, sourceDetail: detail, fetchedAt: startedAt })).id;
           written.push({ metricKey: r.metricKey, value: step.value, observedAt, periodDays: null, source, observationId });
         }
         outcome.metricsWritten.push(r.metricKey);
@@ -312,10 +312,10 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       }
       const observationId = dryRun
         ? null
-        : insertObservation(db, {
+        : (await insertObservation(db, {
             assetId: asset.id, metricKey: r.metricKey, observedAt: v.observedAt, value: v.value, source: v.source,
             sourceDetail: v.detail, fetchedAt: startedAt,
-          }).id;
+          })).id;
       outcome.metricsWritten.push(r.metricKey);
       written.push({ metricKey: r.metricKey, value: v.value, observedAt: v.observedAt, periodDays: null, source: v.source, observationId });
       primaryValue.set(r.metricKey, v.value);
@@ -482,17 +482,17 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     // Keyed by observedAt: a re-scan (--backfill-days) can change a stored day's value, which changes
     // every index window that covers it. Skip only when the existing row already has this value; a
     // changed value must be rewritten (insertObservation supersedes the row at the same observedAt).
-    const have = new Map(listActiveObservations(db, asset.id, r.metricKey).map((o) => [o.observedAt, o.value]));
+    const have = new Map((await listActiveObservations(db, asset.id, r.metricKey)).map((o) => [o.observedAt, o.value]));
     let wrote = 0;
     for (const point of derivedFunction(name)(days, windowDays)) {
       const observedAt = new Date(new Date(`${point.day}T00:00:00.000Z`).getTime() + MS_PER_DAY).toISOString(); // the day's period end
       if (have.get(observedAt) === point.value) continue;
       const observationId = dryRun
         ? null
-        : insertObservation(db, {
+        : (await insertObservation(db, {
             assetId: asset.id, metricKey: r.metricKey, observedAt, value: point.value, source: provenance,
             sourceDetail: `derived ${name}(${flowMetric}, ${windowDays}d)`, fetchedAt: startedAt,
-          }).id;
+          })).id;
       written.push({ metricKey: r.metricKey, value: point.value, observedAt, periodDays: null, source: provenance, observationId });
       if (r.metricKey === STD_METRICS.usageIndex) derivedIndex.push({ observedAt, value: point.value });
       wrote++;
@@ -504,10 +504,10 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   // 7. The stale-revenue alert: advisory, and only for assets that define a usage index.
   const revenueDef = asset.metrics[STD_METRICS.revenue];
   if (asset.metrics[STD_METRICS.usageIndex] !== undefined && revenueDef !== undefined) {
-    const usable = listActiveObservations(db, asset.id, STD_METRICS.revenue).filter((o) => o.status === 'confirmed' || revenueDef.allow_provisional);
+    const usable = (await listActiveObservations(db, asset.id, STD_METRICS.revenue)).filter((o) => o.status === 'confirmed' || revenueDef.allow_provisional);
     const revenue = latestLevel(usable, startedAt);
     if (revenue) {
-      const stored = listActiveObservations(db, asset.id, STD_METRICS.usageIndex).map((o) => ({ observedAt: o.observedAt, value: o.value }));
+      const stored = (await listActiveObservations(db, asset.id, STD_METRICS.usageIndex)).map((o) => ({ observedAt: o.observedAt, value: o.value }));
       const index = dryRun ? [...stored, ...derivedIndex] : stored; // a real run has already stored them
       const finding = checkRevenueStale(revenue.observedAt, index, REVENUE_STALE_MOVE_PCT);
       if (finding) {

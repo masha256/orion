@@ -83,7 +83,7 @@ describe('a schedule_steps reading in a fetch', () => {
     const h = harness({ loaded: parseAssetYaml(yaml), calls });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['emission_rate_annual'] });
     expect(r.sources).toEqual([expect.objectContaining({ sourceId: 'adapter:crv.emission_rate_annual', status: 'ok', metricsWritten: ['emission_rate_annual'] })]);
-    const rows = listActiveObservations(h.db, 'mini', 'emission_rate_annual');
+    const rows = await listActiveObservations(h.db, 'mini', 'emission_rate_annual');
     expect(rows.map((o) => o.value)).toEqual([expect.closeTo(97_161_875.09, 1), expect.closeTo(81_703_072.46, 1)]);
     expect(rows[1].observedAt).toBe(new Date(Number(nowSec + 335n * 86_400n) * 1000).toISOString());
     const asOf = new Date(NOW.getTime() + 60_000).toISOString();
@@ -94,7 +94,7 @@ describe('a schedule_steps reading in a fetch', () => {
     const h = harness({ loaded: parseAssetYaml(yaml), calls });
     await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['emission_rate_annual'] });
     await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['emission_rate_annual'] });
-    const future = listActiveObservations(h.db, 'mini', 'emission_rate_annual').filter((o) => o.observedAt > NOW.toISOString());
+    const future = (await listActiveObservations(h.db, 'mini', 'emission_rate_annual')).filter((o) => o.observedAt > NOW.toISOString());
     expect(future).toHaveLength(1);
   });
 
@@ -102,7 +102,7 @@ describe('a schedule_steps reading in a fetch', () => {
     const h = harness({ loaded: parseAssetYaml(yaml), calls });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['emission_rate_annual'], dryRun: true });
     expect(r.written.map((w) => [w.metricKey, w.observationId])).toEqual([['emission_rate_annual', null], ['emission_rate_annual', null]]);
-    expect(listActiveObservations(h.db, 'mini', 'emission_rate_annual')).toEqual([]);
+    expect(await listActiveObservations(h.db, 'mini', 'emission_rate_annual')).toEqual([]);
   });
 
   it('refuses steps on a metric that is not a schedule', async () => {
@@ -114,6 +114,6 @@ describe('a schedule_steps reading in a fetch', () => {
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['staked_supply'] });
     expect(r.sources[0]).toMatchObject({ status: 'failed' });
     expect(r.sources[0].error).toMatch(/schedule steps can only be stored on a schedule metric, not a level one/);
-    expect(listActiveObservations(h.db, 'mini', 'staked_supply')).toEqual([]);
+    expect(await listActiveObservations(h.db, 'mini', 'staked_supply')).toEqual([]);
   });
 });

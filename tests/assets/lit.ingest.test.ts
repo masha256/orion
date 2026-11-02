@@ -206,42 +206,42 @@ describe('assets/lit.yaml', () => {
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
 
-    const rows = (metric: string) => listActiveObservations(w.db, 'lit', metric);
-    const value = (metric: string) => rows(metric).at(-1)!.value;
-    expect(value('price_usd')).toBe(PRICE);
-    expect(value('total_supply')).toBe(981_909_280);
-    expect(value('reserve_lit')).toBe(231_809_000);
+    const rows = async (metric: string) => await listActiveObservations(w.db, 'lit', metric);
+    const value = async (metric: string) => (await rows(metric)).at(-1)!.value;
+    expect(await value('price_usd')).toBe(PRICE);
+    expect(await value('total_supply')).toBe(981_909_280);
+    expect(await value('reserve_lit')).toBe(231_809_000);
     // Lighter's tranche schedule (proposal #3): the canned allocations release (1199 - 80) days x 3,194,000/7 after the
     // schedule start (2026-12-29), split into 36 monthly tranches from 2027-01-29; 9 of them (Jan 29 .. Sep 29) fall in
     // the next 365 days from 2026-10-16.
-    expect(value('unlocks_next_year') / 1e6).toBeCloseTo((((1199 - 80) * 3_194_000) / 7 / 36) * 9 / 1e6, 1);
+    expect(await value('unlocks_next_year') / 1e6).toBeCloseTo((((1199 - 80) * 3_194_000) / 7 / 36) * 9 / 1e6, 1);
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual(
       expect.arrayContaining([['total_supply', true], ['price_usd', true]]),
     );
 
     // The routine (first) fetch writes the backfill window the API returned: the 100 days of trades less the oldest, partial one.
-    const buys = rows('flow_tokens.buyback');
+    const buys = await rows('flow_tokens.buyback');
     expect(buys.length).toBeGreaterThanOrEqual(91);
     expect(buys.at(-1)!.value).toBeCloseTo(25_000, 0);
-    expect(rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
-    expect(rows('flow_tokens.burn').filter((o) => o.value > 0).map((o) => o.value)).toEqual([15_640_000, 2_450_000]);
+    expect(await rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
+    expect((await rows('flow_tokens.burn')).filter((o) => o.value > 0).map((o) => o.value)).toEqual([15_640_000, 2_450_000]);
     // Routing to Coinbase Prime: only the buyback wallet's sends count; the unrelated sender raises nothing (monitor-only).
-    expect(rows('flow_tokens.routed_to_prime').filter((o) => o.value > 0).map((o) => o.value)).toEqual([1_400_000, 1_500_000]);
-    expect(value('routed_to_prime_rate')).toBeCloseTo((2_900_000 * 365) / 91, 0);
+    expect((await rows('flow_tokens.routed_to_prime')).filter((o) => o.value > 0).map((o) => o.value)).toEqual([1_400_000, 1_500_000]);
+    expect(await value('routed_to_prime_rate')).toBeCloseTo((2_900_000 * 365) / 91, 0);
     // Display only.
     expect(config.metrics['flow_tokens.routed_to_prime'].monitor_only).toBe(true);
 
     // Lighter's own fees, per completed day (today's partial day dropped), over the first fetch's 100-day window.
-    expect(rows('flow_usd.fees_core')).toHaveLength(100);
-    expect(rows('flow_usd.fees_core').every((o) => o.value === 100_000)).toBe(true);
+    expect(await rows('flow_usd.fees_core')).toHaveLength(100);
+    expect((await rows('flow_usd.fees_core')).every((o) => o.value === 100_000)).toBe(true);
     // The Robinhood instance began 2026-06-26: 112 days to 2026-10-15, of which the window holds the last 100.
-    expect(rows('flow_usd.fees_rh')).toHaveLength(100);
-    expect(rows('flow_usd.fees_rh').every((o) => o.value === 40_000)).toBe(true);
-    expect(rows('flow_usd.rh_buyback').filter((o) => o.value > 1).map((o) => o.value)).toEqual([2_500]);
-    expect(value('rh_fee_account_usd')).toBe(3_490_000.12);
-    expect(value('rh_revenue_share_app')).toBe(0.5);
-    expect(value('staked_tokens_reported')).toBe(STAKED);
-    expect(value('staking_apr')).toBeCloseTo(0.06, 6);
+    expect(await rows('flow_usd.fees_rh')).toHaveLength(100);
+    expect((await rows('flow_usd.fees_rh')).every((o) => o.value === 40_000)).toBe(true);
+    expect((await rows('flow_usd.rh_buyback')).filter((o) => o.value > 1).map((o) => o.value)).toEqual([2_500]);
+    expect(await value('rh_fee_account_usd')).toBe(3_490_000.12);
+    expect(await value('rh_revenue_share_app')).toBe(0.5);
+    expect(await value('staked_tokens_reported')).toBe(STAKED);
+    expect(await value('staking_apr')).toBeCloseTo(0.06, 6);
     // The one watch that fires: the $2,500 RH buyback day. The fee account has no previous reading, the split is 0.5 and
     // the APR is inside its band. None is an anomaly (asserted empty above).
     expect(r.watch).toEqual([{ metric: 'flow_usd.rh_buyback', rule: 'above', value: 2_500, previous: null, day: RH_BUY_DAY }]);

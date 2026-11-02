@@ -36,7 +36,7 @@ describe('fetchAsset: monitor-only (report) flows', () => {
     const h = harness({ loaded: loaded(), logs });
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     expect(source(r, REV_ID)).toMatchObject({ status: 'ok', metricsWritten: ['flow_usd.revenue'] });
-    expect(listActiveObservations(h.db, 'mini', 'flow_usd.revenue').map((o) => o.value)).toEqual([0, 30, 0]);
+    expect((await listActiveObservations(h.db, 'mini', 'flow_usd.revenue')).map((o) => o.value)).toEqual([0, 30, 0]);
   });
 
   it('raises no unlisted_sender anomaly for a sender only a report flow sees', async () => {

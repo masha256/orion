@@ -56,10 +56,10 @@ function world(supplyNow: number) {
 }
 
 /** Daily on-chain supply readings at 06:00 for the `n` days before NOW, as solana.token_supply writes them. */
-function seedReadings(db: ReturnType<typeof openDb>, n: number, supplyNow: number) {
+async function seedReadings(db: ReturnType<typeof openDb>, n: number, supplyNow: number) {
   for (let d = n; d >= 1; d--) {
     const at = new Date(NOW.getTime() - d * DAY).toISOString();
-    insertObservation(db, { assetId: 'pump', metricKey: 'total_supply', observedAt: at, value: supplyNow + d * BURN_PER_DAY, source: 'onchain', sourceDetail: `solana getTokenSupply ${MINT} slot ${d}`, fetchedAt: at });
+    await insertObservation(db, { assetId: 'pump', metricKey: 'total_supply', observedAt: at, value: supplyNow + d * BURN_PER_DAY, source: 'onchain', sourceDetail: `solana getTokenSupply ${MINT} slot ${d}`, fetchedAt: at });
   }
 }
 
@@ -94,14 +94,14 @@ describe('assets/pump.yaml', () => {
     const supplyNow = 827.6e9;
     const w = world(supplyNow);
     await fetchAsset(w.db, { config, hash: 'backfill' }, NOW, w.deps, { backfillDays: 362 });
-    const rows = (m: string) => listActiveObservations(w.db, 'pump', m);
-    expect(rows('flow_usd.buyback').filter((o) => o.periodDays === 1)).toHaveLength(362);
-    expect(rows('flow_usd.buyback').every((o) => o.value === HISTORY_USD)).toBe(true);
-    expect(rows('flow_tokens.buyback').at(-1)!.value).toBeCloseTo(HISTORY_USD / PRICE, 0);
-    expect(rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
-    expect(rows('total_supply').at(-1)!.value).toBeCloseTo(supplyNow, 3);
+    const rows = async (m: string) => await listActiveObservations(w.db, 'pump', m);
+    expect((await rows('flow_usd.buyback')).filter((o) => o.periodDays === 1)).toHaveLength(362);
+    expect((await rows('flow_usd.buyback')).every((o) => o.value === HISTORY_USD)).toBe(true);
+    expect((await rows('flow_tokens.buyback')).at(-1)!.value).toBeCloseTo(HISTORY_USD / PRICE, 0);
+    expect(await rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
+    expect((await rows('total_supply')).at(-1)!.value).toBeCloseTo(supplyNow, 3);
     // The keyed Solana URL never lands in a stored detail.
-    expect(rows('flow_usd.buyback').some((o) => (o.sourceDetail ?? '').includes('SECRET'))).toBe(false);
+    expect((await rows('flow_usd.buyback')).some((o) => (o.sourceDetail ?? '').includes('SECRET'))).toBe(false);
   });
 
   it('fetches on-chain days with no anomaly, and reports the burn and the unlocks', async () => {
@@ -110,17 +110,17 @@ describe('assets/pump.yaml', () => {
     // The onboarding backfill eleven days ago (only the flows: its supply reading would be out of line with the seeded ones),
     // then a daily supply reading each morning since.
     await fetchAsset(w.db, { config, hash: 'backfill' }, new Date(NOW.getTime() - 11 * DAY), w.deps, { backfillDays: 362, metrics: ['flow_usd.buyback', 'flow_tokens.buyback'] });
-    seedReadings(w.db, 10, supplyNow);
+    await seedReadings(w.db, 10, supplyNow);
     const r = await fetchAsset(w.db, loadAsset(ROOT, 'pump'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error])).toEqual([]);
     expect(r.anomalies).toEqual([]);
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual(expect.arrayContaining([['total_supply', true], ['price_usd', true]]));
-    const rows = (m: string) => listActiveObservations(w.db, 'pump', m);
+    const rows = async (m: string) => await listActiveObservations(w.db, 'pump', m);
     // The last 7 completed days are on-chain: 1B PUMP a day at 0.005 = 5M USD, superseding DefiLlama's 4M.
-    const last7 = rows('flow_usd.buyback').filter((o) => o.periodDays === 1).slice(-7);
+    const last7 = (await rows('flow_usd.buyback')).filter((o) => o.periodDays === 1).slice(-7);
     expect(last7.map((o) => Math.round(o.value))).toEqual(Array(7).fill(5_000_000));
     expect(last7.every((o) => o.source === 'api')).toBe(true);
-    expect(rows('burn_wallet_a_pump').at(-1)!.value).toBe(0);
+    expect((await rows('burn_wallet_a_pump')).at(-1)!.value).toBe(0);
 
     const rep = await loadHolderYieldReport(w.db, config);
     expect(rep.flows).toEqual([expect.objectContaining({ id: 'buyback', bucket: 'burn', haircut: 0 })]);

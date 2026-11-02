@@ -59,7 +59,7 @@ describe('fetchAsset: a revenue run rate derived from an API-series flow', () =>
   it('writes the run rate at each day with a full window, with the api provenance of its input', async () => {
     const h = harness({ loaded: parseAssetYaml(yaml), routes: { [LLAMA_HYPE]: chart({ '2026-09-14': 100, '2026-09-15': 110, '2026-09-16': 120, '2026-09-17': 130, '2026-09-18': 140 }) } });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
-    const rows = listActiveObservations(h.db, 'hype', 'revenue_run_rate_usd');
+    const rows = await listActiveObservations(h.db, 'hype', 'revenue_run_rate_usd');
     expect(rows.map((o) => [o.observedAt.slice(0, 10), o.value])).toEqual([['2026-09-17', (330 * 365) / 3], ['2026-09-18', (360 * 365) / 3], ['2026-09-19', (390 * 365) / 3]]);
     expect(rows[0]).toMatchObject({ source: 'api', periodDays: null, sourceDetail: 'derived flow_annualized(flow_usd.buyback, 3d)' });
     expect(r.sources.find((s) => s.sourceId === 'derived:flow_annualized')).toMatchObject({ status: 'ok', metricsWritten: ['revenue_run_rate_usd'] });
@@ -70,15 +70,15 @@ describe('fetchAsset: a revenue run rate derived from an API-series flow', () =>
   it('reads a manual daily row that replaced a fetched day outside the revision window, so the window stays complete and the run rate moves', async () => {
     const h = harness({ loaded: parseAssetYaml(yaml), routes: { [LLAMA_HYPE]: chart({ '2026-09-11': 100, '2026-09-12': 110, '2026-09-13': 9000, '2026-09-14': 130, '2026-09-15': 140, '2026-09-16': 150, '2026-09-17': 160, '2026-09-18': 170 }) } });
     await fetchAsset(h.db, h.loaded, NOW, h.deps);
-    const at = (rows: ReturnType<typeof listActiveObservations>, day: string) => rows.find((o) => o.observedAt.startsWith(day))!.value;
-    expect(at(listActiveObservations(h.db, 'hype', 'revenue_run_rate_usd'), '2026-09-14')).toBe((9210 * 365) / 3);
+    const at = (rows: Awaited<ReturnType<typeof listActiveObservations>>, day: string) => rows.find((o) => o.observedAt.startsWith(day))!.value;
+    expect(at(await listActiveObservations(h.db, 'hype', 'revenue_run_rate_usd'), '2026-09-14')).toBe((9210 * 365) / 3);
     // The user replaces the 2026-09-13 artifact: a manual row at the day's end supersedes the API row.
-    insertObservation(h.db, { assetId: 'hype', metricKey: 'flow_usd.buyback', observedAt: '2026-09-14T00:00:00Z', periodDays: 1, value: 120, source: 'manual', fetchedAt: NOW.toISOString() });
+    await insertObservation(h.db, { assetId: 'hype', metricKey: 'flow_usd.buyback', observedAt: '2026-09-14T00:00:00Z', periodDays: 1, value: 120, source: 'manual', fetchedAt: NOW.toISOString() });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     // The day is behind the revision window and covered, so the flow source neither refills it nor refuses it as a conflict.
     expect(r.sources.filter((s) => s.sourceId.startsWith('defillama:'))).toMatchObject([{ status: 'ok', metricsWritten: [], conflicts: [] }]);
     expect(r.sources.find((s) => s.sourceId === 'derived:flow_annualized')).toMatchObject({ status: 'ok', metricsWritten: ['revenue_run_rate_usd'] });
-    const rows = listActiveObservations(h.db, 'hype', 'revenue_run_rate_usd');
+    const rows = await listActiveObservations(h.db, 'hype', 'revenue_run_rate_usd');
     expect(at(rows, '2026-09-14')).toBe((330 * 365) / 3); // the windows that cover the replaced day are rewritten
     expect(at(rows, '2026-09-17')).toBe((420 * 365) / 3); // the others are untouched
     expect(rows).toHaveLength(6);
@@ -130,10 +130,11 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
   ).replace('revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 60, critical: true }', 'revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 60, critical: true, allow_provisional: true }');
 
   /** Stored daily rows for the programmatic flow: `values[i]` covers the day `first + i`. */
-  const seedDaily = (db: Parameters<typeof insertObservation>[0], first: string, values: number[]) =>
-    values.forEach((value, i) =>
-      insertObservation(db, { assetId: 'mini', metricKey: 'flow_usd.fees_programmatic', observedAt: addDays(first, i + 1), periodDays: 1, value, source: 'onchain', fetchedAt: NOW.toISOString() }),
-    );
+  const seedDaily = async (db: Parameters<typeof insertObservation>[0], first: string, values: number[]) => {
+    for (const [i, value] of values.entries()) {
+      await insertObservation(db, { assetId: 'mini', metricKey: 'flow_usd.fees_programmatic', observedAt: addDays(first, i + 1), periodDays: 1, value, source: 'onchain', fetchedAt: NOW.toISOString() });
+    }
+  };
 
   it('validates derived names and params as configuration', async () => {
     const codeOf = async (fn: () => unknown) => Promise.resolve().then(fn).then(() => undefined, (e: unknown) => (e as OrionError).code);
@@ -144,9 +145,9 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
 
   it('writes the index for every day with a full window and no index row yet, stamped at the period end', async () => {
     const h = harness({ loaded: parseAssetYaml(WITH_INDEX) });
-    seedDaily(h.db, '2026-09-10', [30, 60, 90, 120, 150, 180]); // days 10..15; the scan then adds zeros for 16, 17, 18
+    await seedDaily(h.db, '2026-09-10', [30, 60, 90, 120, 150, 180]); // days 10..15; the scan then adds zeros for 16, 17, 18
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
-    const index = listActiveObservations(h.db, 'mini', 'usage_index');
+    const index = await listActiveObservations(h.db, 'mini', 'usage_index');
     expect(index.map((o) => [o.observedAt.slice(0, 10), o.value])).toEqual([
       ['2026-09-13', 60], ['2026-09-14', 90], ['2026-09-15', 120], ['2026-09-16', 150], ['2026-09-17', 110], ['2026-09-18', 60], ['2026-09-19', 0],
     ]);
@@ -156,24 +157,24 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
     const again = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     expect(again.written.filter((w) => w.metricKey === 'usage_index')).toEqual([]);
     expect(again.sources.find((s) => s.sourceId === 'derived:burn_momentum')!.notes).toEqual(['usage_index: no new day with 3 complete days behind it']);
-    expect(listActiveObservations(h.db, 'mini', 'usage_index')).toHaveLength(7);
+    expect(await listActiveObservations(h.db, 'mini', 'usage_index')).toHaveLength(7);
   });
 
   it('rewrites an index day whose window changed after a rescan, leaving days it does not cover untouched', async () => {
     const h = harness({ loaded: parseAssetYaml(WITH_INDEX) });
-    seedDaily(h.db, '2026-09-10', [30, 60, 90, 120, 150, 180]); // days 10..15; the scan then adds zeros for 16, 17, 18
+    await seedDaily(h.db, '2026-09-10', [30, 60, 90, 120, 150, 180]); // days 10..15; the scan then adds zeros for 16, 17, 18
     await fetchAsset(h.db, h.loaded, NOW, h.deps);
-    const before = listActiveObservations(h.db, 'mini', 'usage_index');
+    const before = await listActiveObservations(h.db, 'mini', 'usage_index');
     expect(before.map((o) => o.value)).toEqual([60, 90, 120, 150, 110, 60, 0]);
     const idBefore = new Map(before.map((o) => [o.observedAt, o.id]));
 
     // A --backfill-days rescan supersedes the stored row covering 2026-09-12 (period end 2026-09-13) with a different value.
-    insertObservation(h.db, {
+    await insertObservation(h.db, {
       assetId: 'mini', metricKey: 'flow_usd.fees_programmatic', observedAt: '2026-09-13', periodDays: 1, value: 999, source: 'onchain', fetchedAt: NOW.toISOString(),
     });
 
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
-    const after = listActiveObservations(h.db, 'mini', 'usage_index');
+    const after = await listActiveObservations(h.db, 'mini', 'usage_index');
     const idAfter = new Map(after.map((o) => [o.observedAt, o.id]));
 
     // The three-day trailing windows ending 2026-09-12/13/14 (index days 2026-09-13/14/15) include the
@@ -192,8 +193,8 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
 
   it('raises the advisory alert when usage has moved since the revenue disclosure, once per disclosure', async () => {
     const h = harness({ loaded: parseAssetYaml(WITH_INDEX) });
-    seedDaily(h.db, '2026-09-10', [100, 100, 100, 100, 100, 100]);
-    insertObservation(h.db, {
+    await seedDaily(h.db, '2026-09-10', [100, 100, 100, 100, 100, 100]);
+    await insertObservation(h.db, {
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-14', value: 1000, source: 'manual', status: 'provisional',
       citationUrl: 'https://example.com', fetchedAt: NOW.toISOString(),
     });
@@ -206,10 +207,10 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
 
   it('evaluates a dry run over the rows it would write, and writes none', async () => {
     const h = harness({ loaded: parseAssetYaml(WITH_INDEX) });
-    seedDaily(h.db, '2026-09-10', [100, 100, 100, 100, 100, 100]);
-    insertObservation(h.db, { assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-14', value: 1000, source: 'manual', fetchedAt: NOW.toISOString() });
+    await seedDaily(h.db, '2026-09-10', [100, 100, 100, 100, 100, 100]);
+    await insertObservation(h.db, { assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-14', value: 1000, source: 'manual', fetchedAt: NOW.toISOString() });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps, { dryRun: true });
-    expect(listActiveObservations(h.db, 'mini', 'usage_index')).toEqual([]);
+    expect(await listActiveObservations(h.db, 'mini', 'usage_index')).toEqual([]);
     expect(r.written.filter((w) => w.metricKey === 'usage_index')).toHaveLength(7);
     expect(r.anomalies.find((a) => a.kind === 'revenue_disclosure_stale')).toMatchObject({ id: null });
   });
@@ -219,18 +220,19 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
       'revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 60, critical: true }',
       'revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 60, critical: true, source: { type: derived, name: flow_annualized, params: { metrics: [flow_usd.fees, flow_usd.fees_programmatic], days: 3 } } }',
     );
-    const seed = (db: Parameters<typeof insertObservation>[0], metricKey: string, first: string, values: number[]) =>
-      values.forEach((value, i) =>
-        insertObservation(db, { assetId: 'mini', metricKey, observedAt: addDays(first, i + 1), periodDays: 1, value, source: 'onchain', fetchedAt: NOW.toISOString() }),
-      );
+    const seed = async (db: Parameters<typeof insertObservation>[0], metricKey: string, first: string, values: number[]) => {
+      for (const [i, value] of values.entries()) {
+        await insertObservation(db, { assetId: 'mini', metricKey, observedAt: addDays(first, i + 1), periodDays: 1, value, source: 'onchain', fetchedAt: NOW.toISOString() });
+      }
+    };
 
     it('sums the flows day by day, over days every flow has, and names them all in the detail', async () => {
       expect(SUMMED).not.toBe(INGEST_ASSET_YAML);
       const h = harness({ loaded: parseAssetYaml(SUMMED) });
-      seed(h.db, 'flow_usd.fees', '2026-09-10', [10, 20, 30, 40]); // 10..13
-      seed(h.db, 'flow_usd.fees_programmatic', '2026-09-11', [1, 2, 3, 4]); // 11..14: day 10 has only one flow
+      await seed(h.db, 'flow_usd.fees', '2026-09-10', [10, 20, 30, 40]); // 10..13
+      await seed(h.db, 'flow_usd.fees_programmatic', '2026-09-11', [1, 2, 3, 4]); // 11..14: day 10 has only one flow
       await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['revenue_run_rate_usd'] });
-      const rows = listActiveObservations(h.db, 'mini', 'revenue_run_rate_usd');
+      const rows = await listActiveObservations(h.db, 'mini', 'revenue_run_rate_usd');
       // Days with both flows: 11 (21), 12 (32), 13 (43). One full 3-day window, ending on the 13th: 96.
       expect(rows.map((o) => [o.observedAt.slice(0, 10), o.value])).toEqual([['2026-09-14', (96 * 365) / 3]]);
       expect(rows[0]).toMatchObject({ source: 'onchain', sourceDetail: 'derived flow_annualized(flow_usd.fees+flow_usd.fees_programmatic, 3d)' });
@@ -240,10 +242,10 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
       const NET = SUMMED.replace('metrics: [flow_usd.fees, flow_usd.fees_programmatic]', 'metric: flow_usd.fees, minus: [flow_usd.fees_programmatic]');
       expect(NET).not.toBe(SUMMED);
       const h = harness({ loaded: parseAssetYaml(NET) });
-      seed(h.db, 'flow_usd.fees', '2026-09-10', [10, 20, 30, 40]); // 10..13
-      seed(h.db, 'flow_usd.fees_programmatic', '2026-09-11', [1, 2, 300, 4]); // 11..14: day 10 has no minus row
+      await seed(h.db, 'flow_usd.fees', '2026-09-10', [10, 20, 30, 40]); // 10..13
+      await seed(h.db, 'flow_usd.fees_programmatic', '2026-09-11', [1, 2, 300, 4]); // 11..14: day 10 has no minus row
       await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['revenue_run_rate_usd'] });
-      const rows = listActiveObservations(h.db, 'mini', 'revenue_run_rate_usd');
+      const rows = await listActiveObservations(h.db, 'mini', 'revenue_run_rate_usd');
       // Days with both: 11 (20 - 1), 12 (30 - 2), 13 (40 - 300). One full 3-day window, ending on the 13th: -213.
       expect(rows.map((o) => [o.observedAt.slice(0, 10), o.value])).toEqual([['2026-09-14', (-213 * 365) / 3]]);
       expect(rows[0]).toMatchObject({ source: 'onchain', sourceDetail: 'derived flow_annualized(flow_usd.fees-flow_usd.fees_programmatic, 3d)' });

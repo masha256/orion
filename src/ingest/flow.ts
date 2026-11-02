@@ -82,7 +82,7 @@ export function overlapMs(o: { observedAt: string; periodDays: number | null }, 
 
 /** Active rows from a source other than the writer's own (`own`) whose period overlaps (startMs, endMs). Periods that only touch do not overlap. */
 export async function findFlowConflicts(db: Db, assetId: string, metricKey: string, startMs: number, endMs: number, own: 'onchain' | 'api' = 'onchain'): Promise<FlowConflict[]> {
-  return listActiveObservations(db, assetId, metricKey)
+  return (await listActiveObservations(db, assetId, metricKey))
     .filter((o) => {
       if (o.source === own) return false;
       return overlapMs(o, startMs, endMs) > 0;
@@ -326,11 +326,11 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
             for (const c of conflicts) {
               if (c.metricKey !== m.metricKey || retired.has(c.observationId)) continue;
               if (overlapMs(c, dayEndMs - MS_PER_DAY, dayEndMs) <= 0) continue;
-              rejectObservation(t, c.observationId);
+              await rejectObservation(t, c.observationId);
               retired.add(c.observationId);
               outcome.retiredObservationIds.push(c.observationId);
             }
-            const o = insertObservation(t, {
+            const o = await insertObservation(t, {
               assetId: asset.id, metricKey: m.metricKey, observedAt, periodDays: 1, value: sums.get(m.metricKey)!, source: 'onchain',
               sourceDetail: detail, fetchedAt: nowIso,
             });

@@ -103,20 +103,20 @@ describe('assets/ycrv.yaml', () => {
     const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
     expect(r.anomalies).toEqual([]);
-    const rows = (metric: string) => listActiveObservations(w.db, 'ycrv', metric);
-    const value = (metric: string) => rows(metric).at(-1)!.value;
-    expect(value('price_usd')).toBe(0.18345);
-    expect(value('total_supply')).toBe(71_960_697);
-    expect(value('staked_supply')).toBe(63_328_341);
-    expect(value('staker_emission_share')).toBe(0);
-    expect(rows('emission_rate_annual').map((o) => o.value)).toEqual([0]);
+    const rows = async (metric: string) => await listActiveObservations(w.db, 'ycrv', metric);
+    const value = async (metric: string) => (await rows(metric)).at(-1)!.value;
+    expect(await value('price_usd')).toBe(0.18345);
+    expect(await value('total_supply')).toBe(71_960_697);
+    expect(await value('staked_supply')).toBe(63_328_341);
+    expect(await value('staker_emission_share')).toBe(0);
+    expect((await rows('emission_rate_annual')).map((o) => o.value)).toEqual([0]);
 
-    const fees = rows('flow_usd.fees');
+    const fees = await rows('flow_usd.fees');
     expect(fees).toHaveLength(100);
     expect(fees.filter((o) => o.value > 0)).toHaveLength(14); // the Saturdays 2026-07-04 to 2026-10-03
     // Each payout: 25,000 shares x 1.159 crvUSD per share x 0.9991 USD.
     expect(fees.find((o) => o.value > 0)!.value).toBeCloseTo(25_000 * 1.159 * 0.9991, 6);
-    expect(rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
+    expect(await rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
   });
 

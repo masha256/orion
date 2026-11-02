@@ -32,7 +32,7 @@ export async function describeSources(db: Db, asset: AssetConfig, now: Date): Pr
         break;
       }
     }
-    const newest = latestLevel(listActiveObservations(db, asset.id, metric), nowIso);
+    const newest = latestLevel(await listActiveObservations(db, asset.id, metric), nowIso);
     rows.push({
       metric,
       type: def.source.type,

@@ -63,8 +63,8 @@ export function registerData(program: Command, ctx: CliContext): void {
         throw new OrionError('unexpected_period_days', `metric "${metric}" is a ${def.type} metric: --period-days applies only to flow metrics`);
       }
       const nowIso = ctx.now().toISOString();
-      const o = await withDb(ctx, (db) =>
-        insertObservation(db, {
+      const o = await withDb(ctx, async (db) =>
+        await insertObservation(db, {
           assetId,
           metricKey: metric,
           observedAt: opts.at ?? nowIso,

@@ -73,39 +73,37 @@ function toIso(text: string): string {
 
 const ACTIVE = "superseded_by IS NULL AND status != 'rejected'";
 
-export function getObservationsByIds(db: Db, ids: number[]): Observation[] {
+export async function getObservationsByIds(db: Db, ids: number[]): Promise<Observation[]> {
   if (ids.length === 0) return [];
-  const marks = ids.map(() => '?').join(',');
-  const rows = db.prepare(`SELECT * FROM observations WHERE id IN (${marks}) ORDER BY id`).all(...ids) as Row[];
+  const marks = ids.map((_, i) => `$${i + 1}`).join(',');
+  const rows = await db.all<Row>(`SELECT * FROM observations WHERE id IN (${marks}) ORDER BY id`, ids);
   return rows.map(fromRow);
 }
 
-export function listActiveObservations(db: Db, assetId: string, metricKey?: string): Observation[] {
-  const rows = (
+export async function listActiveObservations(db: Db, assetId: string, metricKey?: string): Promise<Observation[]> {
+  const rows =
     metricKey === undefined
-      ? db.prepare(`SELECT * FROM observations WHERE asset_id = ? AND ${ACTIVE} ORDER BY observed_at, id`).all(assetId)
-      : db
-          .prepare(`SELECT * FROM observations WHERE asset_id = ? AND metric_key = ? AND ${ACTIVE} ORDER BY observed_at, id`)
-          .all(assetId, metricKey)
-  ) as Row[];
+      ? await db.all<Row>(`SELECT * FROM observations WHERE asset_id = $1 AND ${ACTIVE} ORDER BY observed_at, id`, [assetId])
+      : await db.all<Row>(`SELECT * FROM observations WHERE asset_id = $1 AND metric_key = $2 AND ${ACTIVE} ORDER BY observed_at, id`, [assetId, metricKey]);
   return rows.map(fromRow);
 }
 
 /** Newest first. Active rows only, unless `includeInactive` (which adds superseded and rejected rows). */
-export function listObservations(
+export async function listObservations(
   db: Db,
   assetId: string,
   metricKey: string,
   opts: { includeInactive?: boolean; limit?: number } = {},
-): Observation[] {
+): Promise<Observation[]> {
   const where = opts.includeInactive ? '' : ` AND ${ACTIVE}`;
-  const rows = db
-    .prepare(`SELECT * FROM observations WHERE asset_id = ? AND metric_key = ?${where} ORDER BY observed_at DESC, id DESC LIMIT ?`)
-    .all(assetId, metricKey, opts.limit ?? 10) as Row[];
+  const rows = await db.all<Row>(
+    `SELECT * FROM observations WHERE asset_id = $1 AND metric_key = $2${where} ORDER BY observed_at DESC, id DESC LIMIT $3`,
+    [assetId, metricKey, opts.limit ?? 10],
+  );
   return rows.map(fromRow);
 }
 
-export function insertObservation(db: Db, input: NewObservation): Observation {
+export async function insertObservation(db: Db, input: NewObservation): Promise<Observation> {
   if (!Number.isFinite(input.value)) throw new OrionError('invalid_value', 'observation value must be a finite number');
   if (input.periodDays !== undefined && input.periodDays !== null && !(Number.isFinite(input.periodDays) && input.periodDays > 0)) {
     throw new OrionError('invalid_period', `period days must be a finite number greater than 0, got ${input.periodDays}`);
@@ -117,33 +115,35 @@ export function insertObservation(db: Db, input: NewObservation): Observation {
   const observedAt = toIso(input.observedAt);
   const fetchedAt = toIso(input.fetchedAt);
 
-  const id = db.transaction(() => {
-    // A confirmed row supersedes every active prior at this key; a provisional row supersedes only
-    // other provisional rows, so provisional data can never knock out confirmed data.
-    const onlyProvisional = status === 'provisional' ? " AND status = 'provisional'" : '';
-    const prior = db
-      .prepare(`SELECT id FROM observations WHERE asset_id = ? AND metric_key = ? AND observed_at = ? AND ${ACTIVE}${onlyProvisional}`)
-      .all(input.assetId, input.metricKey, observedAt) as { id: number }[];
-    const info = db
-      .prepare(
+  return db.tx(
+    async (t) => {
+      // A confirmed row supersedes every active prior at this key; a provisional row supersedes only
+      // other provisional rows, so provisional data can never knock out confirmed data.
+      const onlyProvisional = status === 'provisional' ? " AND status = 'provisional'" : '';
+      const prior = await t.all<{ id: number }>(
+        `SELECT id FROM observations WHERE asset_id = $1 AND metric_key = $2 AND observed_at = $3 AND ${ACTIVE}${onlyProvisional} ORDER BY id`,
+        [input.assetId, input.metricKey, observedAt],
+      );
+      const inserted = await t.run<{ id: number }>(
         `INSERT INTO observations
            (asset_id, metric_key, observed_at, period_days, value, source, source_detail, status, citation_url, quoted_text, fetched_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        input.assetId, input.metricKey, observedAt, input.periodDays ?? null, input.value, input.source,
-        input.sourceDetail ?? null, status, input.citationUrl ?? null, input.quotedText ?? null, fetchedAt,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         RETURNING id`,
+        [
+          input.assetId, input.metricKey, observedAt, input.periodDays ?? null, input.value, input.source,
+          input.sourceDetail ?? null, status, input.citationUrl ?? null, input.quotedText ?? null, fetchedAt,
+        ],
       );
-    const newId = Number(info.lastInsertRowid);
-    for (const p of prior) db.prepare('UPDATE observations SET superseded_by = ? WHERE id = ?').run(newId, p.id);
-    return newId;
-  })();
-
-  return getObservationsByIds(db, [id])[0];
+      const newId = Number(inserted.rows[0].id);
+      for (const p of prior) await t.run('UPDATE observations SET superseded_by = $1 WHERE id = $2', [newId, p.id]);
+      return (await getObservationsByIds(t, [newId]))[0];
+    },
+    { lockAsset: input.assetId },
+  );
 }
 
-function activeObservation(db: Db, id: number): Observation {
-  const o = getObservationsByIds(db, [id])[0];
+async function activeObservation(db: Db, id: number): Promise<Observation> {
+  const o = (await getObservationsByIds(db, [id]))[0];
   if (!o) throw new OrionError('observation_not_found', `no observation with id ${id}`);
   if (o.supersededBy !== null || o.status === 'rejected') {
     throw new OrionError('not_active', `observation ${id} is not active; it was already superseded or rejected`);
@@ -151,33 +151,52 @@ function activeObservation(db: Db, id: number): Observation {
   return o;
 }
 
-function activeProvisional(db: Db, id: number): Observation {
-  const o = activeObservation(db, id);
+async function activeProvisional(db: Db, id: number): Promise<Observation> {
+  const o = await activeObservation(db, id);
   if (o.status !== 'provisional') {
     throw new OrionError('not_provisional', `observation ${id} is not an active provisional observation`);
   }
   return o;
 }
 
-export function confirmObservation(db: Db, id: number, nowIso: string): Observation {
-  const o = activeProvisional(db, id);
-  return insertObservation(db, {
-    assetId: o.assetId,
-    metricKey: o.metricKey,
-    observedAt: o.observedAt,
-    periodDays: o.periodDays,
-    value: o.value,
-    source: 'manual',
-    sourceDetail: o.sourceDetail,
-    status: 'confirmed',
-    citationUrl: o.citationUrl,
-    quotedText: o.quotedText,
-    fetchedAt: nowIso,
-  });
+/** The observation's asset, for the lock a read-then-write takes; throws when there is no such row. */
+async function assetOf(db: Db, id: number): Promise<string> {
+  const row = await db.one<{ asset_id: string }>('SELECT asset_id FROM observations WHERE id = $1', [id]);
+  if (!row) throw new OrionError('observation_not_found', `no observation with id ${id}`);
+  return row.asset_id;
+}
+
+export async function confirmObservation(db: Db, id: number, nowIso: string): Promise<Observation> {
+  const assetId = await assetOf(db, id);
+  return db.tx(
+    async (t) => {
+      const o = await activeProvisional(t, id);
+      return insertObservation(t, {
+        assetId: o.assetId,
+        metricKey: o.metricKey,
+        observedAt: o.observedAt,
+        periodDays: o.periodDays,
+        value: o.value,
+        source: 'manual',
+        sourceDetail: o.sourceDetail,
+        status: 'confirmed',
+        citationUrl: o.citationUrl,
+        quotedText: o.quotedText,
+        fetchedAt: nowIso,
+      });
+    },
+    { lockAsset: assetId },
+  );
 }
 
 /** Retires any active observation, confirmed or provisional. The row itself is never deleted. */
-export function rejectObservation(db: Db, id: number): void {
-  activeObservation(db, id);
-  db.prepare("UPDATE observations SET status = 'rejected' WHERE id = ?").run(id);
+export async function rejectObservation(db: Db, id: number): Promise<void> {
+  const assetId = await assetOf(db, id);
+  await db.tx(
+    async (t) => {
+      await activeObservation(t, id);
+      await t.run("UPDATE observations SET status = 'rejected' WHERE id = $1", [id]);
+    },
+    { lockAsset: assetId },
+  );
 }

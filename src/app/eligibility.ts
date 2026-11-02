@@ -57,13 +57,13 @@ export async function valueInForce(db: Db, asset: AssetConfig, metricKey: string
   const def = asset.metrics[metricKey];
   if (!def || def.type === 'flow' || def.type === 'event') return null;
   const rows = opts.confirmedOnly
-    ? listActiveObservations(db, asset.id, metricKey).filter((o) => o.status === 'confirmed')
+    ? (await listActiveObservations(db, asset.id, metricKey)).filter((o) => o.status === 'confirmed')
     : (await eligibleObservations(db, asset, asOf)).filter((o) => o.metricKey === metricKey);
   return latestLevel(rows, asOf)?.value ?? null;
 }
 
 export async function eligibleObservations(db: Db, asset: AssetConfig, asOf: string): Promise<Observation[]> {
-  const active = listActiveObservations(db, asset.id).filter((o) => {
+  const active = (await listActiveObservations(db, asset.id)).filter((o) => {
     const def = asset.metrics[o.metricKey];
     return def !== undefined && (o.status === 'confirmed' || def.allow_provisional);
   });

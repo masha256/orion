@@ -39,7 +39,7 @@ function argsFor(h: Harness, over: Partial<FlowScanArgs> = {}): Promise<FlowScan
   }));
 }
 
-const rows = (db: Db, metric: string) => listActiveObservations(db, 'mini', metric).map((o) => [o.observedAt.slice(0, 10), o.value]);
+const rows = async (db: Db, metric: string) => (await listActiveObservations(db, 'mini', metric)).map((o) => [o.observedAt.slice(0, 10), o.value]);
 
 describe('price series', () => {
   it('parses market_chart prices and refuses malformed or non-positive points', () => {
@@ -63,11 +63,11 @@ describe('scanFlowGroup', () => {
     const r = await scanFlowGroup(await argsFor(h));
     expect(r.outcome).toMatchObject({ status: 'ok', error: null, metricsWritten: ['flow_usd.fees', 'flow_tokens.fees', 'flow_usd.fees_programmatic'] });
     // 16th: 2 + 100 tokens at 10 USD. 17th: 3 tokens at 20 USD (the stranger's 5 are excluded). 18th: nothing, written as 0.
-    expect(rows(h.db, 'flow_usd.fees')).toEqual([['2026-09-17', 1020], ['2026-09-18', 60], ['2026-09-19', 0]]);
-    expect(rows(h.db, 'flow_tokens.fees')).toEqual([['2026-09-17', 102], ['2026-09-18', 3], ['2026-09-19', 0]]);
-    expect(rows(h.db, 'flow_usd.fees_programmatic')).toEqual([['2026-09-17', 20], ['2026-09-18', 60], ['2026-09-19', 0]]); // pool only
+    expect(await rows(h.db, 'flow_usd.fees')).toEqual([['2026-09-17', 1020], ['2026-09-18', 60], ['2026-09-19', 0]]);
+    expect(await rows(h.db, 'flow_tokens.fees')).toEqual([['2026-09-17', 102], ['2026-09-18', 3], ['2026-09-19', 0]]);
+    expect(await rows(h.db, 'flow_usd.fees_programmatic')).toEqual([['2026-09-17', 20], ['2026-09-18', 60], ['2026-09-19', 0]]); // pool only
 
-    const first = listActiveObservations(h.db, 'mini', 'flow_usd.fees')[0];
+    const first = (await listActiveObservations(h.db, 'mini', 'flow_usd.fees'))[0];
     expect(first).toMatchObject({ observedAt: '2026-09-17T00:00:00.000Z', periodDays: 1, source: 'onchain', status: 'confirmed' });
     const detail = JSON.parse(first.sourceDetail!) as { day: string; blocks: number[]; senders: Record<string, { count: number; tokens: number }> };
     expect(detail.day).toBe('2026-09-16');
@@ -122,21 +122,21 @@ describe('scanFlowGroup', () => {
     const broken = await scanFlowGroup(await argsFor(h, { rpc: flaky }));
     expect(broken.outcome.status).toBe('failed');
     expect(broken.outcome.error).toMatch(/eth_getLogs failed.*rate limited/);
-    expect(rows(h.db, 'flow_tokens.fees')).toEqual([['2026-09-17', 102]]);
+    expect(await rows(h.db, 'flow_tokens.fees')).toEqual([['2026-09-17', 102]]);
     expect(getCursor(h.db, 'mini', buildPlan(h.loaded.config).flowGroups[0].scanKey)!.lastDay).toBe('2026-09-16');
 
     const resumed = await scanFlowGroup(await argsFor(h));
     expect(resumed.written.map((w) => w.observedAt.slice(0, 10))).not.toContain('2026-09-17');
-    expect(rows(h.db, 'flow_tokens.fees')).toEqual([['2026-09-17', 102], ['2026-09-18', 3], ['2026-09-19', 0]]);
+    expect(await rows(h.db, 'flow_tokens.fees')).toEqual([['2026-09-17', 102], ['2026-09-18', 3], ['2026-09-19', 0]]);
   });
 
   it('is idempotent: a forced re-scan supersedes the same days', async () => {
     const h = world();
     await scanFlowGroup(await argsFor(h));
-    const before = listActiveObservations(h.db, 'mini', 'flow_usd.fees').map((o) => o.id);
+    const before = (await listActiveObservations(h.db, 'mini', 'flow_usd.fees')).map((o) => o.id);
     await scanFlowGroup(await argsFor(h, { rescan: true }));
-    expect(rows(h.db, 'flow_usd.fees')).toEqual([['2026-09-17', 1020], ['2026-09-18', 60], ['2026-09-19', 0]]);
-    expect(getObservationsByIds(h.db, before).every((o) => o.supersededBy !== null)).toBe(true);
+    expect(await rows(h.db, 'flow_usd.fees')).toEqual([['2026-09-17', 1020], ['2026-09-18', 60], ['2026-09-19', 0]]);
+    expect((await getObservationsByIds(h.db, before)).every((o) => o.supersededBy !== null)).toBe(true);
   });
 
   it('falls back to the newest daily price for transfers older than the hourly series', async () => {
@@ -147,7 +147,7 @@ describe('scanFlowGroup', () => {
       },
     });
     await scanFlowGroup(await argsFor(h));
-    expect(rows(h.db, 'flow_usd.fees')[0]).toEqual(['2026-09-17', 102 * 8]);
+    expect((await rows(h.db, 'flow_usd.fees'))[0]).toEqual(['2026-09-17', 102 * 8]);
     expect(h.http.calls.map((c) => c.url)).toEqual([`${CG_CHART}?vs_currency=usd&days=90`, `${CG_CHART}?vs_currency=usd&days=91`]);
   });
 
@@ -167,38 +167,38 @@ describe('scanFlowGroup', () => {
     const r = await scanFlowGroup(await argsFor(h));
     expect(r.outcome.status).toBe('failed');
     expect(r.outcome.error).toMatch(/no mini-token price point at or before 2026-09-16T10:00:01.000Z/);
-    expect(listActiveObservations(h.db, 'mini')).toEqual([]);
+    expect(await listActiveObservations(h.db, 'mini')).toEqual([]);
   });
 
   it('refuses to write over manual rows without --adopt, and says what --adopt would do', async () => {
     const h = world();
-    const manual = insertObservation(h.db, { assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-18', periodDays: 30, value: 5000, source: 'manual', fetchedAt: NOW.toISOString() });
+    const manual = await insertObservation(h.db, { assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-18', periodDays: 30, value: 5000, source: 'manual', fetchedAt: NOW.toISOString() });
     const r = await scanFlowGroup(await argsFor(h));
     expect(r.outcome.status).toBe('skipped');
     expect(r.outcome.conflicts).toEqual([
       { metricKey: 'flow_usd.fees', observationId: manual.id, source: 'manual', observedAt: '2026-09-18T00:00:00.000Z', periodDays: 30, adoptable: true },
     ]);
     expect(r.outcome.notes.join(' ')).toMatch(/--adopt/);
-    expect(listActiveObservations(h.db, 'mini').map((o) => o.id)).toEqual([manual.id]); // no member of the group was written
+    expect((await listActiveObservations(h.db, 'mini')).map((o) => o.id)).toEqual([manual.id]); // no member of the group was written
     expect(getCursor(h.db, 'mini', buildPlan(h.loaded.config).flowGroups[0].scanKey)).toBeNull();
     expect(h.rpc.stats.logRanges).toEqual([]);
   });
 
   it('with --adopt, rejects the manual rows and writes the fetched ones', async () => {
     const h = world();
-    const manual = insertObservation(h.db, { assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-18', periodDays: 30, value: 5000, source: 'manual', fetchedAt: NOW.toISOString() });
-    const older = insertObservation(h.db, { assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-08-19', periodDays: 30, value: 4000, source: 'manual', fetchedAt: NOW.toISOString() });
+    const manual = await insertObservation(h.db, { assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-18', periodDays: 30, value: 5000, source: 'manual', fetchedAt: NOW.toISOString() });
+    const older = await insertObservation(h.db, { assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-08-19', periodDays: 30, value: 4000, source: 'manual', fetchedAt: NOW.toISOString() });
     const r = await scanFlowGroup(await argsFor(h, { adopt: true }));
     expect(r.outcome.status).toBe('ok');
     expect(r.outcome.retiredObservationIds).toEqual([manual.id]);
-    expect(getObservationsByIds(h.db, [manual.id])[0].status).toBe('rejected');
-    expect(getObservationsByIds(h.db, [older.id])[0].status).toBe('confirmed'); // it ends before the scanned days: no overlap
-    expect(rows(h.db, 'flow_usd.fees')).toEqual([['2026-08-19', 4000], ['2026-09-17', 1020], ['2026-09-18', 60], ['2026-09-19', 0]]);
+    expect((await getObservationsByIds(h.db, [manual.id]))[0].status).toBe('rejected');
+    expect((await getObservationsByIds(h.db, [older.id]))[0].status).toBe('confirmed'); // it ends before the scanned days: no overlap
+    expect(await rows(h.db, 'flow_usd.fees')).toEqual([['2026-08-19', 4000], ['2026-09-17', 1020], ['2026-09-18', 60], ['2026-09-19', 0]]);
   });
 
   it('never adopts over a row that is not manual', async () => {
     const h = world();
-    insertObservation(h.db, { assetId: 'mini', metricKey: 'flow_tokens.fees', observedAt: '2026-09-18', periodDays: 2, value: 9, source: 'api', fetchedAt: NOW.toISOString() });
+    await insertObservation(h.db, { assetId: 'mini', metricKey: 'flow_tokens.fees', observedAt: '2026-09-18', periodDays: 2, value: 9, source: 'api', fetchedAt: NOW.toISOString() });
     const r = await scanFlowGroup(await argsFor(h, { adopt: true }));
     expect(r.outcome.status).toBe('skipped');
     expect(r.outcome.conflicts[0]).toMatchObject({ source: 'api', adoptable: false });
@@ -207,7 +207,7 @@ describe('scanFlowGroup', () => {
 
   it('finds conflicts by overlap, ignoring rows that only touch the range', async () => {
     const h = world();
-    const touching = insertObservation(h.db, { assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-16', periodDays: 30, value: 1, source: 'manual', fetchedAt: NOW.toISOString() });
+    const touching = await insertObservation(h.db, { assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-16', periodDays: 30, value: 1, source: 'manual', fetchedAt: NOW.toISOString() });
     expect(await findFlowConflicts(h.db, 'mini', 'flow_usd.fees', ms('2026-09-16T00:00:00Z'), ms('2026-09-19T00:00:00Z'))).toEqual([]);
     expect((await findFlowConflicts(h.db, 'mini', 'flow_usd.fees', ms('2026-09-15T00:00:00Z'), ms('2026-09-19T00:00:00Z'))).map((c) => c.observationId)).toEqual([touching.id]);
   });
@@ -215,7 +215,7 @@ describe('scanFlowGroup', () => {
   it('writes nothing on a dry run and still returns the day values', async () => {
     const h = world();
     const r = await scanFlowGroup(await argsFor(h, { dryRun: true }));
-    expect(listActiveObservations(h.db, 'mini')).toEqual([]);
+    expect(await listActiveObservations(h.db, 'mini')).toEqual([]);
     expect(getCursor(h.db, 'mini', buildPlan(h.loaded.config).flowGroups[0].scanKey)).toBeNull();
     expect(r.written).toHaveLength(9);
     expect(r.written.every((w) => w.observationId === null)).toBe(true);

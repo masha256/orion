@@ -35,7 +35,7 @@ function periodicMetrics(asset: AssetConfig): Set<string> {
 export async function periodicDaily(db: Db, assetId: string, metricKey: string, through: string): Promise<{ days: Map<string, number>; provisional: Set<string> }> {
   const days = new Map<string, number>();
   const provisional = new Set<string>();
-  const rows = listActiveObservations(db, assetId, metricKey)
+  const rows = (await listActiveObservations(db, assetId, metricKey))
     .filter((o) => o.status === 'confirmed' && (o.periodDays ?? 1) >= 1)
     .sort((a, b) => (a.observedAt < b.observedAt ? -1 : 1));
   let last: { end: string; rate: number } | null = null;
@@ -57,7 +57,7 @@ export async function periodicDaily(db: Db, assetId: string, metricKey: string, 
 /** A flow metric's stored daily rows (confirmed, active), keyed by the UTC day each covers. */
 async function dailyOf(db: Db, assetId: string, metricKey: string): Promise<Map<string, number>> {
   const days = new Map<string, number>();
-  for (const o of listActiveObservations(db, assetId, metricKey)) {
+  for (const o of await listActiveObservations(db, assetId, metricKey)) {
     if (o.status !== 'confirmed' || o.periodDays !== 1) continue;
     days.set(utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY), o.value);
   }
@@ -88,27 +88,32 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
   const target = day ?? (await lastCompleteReportDay(db, asset));
   if (target === null) throw new Error(`${asset.id}: no stored day for every report flow yet`);
   const asOf = new Date(Date.parse(`${addDays(target, 1)}T00:00:00.000Z`) + MS_PER_DAY - 1).toISOString(); // to the end of the next day: the levels read with that day's run
-  const level = (key: string): number | null => {
-    const rows = listActiveObservations(db, asset.id, key).filter((o) => o.status === 'confirmed');
+  const level = async (key: string): Promise<number | null> => {
+    const rows = (await listActiveObservations(db, asset.id, key)).filter((o) => o.status === 'confirmed');
     return latestLevel(rows, asOf)?.value ?? null;
   };
   const extra: Record<string, number | null> = {};
-  for (const x of r.extra_cash ?? []) extra[x.metric] = level(x.metric);
+  for (const x of r.extra_cash ?? []) extra[x.metric] = await level(x.metric);
   const disclosed = r.revenue_disclosed
-    ? listActiveObservations(db, asset.id, r.revenue_disclosed)
+    ? (await listActiveObservations(db, asset.id, r.revenue_disclosed))
         .filter((o) => o.status === 'confirmed' && o.observedAt <= asOf)
         .sort((a, b) => (a.observedAt < b.observedAt ? -1 : 1))
         .map((o) => ({ observedAt: o.observedAt, value: o.value }))
     : [];
+  let dilution: ReportLevels['dilution'];
+  if (r.dilution) {
+    dilution = {};
+    for (const d of r.dilution) dilution[d.id] = { rate: await level(d.metric), cap: d.cap_metric ? await level(d.cap_metric) : null };
+  }
   const levels: ReportLevels = {
-    price: level(STD_METRICS.price),
-    totalSupply: level(STD_METRICS.totalSupply),
-    circulatingSupply: asset.metrics[STD_METRICS.circulatingSupply] ? level(STD_METRICS.circulatingSupply) : null,
-    stakedSupply: level(STD_METRICS.stakedSupply),
-    lockedSupply: asset.metrics[STD_METRICS.lockedSupply] ? level(STD_METRICS.lockedSupply) : null,
-    emissionRateAnnual: level(STD_METRICS.emissionRate),
+    price: await level(STD_METRICS.price),
+    totalSupply: await level(STD_METRICS.totalSupply),
+    circulatingSupply: asset.metrics[STD_METRICS.circulatingSupply] ? await level(STD_METRICS.circulatingSupply) : null,
+    stakedSupply: await level(STD_METRICS.stakedSupply),
+    lockedSupply: asset.metrics[STD_METRICS.lockedSupply] ? await level(STD_METRICS.lockedSupply) : null,
+    emissionRateAnnual: await level(STD_METRICS.emissionRate),
     extra,
-    ...(r.dilution ? { dilution: Object.fromEntries(r.dilution.map((d) => [d.id, { rate: level(d.metric), cap: d.cap_metric ? level(d.cap_metric) : null }])) } : {}),
+    ...(dilution ? { dilution } : {}),
     disclosed,
   };
   const periodic = periodicMetrics(asset);

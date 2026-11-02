@@ -123,23 +123,23 @@ describe('assets/uni.yaml', () => {
     expect(scan.unlistedTransfers).toEqual([]);
     expect(scan.notes).toContain('not counted, as configured: 1 from from_ignore senders');
 
-    const rows = (metric: string) => listActiveObservations(w.db, 'uni', metric);
-    const value = (metric: string) => rows(metric).at(-1)!.value;
-    expect(value('price_usd')).toBe(PRICE);
-    expect(value('total_supply')).toBe(887_216_419);
-    expect(value('staked_supply')).toBe(0);
-    expect(value('emission_rate_annual')).toBe(0);
-    expect(value('labs_vest_rate')).toBe(20_000_000);
-    expect(value('labs_vest_approved')).toBe(20_000_000);
-    expect(value('treasury_uni')).toBe(262_247_996);
+    const rows = async (metric: string) => await listActiveObservations(w.db, 'uni', metric);
+    const value = async (metric: string) => (await rows(metric)).at(-1)!.value;
+    expect(await value('price_usd')).toBe(PRICE);
+    expect(await value('total_supply')).toBe(887_216_419);
+    expect(await value('staked_supply')).toBe(0);
+    expect(await value('emission_rate_annual')).toBe(0);
+    expect(await value('labs_vest_rate')).toBe(20_000_000);
+    expect(await value('labs_vest_approved')).toBe(20_000_000);
+    expect(await value('treasury_uni')).toBe(262_247_996);
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]);
 
     // 100 days, 64,000 UNI each (the Timelock's 100M left out), at 7.5 USD.
-    const burns = rows('flow_tokens.burn');
+    const burns = await rows('flow_tokens.burn');
     expect(burns).toHaveLength(100);
     expect(burns.every((o) => o.value === 64_000)).toBe(true);
-    expect(JSON.parse(rows('flow_usd.burn').at(-1)!.sourceDetail!).senders).toEqual({ [BRIDGE]: { count: 1, tokens: 48_000 }, [SEARCHER]: { count: 1, tokens: 16_000 } });
-    expect(rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
+    expect(JSON.parse((await rows('flow_usd.burn')).at(-1)!.sourceDetail!).senders).toEqual({ [BRIDGE]: { count: 1, tokens: 48_000 }, [SEARCHER]: { count: 1, tokens: 16_000 } });
+    expect(await rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
   });
 
   it('reports the burn against the Labs vest as dilution, and the gross swap fees as volume', async () => {

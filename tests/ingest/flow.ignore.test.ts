@@ -107,7 +107,9 @@ describe('transfer_flow ignore rules', () => {
     const rows = async (yaml: string) => {
       const h = harness({ loaded: parseAssetYaml(yaml), logs, code: { [SIDECAR]: clone(IMPL) } });
       await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
-      return ['flow_usd.fees', 'flow_tokens.fees', 'flow_usd.fees_programmatic'].map((k) => listActiveObservations(h.db, 'mini', k).map((o) => [o.observedAt, o.value]));
+      const out = [];
+      for (const k of ['flow_usd.fees', 'flow_tokens.fees', 'flow_usd.fees_programmatic']) out.push((await listActiveObservations(h.db, 'mini', k)).map((o) => [o.observedAt, o.value]));
+      return out;
     };
     expect(await rows(withIgnore({ ignore: ['forwarder'], clones: ['sidecar_impl'] }))).toEqual(await rows(INGEST_ASSET_YAML));
   });
@@ -208,7 +210,7 @@ describe('transfer_flow from_any', () => {
     expect(r.anomalies.filter((a) => a.kind === 'unlisted_sender')).toEqual([]);
     expect(scan(r).notes).toContain('not counted, as configured: 1 from from_ignore senders');
     expect(fees(r)).toEqual([0, 30, 0]); // pool 2 + stranger 1 tokens at 10 USD; the ignored 5 left out
-    const day = listActiveObservations(h.db, 'mini').find((o) => o.metricKey === 'flow_usd.fees' && o.value === 30)!;
+    const day = (await listActiveObservations(h.db, 'mini')).find((o) => o.metricKey === 'flow_usd.fees' && o.value === 30)!;
     expect(Object.keys(JSON.parse(day.sourceDetail!).senders).sort()).toEqual([POOL, STRANGER].sort());
     expect(buildPlan(h.loaded.config).flowGroups[0].anySender).toBe(true);
   });

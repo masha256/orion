@@ -132,24 +132,24 @@ describe('assets/link.yaml', () => {
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error])).toEqual([]);
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]);
 
-    const rows = (metric: string) => listActiveObservations(w.db, 'link', metric);
-    const value = (metric: string) => rows(metric).at(-1)!.value;
-    expect(value('price_usd')).toBe(PRICE);
-    expect(value('total_supply')).toBe(1_000_000_000);
-    expect(value('reserve_link')).toBe(6_293_843);
-    expect(value('emission_rate_annual')).toBe(0);
+    const rows = async (metric: string) => await listActiveObservations(w.db, 'link', metric);
+    const value = async (metric: string) => (await rows(metric)).at(-1)!.value;
+    expect(await value('price_usd')).toBe(PRICE);
+    expect(await value('total_supply')).toBe(1_000_000_000);
+    expect(await value('reserve_link')).toBe(6_293_843);
+    expect(await value('emission_rate_annual')).toBe(0);
 
     // The stranger's 2,000 LINK is an unlisted sender (an alert on the holder flow), never counted; the 5-LINK test is dust.
     const reserveScan = r.sources.find((s) => s.sourceId.startsWith('transfer_flow:token>reserve'))!;
     expect(reserveScan.unlistedTransfers.map((t) => [t.from, t.tokens])).toEqual([[STRANGER, 2_000]]);
     expect(r.anomalies.map((a) => [a.kind, a.metricKey])).toEqual([['unlisted_sender', 'flow_usd.reserve']]);
-    const paid = rows('flow_tokens.reserve').filter((o) => o.value > 0);
+    const paid = (await rows('flow_tokens.reserve')).filter((o) => o.value > 0);
     expect(paid.map((o) => o.value).every((v) => v === 100_000)).toBe(true);
     expect(paid.length).toBe(15);
-    expect(rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
+    expect(await rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
 
     // Releases: the four quarters inside the last 365 days, the dust and the year-old release left out.
-    expect(value('released_rate')).toBeCloseTo(4 * (15_000_000 + 2_500_000), 0);
+    expect(await value('released_rate')).toBeCloseTo(4 * (15_000_000 + 2_500_000), 0);
   });
 
   it('reports the Reserve as a hold with the 5 percent haircut, and the releases as dilution', async () => {

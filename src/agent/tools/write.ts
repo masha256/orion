@@ -15,16 +15,18 @@ import { defineTool, refuse, ToolRefusal, type AgentTool, type ToolContext } fro
 
 const isActive = (o: Observation): boolean => o.supersededBy === null && o.status !== 'rejected';
 
-function evidenceLookup(ctx: ToolContext): (id: number) => EvidenceRef | null {
+/** A lookup over the cited ids: the stored ones are read up front, since `checkEvidence` looks them up synchronously. */
+async function evidenceLookup(ctx: ToolContext, ids: number[]): Promise<(id: number) => EvidenceRef | null> {
+  const stored = new Map((await getObservationsByIds(ctx.db, ids.filter((id) => id >= 0))).map((o) => [o.id, o]));
   return (id) => {
     if (id < 0) return ctx.ledger.hasStagedObservation(id) ? { assetId: ctx.loaded.config.id, active: true } : null;
-    const o = getObservationsByIds(ctx.db, [id])[0];
+    const o = stored.get(id);
     return o ? { assetId: o.assetId, active: isActive(o) } : null;
   };
 }
 
-function requireEvidence(ctx: ToolContext, ids: number[]): void {
-  const refusal = checkEvidence(ids, ctx.loaded.config.id, evidenceLookup(ctx), ctx.ledger.shown);
+async function requireEvidence(ctx: ToolContext, ids: number[]): Promise<void> {
+  const refusal = checkEvidence(ids, ctx.loaded.config.id, await evidenceLookup(ctx, ids), ctx.ledger.shown);
   if (refusal) throw new ToolRefusal(refusal);
 }
 
@@ -118,7 +120,7 @@ const resolveAnomaly = defineTool({
     'condition persists reopens at the next fetch: for a persistent, understood condition, propose an acknowledgement instead. ' +
     'Acknowledged anomalies are read-only to you.',
   input: z.strictObject({ id: z.number().int(), note: z.string().max(MAX_RATIONALE), evidence: z.array(z.number().int()) }),
-  run(ctx, input) {
+  async run(ctx, input) {
     const anomaly = getAnomaly(ctx.db, input.id);
     if (!anomaly || anomaly.assetId !== ctx.loaded.config.id) refuse('anomaly_not_found', `no anomaly ${input.id} on ${ctx.loaded.config.id}`);
     const a = anomaly!;
@@ -127,7 +129,7 @@ const resolveAnomaly = defineTool({
     }
     if (a.status !== 'open') refuse('anomaly_not_open', `anomaly ${a.id} is already ${a.status}`);
     const note = requireText(input.note, 'note');
-    requireEvidence(ctx, input.evidence);
+    await requireEvidence(ctx, input.evidence);
     ctx.ledger.stageResolution({ anomalyId: a.id, note, evidence: input.evidence });
     return { staged: true, anomaly_id: a.id };
   },
@@ -188,7 +190,7 @@ const recordProvisionalObservation = defineTool({
     if (def.type === 'flow' && input.period_days === undefined) refuse('period_required', `${input.metric} is a flow metric; give period_days`);
 
     // The agent never supersedes an observation: the ledger refuses it at commit too. Say so now, while it can still act.
-    const taken = listActiveObservations(ctx.db, asset.id, input.metric).find((o) => o.observedAt === observedAt);
+    const taken = (await listActiveObservations(ctx.db, asset.id, input.metric)).find((o) => o.observedAt === observedAt);
     if (taken) {
       refuse(
         'observation_exists',
@@ -275,11 +277,11 @@ const proposeChange = defineTool({
     observation_id: z.number().int().optional(),
     citations: z.array(z.strictObject({ source: z.string().max(MAX_URL), quoted_text: z.string().max(MAX_QUOTE) })).max(MAX_PROPOSAL_CITATIONS).optional(),
   }),
-  run(ctx, input) {
+  async run(ctx, input) {
     const asset = ctx.loaded.config;
     const rationale = requireText(input.rationale, 'rationale');
     const evidence = input.evidence ?? [];
-    if (evidence.length > 0) requireEvidence(ctx, evidence);
+    if (evidence.length > 0) await requireEvidence(ctx, evidence);
     const citations = verifyProposalCitations(ctx, input.citations ?? []);
 
     switch (input.kind) {
@@ -312,7 +314,7 @@ const proposeChange = defineTool({
       case 'confirm_observation':
       case 'reject_observation': {
         if (input.observation_id === undefined) refuse('invalid_input', `${input.kind} needs observation_id`);
-        const o = getObservationsByIds(ctx.db, [input.observation_id as number])[0];
+        const o = (await getObservationsByIds(ctx.db, [input.observation_id as number]))[0];
         if (!o || o.assetId !== asset.id) refuse('observation_not_found', `no observation ${input.observation_id} on ${asset.id}`);
         if (!isActive(o)) refuse('not_active', `observation ${o.id} is not active`);
         const confirming = input.kind === 'confirm_observation';
@@ -412,7 +414,7 @@ const recordDevFinding = defineTool({
     evidence: z.array(z.number().int()),
     citations: z.array(z.strictObject({ source: z.string().max(MAX_URL), quoted_text: z.string().max(MAX_QUOTE) })).min(1).max(MAX_FINDING_CITATIONS),
   }),
-  run(ctx, input) {
+  async run(ctx, input) {
     const asset = ctx.loaded.config;
     const title = requireText(input.title, 'title');
     const claim = requireText(input.claim, 'claim');
@@ -426,7 +428,7 @@ const recordDevFinding = defineTool({
     }
     // Sorted and deduplicated: the order the model named them in is not part of what the finding is.
     const metricKeys = [...new Set(input.metric_keys)].sort();
-    requireEvidence(ctx, input.evidence);
+    await requireEvidence(ctx, input.evidence);
     const citations = verifyCitations(ctx, input.citations);
     // Defensive: the tool is offered to disclosure runs only, and only those have a target document.
     requireTargetDocCitation(ctx, citations, 'a dev finding');

@@ -54,14 +54,14 @@ export interface AgentWorld {
 export const citable = (d: Pick<StoredDocument, 'id' | 'kind' | 'sha256' | 'text'>): CitableDoc => ({ id: d.id, kind: d.kind, sha256: d.sha256, text: d.text });
 
 /** A disclosure run on the mini asset: the seeded observations, the target document, and no assumption set (none is needed). */
-export function agentWorld(yaml: string = AGENT_ASSET_YAML): AgentWorld {
+export async function agentWorld(yaml: string = AGENT_ASSET_YAML): Promise<AgentWorld> {
   const db = openDb(':memory:');
   const loaded = parseAssetYaml(yaml);
   const ids: Record<string, number> = {};
   for (const o of miniObservations()) {
-    ids[o.metricKey] = insertObservation(db, {
+    ids[o.metricKey] = (await insertObservation(db, {
       assetId: o.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, source: o.source, fetchedAt: o.fetchedAt,
-    }).id;
+    })).id;
   }
   const doc = insertDocument(db, {
     assetId: 'mini', kind: 'post', sourceUrl: 'https://x.com/mini/status/1', sourceId: null, title: null, publishedAt: '2026-06-29T00:00:00.000Z',

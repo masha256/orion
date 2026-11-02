@@ -229,13 +229,13 @@ export class Ledger {
         // The agent never supersedes an observation. insertObservation would let a provisional insert retire any active
         // provisional row at the same metric and time, including one the user entered; rejecting a row is the user's call.
         for (const o of this.stagedObservations) {
-          const taken = listActiveObservations(t, this.assetId, o.metricKey).find((row) => row.observedAt === o.observedAt);
+          const taken = (await listActiveObservations(t, this.assetId, o.metricKey)).find((row) => row.observedAt === o.observedAt);
           if (taken) throw new AgentConflict(`observation #${taken.id} of ${o.metricKey} at ${o.observedAt} already exists; the agent never supersedes one`);
         }
 
         const realId = new Map<number, number>();
         for (const o of this.stagedObservations) {
-          const row = insertObservation(t, {
+          const row = await insertObservation(t, {
             assetId: this.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, source: 'manual',
             sourceDetail: `research:${this.persona}:run ${ctx.agentRunId ?? 'none'}`, status: 'provisional', citationUrl: o.citationUrl,
             quotedText: o.quotedText, fetchedAt: nowIso,

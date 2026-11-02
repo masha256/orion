@@ -28,7 +28,7 @@ function world(points: Record<string, number>, over: Parameters<typeof harness>[
 }
 const fetch = (h: Harness, opts: Parameters<typeof fetchAsset>[4] = {}) => fetchAsset(h.db, h.loaded, h.deps.now(), h.deps, opts);
 const source = (r: FetchResult) => r.sources.find((s) => s.sourceId === SOURCE)!;
-const byDay = (h: Harness) => Object.fromEntries(listActiveObservations(h.db, 'hype', METRIC).map((o) => [o.observedAt.slice(0, 10), o.value]));
+const byDay = async (h: Harness) => Object.fromEntries((await listActiveObservations(h.db, 'hype', METRIC)).map((o) => [o.observedAt.slice(0, 10), o.value]));
 
 describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
   it('writes one row per completed day the series has, skips a day it lacks, touches no chain, and sets the cursor', async () => {
@@ -39,8 +39,8 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     expect(source(r)).toMatchObject({ status: 'ok', metricsWritten: [METRIC], conflicts: [], retiredObservationIds: [] });
     expect(source(r).notes.join('\n')).toMatch(/not in the series, skipped: 86 days from 2026-06-21 to 2026-09-16/); // the 90-day backfill reaches back before the series starts
     // Rows are the transfer scan's shape: period 1, observed at the end of the day, source api, the URL as detail.
-    expect(byDay(h)).toEqual({ '2026-09-15': 100, '2026-09-16': 110, '2026-09-18': 130, '2026-09-19': 140 });
-    expect(listActiveObservations(h.db, 'hype', METRIC)[0]).toMatchObject({ periodDays: 1, source: 'api', status: 'confirmed', sourceDetail: `${LLAMA_HYPE}?dataType=dailyHoldersRevenue` });
+    expect(await byDay(h)).toEqual({ '2026-09-15': 100, '2026-09-16': 110, '2026-09-18': 130, '2026-09-19': 140 });
+    expect((await listActiveObservations(h.db, 'hype', METRIC))[0]).toMatchObject({ periodDays: 1, source: 'api', status: 'confirmed', sourceDetail: `${LLAMA_HYPE}?dataType=dailyHoldersRevenue` });
     expect(r.written.map((w) => w.observedAt.slice(0, 10))).toEqual(['2026-09-15', '2026-09-16', '2026-09-18', '2026-09-19']);
     expect(getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)).toEqual({ lastBlock: 0, lastDay: '2026-09-18' });
   });
@@ -56,8 +56,8 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     const revised = await fetch(world({ ...SERIES, '2026-09-16': 120, '2026-09-17': 135 }, { db: h.db }));
     expect(revised.written.map((w) => [w.observedAt.slice(0, 10), w.value])).toEqual([['2026-09-17', 120], ['2026-09-18', 135]]);
     expect(source(revised).notes.join('\n')).toMatch(/revised by the source, superseded: 2026-09-17/);
-    expect(byDay(h)).toEqual({ '2026-09-15': 100, '2026-09-16': 110, '2026-09-17': 120, '2026-09-18': 135, '2026-09-19': 140 });
-    const history = listObservations(h.db, 'hype', METRIC, { includeInactive: true }).filter((o) => o.observedAt.startsWith('2026-09-18'));
+    expect(await byDay(h)).toEqual({ '2026-09-15': 100, '2026-09-16': 110, '2026-09-17': 120, '2026-09-18': 135, '2026-09-19': 140 });
+    const history = (await listObservations(h.db, 'hype', METRIC, { includeInactive: true })).filter((o) => o.observedAt.startsWith('2026-09-18'));
     expect(history.map((o) => [o.value, o.supersededBy !== null])).toEqual([[135, false], [130, true]]);
   });
 
@@ -66,7 +66,7 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     await fetch(h);
     const old = await fetch(world({ ...SERIES, '2026-09-14': 101 }, { db: h.db }));
     expect(old.written).toEqual([]);
-    expect(byDay(h)['2026-09-15']).toBe(100);
+    expect((await byDay(h))['2026-09-15']).toBe(100);
     const rescan = await fetch(world({ ...SERIES, '2026-09-14': 101 }, { db: h.db }), { backfillDays: 10 });
     expect(rescan.written.map((w) => [w.observedAt.slice(0, 10), w.value])).toEqual([['2026-09-15', 101]]);
     expect(getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)!.lastDay).toBe('2026-09-18'); // never moves backwards
@@ -74,22 +74,22 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
 
   it('refuses to write over a manual row without --adopt, writes nothing on a dry run, and retires it with --adopt', async () => {
     const h = world(SERIES);
-    const manual = insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-18', periodDays: 7, value: 5000, source: 'manual', fetchedAt: '2026-09-18T00:00:00Z' });
+    const manual = await insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-18', periodDays: 7, value: 5000, source: 'manual', fetchedAt: '2026-09-18T00:00:00Z' });
     const refused = await fetch(h);
     expect(source(refused)).toMatchObject({ status: 'skipped', metricsWritten: [], conflicts: [{ observationId: manual.id, adoptable: true }] });
     expect(source(refused).notes.join('\n')).toMatch(/Re-run with --adopt/);
     expect(refused.outcome).toBe('partial');
-    expect(listActiveObservations(h.db, 'hype', METRIC)).toHaveLength(1);
+    expect(await listActiveObservations(h.db, 'hype', METRIC)).toHaveLength(1);
 
     const dry = await fetch(h, { adopt: true, dryRun: true });
     expect(dry.written.map((w) => w.observationId)).toEqual([null, null, null, null]);
     expect(source(dry).notes.join('\n')).toMatch(new RegExp(`--adopt would reject #${manual.id}`));
-    expect(listActiveObservations(h.db, 'hype', METRIC)).toHaveLength(1);
+    expect(await listActiveObservations(h.db, 'hype', METRIC)).toHaveLength(1);
     expect(getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)).toBeNull();
 
     const adopted = await fetch(h, { adopt: true });
     expect(source(adopted)).toMatchObject({ status: 'ok', retiredObservationIds: [manual.id] });
-    expect(byDay(h)).toEqual({ '2026-09-15': 100, '2026-09-16': 110, '2026-09-18': 130, '2026-09-19': 140 });
+    expect(await byDay(h)).toEqual({ '2026-09-15': 100, '2026-09-16': 110, '2026-09-18': 130, '2026-09-19': 140 });
   });
 
   it('fails the source on a value the metric cannot store, and writes none of the days', async () => {
@@ -97,35 +97,35 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     const r = await fetch(h);
     expect(source(r)).toMatchObject({ status: 'failed', metricsWritten: [] });
     expect(source(r).error).toMatch(/2026-09-15: -5 is negative/);
-    expect(listActiveObservations(h.db, 'hype', METRIC)).toEqual([]);
+    expect(await listActiveObservations(h.db, 'hype', METRIC)).toEqual([]);
     expect(getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)).toBeNull();
   });
 
   it('--adopt retires a manual row that overlaps only unchanged days, so nothing is counted twice', async () => {
     const h = world(SERIES);
     await fetch(h);
-    const manual = insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-18T06:00:00Z', periodDays: 1, value: 777, source: 'manual', fetchedAt: '2026-09-18T06:00:00Z' });
+    const manual = await insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-18T06:00:00Z', periodDays: 1, value: 777, source: 'manual', fetchedAt: '2026-09-18T06:00:00Z' });
     // A routine run leaves a manual row in the revision window alone (a decision already taken), days it covers included.
     const routine = await fetch(h);
     expect(source(routine)).toMatchObject({ status: 'ok', conflicts: [] });
     expect(source(routine).notes.join('\n')).toMatch(new RegExp(`left as entered by hand: 2026-09-17, 2026-09-18 \\(#${manual.id}\\)`));
-    expect(listActiveObservations(h.db, 'hype', METRIC).find((o) => o.id === manual.id)).toBeDefined();
+    expect((await listActiveObservations(h.db, 'hype', METRIC)).find((o) => o.id === manual.id)).toBeDefined();
     // A rescan still refuses it.
     const refused = await fetch(h, { backfillDays: 10 });
     expect(source(refused)).toMatchObject({ status: 'skipped', metricsWritten: [] });
     const adopted = await fetch(h, { adopt: true });
     expect(source(adopted)).toMatchObject({ status: 'ok', retiredObservationIds: [manual.id] });
-    expect(listActiveObservations(h.db, 'hype', METRIC).some((o) => o.source === 'manual')).toBe(false);
+    expect((await listActiveObservations(h.db, 'hype', METRIC)).some((o) => o.source === 'manual')).toBe(false);
     const plain = await fetch(h);
     expect(source(plain)).toMatchObject({ status: 'ok' });
   });
 
   it('reports no retirement when the transaction rolled back', async () => {
     const h = world({ ...SERIES, '2026-09-18': -5 });
-    const manual = insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-15', periodDays: 1, value: 5000, source: 'manual', fetchedAt: '2026-09-15T00:00:00Z' });
+    const manual = await insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-15', periodDays: 1, value: 5000, source: 'manual', fetchedAt: '2026-09-15T00:00:00Z' });
     const r = await fetch(h, { adopt: true });
     expect(source(r)).toMatchObject({ status: 'failed', retiredObservationIds: [] });
-    expect(listActiveObservations(h.db, 'hype', METRIC)).toHaveLength(1);
+    expect(await listActiveObservations(h.db, 'hype', METRIC)).toHaveLength(1);
   });
 
   it('picks up a day that appeared later than the revision window', async () => {
@@ -138,7 +138,7 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     expect(source(r2).notes.join('\n')).toMatch(/skipped: 2026-09-16/);
     const r3 = await fetch(world({ '2026-09-14': 100, '2026-09-15': 110, '2026-09-16': 120, '2026-09-17': 130, '2026-09-18': 140, '2026-09-19': 150, '2026-09-20': 160, '2026-09-21': 170 }, { db: h.db, now: later }));
     expect(r3.written.map((w) => [w.observedAt.slice(0, 10), w.value])).toEqual([['2026-09-17', 120]]);
-    expect(byDay(h)['2026-09-17']).toBe(120);
+    expect((await byDay(h))['2026-09-17']).toBe(120);
   });
 
   it('an old gap does not widen the revision window: a revision behind it is not taken', async () => {
@@ -147,26 +147,26 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     await fetch(h);
     const r = await fetch(world({ ...A, '2026-09-13': 999 }, { db: h.db }));
     expect(r.written).toEqual([]);
-    expect(byDay(h)['2026-09-14']).toBe(13);
+    expect((await byDay(h))['2026-09-14']).toBe(13);
     expect(source(r).notes.join('\n')).toMatch(/skipped: 2026-09-12/);
     expect(source(r).notes.join('\n')).toMatch(/1 gap day\(s\) still missing/);
     const r2 = await fetch(world({ ...A, '2026-09-13': 999, '2026-09-17': 170 }, { db: h.db }));
     expect(r2.written.map((w) => [w.observedAt.slice(0, 10), w.value])).toEqual([['2026-09-18', 170]]);
-    expect(byDay(h)['2026-09-14']).toBe(13);
+    expect((await byDay(h))['2026-09-14']).toBe(13);
   });
 
   it('a manual row filling a day the series never reports is neither a conflict nor a gap', async () => {
     const A = { '2026-09-10': 10, '2026-09-11': 11, '2026-09-13': 13, '2026-09-14': 14, '2026-09-15': 15, '2026-09-16': 16, '2026-09-17': 17, '2026-09-18': 18 };
     const h = world(A);
     await fetch(h);
-    const fill = insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-13T00:00:00Z', periodDays: 1, value: 12, source: 'manual', fetchedAt: '2026-09-19T00:00:00Z' });
+    const fill = await insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-13T00:00:00Z', periodDays: 1, value: 12, source: 'manual', fetchedAt: '2026-09-19T00:00:00Z' });
     const r = await fetch(h);
     expect(source(r)).toMatchObject({ status: 'ok', conflicts: [], retiredObservationIds: [] });
     expect(source(r).notes.join('\n')).not.toMatch(/skipped/);
-    expect(listActiveObservations(h.db, 'hype', METRIC).find((o) => o.id === fill.id)).toBeDefined();
+    expect((await listActiveObservations(h.db, 'hype', METRIC)).find((o) => o.id === fill.id)).toBeDefined();
     const adopted = await fetch(h, { adopt: true });
     expect(source(adopted).retiredObservationIds).toEqual([]);
-    expect(listActiveObservations(h.db, 'hype', METRIC).find((o) => o.id === fill.id)).toBeDefined();
+    expect((await listActiveObservations(h.db, 'hype', METRIC)).find((o) => o.id === fill.id)).toBeDefined();
   });
 
   it('skips an unstorable value on a gap day instead of failing every run', async () => {
@@ -174,7 +174,7 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     const h = world(S);
     const first = await fetch(h, { backfillDays: 3 }); // reads 09-16..09-18: 09-16 is absent, so 09-17 and 09-18 are written
     expect(source(first)).toMatchObject({ status: 'ok' });
-    const afterFirst = byDay(h);
+    const afterFirst = await byDay(h);
     expect(afterFirst).toEqual({ '2026-09-18': 130, '2026-09-19': 140 });
     expect(getCursor(h.db, 'hype', `${SOURCE}>${METRIC}`)!.lastDay).toBe('2026-09-18');
     // The 90-day window makes 09-14 and 09-15 gap days: 09-14 cannot be stored and stays a gap, 09-15 is taken.
@@ -182,7 +182,7 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
       const r = await fetch(world(S, { db: h.db }));
       expect(source(r).status).toBe('ok');
       expect(source(r).notes.join('\n')).toMatch(/not storable, skipped \(still a gap\): 2026-09-14: -5 is negative/);
-      expect(byDay(h)).toEqual({ ...afterFirst, '2026-09-16': 110 });
+      expect(await byDay(h)).toEqual({ ...afterFirst, '2026-09-16': 110 });
     }
   });
 
@@ -191,12 +191,12 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     const h = world(A);
     await fetch(h);
     // Covers 09-11T12:00 to 09-12T12:00: half of 09-11 and half of 09-12, both before the revision range 09-16..09-18.
-    const manual = insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-12T12:00:00Z', periodDays: 1, value: 777, source: 'manual', fetchedAt: '2026-09-19T00:00:00Z' });
+    const manual = await insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-12T12:00:00Z', periodDays: 1, value: 777, source: 'manual', fetchedAt: '2026-09-19T00:00:00Z' });
     const r = await fetch(world({ ...A, '2026-09-12': 12 }, { db: h.db }));
     expect(source(r)).toMatchObject({ status: 'ok', conflicts: [], retiredObservationIds: [] });
     expect(r.written).toEqual([]);
-    expect(byDay(h)['2026-09-13']).toBeUndefined(); // the day 09-12 is not written beside the manual row
-    expect(listActiveObservations(h.db, 'hype', METRIC).find((o) => o.id === manual.id)).toBeDefined();
+    expect((await byDay(h))['2026-09-13']).toBeUndefined(); // the day 09-12 is not written beside the manual row
+    expect((await listActiveObservations(h.db, 'hype', METRIC)).find((o) => o.id === manual.id)).toBeDefined();
   });
 
   it('fails the source on an empty series', async () => {
@@ -221,19 +221,19 @@ describe('fetchAsset: a DefiLlama series is read again 30 days back on every run
     const revised = await fetch(world({ ...BASE, '2026-09-12': 5000, '2026-09-11': 6000 }, { db: h.db, now: NOW }, null));
     expect(revised.written.map((w) => [w.observedAt.slice(0, 10), w.value])).toEqual([['2026-09-13', 5000]]);
     expect(source(revised).notes.join('\n')).toMatch(/revised by the source, superseded: 2026-09-12/);
-    expect(byDay(h)['2026-09-12']).toBe(BASE['2026-09-11']); // outside the window: unchanged
+    expect((await byDay(h))['2026-09-12']).toBe(BASE['2026-09-11']); // outside the window: unchanged
   });
 
   it('leaves a manual row inside the 30 days alone and writes every other revised day', async () => {
     const h = world(BASE, { now: NOW }, null);
     await fetch(h);
-    const manual = insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-10T00:00:00Z', periodDays: 1, value: 1, source: 'manual', fetchedAt: '2026-09-24T00:00:00Z' });
+    const manual = await insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-10T00:00:00Z', periodDays: 1, value: 1, source: 'manual', fetchedAt: '2026-09-24T00:00:00Z' });
     // The source still has its artifact on 09-09 (outside) and revises 09-20 (inside); a 09-15 manual row is inside.
-    const fix = insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-16T00:00:00Z', periodDays: 1, value: 2, source: 'manual', fetchedAt: '2026-09-24T00:00:00Z' });
+    const fix = await insertObservation(h.db, { assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-16T00:00:00Z', periodDays: 1, value: 2, source: 'manual', fetchedAt: '2026-09-24T00:00:00Z' });
     const r = await fetch(world({ ...BASE, '2026-09-15': 9999, '2026-09-20': 7777 }, { db: h.db, now: NOW }, null));
     expect(source(r)).toMatchObject({ status: 'ok', conflicts: [] });
     expect(r.written.map((w) => [w.observedAt.slice(0, 10), w.value])).toEqual([['2026-09-21', 7777]]);
-    expect(byDay(h)['2026-09-16']).toBe(2);
-    expect(listActiveObservations(h.db, 'hype', METRIC).filter((o) => o.source === 'manual').map((o) => o.id).sort()).toEqual([manual.id, fix.id].sort());
+    expect((await byDay(h))['2026-09-16']).toBe(2);
+    expect((await listActiveObservations(h.db, 'hype', METRIC)).filter((o) => o.source === 'manual').map((o) => o.id).sort()).toEqual([manual.id, fix.id].sort());
   });
 });

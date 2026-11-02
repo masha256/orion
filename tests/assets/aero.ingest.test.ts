@@ -89,20 +89,20 @@ describe('assets/aero.yaml', () => {
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
-    const value = (metric: string) => listActiveObservations(w.db, 'aero', metric).at(-1)!.value;
-    expect(value('price_usd')).toBe(0.671936);
-    expect(value('circulating_supply')).toBeCloseTo(992591965.5968602, 3);
-    expect(value('total_supply')).toBeCloseTo(1983240735.576791, 3);
-    expect(value('staked_supply')).toBeCloseTo(1051061695.97399, 3);
-    expect(value('locked_supply')).toBeCloseTo(1051061695.97399, 3);
-    expect(value('staker_emission_share')).toBeGreaterThan(0.09);
-    expect(value('staker_emission_share')).toBeLessThan(0.11);
-    expect(value('emission_rate_annual')).toBeGreaterThan(245e6);
-    expect(value('emission_rate_annual')).toBeLessThan(262e6);
+    const value = async (metric: string) => (await listActiveObservations(w.db, 'aero', metric)).at(-1)!.value;
+    expect(await value('price_usd')).toBe(0.671936);
+    expect(await value('circulating_supply')).toBeCloseTo(992591965.5968602, 3);
+    expect(await value('total_supply')).toBeCloseTo(1983240735.576791, 3);
+    expect(await value('staked_supply')).toBeCloseTo(1051061695.97399, 3);
+    expect(await value('locked_supply')).toBeCloseTo(1051061695.97399, 3);
+    expect(await value('staker_emission_share')).toBeGreaterThan(0.09);
+    expect(await value('staker_emission_share')).toBeLessThan(0.11);
+    expect(await value('emission_rate_annual')).toBeGreaterThan(245e6);
+    expect(await value('emission_rate_annual')).toBeLessThan(262e6);
     // The writer keeps only the backfill window (backfill_days 100 on a first run, no cursor): all 100 of the 100 days.
-    expect(listActiveObservations(w.db, 'aero', 'flow_usd.fees')).toHaveLength(100);
+    expect(await listActiveObservations(w.db, 'aero', 'flow_usd.fees')).toHaveLength(100);
     // No derived run rate any more (it fed only the valuation).
-    expect(listActiveObservations(w.db, 'aero', 'revenue_run_rate_usd')).toEqual([]);
+    expect(await listActiveObservations(w.db, 'aero', 'revenue_run_rate_usd')).toEqual([]);
     const checked = r.sources.flatMap((s) => s.crossChecks);
     expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]); // total: CoinGecko's, 2 percent
     expect(w.rpc.stats.multicall).toBeLessThanOrEqual(5); // levels, and two per adapter (the epoch, then the voting power at its start)

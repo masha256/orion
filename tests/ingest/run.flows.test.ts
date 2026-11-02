@@ -24,7 +24,7 @@ describe('fetchAsset: flows', () => {
     const lines: string[] = [];
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps, { onProgress: (l) => lines.push(l) });
     expect(source(r, FLOW_ID)).toMatchObject({ status: 'ok', metricsWritten: ['flow_usd.fees', 'flow_tokens.fees', 'flow_usd.fees_programmatic'] });
-    expect(listActiveObservations(h.db, 'mini', 'flow_usd.fees').map((o) => o.value)).toEqual([0, 40, 0]);
+    expect((await listActiveObservations(h.db, 'mini', 'flow_usd.fees')).map((o) => o.value)).toEqual([0, 40, 0]);
     expect(r.written.filter((w) => w.periodDays === 1)).toHaveLength(9);
     expect(lines).toHaveLength(3);
     expect(r.outcome).toBe('ok');
@@ -36,7 +36,7 @@ describe('fetchAsset: flows', () => {
     expect(r.anomalies).toHaveLength(1);
     expect(r.anomalies[0]).toMatchObject({ kind: 'unlisted_sender', metricKey: 'flow_usd.fees', dedupeKey: STRANGER, severity: 'degrading' });
     expect(r.anomalies[0].detail).toMatchObject({ sender: STRANGER, transfers: 2, tokens: 11, first: { tx: '0xtx0', day: '2026-09-17' }, last: { tx: '0xtx1', day: '2026-09-18' } });
-    expect(listActiveObservations(h.db, 'mini', 'flow_tokens.fees').map((o) => o.value)).toEqual([0, 0, 0]); // excluded from the flow
+    expect((await listActiveObservations(h.db, 'mini', 'flow_tokens.fees')).map((o) => o.value)).toEqual([0, 0, 0]); // excluded from the flow
     expect(listAnomalies(h.db, { assetId: 'mini' })).toHaveLength(1);
   });
 
@@ -48,21 +48,21 @@ describe('fetchAsset: flows', () => {
     expect(h.rpc.stats.logRanges.length).toBe(scanned);
     await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps, { backfillDays: 2 });
     expect(h.rpc.stats.logRanges.length).toBeGreaterThan(scanned);
-    expect(listActiveObservations(h.db, 'mini', 'flow_usd.fees')).toHaveLength(3);
+    expect(await listActiveObservations(h.db, 'mini', 'flow_usd.fees')).toHaveLength(3);
   });
 
   it('passes --adopt and --dry-run through to the scan', async () => {
     const h = harness();
-    insertObservation(h.db, { assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-18', periodDays: 30, value: 5000, source: 'manual', fetchedAt: '2026-09-18T00:00:00Z' });
+    await insertObservation(h.db, { assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-18', periodDays: 30, value: 5000, source: 'manual', fetchedAt: '2026-09-18T00:00:00Z' });
     const refused = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     expect(source(refused, FLOW_ID).status).toBe('skipped');
     expect(refused.outcome).toBe('partial');
     const dry = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps, { adopt: true, dryRun: true });
     expect(source(dry, FLOW_ID).notes.join(' ')).toMatch(/--adopt would reject/);
-    expect(listActiveObservations(h.db, 'mini', 'flow_usd.fees')).toHaveLength(1);
+    expect(await listActiveObservations(h.db, 'mini', 'flow_usd.fees')).toHaveLength(1);
     const adopted = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps, { adopt: true });
     expect(source(adopted, FLOW_ID).retiredObservationIds).toHaveLength(1);
-    expect(listActiveObservations(h.db, 'mini', 'flow_usd.fees')).toHaveLength(3);
+    expect(await listActiveObservations(h.db, 'mini', 'flow_usd.fees')).toHaveLength(3);
   });
 
   it('a --metric narrowed to one member of a shared scan still advances the cursor for the whole group', async () => {
@@ -72,7 +72,7 @@ describe('fetchAsset: flows', () => {
     expect(new Set(first.written.filter((w) => w.periodDays === 1).map((w) => w.metricKey))).toEqual(new Set(narrowed));
     await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps); // a normal fetch afterwards must find nothing left for any member to catch up on
     for (const metricKey of narrowed) {
-      expect(listActiveObservations(h.db, 'mini', metricKey)).toHaveLength(3);
+      expect(await listActiveObservations(h.db, 'mini', metricKey)).toHaveLength(3);
     }
   });
 

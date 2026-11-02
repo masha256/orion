@@ -92,7 +92,7 @@ export interface SourceContext {
    */
   backfillDays?: number;
   /** The asset's active stored observations of one metric (oldest first): for adapters that work from earlier readings (Solana's supply drop). */
-  observations?: (metricKey: string) => Observation[];
+  observations?: (metricKey: string) => Promise<Observation[]>;
 }
 
 /**

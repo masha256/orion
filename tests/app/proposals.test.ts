@@ -16,8 +16,8 @@ let w: AgentWorld;
 let home: string;
 let yamlPath: string;
 
-beforeEach(() => {
-  w = agentWorld();
+beforeEach(async () => {
+  w = await agentWorld();
   home = mkdtempSync(join(tmpdir(), 'orion-proposals-'));
   mkdirSync(join(home, 'assets'));
   yamlPath = join(home, 'assets', 'mini.yaml');
@@ -87,16 +87,16 @@ describe('approving anomaly proposals', () => {
 
 describe('approving observation proposals', () => {
   it('confirms a provisional observation and rejects an active one', async () => {
-    const provisional = insertObservation(w.db, {
+    const provisional = await insertObservation(w.db, {
       assetId: 'mini', metricKey: 'staked_supply', observedAt: '2026-06-29T12:00:00Z', value: 80, source: 'manual', status: 'provisional',
       citationUrl: 'https://example.com', fetchedAt: AS_OF,
     });
     const confirmed = await approve(file({ kind: 'confirm_observation', observationId: provisional.id, note: 'n' }, { status: 'provisional', active: true }).id);
     expect(confirmed.result).toMatchObject({ kind: 'observation', action: 'confirmed' });
-    expect(listActiveObservations(w.db, 'mini', 'staked_supply').at(-1)).toMatchObject({ value: 80, status: 'confirmed' });
+    expect((await listActiveObservations(w.db, 'mini', 'staked_supply')).at(-1)).toMatchObject({ value: 80, status: 'confirmed' });
 
     await approve(file({ kind: 'reject_observation', observationId: w.ids.price_usd, note: 'n' }, { status: 'confirmed', active: true }).id);
-    expect(getObservationsByIds(w.db, [w.ids.price_usd])[0].status).toBe('rejected');
+    expect((await getObservationsByIds(w.db, [w.ids.price_usd]))[0].status).toBe('rejected');
     const again = file({ kind: 'reject_observation', observationId: w.ids.price_usd, note: 'again' }, { status: 'confirmed', active: true });
     expect(await codeOf(() => approve(again.id))).toBe('stale_proposal');
   });
@@ -108,7 +108,7 @@ describe('approving observation proposals', () => {
     };
     const p = file(change, { inForce: 1000 }, { agentRunId: null });
     const { result } = await approve(p.id);
-    const row = getObservationsByIds(w.db, [(result as { observationId: number }).observationId])[0];
+    const row = (await getObservationsByIds(w.db, [(result as { observationId: number }).observationId]))[0];
     expect(row).toMatchObject({
       value: 2000, status: 'confirmed', source: 'manual', citationUrl: 'https://news.example.com/big', quotedText: 'reports annualized revenue of $2,000',
       sourceDetail: `research:analyst:run none; approved proposal #${p.id}`,
@@ -119,7 +119,7 @@ describe('approving observation proposals', () => {
 
   it('checks an observation proposal against the last CONFIRMED value, the baseline the move guard filed it against', async () => {
     // A provisional row is in force (1250). The confirmed value, which the proposal was filed against, is still 1000.
-    insertObservation(w.db, {
+    await insertObservation(w.db, {
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-20', value: 1250, source: 'manual', status: 'provisional',
       citationUrl: 'https://news.example.com/earlier', fetchedAt: AS_OF,
     });
@@ -139,11 +139,11 @@ describe('approving observation proposals', () => {
       citationUrl: 'https://news.example.com/big', quotedText: 'reports annualized revenue of $2,000',
     };
     const p = file(change, { inForce: 1000 });
-    const users = insertObservation(w.db, {
+    const users = await insertObservation(w.db, {
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-10', value: 900, source: 'manual', fetchedAt: AS_OF,
     });
     expect(await codeOf(() => approve(p.id))).toBe('stale_proposal');
-    expect(getObservationsByIds(w.db, [users.id])[0]).toMatchObject({ supersededBy: null, status: 'confirmed' });
+    expect((await getObservationsByIds(w.db, [users.id]))[0]).toMatchObject({ supersededBy: null, status: 'confirmed' });
     expect(getProposal(w.db, p.id)!.status).toBe('pending');
   });
 });

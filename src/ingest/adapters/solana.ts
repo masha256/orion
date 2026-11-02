@@ -109,7 +109,7 @@ async function supplyBurnDaily(ctx: SourceContext, params: Record<string, unknow
   const days = ctx.backfillDays ?? (typeof params.days === 'number' ? params.days : 7);
 
   const now = await tokenSupply(ctx.http, rpcUrl(ctx, params), mint);
-  const stored = ctx.observations(supplyMetric).filter((o) => o.source === 'onchain' && (o.sourceDetail ?? '').includes(mint));
+  const stored = (await ctx.observations(supplyMetric)).filter((o) => o.source === 'onchain' && (o.sourceDetail ?? '').includes(mint));
   const readings: SupplyReading[] = [...stored.map((o) => ({ ms: Date.parse(o.observedAt), supply: o.value })), { ms: Date.parse(ctx.nowIso), supply: now.amount }];
   const onchain = burnsByDay(readings);
   const firstReadingMs = Math.min(...readings.map((r) => r.ms));

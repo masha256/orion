@@ -28,10 +28,10 @@ function world(over: Parameters<typeof harness>[0] = {}) {
 }
 
 /** Daily fee rows before the days the fetch backfills (it scans three), so the week and the week before it are complete. */
-function seedFees(lastDay: string, days: number, value: number, metricKey = 'flow_usd.fees') {
+async function seedFees(lastDay: string, days: number, value: number, metricKey = 'flow_usd.fees') {
   for (let i = 0; i < days; i++) {
     const day = addDays(lastDay, -i);
-    insertObservation(h.db, { assetId: 'mini', metricKey, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, source: 'onchain', fetchedAt: NOW.toISOString() });
+    await insertObservation(h.db, { assetId: 'mini', metricKey, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, source: 'onchain', fetchedAt: NOW.toISOString() });
   }
 }
 
@@ -43,7 +43,7 @@ beforeEach(() => world());
 
 describe('tickAsset', () => {
   it('tick: fetch ok -> exit 0, holder_yield equals summarizeHolderYield(loadHolderYieldReport(db, asset))', async () => {
-    seedFees('2026-09-15', 12, 2);
+    await seedFees('2026-09-15', 12, 2);
     const { report, exitCode } = await tick();
     expect(exitCode).toBe(0);
     expect(report).toMatchObject({
@@ -94,8 +94,8 @@ describe('tickAsset', () => {
 
   it('tick: a report flow that stopped -> exit 2, report_stale, holder_yield still filled', async () => {
     volumeWorld();
-    seedFees('2026-09-15', 12, 2);
-    seedFees(addDays('2026-09-19', -6), 12, 5, 'flow_usd.volume'); // the volume flow stopped six days before the tick
+    await seedFees('2026-09-15', 12, 2);
+    await seedFees(addDays('2026-09-19', -6), 12, 5, 'flow_usd.volume'); // the volume flow stopped six days before the tick
     const { report, exitCode } = await tick();
     expect(exitCode).toBe(2);
     expect(report).toMatchObject({ outcome: 'completed', error: null, ingest: { outcome: 'ok' }, report_error: { code: 'report_stale' } });
@@ -109,8 +109,8 @@ describe('tickAsset', () => {
   it('tick: a report day exactly REPORT_STALE_DAYS (3) behind the tick is not stale -> exit 0, report_error null', async () => {
     expect(REPORT_STALE_DAYS).toBe(3);
     volumeWorld();
-    seedFees('2026-09-16', 12, 2);
-    seedFees(addDays('2026-09-19', -3), 12, 5, 'flow_usd.volume');
+    await seedFees('2026-09-16', 12, 2);
+    await seedFees(addDays('2026-09-19', -3), 12, 5, 'flow_usd.volume');
     const { report, exitCode } = await tick();
     expect(exitCode).toBe(0);
     expect(report).toMatchObject({ outcome: 'completed', report_error: null, holder_yield: { day: '2026-09-16' } });
@@ -118,8 +118,8 @@ describe('tickAsset', () => {
 
   it('tick: a report day one past REPORT_STALE_DAYS (4) behind the tick is stale -> exit 2, report_stale', async () => {
     volumeWorld();
-    seedFees('2026-09-15', 12, 2);
-    seedFees(addDays('2026-09-19', -4), 12, 5, 'flow_usd.volume');
+    await seedFees('2026-09-15', 12, 2);
+    await seedFees(addDays('2026-09-19', -4), 12, 5, 'flow_usd.volume');
     const { report, exitCode } = await tick();
     expect(exitCode).toBe(2);
     expect(report).toMatchObject({ outcome: 'completed', report_error: { code: 'report_stale' }, holder_yield: { day: '2026-09-15' } });

@@ -67,7 +67,7 @@ describe('eligibleObservations', () => {
   });
 
   it('reads the stored rows narrowed to what is usable at as_of', async () => {
-    for (const o of dailyHistory()) insertObservation(db, { assetId: o.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, source: o.source, fetchedAt: o.fetchedAt });
+    for (const o of dailyHistory()) await insertObservation(db, { assetId: o.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, source: o.source, fetchedAt: o.fetchedAt });
     const asset = miniAsset();
     const eligible = await eligibleObservations(db, asset, AS_OF);
     expect(eligible.length).toBeLessThan(110);

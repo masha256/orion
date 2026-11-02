@@ -17,8 +17,8 @@ let w: AgentWorld;
 let home: string;
 let model: ScriptedModel;
 
-beforeEach(() => {
-  w = agentWorld();
+beforeEach(async () => {
+  w = await agentWorld();
   home = agentHome(w.db);
 });
 
@@ -63,7 +63,7 @@ describe('run', () => {
     expect(result.run).toMatchObject({ outcome: 'completed', persona: 'analyst', runType: 'disclosure', trigger: 'manual', dryRun: false, model: 'claude-opus-5-5', error: null });
     expect(result.run.usage).toMatchObject({ requests: 3, inputTokens: 300, outputTokens: 150 });
 
-    const row = listActiveObservations(w.db, 'mini', 'staked_supply').find((o) => o.status === 'provisional')!;
+    const row = (await listActiveObservations(w.db, 'mini', 'staked_supply')).find((o) => o.status === 'provisional')!;
     expect(row).toMatchObject({ value: 55, source: 'manual', citationUrl: 'doc:1', quotedText: STAKED_QUOTE, sourceDetail: `research:analyst:run ${result.run.id}` });
     const proposal = listProposals(w.db)[0];
     expect(proposal).toMatchObject({ agentRunId: result.run.id, status: 'pending', change: { kind: 'observation', value: 1100, citationUrl: 'doc:1' }, effect: null });
@@ -124,7 +124,7 @@ describe('guardrails inside a run', () => {
   it('files a figure from a page fetched in the same turn as an observation proposal, and writes no observation', async () => {
     const result = await run([{ content: [...webFetch(PAGE_URL, PAGE_TEXT), revenueCall(PAGE_URL)], stop_reason: 'tool_use' }, calls(journalCall()), say('Done.')]);
     expect(model.toolResults(1)[0]).toMatchObject({ is_error: false, result: { recorded: false } });
-    expect(listActiveObservations(w.db, 'mini', 'revenue_run_rate_usd').filter((o) => o.status === 'provisional')).toEqual([]);
+    expect((await listActiveObservations(w.db, 'mini', 'revenue_run_rate_usd')).filter((o) => o.status === 'provisional')).toEqual([]);
     expect(listProposals(w.db).map((p) => [p.change, p.effect])).toMatchObject([[{ kind: 'observation', value: 1100, citationUrl: PAGE_URL }, null]]);
     expect(result.committed!.proposalIds).toHaveLength(1);
   });
@@ -323,7 +323,7 @@ describe('a disclosure run', () => {
     // A figure from a disclosure run waits for the user (spec section 15, Ruling 18): on an allow_provisional metric it is a proposal.
     expect(model.toolResults(2)[0]).toMatchObject({ is_error: false, result: { recorded: false } });
     expect(result.run.outcome).toBe('completed');
-    expect(listActiveObservations(w.db, 'mini', 'revenue_run_rate_usd').filter((o) => o.citationUrl === `doc:${w.doc.id}`)).toEqual([]);
+    expect((await listActiveObservations(w.db, 'mini', 'revenue_run_rate_usd')).filter((o) => o.citationUrl === `doc:${w.doc.id}`)).toEqual([]);
     expect(listProposals(w.db).map((p) => p.change)).toMatchObject([{ kind: 'observation', value: 1100, citationUrl: `doc:${w.doc.id}`, quotedText: QUOTE }]);
   });
 

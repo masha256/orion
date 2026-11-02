@@ -130,17 +130,17 @@ describe('assets/cake.yaml', () => {
     expect(burnScan.unlistedTransfers).toEqual([]);
     expect(burnScan.notes).toContain('not counted, as configured: 28 from from_ignore senders, 1 dust (below 1 tokens)');
 
-    const rows = (metric: string) => listActiveObservations(w.db, 'cake', metric);
-    const value = (metric: string) => rows(metric).at(-1)!.value;
-    expect(value('price_usd')).toBe(PRICE);
-    expect(value('total_supply')).toBe(335_468_299);
-    expect(value('emission_rate_annual') / 1e6).toBeCloseTo(7.9396, 3);
+    const rows = async (metric: string) => await listActiveObservations(w.db, 'cake', metric);
+    const value = async (metric: string) => (await rows(metric)).at(-1)!.value;
+    expect(await value('price_usd')).toBe(PRICE);
+    expect(await value('total_supply')).toBe(335_468_299);
+    expect(await value('emission_rate_annual') / 1e6).toBeCloseTo(7.9396, 3);
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]);
 
     // 14 Mondays of 550k CAKE: 13 inside the 91 days to 2026-10-11 (07-13..10-05).
-    const burns = rows('flow_tokens.burn').filter((o) => o.value > 0);
+    const burns = (await rows('flow_tokens.burn')).filter((o) => o.value > 0);
     expect(burns.map((o) => o.value)).toEqual(Array(14).fill(550_000));
-    expect(rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
+    expect(await rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
   });
 
   it('reports the burn against emissions in tokens, and the treasury share as protocol income', async () => {
