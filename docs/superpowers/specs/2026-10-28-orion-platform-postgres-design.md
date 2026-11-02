@@ -1,6 +1,28 @@
 # Orion Phase 1.5: platform (environments, daemon, deploy, Postgres)
 
-Status: **revision 2**, draft for review (2026-10-29, kanban t_269c7cc5). Revision 1 (f27fd4c, DO managed Postgres + an
+Status: **revision 3, decisions recorded (Mike, Slack #orion-dev thread 1793249245.302979, 2026-10-29): "go with all
+recommendations"**, with these changes and inputs:
+- **N3:** schedules stay in UTC so no job ever moves for daylight saving; Mike's rule is that no slot may change local
+  (PT) calendar day between PDT and PST. Every slot in §5.4 already satisfies it (the forbidden band is 07:00-08:00 UTC,
+  PT midnight); nightly stays 00:45 UTC = 17:45 PDT / 16:45 PST, so the report for UTC day D arrives on the evening of
+  local day D all year. Rule recorded in §5.4.
+- **N6 replaced:** the prod site is not ready. Snapshots are published as files to a **git repo the site pulls**, behind a
+  publisher interface whose second driver is an **S3-compatible bucket** (§9.2). The signed HTTPS endpoint (old P1) is
+  dropped for now. New decisions N11-N12 (repo name, staging target) are owed, with recommendations (§13.2); they are
+  needed before the daemon branch, not before the plan.
+- **D4/D10 made concrete:** Raymond writes idempotent shell scripts that install Postgres and create every database and
+  role, one for this dev host and one for the stage/prod host (§2.4); Mike runs them with sudo.
+- **N1 (partial):** the stage/prod server runs **Ubuntu 26.04 LTS** (resolute); this dev host stays on 24.04 (noble).
+  Checked, no blocker; what it changes is in §2.3. Hostname, fixed LAN IP, UPS signal and second disk are still owed and
+  are only needed before provisioning (script arguments), not before the plan.
+- Accepted as recommended: D1-D3, D5-D9, D11, D12 (= PostgreSQL **18**, the newest major in PGDG on 2026-10-29), N2, N4,
+  N5, N7-N10.
+- Owed (none blocks the plan): N1's remaining server inputs, N11 prod snapshot repo, N12 staging target, N13 docker
+  access for testing the provisioning scripts (§13.3).
+- Sequencing: the plan is written when Phase 1 merges (its file scopes depend on Phase 1's final code). The provisioning
+  scripts (§2.4) do not depend on Phase 1 and may be built and run first.
+
+Revision 2 (05511cb, 2026-10-29, kanban t_269c7cc5). Revision 1 (f27fd4c, DO managed Postgres + an
 Orion droplet + timers) was overtaken before review by Mike's revised roadmap decisions 8-12 (Slack #orion-dev,
 2026-10-28; umbrella `2026-10-28-orion-coinrevs-core-roadmap.md` on branch `feat/coinrevs-core` @ 192762c). Assumes
 Phase 1 (`2026-10-28-orion-phase1-remove-valuation-design.md`) has landed: no engine, signals, assumptions, journal or
@@ -85,9 +107,9 @@ build most of them; `tests/db/connection.test.ts` tests SQLite migration mechani
 
 ### 2.1 The Orion server (Mike's LAN box)
 Hardware (Mike): quad-core i7, 16 GB RAM, SSD, on a UPS, same LAN as this dev host. **Provisioning inputs still owed
-(decision N1):** OS and version, hostname, a fixed LAN address (DHCP reservation), UPS model and whether it signals the
-box (USB/NUT) so it can shut down cleanly before the battery runs out. Recommendation: Ubuntu 24.04 LTS, the same as
-this dev host (systemd 255, same apt packages, same Node build), so dev and prod differ only in data.
+(decision N1):** hostname, a fixed LAN address (DHCP reservation), UPS model and whether it signals the
+box (USB/NUT) so it can shut down cleanly before the battery runs out. **OS (Mike, 2026-10-29): Ubuntu 26.04 LTS**
+(resolute); this dev host stays on 24.04 LTS (noble). §2.3 lists what differs and how it is pinned.
 
 | env | host | Unix user | `ORION_HOME` | DB / role (local socket) | scheduler | posts to |
 |---|---|---|---|---|---|---|
@@ -105,7 +127,9 @@ Same layout under each home (only the user differs):
 ~/releases/<tag>/        immutable: dist/, assets/, scripts/, schedule.yaml, package.json, package-lock.json, node_modules/
 ~/current -> releases/<tag>
 ~/shared/.env            mode 600, never in a release (§4)
-~/shared/site-push.key   Ed25519 private key for snapshot pushes (§9), mode 600; prod only
+~/shared/publish_ed25519 deploy key for this env's snapshot repo (§9.2), mode 600, generated on the server
+~/shared/snapshot-sign.key  Ed25519 key that signs each manifest (§9.2), mode 600
+~/home/publish/          local clone of this env's snapshot repo (git driver)
 ~/home/                  ORION_HOME: daemon.log (journal mirror), disclosure watcher state/ and transcripts/
 ~/bin/orion-remote       forced-command entry point for SSH (§3.4); installed by provisioning, not by releases
 ~/.config/systemd/user/orion-daemon.service   installed by provisioning (§5.1)
@@ -117,7 +141,7 @@ live-install rules in the `orion` skill move to the server.
 
 ### 2.2 Network
 - **Outbound only.** The server opens connections to RPC providers, CoinGecko, first-party APIs, Slack webhooks, the
-  site's push endpoint (§9), DO Spaces (§10) and the dead-man's-switch service (§5.6). No port forward on the LAN
+  GitHub over SSH for the snapshot repo (§9.2), DO Spaces (§10) and the dead-man's-switch service (§5.6). No port forward on the LAN
   router, no inbound from the internet. A residential uplink with a changing public IP therefore needs no handling.
 - **Inbound on the LAN:** SSH only, from this dev host's LAN address and Mike's machine (`ufw` default deny, allow 22 from
   those two). Postgres `listen_addresses = ''` (Unix socket only); nothing on the network can reach it, this dev host
@@ -125,10 +149,60 @@ live-install rules in the `orion` skill move to the server.
 - Shared fate: the dev host and the server share the LAN, its uplink and (likely) its power circuit. Anything that
   watches the server from this host goes silent in the same outage, which is why the watchdog has an external leg (§5.6).
 
-### 2.3 Software
-Node: the same major on all three (pinned in `.nvmrc` and `engines`), installed system-wide under `/opt/node-v<major>` by
-provisioning. Postgres: the same major on the server and this dev host, both from the PGDG apt repository (decision D12),
-plus `pgbackrest` (§10). Python 3 + the watcher's deps on the server (D11).
+### 2.3 Software (server on Ubuntu 26.04, dev host on 24.04)
+Checked 2026-10-29 against the live apt indexes. 26.04 is not a problem as long as nothing version-sensitive comes from
+the Ubuntu archive; each piece is pinned so both hosts run the same build:
+
+| piece | Ubuntu 26.04 archive | what we use (both hosts) | why |
+|---|---|---|---|
+| PostgreSQL | `postgresql-18` 18.3 | **PGDG** `resolute-pgdg` / `noble-pgdg`: `postgresql-18` 18.6 on both | same minor on dev and server; the archive trails PGDG on minors (security fixes) and 24.04's archive has only 16 |
+| pgBackRest | 2.58 | PGDG 2.60 on both | the monthly restore drill on dev (§10.3) restores the server's repo: same pgBackRest version on both ends |
+| Node | `nodejs` 22.22 | official tarball, **Node 26** (dev runs 26.7 today), sha256-pinned in the script, under `/opt/node-v26` | Orion is developed and tested on 26; the archive's 22 is two majors behind |
+| Python (watcher) | 3.14.3 | system 3.14 + a venv per Orion user | the watcher already runs on 3.14 here; deps (`faster-whisper`, PyYAML) pinned in a requirements file |
+| yt-dlp | 2026.03.17 | pip, in the venv, upgraded weekly | YouTube breaks old yt-dlp releases within months; the apt build is already 7 months old |
+| ffmpeg | 8.0 | archive | only used to cut audio; version-insensitive |
+
+Residual risk: tests run on 24.04, prod runs on 26.04 (different systemd 25x/26x, glibc, OpenSSL). The staging
+environment on the same server is the proof: every release runs a scheduled staging nightly there before prod (D5),
+and the provisioning script's self-check (§2.4) runs on 26.04. Dev could move to 26.04 later; not needed for Phase 1.5.
+
+### 2.4 Provisioning scripts (D4, D10)
+Raymond writes them; Mike runs them with sudo. Both live in `scripts/provision/`, are plain bash with `set -euo
+pipefail`, are **idempotent** (re-running changes nothing and says so), take `--dry-run` (prints every command and file
+it would write, changes nothing), never print a secret, and end with a self-check whose output Mike pastes back.
+
+1. **`dev-postgres.sh`** (this host, refuses anything but noble without `--force-os`):
+   PGDG apt repo with its signing key (`/usr/share/postgresql-common/pgdg/apt.postgresql.org.sh` from
+   `postgresql-common`, or the keyring + `sources.list.d` file by hand), `postgresql-18`, `postgresql-client-18`,
+   `pgbackrest`; cluster `18/main` with `listen_addresses = ''`; role `orion_dev` (LOGIN, CREATEDB so tests can make
+   per-file schemas), mapped from Unix `hermes` by `pg_ident.conf` (peer auth, no password); databases `orion_dev` and
+   `orion_test` owned by it. Self-check: `psql -d orion_dev -c 'select version()'` and a create/drop schema in
+   `orion_test` as `hermes`. Can run before Phase 1 lands.
+2. **`orion-host.sh --hostname <h> [--backup-disk <path>] [--nut]`** (the server, refuses anything but resolute
+   without `--force-os`):
+   - packages: PGDG `postgresql-18` + `pgbackrest`, Node 26 tarball (sha256-checked), `python3-venv`, `ffmpeg`, `ufw`,
+     `age`, optional `nut-client`;
+   - Unix users `orion-prod`, `orion-stage` (no password, no sudo), `loginctl enable-linger` for both, the §2.1 home
+     layout, empty `~/shared/.env` (mode 600) with every key from §4 commented for Mike to fill;
+   - Postgres: `listen_addresses = ''`, WAL archiving through pgBackRest (§10), then **`pg-roles.sql`** (roles,
+     databases, schema owners, the CONNECT revokes, `orion_prod_ro`) and the §9.3 `pg_hba.conf` / `pg_ident.conf`;
+   - the per-user `orion-daemon.service` (not started: there is no release yet), `~/bin/orion-remote`, the
+     forced-command `authorized_keys` lines (public keys passed with `--deploy-key-stage <file> --deploy-key-prod <file>`;
+     the private halves are created on this host only on Mike's go);
+   - the publish key per env (§9.2): an ed25519 key generated **on the server** in `~/shared/`, its public half printed
+     for Mike to add to the data repo as a deploy key;
+   - root backup timers (§10), `ufw` (deny in, SSH from the dev host and Mike's machine);
+   - self-check: each role connects to its own DB; `orion-stage` → `orion_prod` is refused; `SET ROLE orion_prod` as
+     `orion_stage` is refused; `pgbackrest check` (once Mike has put the Spaces keys in `/etc/pgbackrest/`).
+3. **`pg-roles.sql`**: called by `orion-host.sh`, also usable alone (`sudo -u postgres psql -f`); `CREATE ROLE` /
+   `CREATE DATABASE` guarded so a re-run is a no-op.
+
+Testing before Mike runs them: `shellcheck`; `--dry-run` on both; then each run for real in a throwaway container
+(`ubuntu:26.04` for `orion-host.sh`, `ubuntu:24.04` for `dev-postgres.sh`), self-check included. Docker is installed
+on this host but `hermes` is not in the `docker` group (checked 2026-10-29: permission denied on the socket), so this
+needs Mike once: `sudo usermod -aG docker hermes` (decision N13), or he runs the container test himself. Without it the
+scripts get only shellcheck + dry runs before their first real run. Nothing runs against this host or the server until
+Mike does it.
 
 ## 3. Release and deploy
 
@@ -206,7 +280,8 @@ Assets live in the release (`assets/*.yaml`), so a YAML change is a release. Tha
 | `COINGECKO_API_KEY` | Basic plan key (roadmap decision 3) | a free Demo key (10k credits/mo; §5.7 sizes staging under it) | none |
 | `ANTHROPIC_API_KEY` | disclosure runs only | none: staging watcher runs `--dry-run` | as today |
 | `SLACK_WEBHOOK_URL` | #orion-ops webhook | #orion-staging webhook | none |
-| `ORION_SITE_PUSH_URL` | the site's prod endpoint (§9) | the site's staging endpoint, or unset (D3) | unset |
+| `ORION_PUBLISH` | `git:git@github.com:masha256/orion-data.git#main` (N11) | `git:git@github.com:masha256/orion-data-staging.git#main` (N12) | unset (or a local bare repo for tests) |
+| `ORION_PUBLISH_S3_*` | unset until the S3 driver is chosen (endpoint, bucket, prefix, keys) | same | unset |
 | `ORION_DEADMAN_URL` | the prod check's ping URL (§5.6) | the staging check's | unset |
 
 Not in either `.env`: the Spaces keys and the pgBackRest encryption passphrase belong to the `postgres` OS user
@@ -325,6 +400,12 @@ staging_refresh:  { weekly: sun, at: "10:30", tz: UTC, env: stage }
 staging_overrides: { nightly: { at: "02:45", tz: UTC }, levels: { every: 6h } }   # D3, §5.7
 ```
 
+- **Daylight saving (Mike, 2026-10-29):** every slot is written in UTC, so no job moves when PT changes between PDT and
+  PST, and no daily or weekly slot may sit in **07:00-08:00 UTC**, the only band whose PT calendar date differs between PDT (00:00-01:00)
+  and PST (23:00-24:00 the day before). The daemon refuses a `schedule.yaml` with a daily or weekly slot in that band or a `tz` other
+  than UTC, and a test pins it. The slots above, in PT: nightly 17:45 PDT / 16:45 PST; staging nightly 19:45 / 18:45;
+  disclosure 09:40 / 08:40; staging refresh Sun 03:30 / 02:30; dumps 01:30 / 00:30; physical backup 02:00 / 01:00. All
+  keep their PT date across the change (the hourly levels job is not date-labelled, so it may run at 07:15). Reports are labelled by the UTC day they cover.
 - **Nightly at 00:45 UTC** (decision N3): 45 min after the UTC day closes, so Ethereum (finalised after ~13 min) and Base
   and BNB are final for the day's last block, and first-party APIs have closed their day. Scans read up to the
   `finalized` block tag where the chain has one. That moves the report from today's 05:05 PT to **17:45 PDT / 16:45 PST**
@@ -573,20 +654,53 @@ readers. Every snapshot is first written to `snapshots_out (id, kind, seq, snaps
 pushed_at, attempts, last_error)`, then pushed, so a failed push is retried from the outbox and nothing is recomputed;
 outbox rows older than 30 days are pruned except the last 7 `full`.
 
-### 9.2 Transport options (decision N6)
+### 9.2 Publishing (decision N6, Mike 2026-10-29): files in a git repo now, S3-compatible bucket later
+The prod site is not ready, so Orion publishes snapshots as **files** the site pulls. A `Publisher` interface
+(`publish(files, manifest) -> {ref}`) has two drivers; `ORION_PUBLISH` picks one per env. Revision 2's signed HTTPS
+endpoint and the site-side database are dropped.
 
-| | P1. HTTPS push endpoint on the site (**recommended**) | P2. Orion writes into a site-side database | P3. Drop into object storage (Spaces), site pulls |
-|---|---|---|---|
-| How | `POST /internal/orion/snapshots` (gzip JSON); site verifies, stores, flips "current" | Orion holds a write credential to a DO Postgres the site reads | Orion `PUT`s to a private Spaces bucket, then pings the site; site fetches and verifies |
-| Auth | Ed25519 signature over `snapshot_id|generated_at|sha256` in a header, plus TLS; the site holds only the **public** key, so a leaked site config cannot forge data; 10 min replay window, idempotent on `snapshot_id` | DB role + TLS; the database must accept connections from Mike's residential IP, which changes, so either a wide allow-list or a VPN | Spaces keys on both sides; signature as P1 to prove origin |
-| Coupling | contract = the envelope schema; site owns its storage | Orion's code depends on the site's schema; half-written pushes are visible unless every write is one transaction | as P1 |
-| Failure | site down → outbox retries with backoff (1, 5, 15 min, then hourly), alert after 3 h; site keeps serving the last good snapshot with its age | Orion stalls on DB timeouts; site DB is internet-exposed | site polls; no endpoint to build, but two credentials and a poll lag |
-| Site work | one endpoint + a `snapshots` table or file store | none for intake, but the site's DB becomes shared infra | a fetcher + poller |
+**File layout** (identical for both drivers, so the site's reader never changes):
 
-P1 because it keeps Orion outbound-only with no credential that can write the site's data store, keeps the contract to
-one versioned document, and lets the site validate before anything goes live (schema version, sha256, `seq` newer than
-current, every active asset present; a failed check keeps the old snapshot and returns the reason, which Orion posts as an
-ALERT). P3 is the fallback if the site's hosting can't take a POST. Staging pushes to a staging endpoint or nowhere (D3).
+```
+manifest.json              {schema: "orion.snapshot/1", env, release_tag, generated_at, full: {seq, day, path, sha256},
+                            levels: {seq, generated_at, path, sha256}}
+manifest.json.sig          Ed25519 signature over manifest.json (key: ~/shared/snapshot-sign.key; the site holds the public key)
+full/latest.json           newest nightly snapshot
+full/YYYY/YYYY-MM-DD.json  one per UTC day covered; a same-day re-run overwrites it with a higher seq
+levels/latest.json         newest hourly levels (overwritten; history lives in git / bucket versioning)
+assets.json                registry state: active / paused (since, reason)
+```
+
+The site trusts a snapshot only after: signature valid, each file's sha256 matches the manifest, `schema` known, `seq`
+newer than the one it holds. Otherwise it keeps serving what it has. The signature costs one key and ~20 lines, and it
+makes the site's check independent of the transport, so moving from git to a bucket changes nothing on the site.
+
+**Git driver (now).** Each env keeps a clone in `~/home/publish/`. A publish writes the files, commits as
+`orion-<env>@<hostname>` (message: kind, seq, UTC day, release tag) and pushes over SSH with that env's deploy key, which
+has write access to its own repo only. Orion is the only writer: if the remote has moved (someone edited the repo), the
+push is refused and posts an ALERT rather than merging. A failed push stays in `snapshots_out` and is retried
+(1, 5, 15 min, then hourly; ALERT after 3 h); the commit is local first, so nothing is recomputed. The site pulls on its
+own schedule (or a GitHub webhook later); a pull is cheap because only changed files move.
+
+Size (measured 2026-10-29 on a `.backup` copy: `report yield <a> --json` per asset, the Phase 1.5 minimal body): 13
+assets = 56 kB per full snapshot, 16 kB gzipped; levels are smaller. A year of nightly fulls plus hourly levels at 13
+assets is tens of MB in git even before delta compression; at 100 assets and Phase 5's richer body, a few hundred MB a
+year (estimate). GitHub's guidance is to keep a repo under ~1 GB, so the publisher can roll history yearly (tag the old
+head, start an orphan branch), decided when the repo passes 500 MB.
+
+**S3-compatible driver (later, config only).** Same layout under a prefix; files are `PUT` first and `manifest.json` +
+`.sig` last, so a reader never sees a manifest pointing at files that aren't there yet. Bucket versioning keeps history.
+Works with DO Spaces, R2, B2 or AWS S3 through the S3 API (endpoint configurable). Phase 1.5 builds the interface and the
+git driver only; the S3 driver is built when Mike picks a bucket, against the same interface tests.
+
+| | Git repo (**now**) | S3-compatible bucket (later) |
+|---|---|---|
+| Site pulls with | `git pull` / GitHub contents API, read-only deploy key or token | HTTPS GET (public-read bucket or signed URLs) |
+| History | git log, diffable | bucket versioning |
+| Cost | $0 (private repo) | ~$0-5/mo |
+| Limits | repo size (roll yearly) | none at this size |
+
+Staging publishes to its own repo (N12), never to prod's, for the same reason its DB role has no rights on prod.
 
 ### 9.3 Roles
 Created by `scripts/provision/pg-roles.sql`, run once by Mike as `postgres` on the server:
@@ -654,6 +768,7 @@ also ping the dead-man's switch (a "backups" check, every 24 h). `pgbackrest inf
 | Orion server | $0 | Mike's hardware; electricity ≈ 30-50 W average for a quad-core i7 desktop ≈ 22-36 kWh ≈ **$8-15** at ~$0.40/kWh (estimate, not metered) |
 | DO Spaces (backups, dumps) | **$5** | 250 GiB storage and 1 TiB egress included; our use is ~1-2 GiB |
 | Dead-man's switch | **$0** | free tier of a healthchecks-style service (3-4 checks) |
+| Snapshot repos (prod + staging) | **$0** | private GitHub repos (§9.2); an S3-compatible bucket later is ~$0-5 |
 | Alchemy RPC (prod + staging apps) | **~$1** at 13 assets, ~$6 at 100 (§5.7) | PAYG $0.52/M CU |
 | CoinGecko Basic | **$35** ($29 billed yearly) | roadmap decision 3, shared by Orion prod and the site's price layer (§5.7) |
 | Anthropic | disclosure runs only | the 13 daily report-agent sessions end with option A |
@@ -668,50 +783,63 @@ assets ≈ 1.5k rows/day at 100, measured rate scaled).
 Revision 1 costs that are gone: DO managed Postgres ($15.15), Orion droplet ($24), droplet backups (~$5).
 
 ## 12. Work order (for the plan)
-1. Dev Postgres on this host (PGDG apt; needs Mike's sudo, D10).
+0. **Independent of Phase 1, can start now:** `scripts/provision/{dev-postgres.sh,orion-host.sh,pg-roles.sql}` (§2.4) on
+   branch `feat/provision`, shellchecked, dry-run, container-tested if N13 is granted; Mike runs `dev-postgres.sh` on
+   this host (D10). Mike may run `orion-host.sh` on the server any time after; nothing deploys until step 5.
+1. Plan written once Phase 1 merges (file scopes re-measured on that main).
 2. Branch `feat/platform-pg`: §7 code, tests green on local Postgres; importer (§8.1).
-3. Branch `feat/daemon` (on 2): daemon, jobs, registry, hourly levels, watch state, Slack notify, snapshot outbox + push
-   client, `orion-remote`, release/deploy scripts, user unit, provisioning scripts (`scripts/provision/{orion-host.sh,
-   pg-roles.sql,pgbackrest.conf.tmpl,backup timers}`) written but not run.
+3. Branch `feat/daemon` (on 2): daemon, jobs, registry, hourly levels, watch state, Slack notify, snapshot outbox +
+   publisher (git driver), `orion-remote`, release/deploy scripts, user unit.
 4. Proofs on dev (§8.2) against a `.backup` copy of live SQLite; daemon soak on dev (a scratch DB, real chains, 48 h,
-   Slack to a test webhook).
-5. Mike installs the OS and runs the provisioning scripts (D4); Raymond creates the two SSH keys on his go; backup
-   repo created and a first `pgbackrest check` passes; dead-man's checks created.
+   Slack to a test webhook, publishing to a scratch bare repo).
+5. Mike creates the two snapshot repos and adds the server's deploy keys (N11, N12); Raymond creates the two SSH keys on
+   his go; backup repo created and a first `pgbackrest check` passes; dead-man's checks created.
 6. Staging: deploy, import, parallel run ≥3 days next to the live SQLite install (§8.3); first restore drill (§10.3).
 7. Prod cutover (§8.4); Hermes `orion-<asset>` jobs and wrappers removed; disclosure watcher moved into the repo and
    onto the daemon (D11); `orion` skill and `docs/ops/` rewritten for the server.
 
-## 13. Decisions owed by Mike
+## 13. Decisions
 
-### 13.1 Revision-1 decisions: status after the 2026-10-28 revision
+Recorded 2026-10-29 (Mike, #orion-dev thread 1793249245.302979): every recommendation below accepted, except N6 (replaced
+by Mike's git-repo/bucket direction) and N3 (accepted with his no-DST-shift rule). Settled items are kept for the record.
 
-| # | Question | Status | Recommendation |
-|---|---|---|---|
-| D1 | Unix user and role names | open, unchanged | `orion-prod`, `orion-stage`; roles `orion_prod`, `orion_stage`, `orion_prod_ro` |
-| D2 | How reports reach #orion-ops | narrowed: Mike's roadmap note keeps A recommended; confirm | **A**: Orion posts via webhook; watchdog is now the external dead-man's switch (N10), not a Hermes "ORION SILENT" job |
-| D3 | Staging output | open | #orion-staging for failures, restarts, the weekly refresh and the soak result; staging pushes to a staging site endpoint only if the site has one, else nowhere; staging runs nightly + levels every 6 h |
-| D4 | Who provisions | revised (no DO console) | Mike installs the OS and runs `orion-host.sh` + `pg-roles.sql` with sudo, creates the Spaces bucket and the dead-man's checks; Raymond gets only the two forced-command keys |
-| D5 | Prod soak rule | open, unchanged | a tag must have completed one scheduled staging nightly before prod; `--no-soak` for hotfixes |
-| D6 | Config proposals once YAML ships in releases | open, unchanged | approval = commit + release; `proposals approve` on prod refuses `config` kind unless the running release's YAML hash equals the proposal's, then records it approved |
-| D7 | Timestamp type | open, unchanged | `timestamptz`, read back as today's ISO strings |
-| D8 | History carried | open, unchanged (plus: `run_locks` dropped, 0 rows) | kept tables in full; all 49 agent_runs rows; the disclosure transcript only; no `assumption_value` proposals |
-| D9 | Test database | open, unchanged | real local Postgres per test file, not PGlite |
-| D10 | Dev Postgres on this host | open | Mike approves the PGDG apt repo + `postgresql-<major>` + `pgbackrest` (sudo) and a local role `orion_dev` |
-| D11 | Disclosure watcher | revised | move it into the repo (`tools/disclosure-watcher/`), released and run as the daemon's `disclosure_watch` job (not a timer); staging runs it `--dry-run` |
-| D12 | Postgres major | revised (no DO) | the newest stable PGDG major at provisioning, the same on the server and this host |
-| — | revision-1 DO items: managed backups, VPC, `doadmin`, `coinrevs_site` role, Orion droplet sizing | **moot** (decisions 8, 10) | — |
+### 13.1 Revision-1 decisions
 
-### 13.2 New decisions
+| # | Question | Decision |
+|---|---|---|
+| D1 | Unix user and role names | `orion-prod`, `orion-stage`; roles `orion_prod`, `orion_stage`, `orion_prod_ro` |
+| D2 | How reports reach #orion-ops | **A**: Orion posts via webhook; watchdog = external dead-man's switch (N10) |
+| D3 | Staging output | #orion-staging for failures, restarts, the weekly refresh and the soak result; staging publishes to its own snapshot repo (N12); nightly + levels every 6 h |
+| D4 | Who provisions | Mike installs the OS and runs Raymond's provisioning scripts (§2.4) with sudo, creates the Spaces bucket, the snapshot repos and the dead-man's checks; Raymond gets only the two forced-command keys |
+| D5 | Prod soak rule | a tag must have completed one scheduled staging nightly before prod; `--no-soak` for hotfixes |
+| D6 | Config proposals once YAML ships in releases | approval = commit + release; `proposals approve` on prod refuses `config` kind unless the running release's YAML hash equals the proposal's, then records it approved |
+| D7 | Timestamp type | `timestamptz`, read back as today's ISO strings |
+| D8 | History carried | kept tables in full; all 49 agent_runs rows; the disclosure transcript only; no `assumption_value` proposals; `run_locks` dropped |
+| D9 | Test database | real local Postgres per test file, not PGlite |
+| D10 | Dev Postgres on this host | PGDG `postgresql-18` + `pgbackrest`, role `orion_dev`, via `dev-postgres.sh` run by Mike |
+| D11 | Disclosure watcher | moved into the repo (`tools/disclosure-watcher/`), run as the daemon's `disclosure_watch` job; staging `--dry-run` |
+| D12 | Postgres major | **18** (newest PGDG major on 2026-10-29), from PGDG on both hosts (§2.3) |
+| — | revision-1 DO items | moot |
+
+### 13.2 Revision-2 decisions
+
+| # | Question | Decision |
+|---|---|---|
+| N1 | Server inputs | OS = **Ubuntu 26.04 LTS** (Mike); **still owed before provisioning:** hostname, fixed LAN IP, UPS signal (USB/NUT?), second disk? |
+| N2 | How the daemon runs | systemd user service with linger per Orion user |
+| N3 | Nightly slot | 00:45 UTC, all slots in UTC, none in 07:00-08:00 UTC (§5.4) |
+| N4 | A new asset in a release | arrives inactive until `orion asset activate <a>` |
+| N5 | Hourly scope | levels + watched `monitor_only` levels + one batched CoinGecko read into `latest_levels`; watch alerts on fire/clear; hourly `levels` publish |
+| N6 | Site transport | **replaced (Mike):** files in a git repo the site pulls, behind a publisher interface with an S3-compatible driver later (§9.2) |
+| N7 | Backups | pgBackRest to Spaces (~4-5 weeks PITR) + nightly encrypted `pg_dump` (30 daily, 12 monthly); keys with Mike off the box; monthly restore drill on this host |
+| N8 | CoinGecko budget | batch the hourly read, cache price series per id per night, site price cache 60 s, staging on a free Demo key |
+| N9 | RPC efficiency | build the day-boundary block cache; no cross-asset multicall for now |
+| N10 | Watchdog | systemd watchdog + daemon self-alerts + external dead-man's switch |
+
+### 13.3 Open (new in revision 3)
 
 | # | Question | Recommendation |
 |---|---|---|
-| N1 | Server inputs | OS and version (recommend Ubuntu 24.04 LTS, as this host), hostname, fixed LAN IP, whether the UPS can signal a clean shutdown (USB/NUT), whether the box has a second disk for local backups |
-| N2 | How the daemon runs | systemd **user** service with linger per Orion user, so deploys restart it without sudo (alternative: system units with `User=`, needs a sudoers rule for the deploy) |
-| N3 | Nightly slot | **00:45 UTC** (17:45 PDT / 16:45 PST): the report arrives the same evening, not the next morning. Alternative: refresh at 00:45 UTC but hold the Slack post to 13:00 UTC (06:00 PDT) |
-| N4 | A new asset in a release | arrives **inactive**, runs only after `orion asset activate <a>` (alternative: active on deploy) |
-| N5 | Hourly scope | supply/staked/locked levels + every watched `monitor_only` level + the batched CoinGecko read, into `latest_levels`; watch alerts posted on change (fire / clear), not every hour; a `levels` snapshot pushed hourly |
-| N6 | Site transport | **P1**: signed (Ed25519) HTTPS POST to a site endpoint, outbox with retries, site keeps the last good snapshot; P3 (Spaces drop) as the fallback |
-| N7 | Backup tooling and retention | **pgBackRest** to Spaces (encrypted, ~4-5 weeks PITR) + nightly encrypted `pg_dump` (30 daily, 12 monthly); keys held by Mike off the box; monthly restore drill on this host |
-| N8 | CoinGecko budget | batch the hourly read into one call, cache price series per id per night, site price cache **60 s**, staging on a free Demo key |
-| N9 | RPC efficiency | build the shared day-boundary block cache; skip cross-asset multicall batching until volume or cost says otherwise (~$6/mo at 100 assets) |
-| N10 | Watchdog | systemd watchdog + daemon self-alerts + an **external dead-man's switch** (free healthchecks-style service) pinged after each nightly and hourly job and each backup |
+| N11 | Prod snapshot repo | private `masha256/orion-data`, created by Mike; the server's prod deploy key (write) on it; the site later gets its own read-only key |
+| N12 | Staging snapshot target | a separate private repo `masha256/orion-data-staging` with the staging key only, so staging can never write prod's data |
+| N13 | Container testing of the provisioning scripts | add `hermes` to the `docker` group (`sudo usermod -aG docker hermes`) so both scripts run for real in `ubuntu:24.04` / `ubuntu:26.04` before Mike runs them; alternative: Mike runs the container test, or skip it (shellcheck + dry run only). Note the docker group is root-equivalent on this host |
