@@ -73,8 +73,8 @@ function approvedLines(result: ApproveResult): string[] {
   }
 }
 
-export function registerProposals(model: Command, ctx: CliContext): void {
-  const proposals = model.command('proposals').description('changes the agent may not make itself, for you to approve or reject');
+export function registerProposals(program: Command, ctx: CliContext): void {
+  const proposals = program.command('proposals').description('changes the agent may not make itself, for you to approve or reject');
 
   proposals
     .command('list [asset]')

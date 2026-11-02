@@ -1,17 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { runValuation } from '../../src/app/valuation.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
 import { listPersonaNames, loadPersona, skillsFor } from '../../src/config/personas.js';
-import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb } from '../../src/db/connection.js';
 import { listActiveObservations } from '../../src/db/observations.js';
-import { requiredAssumptionKeys } from '../../src/engine/requirements.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { addDays } from '../../src/ingest/time.js';
-import type { AssumptionValues } from '../../src/types.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { llamaOverview } from '../helpers/llamaOverview.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
@@ -60,23 +56,11 @@ function world() {
   return { db: openDb(':memory:'), deps, http, rpc };
 }
 
-/** A flat, plausible set for the wiring test; the real one comes from the user's calibration. */
-function assumptions(): AssumptionValues {
-  const one = {
-    rev_growth_y1: 0.1, growth_fade_years: 4, terminal_growth: 0.02, 'capture_rate_terminal.fees': 1, 'capture_ramp_years.fees': 0,
-    discount_rate_base: 0.2, 'multiple.fm_holder_flow': 8, regime_multiplier: 1, staked_ratio_horizon: 0.5,
-  };
-  return { bear: { ...one }, base: { ...one }, bull: { ...one } };
-}
-
 describe('assets/aero.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'aero', symbol: 'AERO', supply_basis: 'effective_total' });
     expect(config.holder_flows).toEqual([{ id: 'fees', kind: 'fee_share', capture_rule: 'contractual', recipient_base: 'locked', metric: 'flow_usd.fees', window_days: 91 }]);
     expect(config.modules.map((m) => [m.id, m.weight])).toEqual([['hc', 0.6], ['fm_holder_flow', 0.4]]);
-    expect(requiredAssumptionKeys(config)).toEqual([
-      'capture_ramp_years.fees', 'capture_rate_terminal.fees', 'discount_rate_base', 'growth_fade_years', 'multiple.fm_holder_flow', 'regime_multiplier', 'rev_growth_y1', 'staked_ratio_horizon', 'terminal_growth',
-    ]);
     // Every metric has a source: a bootstrap run has nothing to research on this asset.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
@@ -106,7 +90,7 @@ describe('assets/aero.yaml', () => {
     expect(plan.needsRpc).toBe(true);
   });
 
-  it('fetches every metric from canned sources with the price cross-check in tolerance, then values the asset', async () => {
+  it('fetches every metric from canned sources with the price cross-check in tolerance', async () => {
     const w = world();
     const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
@@ -135,14 +119,6 @@ describe('assets/aero.yaml', () => {
     const checked = r.sources.flatMap((s) => s.crossChecks);
     expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]); // total: CoinGecko's, 2 percent
     expect(w.rpc.stats.multicall).toBeLessThanOrEqual(5); // levels, and two per adapter (the epoch, then the voting power at its start)
-
-    createAssumptionSet(w.db, { assetId: 'aero', author: 'user', rationale: 'wiring', values: assumptions(), createdAt: NOW.toISOString() });
-    const { signal } = runValuation(w.db, loadAsset(ROOT, 'aero'), NOW);
-    expect(signal.status_reasons).toEqual([]);
-    expect(signal.status).toBe('ok');
-    expect(signal.data_quality.grade).toBe('A');
-    expect(signal.spot!.price).toBe(0.671936);
-    expect(signal.horizons!['12m'].expected_target).toBeGreaterThan(0);
   });
 });
 

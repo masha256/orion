@@ -77,9 +77,10 @@ export function checkEvidence(
 export type ObservationRoute = 'inert' | 'proposal' | 'live';
 
 /**
- * Where a researched observation goes. `inert`: stored provisional and out of every signal until the user confirms it.
- * `live`: stored provisional and in the signal at grade C. `proposal`: too large a move on a critical metric to go
- * live unattended. `inForce` is null when nothing is in force (and always for flow and event metrics).
+ * Where a researched observation goes. `inert`: stored provisional and never read as the value in force until the user
+ * confirms it. `live`: stored provisional and read as the value in force (by the agent's reads) until the user decides.
+ * `proposal`: too large a move on a critical metric to go live unattended. Both stored kinds are listed in the inbox.
+ * `inForce` is null when nothing is in force (and always for flow and event metrics).
  */
 export function routeObservation(input: {
   allowProvisional: boolean;

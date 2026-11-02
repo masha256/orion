@@ -1,19 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
-import { updateAsset } from '../../src/app/update.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
 import { loadPersona } from '../../src/config/personas.js';
-import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb } from '../../src/db/connection.js';
 import { listActiveObservations } from '../../src/db/observations.js';
-import { requiredAssumptionKeys, requiredExtraMetrics } from '../../src/engine/requirements.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { addDays } from '../../src/ingest/time.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
-import type { AssumptionValues } from '../../src/types.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { llamaOverview } from '../helpers/llamaOverview.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
@@ -91,22 +86,11 @@ function world() {
   return { db: openDb(':memory:'), deps, http, rpc };
 }
 
-/** The user's calibration (central package, 2026-10-11). */
-const calibrated = parseYaml(readFileSync(`${ROOT}/calibration/uni-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
-function assumptions(): AssumptionValues {
-  return calibrated as unknown as AssumptionValues;
-}
-
 describe('assets/uni.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'uni', symbol: 'UNI', chain: 'ethereum', supply_basis: 'effective_total', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
     expect(config.holder_flows).toEqual([{ id: 'burn', kind: 'burn', capture_rule: 'programmatic', recipient_base: 'all', metric: 'flow_usd.burn', window_days: 91 }]);
     expect(config.modules.map((m) => [m.id, m.kind, m.weight ?? null])).toEqual([['hc', 'estimate', 0.6], ['fm_holder_flow', 'estimate', 0.4]]);
-    expect(requiredAssumptionKeys(config)).toEqual([
-      'capture_ramp_years.burn', 'capture_rate_terminal.burn', 'discount_premium_programmatic', 'discount_rate_base', 'growth_fade_years',
-      'multiple.fm_holder_flow', 'regime_multiplier', 'rev_growth_y1', 'staked_ratio_horizon', 'terminal_growth',
-    ]);
-    expect(requiredExtraMetrics(config)).toEqual([]);
     // Every metric has a source, and none is manual: a bootstrap run has nothing to research and the grade can be A.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // DefiLlama only for the gross swap fees (Mike, 2026-10-11): the one series with no on-chain source.
@@ -136,10 +120,9 @@ describe('assets/uni.yaml', () => {
     expect(plan.derived.map((r) => r.metricKey)).toEqual(['revenue_run_rate_usd']);
   });
 
-  it('fetches every metric from canned sources, counts every burner but the Timelock, and values the asset at grade A through the tick path', async () => {
+  it('fetches every metric from canned sources and counts every burner but the Timelock', async () => {
     const w = world();
-    createAssumptionSet(w.db, { assetId: 'uni', author: 'user', rationale: 'wiring', values: assumptions(), createdAt: NOW.toISOString() });
-    const { fetch: r, signal } = await updateAsset(w.db, loadAsset(ROOT, 'uni'), NOW, w.deps);
+    const r = await fetchAsset(w.db, loadAsset(ROOT, 'uni'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
     // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
     expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'uni', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
@@ -168,15 +151,6 @@ describe('assets/uni.yaml', () => {
     const revenue = rows('revenue_run_rate_usd').at(-1)!;
     expect(revenue.value).toBeCloseTo((91 * 64_000 * PRICE * 365) / 91, 0);
     expect(revenue).toMatchObject({ source: 'onchain', sourceDetail: 'derived flow_annualized(flow_usd.burn, 91d)' });
-
-    expect(signal.status_reasons).toEqual([]);
-    expect(signal.status).toBe('ok');
-    expect(signal.data_quality.grade).toBe('A');
-    expect(signal.generated_at.slice(0, 10)).toBe('2026-10-11');
-    expect(signal.spot!.price).toBe(PRICE);
-    expect(signal.horizons!['12m'].expected_target).toBeGreaterThan(0);
-    // No staking: no staked cash, no emission yield.
-    expect(signal.horizons!['12m'].staked_cash_per_token ?? 0).toBe(0);
   });
 
   it('reports the burn against the Labs vest as dilution, and the gross swap fees as volume', async () => {
@@ -208,19 +182,5 @@ describe('the UNI persona', () => {
     const persona = loadPersona(ROOT, 'onchain-dex-analyst');
     expect(persona.body).toContain('A fee-switch burn (UNI)');
     expect(/^[\x00-\x7F]*$/.test(persona.body)).toBe(true);
-  });
-});
-
-describe('calibration/uni-assumptions.yaml', () => {
-  it('is complete and sits inside the agent bands of assets/uni.yaml', () => {
-    for (const s of ['bear', 'base', 'bull'] as const) {
-      expect(Object.keys(calibrated[s]).sort()).toEqual(requiredAssumptionKeys(config));
-      for (const [key, value] of Object.entries(calibrated[s])) {
-        const b = config.assumptions[key];
-        const band = b[s] ?? b;
-        expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
-        expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
-      }
-    }
   });
 });

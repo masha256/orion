@@ -33,7 +33,7 @@ function stagedLines(staged: StoredStaged, verb: string): string[] {
   const lines: string[] = [];
   for (const c of staged.assumptionChanges ?? []) lines.push(`  ${verb} ${c.key} (${c.scenario}) ${c.start} -> ${c.value}: ${c.rationale}`);
   for (const r of staged.resolutions ?? []) lines.push(`  ${verb} anomaly #${r.anomalyId} resolved: ${r.note}`);
-  for (const o of staged.observations ?? []) lines.push(`  ${verb} provisional ${o.metricKey} = ${o.value} at ${o.observedAt} (${o.live ? 'in the signal' : 'inert until confirmed'}) ${o.citationUrl}`);
+  for (const o of staged.observations ?? []) lines.push(`  ${verb} provisional ${o.metricKey} = ${o.value} at ${o.observedAt} (${o.live ? 'in force until reviewed' : 'inert until confirmed'}) ${o.citationUrl}`);
   for (const p of staged.proposals ?? []) lines.push(`  ${verb} proposal ${p.change.kind}: ${p.rationale}`);
   if (staged.journal) {
     lines.push(`  ${verb} journal: ${staged.journal.summary}`);

@@ -1,6 +1,5 @@
 import type { Command } from 'commander';
 import { listAssetIds, loadAsset } from '../../config/load.js';
-import { requiredAssumptionKeys, validateAssetModules } from '../../engine/requirements.js';
 import { OrionError } from '../../types.js';
 import { output, type CliContext } from '../util.js';
 
@@ -21,14 +20,11 @@ export function registerAsset(program: Command, ctx: CliContext): void {
     .action((id: string, opts: { json?: boolean }) => {
       const loaded = loadAsset(ctx.home, id);
       const c = loaded.config;
-      output(ctx, opts.json, { ...loaded, required_assumption_keys: requiredAssumptionKeys(c) }, () => [
+      output(ctx, opts.json, loaded, () => [
         `${c.symbol}  ${c.name}  (${c.id})`,
         `config hash ${loaded.hash}`,
-        `supply basis ${c.supply_basis}`,
         `metrics: ${Object.keys(c.metrics).join(', ')}`,
         `holder flows: ${c.holder_flows.map((f) => `${f.id} [${f.kind}, ${f.capture_rule}, ${f.recipient_base}]`).join('; ')}`,
-        `modules: ${c.modules.map((m) => `${m.id}=${m.type}${m.weight === undefined ? '' : `@${m.weight}`}`).join('; ')}`,
-        `scenario probabilities: bear ${c.scenario_probabilities.bear}, base ${c.scenario_probabilities.base}, bull ${c.scenario_probabilities.bull}`,
       ]);
     });
 
@@ -38,7 +34,8 @@ export function registerAsset(program: Command, ctx: CliContext): void {
     .action((id: string | undefined, opts: { json?: boolean }) => {
       const results = (id ? [id] : listAssetIds(ctx.home)).map((assetId) => {
         try {
-          return { id: assetId, errors: validateAssetModules(loadAsset(ctx.home, assetId).config) };
+          loadAsset(ctx.home, assetId);
+          return { id: assetId, errors: [] as string[] };
         } catch (err) {
           if (err instanceof OrionError) return { id: assetId, errors: err.message.split('\n') };
           throw err;

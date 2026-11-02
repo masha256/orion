@@ -1,18 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
-import { updateAsset } from '../../src/app/update.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
 import { loadPersona } from '../../src/config/personas.js';
-import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb } from '../../src/db/connection.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
-import { requiredAssumptionKeys, requiredExtraMetrics } from '../../src/engine/requirements.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
-import type { AssumptionValues } from '../../src/types.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { llamaOverview } from '../helpers/llamaOverview.js';
 
@@ -70,19 +65,11 @@ function seedReadings(db: ReturnType<typeof openDb>, n: number, supplyNow: numbe
   }
 }
 
-/** The calibrated package (the CAKE/LIT/LINK central, Mike 2026-10-16: "Option 1"). */
-const calibrated = parseYaml(readFileSync(`${ROOT}/calibration/pump-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
-
 describe('assets/pump.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'pump', symbol: 'PUMP', chain: 'solana', supply_basis: 'effective_total' });
     expect(config.ingest).toBeUndefined(); // no EVM RPC: Solana is read by the solana.* adapters
     expect(config.holder_flows).toEqual([{ id: 'buyback', kind: 'burn', capture_rule: 'discretionary', recipient_base: 'all', metric: 'flow_usd.buyback', window_days: 91 }]);
-    expect(requiredAssumptionKeys(config)).toEqual([
-      'capture_ramp_years.buyback', 'capture_rate_terminal.buyback', 'discount_premium_discretionary', 'discount_rate_base', 'growth_fade_years',
-      'multiple.fm_holder_flow', 'regime_multiplier', 'rev_growth_y1', 'staked_ratio_horizon', 'terminal_growth',
-    ]);
-    expect(requiredExtraMetrics(config)).toEqual([]);
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // DefiLlama only for the pre-reading history, the unlocks and the revenue display line (Mike, 2026-10-16).
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.llama_revenue']);
@@ -121,15 +108,14 @@ describe('assets/pump.yaml', () => {
     expect(rows('flow_usd.buyback').some((o) => (o.sourceDetail ?? '').includes('SECRET'))).toBe(false);
   });
 
-  it('values through the tick path from on-chain days, with no anomaly, and reports the burn and the unlocks', async () => {
+  it('fetches on-chain days with no anomaly, and reports the burn and the unlocks', async () => {
     const supplyNow = 827.6e9;
     const w = world(supplyNow);
-    createAssumptionSet(w.db, { assetId: 'pump', author: 'user', rationale: 'calibrated', values: calibrated as unknown as AssumptionValues, createdAt: NOW.toISOString() });
     // The onboarding backfill eleven days ago (only the flows: its supply reading would be out of line with the seeded ones),
     // then a daily supply reading each morning since.
     await fetchAsset(w.db, { config, hash: 'backfill' }, new Date(NOW.getTime() - 11 * DAY), w.deps, { backfillDays: 362, metrics: ['flow_usd.buyback', 'flow_tokens.buyback', 'revenue_run_rate_usd'] });
     seedReadings(w.db, 10, supplyNow);
-    const { fetch: r, signal } = await updateAsset(w.db, loadAsset(ROOT, 'pump'), NOW, w.deps);
+    const r = await fetchAsset(w.db, loadAsset(ROOT, 'pump'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error])).toEqual([]);
     // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
     expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'pump', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
@@ -141,8 +127,6 @@ describe('assets/pump.yaml', () => {
     expect(last7.map((o) => Math.round(o.value))).toEqual(Array(7).fill(5_000_000));
     expect(last7.every((o) => o.source === 'api')).toBe(true);
     expect(rows('burn_wallet_a_pump').at(-1)!.value).toBe(0);
-    expect(signal.horizons!['12m'].expected_target).toBeGreaterThan(0);
-    expect(signal.spot!.price).toBe(PRICE);
 
     const rep = loadHolderYieldReport(w.db, config);
     expect(rep.flows).toEqual([expect.objectContaining({ id: 'buyback', bucket: 'burn', haircut: 0 })]);
@@ -168,21 +152,5 @@ describe('the PUMP persona', () => {
     expect(persona.body).toContain('The company sets the share (PUMP)');
     expect(persona.body).toContain('Insider unlocks outweigh the burn');
     expect(/^[\x00-\x7F]*$/.test(persona.body)).toBe(true);
-  });
-});
-
-describe('calibration/pump-assumptions.yaml', () => {
-  it('is complete, sits inside the agent bands of assets/pump.yaml, and is LIT\'s central unchanged', () => {
-    const lit = parseYaml(readFileSync(`${ROOT}/calibration/lit-assumptions.yaml`, 'utf8')) as typeof calibrated;
-    for (const s of ['bear', 'base', 'bull'] as const) {
-      expect(Object.keys(calibrated[s]).sort()).toEqual(requiredAssumptionKeys(config));
-      for (const [key, value] of Object.entries(calibrated[s])) {
-        const b = config.assumptions[key];
-        const band = b[s] ?? b;
-        expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
-        expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
-      }
-      expect(calibrated[s]).toEqual(lit[s]);
-    }
   });
 });

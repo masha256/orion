@@ -1,17 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
-import { runValuation } from '../../src/app/valuation.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
 import { loadPersona } from '../../src/config/personas.js';
-import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb } from '../../src/db/connection.js';
 import { listActiveObservations } from '../../src/db/observations.js';
-import { requiredAssumptionKeys, requiredExtraMetrics } from '../../src/engine/requirements.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
-import type { AssumptionValues } from '../../src/types.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { llamaOverview } from '../helpers/llamaOverview.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
@@ -84,26 +79,11 @@ function world() {
   return { db: openDb(':memory:'), deps, http, rpc };
 }
 
-/** A flat, plausible set for the wiring test; the real one comes from the user's calibration. */
-function assumptions(): AssumptionValues {
-  const one = {
-    rev_growth_y1: 0.1, growth_fade_years: 4, terminal_growth: 0.02, 'capture_rate_terminal.fees': 1, 'capture_ramp_years.fees': 0,
-    discount_rate_base: 0.2, discount_premium_programmatic: 0.03, 'multiple.fm_holder_flow': 10, regime_multiplier: 1, staked_ratio_horizon: 0.35,
-    incentive_efficiency_drift: 0, incentive_discount_rate: 0.2,
-  };
-  return { bear: { ...one }, base: { ...one }, bull: { ...one } };
-}
-
 describe('assets/crv.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'crv', symbol: 'CRV', chain: 'ethereum', supply_basis: 'effective_total', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
     expect(config.holder_flows).toEqual([{ id: 'fees', kind: 'fee_share', capture_rule: 'programmatic', recipient_base: 'locked', metric: 'flow_usd.fees', window_days: 91 }]);
     expect(config.modules.map((m) => [m.id, m.kind, m.weight ?? null])).toEqual([['hc', 'estimate', 0.6], ['fm_holder_flow', 'estimate', 0.4], ['vote_incentives', 'component', null]]);
-    expect(requiredAssumptionKeys(config)).toEqual([
-      'capture_ramp_years.fees', 'capture_rate_terminal.fees', 'discount_premium_programmatic', 'discount_rate_base', 'growth_fade_years',
-      'incentive_discount_rate', 'incentive_efficiency_drift', 'multiple.fm_holder_flow', 'regime_multiplier', 'rev_growth_y1', 'staked_ratio_horizon', 'terminal_growth',
-    ]);
-    expect(requiredExtraMetrics(config)).toEqual(['vote_incentive_run_rate_usd']);
     // Every metric has a source, and none is manual: a bootstrap run has nothing to research and the grade can be A.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
@@ -140,7 +120,7 @@ describe('assets/crv.yaml', () => {
     expect(plan.needsRpc).toBe(true);
   });
 
-  it('fetches every metric from canned sources with both cross-checks in tolerance, then values the asset at grade A', async () => {
+  it('fetches every metric from canned sources with both cross-checks in tolerance', async () => {
     const w = world();
     const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
@@ -177,26 +157,9 @@ describe('assets/crv.yaml', () => {
     expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true], ['vote_incentive_run_rate_usd', true]]);
     expect(w.rpc.stats.logRanges).toHaveLength(300); // three scans (fees, protocol revenue, treasury), 100 days each: the scanner commits a day at a time; a mainnet day (7,200 blocks) fits one call
     expect(w.rpc.stats.logRanges.every(([a, b]) => b - a + 1n <= 10_000n)).toBe(true);
-
-    createAssumptionSet(w.db, { assetId: 'crv', author: 'user', rationale: 'wiring', values: assumptions(), createdAt: NOW.toISOString() });
-    const { signal } = runValuation(w.db, loadAsset(ROOT, 'crv'), NOW);
-    expect(signal.status_reasons).toEqual([]);
-    expect(signal.status).toBe('ok');
-    expect(signal.data_quality.grade).toBe('A');
-    expect(signal.spot!.price).toBe(0.3933);
-    expect(signal.horizons!['12m'].expected_target).toBeGreaterThan(0);
-    const component = signal.horizons!['12m'].modules.vote_incentives;
-    expect(component).toMatchObject({ type: 'vote_incentives', kind: 'component', weight: null });
-    // Valued at spot (price_basis spot): independent of the fee model's target, about 0.0078 USD a token
-    // (19.8M USD of discounted incentives over supply at the horizon).
-    expect(component.breakdown).toMatchObject({ metric: 'vote_incentive_run_rate_usd', years_valued: 10, price_basis: 'spot', price_ratio: 1, incentives_run_rate_usd: expect.closeTo(8_688_188.56, 1) });
-    expect(component.value).toBeGreaterThan(0.004);
-    expect(component.value).toBeLessThan(0.009);
-    // Over supply at the horizon, which emissions have grown past today's 2.42B.
-    expect(component.value).toBeLessThan((component.breakdown.aggregate_pv_usd as number) / 2_424_321_556);
   });
 
-  it('keeps the monitor-only locker lines out of the valuation: a failed read leaves the signal ok at grade A', async () => {
+  it('a failed monitor-only locker read fails chain_levels but still writes its other readings', async () => {
     const w = world();
     const failing = { ...w.deps, rpcFactory: () => ({ ...w.rpc, multicall: async (calls: Parameters<typeof w.rpc.multicall>[0], b: bigint) => {
       const out = await w.rpc.multicall(calls, b);
@@ -211,30 +174,11 @@ describe('assets/crv.yaml', () => {
     ]);
     expect(listActiveObservations(w.db, 'crv', 've_power.yearn')).toEqual([]);
     expect(listActiveObservations(w.db, 'crv', 'staked_supply')).toHaveLength(1);
-    createAssumptionSet(w.db, { assetId: 'crv', author: 'user', rationale: 'wiring', values: assumptions(), createdAt: NOW.toISOString() });
-    const { signal } = runValuation(w.db, loadAsset(ROOT, 'crv'), NOW);
-    expect(signal.status).toBe('ok');
-    expect(signal.data_quality.grade).toBe('A');
   });
 
   it('refuses to run without the Ethereum RPC URL', async () => {
     const w = world();
     await expect(fetchAsset(w.db, { config, hash: 'test' }, NOW, { ...w.deps, env: {} })).rejects.toMatchObject({ code: 'missing_rpc_url' });
-  });
-});
-
-describe('calibration/crv-assumptions.yaml', () => {
-  it('is complete and sits inside the agent bands of assets/crv.yaml', () => {
-    const raw = parseYaml(readFileSync(`${ROOT}/calibration/crv-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
-    for (const s of ['bear', 'base', 'bull'] as const) {
-      expect(Object.keys(raw[s]).sort()).toEqual(requiredAssumptionKeys(config));
-      for (const [key, value] of Object.entries(raw[s])) {
-        const b = config.assumptions[key];
-        const band = b[s] ?? b;
-        expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
-        expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
-      }
-    }
   });
 });
 

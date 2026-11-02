@@ -1,16 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
-import { runValuation } from '../../src/app/valuation.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
-import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb } from '../../src/db/connection.js';
 import { listActiveObservations } from '../../src/db/observations.js';
-import { requiredAssumptionKeys, requiredExtraMetrics } from '../../src/engine/requirements.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
-import type { AssumptionValues } from '../../src/types.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 
@@ -72,15 +67,6 @@ function world() {
   return { db: openDb(':memory:'), deps, http, rpc };
 }
 
-/** A flat, plausible set for the wiring test; the real one comes from the user's calibration. */
-function assumptions(): AssumptionValues {
-  const one = {
-    rev_growth_y1: -0.1, growth_fade_years: 3, terminal_growth: -0.05, 'capture_rate_terminal.fees': 1, 'capture_ramp_years.fees': 0,
-    discount_rate_base: 0.15, discount_premium_programmatic: 0.02, 'multiple.fm_holder_flow': 8, regime_multiplier: 1, staked_ratio_horizon: 0.88,
-  };
-  return { bear: { ...one }, base: { ...one }, bull: { ...one } };
-}
-
 describe('assets/ycrv.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'ycrv', symbol: 'yCRV', chain: 'ethereum', supply_basis: 'effective_total', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
@@ -88,11 +74,6 @@ describe('assets/ycrv.yaml', () => {
       { id: 'fees', kind: 'fee_share', capture_rule: 'programmatic', recipient_base: 'staked', valued_per: 'recipients', metric: 'flow_usd.fees', window_days: 91 },
     ]);
     expect(config.modules.map((m) => [m.id, m.kind, m.weight ?? null])).toEqual([['hc', 'estimate', 0.6], ['fm_holder_flow', 'estimate', 0.4]]);
-    expect(requiredAssumptionKeys(config)).toEqual([
-      'capture_ramp_years.fees', 'capture_rate_terminal.fees', 'discount_premium_programmatic', 'discount_rate_base', 'growth_fade_years',
-      'multiple.fm_holder_flow', 'regime_multiplier', 'rev_growth_y1', 'staked_ratio_horizon', 'terminal_growth',
-    ]);
-    expect(requiredExtraMetrics(config)).toEqual([]);
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/ycrv.yaml moves it; update the pin on purpose.
     expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('5dd6000670d3a75fc0c6fdc2731a1eb02ee3a92fbe0b4fef23b7633bd268b9d9');
@@ -116,7 +97,7 @@ describe('assets/ycrv.yaml', () => {
     expect(plan.derived.map((r) => r.metricKey)).toEqual(['revenue_run_rate_usd']);
   });
 
-  it('fetches every metric from canned sources, then values the cash per staked yCRV at grade A', async () => {
+  it('fetches every metric from canned sources', async () => {
     const w = world();
     const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
@@ -137,37 +118,10 @@ describe('assets/ycrv.yaml', () => {
     // 13 payouts in the 91 days to 2026-10-08, scaled to a year.
     expect(rows('revenue_run_rate_usd').at(-1)!.value).toBeCloseTo((13 * 25_000 * 1.159 * 0.9991 * 365) / 91, 0);
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
-
-    createAssumptionSet(w.db, { assetId: 'ycrv', author: 'user', rationale: 'wiring', values: assumptions(), createdAt: NOW.toISOString() });
-    const { signal } = runValuation(w.db, loadAsset(ROOT, 'ycrv'), NOW);
-    expect(signal.status_reasons).toEqual([]);
-    expect(signal.status).toBe('ok');
-    expect(signal.data_quality.grade).toBe('A');
-    const hc = signal.horizons!['12m'].modules.hc;
-    const share = 63_328_341 / 71_960_697;
-    expect((hc.breakdown.flows as Record<string, Record<string, unknown>>).fees.valued_over_share).toBeCloseTo(share, 12);
-    expect(signal.horizons!['12m'].modules.fm_holder_flow.breakdown.valued_per_recipients).toEqual({ fees: expect.closeTo(share, 12) });
-    // No emissions: supply at the horizon is today's.
-    expect(hc.breakdown.supply_at_horizon).toBe(71_960_697);
   });
 
   it('refuses to run without the Ethereum RPC URL', async () => {
     const w = world();
     await expect(fetchAsset(w.db, { config, hash: 'test' }, NOW, { ...w.deps, env: {} })).rejects.toMatchObject({ code: 'missing_rpc_url' });
-  });
-});
-
-describe('calibration/ycrv-assumptions.yaml', () => {
-  it('is complete and sits inside the agent bands of assets/ycrv.yaml', () => {
-    const raw = parseYaml(readFileSync(`${ROOT}/calibration/ycrv-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
-    for (const s of ['bear', 'base', 'bull'] as const) {
-      expect(Object.keys(raw[s]).sort()).toEqual(requiredAssumptionKeys(config));
-      for (const [key, value] of Object.entries(raw[s])) {
-        const b = config.assumptions[key];
-        const band = b[s] ?? b;
-        expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
-        expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
-      }
-    }
   });
 });

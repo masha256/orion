@@ -1,20 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
-import { updateAsset } from '../../src/app/update.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
 import { loadPersona } from '../../src/config/personas.js';
-import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb } from '../../src/db/connection.js';
 import { listActiveObservations } from '../../src/db/observations.js';
-import { requiredAssumptionKeys, requiredExtraMetrics } from '../../src/engine/requirements.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { addDays } from '../../src/ingest/time.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
-import type { AssumptionValues } from '../../src/types.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { llamaOverview } from '../helpers/llamaOverview.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
@@ -104,19 +99,10 @@ function world() {
   return { db: openDb(':memory:'), deps };
 }
 
-/** The calibration (central package, 2026-10-12). */
-const calibrated = parseYaml(readFileSync(`${ROOT}/calibration/cake-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
-const placeholder = calibrated as unknown as AssumptionValues;
-
 describe('assets/cake.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'cake', symbol: 'CAKE', chain: 'bnb', supply_basis: 'effective_total', ingest: { chain_id: 56, rpc_url_env: 'ORION_BNB_RPC_URL', backfill_days: 100 } });
     expect(config.holder_flows).toEqual([{ id: 'burn', kind: 'burn', capture_rule: 'programmatic', recipient_base: 'all', metric: 'flow_usd.burn', window_days: 91 }]);
-    expect(requiredAssumptionKeys(config)).toEqual([
-      'capture_ramp_years.burn', 'capture_rate_terminal.burn', 'discount_premium_programmatic', 'discount_rate_base', 'growth_fade_years',
-      'multiple.fm_holder_flow', 'regime_multiplier', 'rev_growth_y1', 'staked_ratio_horizon', 'terminal_growth',
-    ]);
-    expect(requiredExtraMetrics(config)).toEqual([]);
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // DefiLlama only for the display series with no on-chain source (fees paid in thousands of pool tokens).
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.fees', 'flow_usd.llama_revenue']);
@@ -138,10 +124,9 @@ describe('assets/cake.yaml', () => {
     expect(plan.derived.map((r) => r.metricKey)).toEqual(['revenue_run_rate_usd']);
   });
 
-  it('fetches every metric, counts only the fee-funded burn, and values the asset at grade A through the tick path', async () => {
+  it('fetches every metric and counts only the fee-funded burn', async () => {
     const w = world();
-    createAssumptionSet(w.db, { assetId: 'cake', author: 'user', rationale: 'calibrated', values: placeholder, createdAt: NOW.toISOString() });
-    const { fetch: r, signal } = await updateAsset(w.db, loadAsset(ROOT, 'cake'), NOW, w.deps);
+    const r = await fetchAsset(w.db, loadAsset(ROOT, 'cake'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
     // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
     expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'cake', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
@@ -164,12 +149,6 @@ describe('assets/cake.yaml', () => {
     const revenue = rows('revenue_run_rate_usd').at(-1)!;
     expect(revenue.value).toBeCloseTo((13 * 550_000 * PRICE * 365) / 91, 0);
     expect(revenue.sourceDetail).toBe('derived flow_annualized(flow_usd.burn, 91d)');
-
-    expect(signal.status_reasons).toEqual([]);
-    expect(signal.status).toBe('ok');
-    expect(signal.data_quality.grade).toBe('A');
-    expect(signal.generated_at.slice(0, 10)).toBe('2026-10-12');
-    expect(signal.horizons!['12m'].expected_target).toBeGreaterThan(0);
   });
 
   it('reports the burn against emissions in tokens, and the treasury share as protocol income', async () => {
@@ -194,26 +173,5 @@ describe('assets/cake.yaml', () => {
   it('refuses to run without the BNB Chain RPC URL', async () => {
     const w = world();
     await expect(fetchAsset(w.db, { config, hash: 'test' }, NOW, { ...w.deps, env: {} })).rejects.toMatchObject({ code: 'missing_rpc_url' });
-  });
-});
-
-describe('calibration/cake-assumptions.yaml', () => {
-  it('is complete and sits inside the agent bands of assets/cake.yaml', () => {
-    for (const s of ['bear', 'base', 'bull'] as const) {
-      expect(Object.keys(calibrated[s]).sort()).toEqual(requiredAssumptionKeys(config));
-      for (const [key, value] of Object.entries(calibrated[s])) {
-        const b = config.assumptions[key];
-        const band = b[s] ?? b;
-        expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
-        expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
-      }
-    }
-    // Bands exist for every key that moves the value; every band is sorted.
-    for (const key of ['rev_growth_y1', 'multiple.fm_holder_flow', 'discount_rate_base', 'capture_rate_terminal.burn']) {
-      for (const s of ['bear', 'base', 'bull'] as const) {
-        const band = config.assumptions[key][s]!;
-        expect(band.min, `${s} ${key}`).toBeLessThanOrEqual(band.max);
-      }
-    }
   });
 });

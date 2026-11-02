@@ -3,16 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Ledger } from '../../src/agent/ledger.js';
-import { runValuation } from '../../src/app/valuation.js';
-import { parseAssetYaml } from '../../src/config/load.js';
-import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb, type Db } from '../../src/db/connection.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
-import { getLatestSignal } from '../../src/db/runs.js';
 import { fetchAsset } from '../../src/ingest/run.js';
-import { MINI_ASSET_YAML, miniAssumptions } from '../helpers/assets.js';
 import { harness } from '../helpers/fetchHarness.js';
-import { miniObservations } from '../helpers/obs.js';
 
 /**
  * Two connections to ONE file database, which is what a scheduled run and a manual command are. `openDb` puts SQLite in
@@ -121,30 +115,6 @@ describe('Ledger.commit against a second connection', () => {
     B.exec('ROLLBACK');
     expect(waited).toBeGreaterThanOrEqual(200);
     expect(listActiveObservations(A, 'mini', 'revenue_run_rate_usd')).toEqual([]); // nothing was written
-  });
-});
-
-describe('runValuation against a second connection', () => {
-  it('keeps a competing writer out for the whole valuation (passes deferred too: runValuation writes first; .immediate() makes that independent of statement order)', () => {
-    // Not a discriminating test: saveConfigVersion's INSERT OR IGNORE already takes the write lock before the first read. It pins the property, not the mechanism.
-    createAssumptionSet(A, { assetId: 'mini', author: 'user', rationale: 'initial', values: miniAssumptions(), createdAt: '2026-09-01T00:00:00Z' });
-    for (const o of miniObservations()) {
-      insertObservation(A, { assetId: o.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, source: o.source, fetchedAt: o.fetchedAt });
-    }
-    B.pragma('busy_timeout = 50');
-    let theOtherWrite = 'never attempted';
-    const watched = interleaving(A, () => {
-      try {
-        otherWrite(B);
-        theOtherWrite = 'committed';
-      } catch (err) {
-        theOtherWrite = err instanceof Error ? err.message : String(err);
-      }
-    });
-    const { signal } = runValuation(watched, parseAssetYaml(MINI_ASSET_YAML), NOW);
-    expect(signal.status).not.toBe('blocked');
-    expect(theOtherWrite).toMatch(/database is locked/);
-    expect(getLatestSignal(B, 'mini')!.signal_id).toBe(signal.signal_id);
   });
 });
 

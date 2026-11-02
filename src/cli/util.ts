@@ -3,7 +3,6 @@ import { anthropicModelClient, type ModelClient } from '../agent/model.js';
 import { openDb, type Db } from '../db/connection.js';
 import { realFetchDeps } from '../ingest/deps.js';
 import type { FetchDeps, FetchResult } from '../ingest/run.js';
-import type { Signal } from '../signals/schema.js';
 import { OrionError } from '../types.js';
 import { loadEnv } from './env.js';
 
@@ -73,43 +72,6 @@ export function parseNumber(text: string, label: string): number {
   const n = Number(text);
   if (text.trim() === '' || !Number.isFinite(n)) throw new OrionError('invalid_number', `${label} must be a number, got "${text}"`);
   return n;
-}
-
-export const fmt = (n: number): string => n.toFixed(4);
-
-export function signalSummary(s: Signal, opts: { rationale?: boolean } = {}): string[] {
-  const lines = [`${s.asset.toUpperCase()}  ${s.status}  grade ${s.data_quality.grade}  (${s.signal_id})`];
-  if (s.spot) lines.push(`spot ${fmt(s.spot.price)} at ${s.spot.ts}`);
-  for (const [name, h] of Object.entries(s.horizons ?? {})) {
-    lines.push(
-      `${name}  expected ${fmt(h.expected_target)}  upside ${h.upside_pct.toFixed(1)}%  staked total return ${h.staked_total_return_pct.toFixed(1)}%  dispersion ${h.dispersion.toFixed(2)}`,
-    );
-    lines.push(
-      '     ' + (['bear', 'base', 'bull'] as const).map((k) => `${k} ${fmt(h.scenarios[k].target)} (${(h.scenarios[k].probability * 100).toFixed(0)}%)`).join('  '),
-    );
-    lines.push(
-      '     ' + Object.entries(h.modules).map(([id, m]) => `${id} ${fmt(m.value)}${m.weight === null ? ' (component)' : ` (w ${m.weight.toFixed(2)})`}`).join('  '),
-    );
-    if ((h.staked_cash_per_token ?? 0) > 0) {
-      lines.push(`     cash paid to stakers during the horizon ${fmt(h.staked_cash_per_token!)} a token (in staked total return)`);
-    }
-    for (const [id, v] of Object.entries(h.extras)) lines.push(`     ${id} ${v.toFixed(1)}%`);
-  }
-  if (s.status_reasons.length > 0) lines.push(`reasons: ${s.status_reasons.join('; ')}`);
-  if (s.data_quality.stale_metrics.length > 0) lines.push(`stale: ${s.data_quality.stale_metrics.join(', ')}`);
-  if (s.data_quality.provisional_metrics.length > 0) lines.push(`provisional: ${s.data_quality.provisional_metrics.join(', ')}`);
-  const anomalies = s.data_quality.anomalies ?? []; // signals stored before sub-project 2 have no list
-  if (anomalies.length > 0) {
-    lines.push(`open anomalies: ${anomalies.map((a) => `#${a.id} ${a.kind}${a.metric ? ` on ${a.metric}` : ''} (${a.severity})`).join('; ')}`);
-  }
-  if (s.change.prev_signal_id) {
-    const delta = s.change.target_delta_pct === null ? 'n/a' : `${s.change.target_delta_pct.toFixed(1)}%`;
-    // `causes` and `author` are absent on signals stored before sub-project 3.
-    const cause = s.change.cause === 'both' && s.change.causes ? s.change.causes.join(' + ') : s.change.cause;
-    const by = s.change.author ? ` by ${s.change.author}` : '';
-    lines.push(`change: ${cause}${by}, 12m target ${delta} vs ${s.change.prev_signal_id}${opts.rationale !== false && s.change.rationale ? ` (${s.change.rationale})` : ''}`);
-  }
-  return lines;
 }
 
 const trim = (n: number): string => String(Number(n.toPrecision(10)));

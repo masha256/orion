@@ -5,11 +5,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { approveProposal, rejectProposal } from '../../src/app/proposals.js';
 import { loadAsset } from '../../src/config/load.js';
 import { decideAnomaly, getAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
-import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { getObservationsByIds, insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { getProposal, insertProposal, type NewProposal, type ProposalChange } from '../../src/db/proposals.js';
 import type { OrionError } from '../../src/types.js';
-import { miniAssumptions } from '../helpers/assets.js';
 import { AGENT_ASSET_YAML, agentWorld, type AgentWorld } from '../helpers/agentWorld.js';
 import { AS_OF } from '../helpers/obs.js';
 
@@ -120,7 +118,7 @@ describe('approving observation proposals', () => {
   });
 
   it('checks an observation proposal against the last CONFIRMED value, the baseline the move guard filed it against', () => {
-    // A provisional row is live in the signal (1250). The confirmed value, which the proposal was filed against, is still 1000.
+    // A provisional row is in force (1250). The confirmed value, which the proposal was filed against, is still 1000.
     insertObservation(w.db, {
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-20', value: 1250, source: 'manual', status: 'provisional',
       citationUrl: 'https://news.example.com/earlier', fetchedAt: AS_OF,
@@ -173,14 +171,13 @@ describe('approving a config proposal', () => {
     expect(readFileSync(yamlPath, 'utf8')).toBe(before);
   });
 
-  it('refuses an edit that would break the config or the current assumptions, and leaves the file untouched', () => {
-    // Until the valuation code goes, approve still checks an edited config against a stored assumption set.
-    createAssumptionSet(w.db, { assetId: 'mini', author: 'user', rationale: 'initial', values: miniAssumptions(), createdAt: AS_OF });
+  it('refuses an edit that would break the config, and leaves the file untouched', () => {
+    // The real loader is the check: the asset must still parse after the edit.
     const before = readFileSync(yamlPath, 'utf8');
     const weights = file({ kind: 'config', edits: [{ path: ['modules', 'hc', 'weight'], value: 0.5 }] }, [1]);
     expect(codeOf(() => approve(weights.id))).toBe('invalid_asset_config');
-    const tight = file({ kind: 'config', edits: [{ path: ['assumptions', 'discount_rate_base', 'min'], value: 0.2 }] }, [0.05]);
-    expect(codeOf(() => approve(tight.id))).toBe('invalid_asset_config');
+    const inverted = file({ kind: 'config', edits: [{ path: ['assumptions', 'rev_growth_y1', 'base'], value: { min: 2, max: 1 } }] }, [{ min: 0, max: 1 }]);
+    expect(codeOf(() => approve(inverted.id))).toBe('invalid_asset_config');
     expect(readFileSync(yamlPath, 'utf8')).toBe(before);
     expect(getProposal(w.db, weights.id)!.status).toBe('pending');
   });

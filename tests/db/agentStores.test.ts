@@ -1,20 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  abandonRunningRuns, finishAgentRun, getAgentRun, getTranscript, lastCompletedRun, listAgentRuns, startAgentRun, ZERO_USAGE,
+  abandonRunningRuns, finishAgentRun, getAgentRun, getTranscript, listAgentRuns, startAgentRun, ZERO_USAGE,
   type StartAgentRunInput,
 } from '../../src/db/agentRuns.js';
 import { decideAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
-import { insertAssumptionChange, listAssumptionChanges } from '../../src/db/assumptionChanges.js';
-import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb, type Db } from '../../src/db/connection.js';
 import { assignPersona, getCoverage, listCoverage } from '../../src/db/coverage.js';
 import { insertJournalEntry, listJournal } from '../../src/db/journal.js';
-import { insertObservation } from '../../src/db/observations.js';
 import {
   decideProposal, findPendingDuplicate, getProposal, insertProposal, listProposals, recentlyDecidedProposals, type NewProposal,
 } from '../../src/db/proposals.js';
 import type { OrionError } from '../../src/types.js';
-import { miniAssumptions } from '../helpers/assets.js';
 
 let db: Db;
 beforeEach(() => {
@@ -76,7 +72,7 @@ describe('agent runs', () => {
     expect(getTranscript(db, id)).toEqual(['late but real']);
   });
 
-  it('lists newest first, by asset, and finds the last completed non-dry run', () => {
+  it('lists newest first, by asset', () => {
     const a = startAgentRun(db, run());
     const b = startAgentRun(db, run({ dryRun: true }));
     const c = startAgentRun(db, run({ assetId: 'other' }));
@@ -87,8 +83,6 @@ describe('agent runs', () => {
     finish(c, 'error');
     expect(listAgentRuns(db).map((r) => r.id)).toEqual([c, b, a]);
     expect(listAgentRuns(db, { assetId: 'mini' }).map((r) => r.id)).toEqual([b, a]);
-    expect(lastCompletedRun(db, 'mini')!.id).toBe(a); // the dry run does not count
-    expect(lastCompletedRun(db, 'other')).toBeNull();
   });
 
   it('abandons every running row of the asset, whatever its age, and no other asset\'s', () => {
@@ -203,19 +197,6 @@ describe('journal', () => {
     const raw = (id: number) => (db.prepare('SELECT catalysts_json FROM journal WHERE id = ?').get(id) as { catalysts_json: string | null }).catalysts_json;
     expect(raw(old.id)).toBeNull();
     expect(listJournal(db, 'mini').map((e) => e.catalysts)).toEqual([[], catalysts]);
-  });
-});
-
-describe('assumption changes', () => {
-  it('records each change with its own rationale and evidence', () => {
-    const set = createAssumptionSet(db, { assetId: 'mini', author: 'analyst', rationale: 'digest', values: miniAssumptions(), createdAt: '2026-09-20T00:00:00Z' });
-    const o = insertObservation(db, { assetId: 'mini', metricKey: 'price_usd', observedAt: '2026-09-19', value: 10, source: 'onchain', fetchedAt: '2026-09-19' });
-    const change = insertAssumptionChange(db, {
-      setId: set.id, key: 'rev_growth_y1', scenario: 'base', fromValue: 0, toValue: 0.1, rationale: 'usage up', evidence: [o.id, o.id],
-    });
-    expect(change).toMatchObject({ key: 'rev_growth_y1', scenario: 'base', fromValue: 0, toValue: 0.1, rationale: 'usage up', evidence: [o.id] });
-    expect(listAssumptionChanges(db, set.id)).toEqual([change]);
-    expect(listAssumptionChanges(db, 999)).toEqual([]);
   });
 });
 

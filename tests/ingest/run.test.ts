@@ -1,17 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { eligibleObservations } from '../../src/app/eligibility.js';
-import { runValuation } from '../../src/app/valuation.js';
 import { parseAssetYaml } from '../../src/config/load.js';
 import { decideAnomaly, listAnomalies } from '../../src/db/anomalies.js';
-import { createAssumptionSet } from '../../src/db/assumptions.js';
 import type { Db } from '../../src/db/connection.js';
 import { listFetchRuns } from '../../src/db/fetchRuns.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
-import { computeDrivers } from '../../src/drivers/compute.js';
-import { requiredExtraMetrics } from '../../src/engine/requirements.js';
 import { fetchAsset, validateReading, type FetchResult } from '../../src/ingest/run.js';
 import type { OrionError } from '../../src/types.js';
-import { MINI_ASSET_YAML, miniAssumptions } from '../helpers/assets.js';
+import { MINI_ASSET_YAML } from '../helpers/assets.js';
 import { CG_MARKETS, GENESIS_TS, harness, LATEST, NOW, STATS } from '../helpers/fetchHarness.js';
 import { ingestAsset as ingestAssetLoaded, INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 
@@ -172,7 +167,7 @@ describe('fetchAsset: levels', () => {
     expect(third.anomalies[0]).toMatchObject({ kind: 'source_failure_streak', metricKey: '', dedupeKey: 'coingecko', severity: 'advisory' });
   });
 
-  it('a failed defillama_share read marks its source failed but the valuation still runs ungraded-down', async () => {
+  it('a failed defillama_share read marks its source failed and changes no other source', async () => {
     const OVERVIEW = 'https://api.llama.fi/overview/dexs';
     const SHARE_ID = 'defillama_share:dexs:Dexs:parent#mini:30d';
     const withShare = (yaml: string) =>
@@ -180,21 +175,13 @@ describe('fetchAsset: levels', () => {
     // The same world twice, once without the share metric: the share must change nothing but its own source's status.
     const runOnce = async (loaded: ReturnType<typeof parseAssetYaml>) => {
       const h = harness({ loaded, routes: { [OVERVIEW]: new Error('HTTP 503') } });
-      const at = NOW.toISOString();
       // The last good share read is 20 days old (past its 7-day staleness): the source has been failing since.
       if (loaded.config.metrics.dominance_share) {
         const old = new Date(NOW.getTime() - 20 * 86_400_000).toISOString();
         insertObservation(h.db, { assetId: 'mini', metricKey: 'dominance_share', observedAt: old, value: 0.3, source: 'api', fetchedAt: old });
       }
       const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
-      // The two manual metrics of the fixture, entered by hand as research would.
-      insertObservation(h.db, { assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: at, value: 1000, source: 'manual', fetchedAt: at });
-      insertObservation(h.db, { assetId: 'mini', metricKey: 'staker_emission_share', observedAt: at, value: 1, source: 'manual', fetchedAt: at });
-      const asset = h.loaded.config;
-      const report = computeDrivers(asset, eligibleObservations(h.db, asset, at), at, requiredExtraMetrics(asset));
-      createAssumptionSet(h.db, { assetId: 'mini', author: 'user', rationale: 'wiring', values: miniAssumptions(), createdAt: at });
-      const { signal } = runValuation(h.db, h.loaded, new Date(NOW.getTime() + 10_000));
-      return { h, r, report, signal };
+      return { h, r };
     };
 
     const plain = await runOnce(ingestAssetLoaded());
@@ -208,18 +195,6 @@ describe('fetchAsset: levels', () => {
     expect(shared.r.outcome).toBe('partial');
     expect(shared.r.sources.filter((s) => s.sourceId !== SHARE_ID).map((s) => [s.sourceId, s.status])).toEqual(plain.r.sources.map((s) => [s.sourceId, s.status]));
     expect(listActiveObservations(shared.h.db, 'mini', 'dominance_share').map((o) => o.value)).toEqual([0.3]); // nothing new written
-
-    // The driver report: nothing missing, nothing stale, the stale monitor-only row nowhere in it.
-    expect(shared.report.missing).toEqual([]);
-    expect(shared.report.staleCritical).toEqual([]);
-    expect(shared.report.staleMetrics).not.toContain('dominance_share');
-    expect(shared.report).toEqual(plain.report);
-
-    // The valuation runs, at the same status and grade as without the metric.
-    expect(shared.signal.status).toBe(plain.signal.status);
-    expect(shared.signal.status_reasons).toEqual(plain.signal.status_reasons);
-    expect(shared.signal.data_quality).toEqual(plain.signal.data_quality);
-    expect(shared.signal.status).toBe('ok');
   });
 
   it('narrows to the requested metrics', async () => {

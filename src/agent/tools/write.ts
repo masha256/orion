@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { valueInForce } from '../../app/eligibility.js';
-import { provisionalMovePct } from '../../config/agentPolicy.js';
+import { PROVISIONAL_MOVE_PCT } from '../../config/agentPolicy.js';
 import { applyEditsToObject, getAtPath, UNPROPOSABLE_ROOTS, unproposableEdits } from '../../config/edit.js';
 import { parseAssetObject, rawConfig } from '../../config/load.js';
 import { getAnomaly } from '../../db/anomalies.js';
@@ -141,9 +141,9 @@ const recordProvisionalObservation = defineTool({
     'Records a value you found by research, for a manually maintained metric. citation_url is the URL of a page you fetched, or doc:<id> ' +
     'for the stored document in your context pack. quoted_text must be the source\'s own words (20 characters or more, verbatim, from within ' +
     `one paragraph, table cell, or list item; in a transcript, within ${TRANSCRIPT_WINDOW} consecutive segments, without the [mm:ss] stamps) ` +
-    'stating the figure. The row is stored as provisional. A figure from a machine transcript, and every figure in a disclosure run, never ' +
-    'reaches the signal unconfirmed: on a ' +
-    'metric that allows provisional data it becomes a proposal for the user, otherwise the row stays out of the signal until the user confirms it. ' +
+    'stating the figure. The row is stored as provisional and listed in the inbox for the user to confirm or reject; Orion\'s reports read ' +
+    'confirmed rows only. A figure from a machine transcript, and every figure in a disclosure run, always waits for the user: on a ' +
+    'metric that allows provisional data it becomes a proposal for the user, otherwise the row stays provisional until the user confirms it. ' +
     'On a critical metric, a large move from the last confirmed value becomes a proposal for the user instead of going live. ' +
     'Future dates are for announced schedule changes and events only. A fetched metric takes a researched row only when it is a schedule or event ' +
     'metric and the date is in the future: an announced change with its effective date. Fetched levels and flows never take one. ' +
@@ -204,12 +204,12 @@ const recordProvisionalObservation = defineTool({
 
     // The last CONFIRMED value: measuring from a provisional row would let the guard compound from run to run.
     const inForce = valueInForce(ctx.db, asset, input.metric, now.toISOString(), { confirmedOnly: true });
-    const movePct = provisionalMovePct(asset);
-    // A figure from a machine transcript may be misheard: it never reaches a signal unconfirmed (spec invariant 3). A
-    // figure from a disclosure run, whatever it cites, waits for the user too (spec section 15, Ruling 18): the run reads
-    // the issuer's own claims. A provisional row is signal-eligible on a metric that allows provisional data, so there it
-    // goes to the user as a proposal, whatever the move or the metric's criticality; elsewhere a provisional row is inert
-    // until confirmed.
+    const movePct = PROVISIONAL_MOVE_PCT;
+    // A figure from a machine transcript may be misheard: it is never read as the value in force unconfirmed (spec
+    // invariant 3). A figure from a disclosure run, whatever it cites, waits for the user too (spec section 15, Ruling 18):
+    // the run reads the issuer's own claims. A provisional row is eligible on a metric that allows provisional data, so
+    // there it goes to the user as a proposal, whatever the move or the metric's criticality; elsewhere a provisional row
+    // is inert until confirmed.
     const fromMachineTranscript = verified.citation.docKind === 'machine_transcript';
     const fromDisclosureRun = ctx.runType === 'disclosure';
     const route = fromMachineTranscript || fromDisclosureRun
@@ -240,15 +240,14 @@ const recordProvisionalObservation = defineTool({
     return {
       recorded: true,
       observation_id: staged.tempId,
-      in_signal: route === 'live',
       note:
         route === 'live'
-          ? 'provisional; it will be in the next signal, at data-quality grade C. You may cite this id as evidence in this run.'
+          ? 'provisional; listed in the inbox for the user to confirm or reject. You may cite this id as evidence in this run.'
           : `provisional; ${
             fromMachineTranscript
               ? 'it cites a machine transcript'
               : fromDisclosureRun ? 'it comes from a disclosure run' : `${input.metric} does not allow provisional data`
-          }, so it stays out of the signal until the user confirms it. You may cite this id as evidence in this run.`,
+          }, so it is not read as the value in force; it is listed in the inbox until the user confirms or rejects it. You may cite this id as evidence in this run.`,
     };
   },
 });

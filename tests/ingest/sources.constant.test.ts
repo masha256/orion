@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { parseAssetYaml } from '../../src/config/load.js';
 import { listActiveObservations } from '../../src/db/observations.js';
-import { computeDrivers } from '../../src/drivers/compute.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset } from '../../src/ingest/run.js';
 import { constantSource } from '../../src/ingest/sources/constant.js';
-import { obs } from '../helpers/obs.js';
 import { harness, NOW } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 import { req, sourceCtx } from '../helpers/sourceCtx.js';
@@ -30,7 +28,7 @@ describe('the constant source', () => {
     expect(plan.needsRpc).toBe(false);
   });
 
-  it('is written on every run, and its provenance is not manual, so it never caps the grade', async () => {
+  it('is written on every run, and its provenance is not manual', async () => {
     const loaded = parseAssetYaml(WITH_CONSTANT);
     const h = harness({ loaded });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
@@ -38,8 +36,5 @@ describe('the constant source', () => {
     const rows = listActiveObservations(h.db, 'mini', 'staker_emission_share');
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ value: 0, source: 'api', sourceDetail: 'constant: all emissions go to LP gauges', observedAt: NOW.toISOString() });
-
-    const report = computeDrivers(loaded.config, [rows[0], obs('price_usd', 10, NOW.toISOString())], NOW.toISOString());
-    expect(report.manualMetrics).not.toContain('staker_emission_share');
   });
 });

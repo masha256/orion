@@ -6,7 +6,7 @@ export const SINK = '0x0000000000000000000000000000000000000000';
 export const POOL = '0x3333333333333333333333333333333333333333';
 export const SAFE = '0x4444444444444444444444444444444444444444';
 
-/** The mini asset with every declarative source type wired up. Uses the same assumptions as miniAssumptions(). */
+/** The mini asset with every declarative source type wired up. */
 export const INGEST_ASSET_YAML = `
 id: mini
 symbol: MINI

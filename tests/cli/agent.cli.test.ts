@@ -339,26 +339,26 @@ describe('orion agent run', () => {
   });
 });
 
-describe('orion model proposals', () => {
+describe('orion proposals', () => {
   beforeEach(async () => {
     await seed();
   });
 
   it('lists and shows a stored assumption_value proposal with its effect, refuses to approve it, and rejects it', async () => {
-    expect(await orion('model', 'proposals', 'list')).toBe('no proposals');
+    expect(await orion('proposals', 'list')).toBe('no proposals');
     const p = fileProposal({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 }, { '6m': { from: 10, to: 11 }, '12m': { from: 10, to: 12.5 } });
-    expect(await orion('model', 'proposals', 'list', 'mini')).toContain(`#${p.id}  mini  analyst  assumption_value  pending  rev_growth_y1 (base) -> 1.8  [12m 10.00 -> 12.50]  0d old`);
-    const shown = await orion('model', 'proposals', 'show', String(p.id));
+    expect(await orion('proposals', 'list', 'mini')).toContain(`#${p.id}  mini  analyst  assumption_value  pending  rev_growth_y1 (base) -> 1.8  [12m 10.00 -> 12.50]  0d old`);
+    const shown = await orion('proposals', 'show', String(p.id));
     expect(shown).toContain('rationale: because');
     expect(shown).toContain('revenue_run_rate_usd = 1000');
-    await expect(orion('model', 'proposals', 'approve', String(p.id))).rejects.toMatchObject({ code: 'proposal_kind_retired' });
-    const refused = JSON.parse(await orion('model', 'proposals', 'approve', String(p.id), '--json')) as { error: { code: string } };
+    await expect(orion('proposals', 'approve', String(p.id))).rejects.toMatchObject({ code: 'proposal_kind_retired' });
+    const refused = JSON.parse(await orion('proposals', 'approve', String(p.id), '--json')) as { error: { code: string } };
     expect(refused.error.code).toBe('proposal_kind_retired');
     expect(exitCode).toBe(1);
-    expect(await orion('model', 'proposals', 'list', 'mini')).toContain('pending');
-    expect(await orion('model', 'proposals', 'reject', String(p.id), '--note', 'assumptions are retired')).toBe(`proposal #${p.id} rejected: assumptions are retired`);
-    expect(await orion('model', 'proposals', 'list')).toBe('no proposals');
-    expect(await orion('model', 'proposals', 'list', '--all')).toContain('rejected');
+    expect(await orion('proposals', 'list', 'mini')).toContain('pending');
+    expect(await orion('proposals', 'reject', String(p.id), '--note', 'assumptions are retired')).toBe(`proposal #${p.id} rejected: assumptions are retired`);
+    expect(await orion('proposals', 'list')).toBe('no proposals');
+    expect(await orion('proposals', 'list', '--all')).toContain('rejected');
   });
 
   it('shows each citation with its locator and the label of its document', async () => {
@@ -378,18 +378,18 @@ describe('orion model proposals', () => {
         ],
       }),
     );
-    const shown = (await orion('model', 'proposals', 'show', String(p.id))).split('\n');
+    const shown = (await orion('proposals', 'show', String(p.id))).split('\n');
     expect(shown).toContain(
       `  citation doc:${doc.id} at 12:33 [machine transcript (whisper-large-v3): names and numbers may be misheard; every figure in it is the speaker's dated claim, not a fact]: "revenue reached $1,100 in September"`,
     );
     expect(shown).toContain('  citation https://news.example.com/a: "annualized revenue of $1,100"');
-    const json = JSON.parse(await orion('model', 'proposals', 'show', String(p.id), '--json')) as { citations: unknown[] };
+    const json = JSON.parse(await orion('proposals', 'show', String(p.id), '--json')) as { citations: unknown[] };
     expect(json.citations).toHaveLength(2);
   });
 
   it('approving a config proposal edits the YAML and says to review and commit it', async () => {
     const p = fileProposal({ kind: 'config', edits: [{ path: ['assumptions', 'rev_growth_y1', 'base'], value: { min: 0, max: 2 } }] }, [{ min: 0, max: 1 }]);
-    const out = await orion('model', 'proposals', 'approve', String(p.id));
+    const out = await orion('proposals', 'approve', String(p.id));
     // " > ", not ".": assumption keys contain dots, so a dotted path is ambiguous.
     expect(out).toContain('assumptions > rev_growth_y1 > base: {"max":1,"min":0} -> {"max":2,"min":0}');
     expect(out).toContain('review it with "git diff", then commit it');
@@ -399,20 +399,20 @@ describe('orion model proposals', () => {
   it('marks a config proposal that would change what the agent may do by itself, in the list and in show', async () => {
     const band = fileProposal({ kind: 'config', edits: [{ path: ['assumptions', 'rev_growth_y1', 'base'], value: { min: 0, max: 2 } }] }, [{ min: 0, max: 1 }]);
     const weight = fileProposal({ kind: 'config', edits: [{ path: ['modules', 'hc', 'weight'], value: 1 }] }, [1]);
-    const listed = await orion('model', 'proposals', 'list', 'mini');
+    const listed = await orion('proposals', 'list', 'mini');
     expect(listed).toContain(`#${band.id}`);
     expect(listed.split('\n').find((l) => l.includes(`#${band.id}`))).toContain("[changes the agent's limits]");
     expect(listed.split('\n').find((l) => l.includes(`#${weight.id}`))).not.toContain("[changes the agent's limits]");
-    expect(await orion('model', 'proposals', 'show', String(band.id))).toContain("[changes the agent's limits]");
-    expect(await orion('model', 'proposals', 'show', String(weight.id))).not.toContain("[changes the agent's limits]");
+    expect(await orion('proposals', 'show', String(band.id))).toContain("[changes the agent's limits]");
+    expect(await orion('proposals', 'show', String(weight.id))).not.toContain("[changes the agent's limits]");
   });
 
   it('rejects with a required note, and reports a stale or missing proposal as JSON under --json', async () => {
     const p = fileProposal({ kind: 'config', edits: [{ path: ['symbol'], value: 'MIN2' }] }, ['OLD']);
-    const stale = JSON.parse(await orion('model', 'proposals', 'approve', String(p.id), '--json')) as { error: { code: string } };
+    const stale = JSON.parse(await orion('proposals', 'approve', String(p.id), '--json')) as { error: { code: string } };
     expect(stale.error.code).toBe('stale_proposal');
     expect(exitCode).toBe(1);
-    expect(await orion('model', 'proposals', 'reject', String(p.id), '--note', 'filed against an old value')).toBe(`proposal #${p.id} rejected: filed against an old value`);
-    await expect(orion('model', 'proposals', 'show', '99')).rejects.toMatchObject({ code: 'proposal_not_found' } satisfies Partial<OrionError>);
+    expect(await orion('proposals', 'reject', String(p.id), '--note', 'filed against an old value')).toBe(`proposal #${p.id} rejected: filed against an old value`);
+    await expect(orion('proposals', 'show', '99')).rejects.toMatchObject({ code: 'proposal_not_found' } satisfies Partial<OrionError>);
   });
 });

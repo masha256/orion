@@ -1,20 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
-import { updateAsset } from '../../src/app/update.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
 import { loadPersona } from '../../src/config/personas.js';
-import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb } from '../../src/db/connection.js';
 import { listActiveObservations } from '../../src/db/observations.js';
-import { requiredAssumptionKeys, requiredExtraMetrics } from '../../src/engine/requirements.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { addDays } from '../../src/ingest/time.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import type { TransferLog } from '../../src/ingest/transport/rpc.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
-import type { AssumptionValues } from '../../src/types.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 
@@ -97,25 +92,11 @@ function world() {
   return { db: openDb(':memory:'), deps, http, rpc };
 }
 
-/** A flat wiring package, inside the placeholder bands. */
-function assumptions(): AssumptionValues {
-  const s = {
-    rev_growth_y1: 0.1, growth_fade_years: 5, terminal_growth: 0.02, 'capture_rate_terminal.reserve': 0.85, 'capture_ramp_years.reserve': 0,
-    discount_rate_base: 0.2, discount_premium_discretionary: 0.06, 'multiple.fm_holder_flow': 10, regime_multiplier: 1, staked_ratio_horizon: 0.5,
-  };
-  return { bear: s, base: s, bull: s } as unknown as AssumptionValues;
-}
-
 describe('assets/link.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'link', symbol: 'LINK', chain: 'ethereum', supply_basis: 'effective_total', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
     expect(config.holder_flows).toEqual([{ id: 'reserve', kind: 'buy_and_hold', capture_rule: 'discretionary', recipient_base: 'all', metric: 'flow_usd.reserve', window_days: 91 }]);
     expect(config.modules.map((m) => [m.id, m.kind, m.weight ?? null])).toEqual([['hc', 'estimate', 0.6], ['fm_holder_flow', 'estimate', 0.4]]);
-    expect(requiredAssumptionKeys(config)).toEqual([
-      'capture_ramp_years.reserve', 'capture_rate_terminal.reserve', 'discount_premium_discretionary', 'discount_rate_base', 'growth_fade_years',
-      'multiple.fm_holder_flow', 'regime_multiplier', 'rev_growth_y1', 'staked_ratio_horizon', 'terminal_growth',
-    ]);
-    expect(requiredExtraMetrics(config)).toEqual([]);
     // One manual metric, monitor-only so it never touches the grade: the category share, recorded by research (2026-10-17).
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual(['dominance_share']);
     // No DefiLlama at all (Mike, 2026-10-11): the Reserve flow and the releases are read on chain.
@@ -146,12 +127,11 @@ describe('assets/link.yaml', () => {
     expect(plan.derived.map((r) => r.metricKey).sort()).toEqual(['released_rate', 'revenue_run_rate_usd']);
   });
 
-  it('fetches every metric, counts only the fee converter, flags the stranger, and values the asset through the tick path', async () => {
+  it('fetches every metric, counts only the fee converter, and flags the stranger', async () => {
     const w = world();
-    createAssumptionSet(w.db, { assetId: 'link', author: 'user', rationale: 'wiring', values: assumptions(), createdAt: NOW.toISOString() });
     // The year of releases first (live does this as the onboarding backfill); then the routine tick reads 100 days.
     await fetchAsset(w.db, { config, hash: 'backfill' }, NOW, w.deps, { backfillDays: 370, metrics: ['flow_tokens.released_hub', 'flow_tokens.released_rewards', 'released_rate'] });
-    const { fetch: r, signal } = await updateAsset(w.db, loadAsset(ROOT, 'link'), NOW, w.deps);
+    const r = await fetchAsset(w.db, loadAsset(ROOT, 'link'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error])).toEqual([]);
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]);
 
@@ -174,10 +154,6 @@ describe('assets/link.yaml', () => {
 
     // Releases: the four quarters inside the last 365 days, the dust and the year-old release left out.
     expect(value('released_rate')).toBeCloseTo(4 * (15_000_000 + 2_500_000), 0);
-
-    // The open alert holds the grade below A until it is acknowledged; the valuation itself runs.
-    expect(signal.horizons!['12m'].expected_target).toBeGreaterThan(0);
-    expect(signal.spot!.price).toBe(PRICE);
   });
 
   it('reports the Reserve as a hold with the 5 percent haircut, and the releases as dilution', async () => {
@@ -209,23 +185,5 @@ describe('the LINK persona', () => {
     expect(persona.body).toContain('A reserve that buys and holds (LINK)');
     expect(persona.body).toContain('Releases are dilution, not emissions');
     expect(/^[\x00-\x7F]*$/.test(persona.body)).toBe(true);
-  });
-});
-
-describe('calibration/link-assumptions.yaml', () => {
-  const calibrated = parseYaml(readFileSync(`${ROOT}/calibration/link-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
-  it('is complete and sits inside the agent bands of assets/link.yaml', () => {
-    for (const s of ['bear', 'base', 'bull'] as const) {
-      expect(Object.keys(calibrated[s]).sort()).toEqual(requiredAssumptionKeys(config));
-      for (const [key, value] of Object.entries(calibrated[s])) {
-        const b = config.assumptions[key];
-        const band = b[s] ?? b;
-        expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
-        expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
-      }
-    }
-    for (const key of ['rev_growth_y1', 'multiple.fm_holder_flow', 'discount_rate_base', 'capture_rate_terminal.reserve', 'discount_premium_discretionary']) {
-      for (const s of ['bear', 'base', 'bull'] as const) expect(config.assumptions[key][s], `${s} ${key}`).toBeDefined();
-    }
   });
 });

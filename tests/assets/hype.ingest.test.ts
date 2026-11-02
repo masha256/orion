@@ -1,17 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { runValuation } from '../../src/app/valuation.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
 import { listPersonaNames, loadPersona, skillsFor } from '../../src/config/personas.js';
-import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb } from '../../src/db/connection.js';
-import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
-import { requiredAssumptionKeys, validateAssetModules } from '../../src/engine/requirements.js';
+import { listActiveObservations } from '../../src/db/observations.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { addDays } from '../../src/ingest/time.js';
-import type { AssumptionValues } from '../../src/types.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { llamaOverview } from '../helpers/llamaOverview.js';
 
@@ -80,15 +76,6 @@ function world(now: Date = NOW) {
   return { db: openDb(':memory:'), deps, http };
 }
 
-/** A flat, plausible set for the wiring test; the real one comes from the user's calibration. */
-function assumptions(): AssumptionValues {
-  const one = {
-    rev_growth_y1: 0.2, growth_fade_years: 5, terminal_growth: 0.02, 'capture_rate_terminal.af_buyback': 1, 'capture_ramp_years.af_buyback': 0,
-    discount_rate_base: 0.2, discount_premium_programmatic: 0.02, 'multiple.fm_holder_flow': 30, regime_multiplier: 1, staked_ratio_horizon: 0.46,
-  };
-  return { bear: { ...one }, base: { ...one }, bull: { ...one } };
-}
-
 describe('assets/hype.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'hype', symbol: 'HYPE', supply_basis: 'effective_total' });
@@ -96,12 +83,8 @@ describe('assets/hype.yaml', () => {
     expect(config.ingest).toBeUndefined();
     expect(config.holder_flows).toEqual([{ id: 'af_buyback', kind: 'burn', capture_rule: 'programmatic', recipient_base: 'all', metric: 'flow_usd.af_buyback', window_days: 91 }]);
     expect(config.modules.map((m) => [m.id, m.weight])).toEqual([['hc', 0.6], ['fm_holder_flow', 0.4]]);
-    expect(requiredAssumptionKeys(config)).toEqual([
-      'capture_ramp_years.af_buyback', 'capture_rate_terminal.af_buyback', 'discount_premium_programmatic', 'discount_rate_base', 'growth_fade_years', 'multiple.fm_holder_flow', 'regime_multiplier', 'rev_growth_y1', 'staked_ratio_horizon', 'terminal_growth',
-    ]);
     // One manual metric: the staker share, 1.0 by construction, which the bootstrap researches and the user confirms.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual(['staker_emission_share']);
-    expect(validateAssetModules(config)).toEqual([]);
     // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
     for (const key of ['dominance_share', 'dominance_share_1y']) expect(config.metrics[key]).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true, staleness_days: 7 });
     expect(config.metrics.dominance_share.source).toEqual({ type: 'defillama_share', parent: 'parent#hyperliquid', category: 'Derivatives', overview: 'fees', window: '30d' });
@@ -132,7 +115,7 @@ describe('assets/hype.yaml', () => {
     expect(plan.needsRpc).toBe(false);
   });
 
-  it('fetches every sourced metric from canned responses with the price cross-check in tolerance, then values the asset once the staker share is entered', async () => {
+  it('fetches every sourced metric from canned responses with the price cross-check in tolerance', async () => {
     const w = world();
     const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
@@ -173,27 +156,6 @@ describe('assets/hype.yaml', () => {
     expect(direct.map((o) => o.value)).toEqual(Array(10).fill(1500));
     expect(direct[0].observedAt).toBe('2026-09-15T00:00:00.000Z');
     expect(direct[0].source).toBe('api');
-
-    createAssumptionSet(w.db, { assetId: 'hype', author: 'user', rationale: 'wiring', values: assumptions(), createdAt: NOW.toISOString() });
-    const withoutShare = runValuation(w.db, loadAsset(ROOT, 'hype'), NOW);
-    expect(withoutShare.signal.status).toBe('blocked');
-    expect(withoutShare.signal.status_reasons.join(' ')).toMatch(/staker_emission_share/);
-    expect(withoutShare.signal.status_reasons).toHaveLength(1);
-    // The user's confirmation of the bootstrap's row: 1.0 by construction.
-    insertObservation(w.db, { assetId: 'hype', metricKey: 'staker_emission_share', observedAt: NOW.toISOString(), value: 1, source: 'manual', fetchedAt: NOW.toISOString() });
-    const { signal } = runValuation(w.db, loadAsset(ROOT, 'hype'), NOW);
-    expect(signal.status_reasons).toEqual([]);
-    expect(signal.status).toBe('ok');
-    expect(signal.data_quality.grade).toBe('B'); // a manual row in force (the staker share) caps the grade, as VVV's revenue does
-    expect(signal.spot!.price).toBe(92.36);
-    expect(signal.horizons!['12m'].expected_target).toBeGreaterThan(0);
-    // A burn flow on the effective-total basis: the horizon supply is today's total supply plus a year of emissions less the
-    // tokens the buyback dollars buy along the price path. With this wiring set that is about 16M tokens (the flat set solves to a
-    // target near 12 USD, so each dollar buys more tokens than at spot); the band fails if the burn is missing or an order out.
-    const noBurn = value('total_supply') + value('emission_rate_annual');
-    const hc = signal.horizons!['12m'].modules.hc.breakdown as { supply_at_horizon: number };
-    expect(hc.supply_at_horizon).toBeLessThan(noBurn - 12e6);
-    expect(hc.supply_at_horizon).toBeGreaterThan(noBurn - 20e6);
   });
 });
 

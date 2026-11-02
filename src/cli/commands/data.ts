@@ -161,7 +161,7 @@ export function registerData(program: Command, ctx: CliContext): void {
 
   for (const [name, status, summary] of [
     ['resolve', 'resolved', 'the cause is fixed; if it recurs, a new anomaly opens. Also withdraws an acknowledgement'],
-    ['ack', 'acknowledged', 'the cause is understood and accepted; it no longer affects the signal, also when seen again'],
+    ['ack', 'acknowledged', 'the cause is understood and accepted; it is no longer listed in the daily report, also when seen again'],
   ] as const) {
     data
       .command(`${name} <id>`)

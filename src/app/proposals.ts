@@ -4,11 +4,9 @@ import { parse as parseYaml } from 'yaml';
 import { applyEditsToYaml, getAtPath, unproposableEdits } from '../config/edit.js';
 import { loadAsset, parseAssetYaml } from '../config/load.js';
 import { decideAnomaly, getAnomaly } from '../db/anomalies.js';
-import { getLatestAssumptionSet } from '../db/assumptions.js';
 import type { Db } from '../db/connection.js';
 import { confirmObservation, getObservationsByIds, insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
 import { decideProposal, getProposal, type Proposal } from '../db/proposals.js';
-import { validateAssetModules, validateAssumptions } from '../engine/requirements.js';
 import { OrionError, type PathSegment } from '../types.js';
 import { canonicalJson } from '../util/canonical.js';
 import { valueInForce } from './eligibility.js';
@@ -168,10 +166,6 @@ function approveConfig(db: Db, home: string, p: Proposal, note: string | null, n
   const edited = applyEditsToYaml(original, edits);
   const { config } = parseAssetYaml(edited);
   if (config.id !== p.assetId) throw new OrionError('invalid_asset_config', `the edit would change the asset id to "${config.id}"`);
-  const errors = validateAssetModules(config);
-  const latest = getLatestAssumptionSet(db, p.assetId);
-  if (latest) errors.push(...validateAssumptions(config, latest.values));
-  if (errors.length > 0) throw new OrionError('invalid_asset_config', `the edited config is not valid:\n${errors.join('\n')}`);
 
   // 4. Write the file.
   writeAtomically(file, edited);

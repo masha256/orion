@@ -2,15 +2,12 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
-import { updateAsset } from '../../src/app/update.js';
 import { buildProgram } from '../../src/cli/program.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
 import { loadPersona } from '../../src/config/personas.js';
 import { listActiveObservations } from '../../src/db/observations.js';
 import { openDb } from '../../src/db/connection.js';
-import { requiredAssumptionKeys, requiredExtraMetrics } from '../../src/engine/requirements.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { addDays } from '../../src/ingest/time.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
@@ -158,11 +155,6 @@ describe('assets/lit.yaml', () => {
     expect(config).toMatchObject({ id: 'lit', symbol: 'LIT', chain: 'ethereum', supply_basis: 'effective_total', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
     // Mike, 2026-10-16: discretionary.
     expect(config.holder_flows).toEqual([{ id: 'buyback', kind: 'burn', capture_rule: 'discretionary', recipient_base: 'all', metric: 'flow_usd.buyback', window_days: 91 }]);
-    expect(requiredAssumptionKeys(config)).toEqual([
-      'capture_ramp_years.buyback', 'capture_rate_terminal.buyback', 'discount_premium_discretionary', 'discount_rate_base', 'growth_fade_years',
-      'multiple.fm_holder_flow', 'regime_multiplier', 'rev_growth_y1', 'staked_ratio_horizon', 'terminal_growth',
-    ]);
-    expect(requiredExtraMetrics(config)).toEqual([]);
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // Lighter's own data for the holder flow (Mike, 2026-10-16); DefiLlama only for display series and the unlock schedule.
     expect(config.metrics['flow_usd.buyback'].source).toMatchObject({ type: 'adapter', name: 'lit.treasury_buys_daily' });
@@ -211,9 +203,9 @@ describe('assets/lit.yaml', () => {
     expect(plan.derived.map((r) => r.metricKey).sort()).toEqual(['revenue_run_rate_usd', 'routed_to_prime_rate']);
   });
 
-  it('fetches every metric, reads the buys from Lighter, and values the asset through the tick path', async () => {
+  it('fetches every metric and reads the buys from Lighter', async () => {
     const w = world();
-    const { fetch: r, signal } = await updateAsset(w.db, loadAsset(ROOT, 'lit'), NOW, w.deps);
+    const r = await fetchAsset(w.db, loadAsset(ROOT, 'lit'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
     // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
     expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'lit', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
@@ -244,7 +236,7 @@ describe('assets/lit.yaml', () => {
     // Routing to Coinbase Prime: only the buyback wallet's sends count; the unrelated sender raises nothing (monitor-only).
     expect(rows('flow_tokens.routed_to_prime').filter((o) => o.value > 0).map((o) => o.value)).toEqual([1_400_000, 1_500_000]);
     expect(value('routed_to_prime_rate')).toBeCloseTo((2_900_000 * 365) / 91, 0);
-    // The valuation's inputs are unchanged by it.
+    // Display only.
     expect(config.metrics['flow_tokens.routed_to_prime'].monitor_only).toBe(true);
 
     // Lighter's own fees, per completed day (today's partial day dropped), over the first fetch's 100-day window.
@@ -264,9 +256,6 @@ describe('assets/lit.yaml', () => {
     // The holder flow is still the measured Core buys.
     expect(config.holder_flows.map((h) => h.metric)).toEqual(['flow_usd.buyback']);
     expect(config.metrics['flow_usd.buyback'].source).toEqual({ type: 'adapter', name: 'lit.treasury_buys_daily', params: { account: 0, market: 2049, unit: 'usd', days: 7 } });
-
-    // No assumption set yet: blocked, as every new asset is until calibration.
-    expect(signal.status_reasons).toContain('no_assumption_set');
 
     // The next routine fetch has a cursor, so it reads only the adapter's own 7-day window: one page (84 trades), not the 12 of the first.
     const pages = () => w.http.calls.filter((c) => c.url.includes('/trades?')).length;
@@ -335,23 +324,5 @@ describe('assets/lit.yaml', () => {
     const persona = loadPersona(ROOT, 'perp-exchange-analyst');
     expect(persona.body).toContain('A buyback with the burn drawn from the reserve (LIT)');
     expect(/^[\x00-\x7F]*$/.test(persona.body)).toBe(true);
-  });
-});
-
-describe('calibration/lit-assumptions.yaml', () => {
-  const calibrated = parseYaml(readFileSync(`${ROOT}/calibration/lit-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
-  it('is complete and sits inside the agent bands of assets/lit.yaml', () => {
-    for (const s of ['bear', 'base', 'bull'] as const) {
-      expect(Object.keys(calibrated[s]).sort()).toEqual(requiredAssumptionKeys(config));
-      for (const [key, value] of Object.entries(calibrated[s])) {
-        const b = config.assumptions[key];
-        const band = b[s] ?? b;
-        expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
-        expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
-      }
-    }
-    for (const key of ['rev_growth_y1', 'multiple.fm_holder_flow', 'discount_rate_base', 'capture_rate_terminal.buyback', 'discount_premium_discretionary']) {
-      for (const s of ['bear', 'base', 'bull'] as const) expect(config.assumptions[key][s], `${s} ${key}`).toBeDefined();
-    }
   });
 });

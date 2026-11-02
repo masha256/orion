@@ -5,19 +5,17 @@ import { registerData } from './commands/data.js';
 import { registerDoc } from './commands/doc.js';
 import { registerInbox } from './commands/inbox.js';
 import { registerInit } from './commands/init.js';
-import { registerModel } from './commands/model.js';
 import { registerPersona } from './commands/persona.js';
+import { registerProposals } from './commands/proposals.js';
 import { registerReport } from './commands/report.js';
-import { registerSignal } from './commands/signal.js';
 import { registerTick } from './commands/tick.js';
-import { registerUpdate } from './commands/update.js';
 import type { CliContext } from './util.js';
 
 export type { CliContext } from './util.js';
 
 export function buildProgram(ctx: CliContext): Command {
   const program = new Command('orion')
-    .description('Token valuation signals from deterministic models and versioned assumptions')
+    .description('Token revenue, holder-flow and supply data with provenance')
     .exitOverride()
     .configureOutput({
       writeOut: (s) => ctx.stdout(s.trimEnd()),
@@ -26,9 +24,7 @@ export function buildProgram(ctx: CliContext): Command {
   registerInit(program, ctx);
   registerAsset(program, ctx);
   registerData(program, ctx);
-  registerModel(program, ctx);
-  registerSignal(program, ctx);
-  registerUpdate(program, ctx);
+  registerProposals(program, ctx);
   registerTick(program, ctx);
   registerInbox(program, ctx);
   registerPersona(program, ctx);

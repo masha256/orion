@@ -139,8 +139,9 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
 
   it('a citation on a metric that does not allow provisional data stages an inert row', () => {
     const r = research({ metric: 'staked_supply', value: 55 });
-    expect(r).toMatchObject({ isError: false, result: { recorded: true, in_signal: false } });
-    expect(r.result.note).toMatch(/^provisional; it comes from a disclosure run, so it stays out of the signal/);
+    expect(r).toMatchObject({ isError: false, result: { recorded: true } });
+    expect(Object.keys(r.result as object)).not.toContain('in_signal');
+    expect(r.result.note).toMatch(/^provisional; it comes from a disclosure run, so it is not read as the value in force; it is listed in the inbox/);
     expect(w.ledger.observations()).toEqual([expect.objectContaining({ citationUrl: PAGE_URL, live: false })]);
     expect(w.ledger.proposals()).toEqual([]);
   });
@@ -172,7 +173,7 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
     it.each([
       ['not critical', AGENT_ASSET_YAML.replace('critical: true, allow_provisional: true', 'critical: false, allow_provisional: true')],
       ['critical, a small move', AGENT_ASSET_YAML],
-    ])('on an allow_provisional metric (%s), goes to the user as an observation proposal and never reaches the signal', (_label, yaml) => {
+    ])('on an allow_provisional metric (%s), goes to the user as an observation proposal and is never in force unconfirmed', (_label, yaml) => {
       withTranscript(yaml);
       expect(research({ citation_url: 'doc:2', quoted_text: REVENUE_QUOTE }).result.refused).toBe('doc_not_in_run');
       const r = research({ citation_url: 'doc:1', quoted_text: REVENUE_QUOTE, note: 'Q3 call' });
@@ -189,11 +190,11 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
       expect(eligibleFromDocs()).toEqual([]);
     });
 
-    it('on a metric that does not allow provisional data, stages an inert row that stays out of the signal after commit', () => {
+    it('on a metric that does not allow provisional data, stages an inert row that stays out of the value in force after commit', () => {
       withTranscript();
       const r = researchStaked();
-      expect(r).toMatchObject({ isError: false, result: { recorded: true, in_signal: false } });
-      expect(r.result.note).toMatch(/^provisional; it cites a machine transcript, so it stays out of the signal/);
+      expect(r).toMatchObject({ isError: false, result: { recorded: true } });
+      expect(r.result.note).toMatch(/^provisional; it cites a machine transcript, so it is not read as the value in force; it is listed in the inbox/);
       expect(w.ledger.observations()).toEqual([expect.objectContaining({ citationUrl: 'doc:1', quotedText: STAKED_QUOTE, live: false })]);
       expect(w.ledger.proposals()).toEqual([]);
       expect(eligibleFromDocs()).toEqual([]);
@@ -229,7 +230,7 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
     expect(research({ observed_at: '2026-08-01' }).result.refused).toBe('future_observation');
     expect(research({ observed_at: 'soon' }).result.refused).toBe('invalid_timestamp');
     expect(research({ metric: 'flow_usd.fees', value: 30 }).result.refused).toBe('period_required');
-    expect(research({ metric: 'emission_rate_annual', value: 5, observed_at: '2026-10-01' })).toMatchObject({ isError: false, result: { recorded: true, in_signal: false } });
+    expect(research({ metric: 'emission_rate_annual', value: 5, observed_at: '2026-10-01' })).toMatchObject({ isError: false, result: { recorded: true } });
   });
 
   it('takes an announced change on a FETCHED schedule only when it is dated after now, and the confirmed row governs from its date until the chain catches up', () => {
@@ -244,7 +245,7 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
       fw.call('record_provisional_observation', { metric: 'emission_rate_annual', value: 5, observed_at: '2026-10-01', citation_url: PAGE_URL, quoted_text: QUOTE, ...over });
     expect(announce({ observed_at: AS_OF }).result.refused).toBe('fetched_metric'); // at now: a reading, not an announcement
     expect(announce({ observed_at: '2026-06-01' }).result.refused).toBe('fetched_metric');
-    expect(announce({})).toMatchObject({ isError: false, result: { recorded: true, in_signal: false } });
+    expect(announce({})).toMatchObject({ isError: false, result: { recorded: true } });
     expect(fw.ledger.observations()[0]).toMatchObject({ metricKey: 'emission_rate_annual', value: 5, observedAt: '2026-10-01T00:00:00.000Z', live: false });
 
     // What the row does once the user confirms it, with the daily on-chain reads landing beneath it.

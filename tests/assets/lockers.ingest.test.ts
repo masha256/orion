@@ -1,17 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { parse as parseYaml } from 'yaml';
-import { runValuation } from '../../src/app/valuation.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
-import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb } from '../../src/db/connection.js';
 import { listActiveObservations } from '../../src/db/observations.js';
-import { requiredAssumptionKeys, requiredExtraMetrics } from '../../src/engine/requirements.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.js';
-import type { AssumptionValues } from '../../src/types.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 
@@ -58,19 +53,6 @@ function multiLogRpc(base: ReturnType<typeof fakeRpc>, logs: Record<string, Omit
   };
 }
 
-function oneSet(flows: string[], extra: Record<string, number>): Record<string, number> {
-  const s: Record<string, number> = {
-    rev_growth_y1: -0.1, growth_fade_years: 3, terminal_growth: -0.05, discount_rate_base: 0.15, discount_premium_programmatic: 0.02,
-    'multiple.fm_holder_flow': 8, regime_multiplier: 1, staked_ratio_horizon: 0.85, ...extra,
-  };
-  for (const f of flows) {
-    s[`capture_rate_terminal.${f}`] = 1;
-    s[`capture_ramp_years.${f}`] = 0;
-  }
-  return s;
-}
-const flat = (s: Record<string, number>): AssumptionValues => ({ bear: { ...s }, base: { ...s }, bull: { ...s } });
-
 interface Case {
   id: 'cvxcrv' | 'sdcrv';
   hash: string;
@@ -82,7 +64,6 @@ interface Case {
   stakedContract: string;
   /** flow id -> [token, sink, sender, cadence days, tokens per payout, coingecko id, price] */
   streams: Record<string, [string, string, string, number, bigint, string, number]>;
-  extraKeys: Record<string, number>;
 }
 
 const cvx = loadAsset(ROOT, 'cvxcrv').config.contracts;
@@ -104,7 +85,6 @@ const CASES: Case[] = [
       crv: [cvx.crv, cvx.wrapper, cvx.base_reward_pool, 1, 18_000n, 'curve-dao-token', 0.3534],
       cvx: [cvx.cvx, cvx.wrapper, cvx.cvx_distribution, 1, 1_160n, 'convex-finance', 2.05],
     },
-    extraKeys: { discount_premium_discretionary: 0.1 },
   },
   {
     id: 'sdcrv',
@@ -121,7 +101,6 @@ const CASES: Case[] = [
       crv: [sd.crv, sd.gauge, sd.accumulator, 7, 14_600n, 'curve-dao-token', 0.3534],
       bribes: [sd.token, sd.merkle_stash, sd.botmarket, 7, 188_700n, 'stake-dao-crv', 0.1884],
     },
-    extraKeys: {},
   },
 ];
 
@@ -156,9 +135,7 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: c.id, chain: 'ethereum', supply_basis: 'effective_total', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
     expect(config.holder_flows.map((f) => [f.id, f.kind, f.recipient_base, f.valued_per, f.window_days])).toEqual(flowIds.map((id) => [id, 'fee_share', 'staked', 'recipients', 91]));
-    expect(requiredExtraMetrics(config)).toEqual([]);
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
-    expect(Object.keys(flat(oneSet(flowIds, c.extraKeys)).base).sort()).toEqual(requiredAssumptionKeys(config));
     expect(parseAssetYaml(readFileSync(`${ROOT}/assets/${c.id}.yaml`, 'utf8')).hash).toBe(c.hash);
     // Supply definitions (Mike, 2026-10-12): CoinGecko has no circulating supply for the wrappers, so it is the on-chain total;
     // CoinGecko's total_supply checks cvxCRV only (sdCRV's figure there is a stale 2022 snapshot).
@@ -183,7 +160,7 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     ]);
   });
 
-  it('fetches every stream, sums them into the run rate, and values the cash per staked token at grade A', async () => {
+  it('fetches every stream and sums them into the run rate', async () => {
     const w = world(c);
     const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
@@ -204,45 +181,5 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     }
     expect(rows('revenue_run_rate_usd').at(-1)!.value).toBeCloseTo((expected * 365) / 91, 0);
     expect(rows('revenue_run_rate_usd').at(-1)!.sourceDetail).toBe(`derived flow_annualized(${flowIds.map((id) => `flow_usd.${id}`).join('+')}, 91d)`);
-
-    const calibrated = parseYaml(readFileSync(`${ROOT}/calibration/${c.id}-assumptions.yaml`, 'utf8')) as AssumptionValues;
-    createAssumptionSet(w.db, { assetId: c.id, author: 'user', rationale: 'calibration', values: calibrated, createdAt: NOW.toISOString() });
-    const { signal } = runValuation(w.db, loadAsset(ROOT, c.id), NOW);
-    expect(signal.status_reasons).toEqual([]);
-    expect(signal.status).toBe('ok');
-    expect(signal.data_quality.grade).toBe('A');
-    const h = signal.horizons!['12m'];
-    // Every stream reaches stakers during the horizon, per staked token.
-    expect(h.staked_cash_streams!.map((s) => [s.id, s.recipient_base])).toEqual(flowIds.map((id) => [id, 'staked']));
-    const share = Number(c.staked) / Number(c.supply);
-    expect(h.staked_cash_streams!.reduce((s, x) => s + x.usd, 0)).toBeGreaterThan(0);
-    expect((h.modules.hc.breakdown.flows as Record<string, Record<string, unknown>>)[flowIds[0]].valued_over_share).toBeCloseTo(share, 12);
   });
 });
-
-for (const id of ['cvxcrv', 'sdcrv'] as const) {
-  describe(`calibration/${id}-assumptions.yaml`, () => {
-    const { config } = loadAsset(ROOT, id);
-    const raw = parseYaml(readFileSync(`${ROOT}/calibration/${id}-assumptions.yaml`, 'utf8')) as Record<'bear' | 'base' | 'bull', Record<string, number>>;
-
-    it('is complete and sits inside the agent bands', () => {
-      for (const s of ['bear', 'base', 'bull'] as const) {
-        expect(Object.keys(raw[s]).sort()).toEqual(requiredAssumptionKeys(config));
-        for (const [key, value] of Object.entries(raw[s])) {
-          const b = config.assumptions[key];
-          const band = b[s] ?? b;
-          expect(value, `${s} ${key}`).toBeGreaterThanOrEqual(band.min);
-          expect(value, `${s} ${key}`).toBeLessThanOrEqual(band.max);
-        }
-      }
-    });
-
-    it('splits the run rate across the flows (capture shares sum to at most 1, and no band lets them pass 1.1)', () => {
-      const flows = config.holder_flows.map((f) => f.id);
-      for (const s of ['bear', 'base', 'bull'] as const) {
-        expect(flows.reduce((t, f) => t + raw[s][`capture_rate_terminal.${f}`], 0)).toBeLessThanOrEqual(1);
-      }
-      expect(flows.reduce((t, f) => t + config.assumptions[`capture_rate_terminal.${f}`].max, 0)).toBeLessThanOrEqual(1.35);
-    });
-  });
-}
