@@ -1,20 +1,15 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { runAgent, type RunAgentDeps, type RunAgentOptions } from '../../src/agent/run.js';
-import { DISCLOSURE_ONLY_TOOLS, toolsForRun, type AgentTool } from '../../src/agent/tools/index.js';
-import { runValuation } from '../../src/app/valuation.js';
+import { runAgent, TOOL_LAYER_VERSION, type RunAgentDeps, type RunAgentOptions } from '../../src/agent/run.js';
+import { toolsForRun, type AgentTool } from '../../src/agent/tools/index.js';
 import { DEFAULT_BUDGETS } from '../../src/config/agentPolicy.js';
 import { getAgentRun, getTranscript, listAgentRuns } from '../../src/db/agentRuns.js';
-import { insertFiring } from '../../src/db/triggerFirings.js';
 import { insertDocument } from '../../src/db/documents.js';
-import { getAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
-import { listAssumptionChanges } from '../../src/db/assumptionChanges.js';
-import { createAssumptionSet, getLatestAssumptionSet } from '../../src/db/assumptions.js';
+import { decideAnomaly, getAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
 import { listJournal } from '../../src/db/journal.js';
 import { listActiveObservations } from '../../src/db/observations.js';
 import { listProposals } from '../../src/db/proposals.js';
 import type { OrionError } from '../../src/types.js';
-import { miniAssumptions } from '../helpers/assets.js';
-import { AGENT_ASSET_YAML, agentHome, agentWorld, PAGE_TEXT, PAGE_URL, QUOTE, type AgentWorld } from '../helpers/agentWorld.js';
+import { AGENT_ASSET_YAML, agentHome, agentWorld, DOC_TEXT, PAGE_TEXT, PAGE_URL, QUOTE, STAKED_QUOTE, type AgentWorld } from '../helpers/agentWorld.js';
 import { calls, journalCall, say, scriptedModel, toolUse, webFetch, type ScriptedModel, type ScriptStep } from '../helpers/fakeModel.js';
 import { AS_OF } from '../helpers/obs.js';
 
@@ -27,41 +22,68 @@ beforeEach(() => {
   home = agentHome(w.db);
 });
 
+const NINE = [
+  'get_observations', 'get_anomalies', 'get_journal', 'get_flow_total', 'resolve_anomaly', 'record_provisional_observation', 'propose_change',
+  'write_journal', 'record_dev_finding',
+];
 const count = (table: string): number => (w.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
 const run = (script: ScriptStep[], opts: Partial<RunAgentOptions> = {}, deps: Partial<RunAgentDeps> = {}) => {
   model = scriptedModel(script);
-  return runAgent(w.db, w.loaded, { runType: 'weekly', ...opts }, { home, now: () => new Date(AS_OF), modelClient: () => model, reload: () => w.loaded, ...deps });
+  return runAgent(
+    w.db, w.loaded, { runType: 'disclosure', docId: w.doc.id, assetYaml: AGENT_ASSET_YAML, ...opts },
+    { home, now: () => new Date(AS_OF), modelClient: () => model, reload: () => w.loaded, ...deps },
+  );
 };
-const growthCall = (value: number) =>
-  toolUse('apply_assumption_change', { key: 'rev_growth_y1', scenario: 'base', value, evidence: [w.ids.revenue_run_rate_usd], rationale: 'usage is accelerating' });
+const codeOf = async (p: Promise<unknown>): Promise<string | undefined> => p.then(() => undefined, (err: OrionError) => err.code);
+const packOf = (i = 0): Record<string, any> => {
+  const content = model.requests[i].messages[0].content as string;
+  return JSON.parse(content.slice(content.indexOf('{')));
+};
+/** Staked supply does not allow provisional data, so a figure for it is staged as an inert row. */
+const stakedCall = () =>
+  toolUse('record_provisional_observation', { metric: 'staked_supply', value: 55, observed_at: '2026-06-28', citation_url: 'doc:1', quoted_text: STAKED_QUOTE });
+/** Revenue allows provisional data, so in a disclosure run a figure for it is filed as an observation proposal. */
+const revenueCall = (source = 'doc:1') =>
+  toolUse('record_provisional_observation', { metric: 'revenue_run_rate_usd', value: 1100, observed_at: '2026-06-28', citation_url: source, quoted_text: QUOTE });
+const anomaly = (dedupeKey = 'x') =>
+  raiseAnomaly(w.db, { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey, severity: 'degrading', detail: { primary: 10, check: 12 }, seenAt: AS_OF });
 
-describe('a weekly run that changes an assumption', () => {
-  it('commits one set with its change and evidence, the journal, and a signal that names the agent', async () => {
-    runValuation(w.db, w.loaded, new Date(AS_OF)); // a previous signal to compare against
-    const result = await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')]);
-
-    expect(result.run).toMatchObject({ outcome: 'completed', persona: 'analyst', runType: 'weekly', trigger: 'manual', dryRun: false, model: 'claude-opus-5-5', error: null });
-    expect(result.run.usage).toMatchObject({ requests: 3, inputTokens: 300, outputTokens: 150 });
-    expect(result.committed).toMatchObject({ setVersion: 2, observationIds: [], resolvedAnomalyIds: [], proposalIds: [] });
-
-    const set = getLatestAssumptionSet(w.db, 'mini')!;
-    expect(set).toMatchObject({ version: 2, author: 'analyst', rationale: 'rev_growth_y1 base 0 -> 0.2: usage is accelerating' });
-    expect(listAssumptionChanges(w.db, set.id)[0]).toMatchObject({ key: 'rev_growth_y1', scenario: 'base', fromValue: 0, toValue: 0.2, evidence: [w.ids.revenue_run_rate_usd] });
-    expect(listJournal(w.db, 'mini')[0]).toMatchObject({ agentRunId: result.run.id, persona: 'analyst', thesis: 'steady' });
-
-    expect(result.signal!.change).toMatchObject({ cause: 'assumptions', causes: ['assumptions'], author: 'analyst' });
-    expect(result.signal!.provenance).toMatchObject({ agent_run_id: result.run.id, assumption_set_version: 2 });
+describe('run', () => {
+  it('a disclosure run needs no assumption set', async () => {
+    expect(count('assumption_sets')).toBe(0);
+    const result = await run([calls(journalCall()), say('Done.')]);
+    expect(result.run).toMatchObject({ outcome: 'completed', runType: 'disclosure', error: null });
+    expect(listJournal(w.db, 'mini')[0]).toMatchObject({ agentRunId: result.run.id });
+    expect(count('assumption_sets')).toBe(0);
   });
 
-  it('cites context-pack observations without reading them again, sends the persona, rules, skills, and every tool', async () => {
-    await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')]);
-    expect(model.toolResults(1)[0]).toMatchObject({ is_error: false, result: { applied: true } });
+  it('commits what it staged in one transaction, and returns run, staged and committed only', async () => {
+    const result = await run([calls(stakedCall(), revenueCall()), calls(journalCall()), say('Done.')]);
+    expect(Object.keys(result)).toEqual(['run', 'staged', 'committed']);
+    expect(result.run).toMatchObject({ outcome: 'completed', persona: 'analyst', runType: 'disclosure', trigger: 'manual', dryRun: false, model: 'claude-opus-5-5', error: null });
+    expect(result.run.usage).toMatchObject({ requests: 3, inputTokens: 300, outputTokens: 150 });
+
+    const row = listActiveObservations(w.db, 'mini', 'staked_supply').find((o) => o.status === 'provisional')!;
+    expect(row).toMatchObject({ value: 55, source: 'manual', citationUrl: 'doc:1', quotedText: STAKED_QUOTE, sourceDetail: `research:analyst:run ${result.run.id}` });
+    const proposal = listProposals(w.db)[0];
+    expect(proposal).toMatchObject({ agentRunId: result.run.id, status: 'pending', change: { kind: 'observation', value: 1100, citationUrl: 'doc:1' }, effect: null });
+    const journalId = listJournal(w.db, 'mini')[0].id;
+    expect(result.committed).toEqual({ observationIds: [row.id], resolvedAnomalyIds: [], proposalIds: [proposal.id], journalId, devFindings: [] });
+    expect(Object.keys(result.staged)).toEqual(['resolutions', 'observations', 'proposals', 'journal', 'devFindings']);
+    expect(Object.keys(result.run.summary!)).toEqual(['committed', 'staged']);
+  });
+
+  it('sends the persona, the rules, the run type, both disclosure skills sorted by name, and the nine tools with the web tools', async () => {
+    const a = anomaly();
+    // The pack's observations may be cited without reading them again.
+    await run([calls(toolUse('resolve_anomaly', { id: a.id, note: 'sources agree again', evidence: [w.ids.price_usd] })), calls(journalCall()), say('Done.')]);
+    expect(model.toolResults(1)[0]).toMatchObject({ is_error: false, result: { staged: true } });
     const first = model.requests[0];
     expect(first.system.indexOf('You are the analyst')).toBe(0);
     expect(first.system).toContain('# How Orion works');
-    expect(first.system.indexOf('# Skill: assumption-review')).toBeLessThan(first.system.indexOf('# Skill: disclosure-research'));
-    expect(first.system).not.toContain('anomaly-triage');
-    expect(first.tools.map((t) => ('name' in t ? t.name : ''))).toEqual(expect.arrayContaining(['apply_assumption_change', 'write_journal', 'web_search', 'web_fetch']));
+    expect(first.system).toContain('This is a disclosure run.');
+    expect(first.system.indexOf('# Skill: disclosure-research')).toBeLessThan(first.system.indexOf('# Skill: disclosure-review'));
+    expect(first.tools.map((t) => ('name' in t ? t.name : t.type))).toEqual([...NINE, 'web_search', 'web_fetch']);
     expect(first.messages).toHaveLength(1);
     expect(first.messages[0].content).toContain('"observations_in_force"');
   });
@@ -74,159 +96,81 @@ describe('a weekly run that changes an assumption', () => {
     expect(transcript.tools).toContain('web_fetch');
     expect(JSON.stringify(getAgentRun(w.db, result.run.id))).not.toContain('context pack');
   });
-});
 
-describe('a run that changes nothing', () => {
-  it('writes its journal and emits no signal', async () => {
+  it('a run that changes nothing writes its journal and nothing else', async () => {
     const result = await run([calls(journalCall({ summary: 'nothing needed changing' })), say('Done.')]);
     expect(result.run.outcome).toBe('completed');
-    expect(result.signal).toBeNull();
-    expect(count('valuation_runs')).toBe(0);
+    expect(result.committed).toMatchObject({ observationIds: [], resolvedAnomalyIds: [], proposalIds: [], devFindings: [] });
     expect(count('journal')).toBe(1);
-    expect(result.run.summary).toMatchObject({ signal_id: null, valuation_error: null });
+    expect(count('proposals') + count('valuation_runs') + count('signals')).toBe(0);
   });
-});
 
-describe('a triage run', () => {
-  it('resolves a degrading anomaly on a critical metric and the grade recovers', async () => {
-    const a = raiseAnomaly(w.db, {
-      assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey: 'x', severity: 'degrading', detail: { primary: 10, check: 12 }, seenAt: AS_OF,
-    });
-    expect(runValuation(w.db, w.loaded, new Date(AS_OF)).signal).toMatchObject({ status: 'degraded', data_quality: { grade: 'D' } });
-
+  it('carries --anomaly and --note as pack context, and resolves that anomaly when the evidence supports it', async () => {
+    const a = anomaly();
     const result = await run(
       [calls(toolUse('resolve_anomaly', { id: a.id, note: 'the check source has caught up', evidence: [w.ids.price_usd] })), calls(journalCall()), say('Done.')],
-      { runType: 'triage', anomalyId: a.id, note: 'see https://status.example.com' },
+      { anomalyId: a.id, note: 'see https://status.example.com' },
     );
-    expect(result.run).toMatchObject({ outcome: 'completed', runType: 'triage', triggerDetail: { anomalyId: a.id, note: 'see https://status.example.com' } });
+    expect(result.run).toMatchObject({
+      outcome: 'completed', triggerDetail: { anomalyId: a.id, note: 'see https://status.example.com', docId: w.doc.id, docSha256: w.doc.sha256 },
+    });
     expect(getAnomaly(w.db, a.id)).toMatchObject({ status: 'resolved', decidedBy: 'analyst' });
-    expect(result.signal).toMatchObject({ status: 'ok', data_quality: { grade: 'A', open_anomalies: 0 } });
-    expect(model.requests[0].system).toContain('# Skill: anomaly-triage');
-    const pack = model.requests[0].messages[0].content as string;
-    expect(pack).toContain('"unverified_note": "see https://status.example.com"');
-  });
-});
-
-describe('a bootstrap run', () => {
-  const record = () => toolUse('record_provisional_observation', { metric: 'staked_supply', value: 55, observed_at: '2026-06-28', citation_url: PAGE_URL, quoted_text: QUOTE });
-
-  it('runs with no assumption set, offers no assumption tools, records research, commits with its journal, and values to a blocked signal', async () => {
-    w.db.prepare('DELETE FROM assumptions').run();
-    w.db.prepare('DELETE FROM assumption_sets').run();
-    const result = await run([{ content: [...webFetch(PAGE_URL, PAGE_TEXT), record()], stop_reason: 'tool_use' }, calls(journalCall()), say('Done.')], { runType: 'bootstrap' });
-    expect(result.run).toMatchObject({ outcome: 'completed', runType: 'bootstrap', error: null });
-    expect(result.committed).toMatchObject({ setVersion: null, resolvedAnomalyIds: [], proposalIds: [] });
-    expect(result.committed!.observationIds).toHaveLength(1);
-    expect(listActiveObservations(w.db, 'mini', 'staked_supply').filter((o) => o.status === 'provisional')).toMatchObject([{ value: 55, citationUrl: PAGE_URL }]);
-    expect(listJournal(w.db, 'mini')[0]).toMatchObject({ agentRunId: result.run.id });
-    expect(result.signal).toMatchObject({ status: 'blocked', status_reasons: expect.arrayContaining(['no_assumption_set']) });
-
-    const first = model.requests[0];
-    const names = first.tools.map((t) => ('name' in t ? t.name : ''));
-    expect(names).not.toContain('apply_assumption_change');
-    expect(names).not.toContain('get_assumptions');
-    expect(names).toEqual(expect.arrayContaining(['get_drivers', 'record_provisional_observation', 'propose_change', 'write_journal', 'web_search', 'web_fetch']));
-    expect(first.system).toContain('# Skill: bootstrap-research');
-    expect(first.system).toContain('# Skill: disclosure-research');
-    expect(first.system).not.toContain('assumption-review');
-    expect(first.system).toContain('This is a bootstrap run.');
-    const pack = first.messages[0].content as string;
-    expect(pack).toContain('"assumption_set_version": null');
-    expect(pack).toContain('"assumptions": "none yet"');
-    const parsed = JSON.parse(pack.slice(pack.indexOf('{')));
-    expect(parsed.asset.manual_metrics).toEqual(['emission_rate_annual', 'flow_usd.fees', 'revenue_run_rate_usd', 'staked_supply', 'staker_emission_share', 'total_supply']);
-  });
-
-  it('refuses an assumption tool call it was not offered, so a model cannot change what does not exist', async () => {
-    w.db.prepare('DELETE FROM assumptions').run();
-    w.db.prepare('DELETE FROM assumption_sets').run();
-    const result = await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')], { runType: 'bootstrap' });
-    expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'unknown_tool' } });
-    expect(result.run.outcome).toBe('completed');
-    expect(getLatestAssumptionSet(w.db, 'mini')).toBeNull();
-  });
-
-  it('with a set present is still offered no assumption change, and refuses a config proposal: the code keeps it off both', async () => {
-    const result = await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')], { runType: 'bootstrap' });
-    expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'unknown_tool' } });
-    expect(result.run).toMatchObject({ outcome: 'completed', runType: 'bootstrap' });
-    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1); // unchanged: the call was refused
-    const names = model.requests[0].tools.map((t) => ('name' in t ? t.name : ''));
-    expect(names).toContain('get_assumptions');
-    expect(names).not.toContain('apply_assumption_change');
+    expect(result.committed!.resolvedAnomalyIds).toEqual([a.id]);
+    expect(packOf().trigger).toEqual({ anomaly: expect.objectContaining({ id: a.id, detail: { primary: 10, check: 12 } }), unverified_note: 'see https://status.example.com' });
   });
 });
 
 describe('guardrails inside a run', () => {
-  it('files an out-of-band value as a proposal tied to the run, and moves no signal', async () => {
-    const result = await run([calls(growthCall(1.2)), calls(journalCall()), say('Done.')]);
-    expect(result.signal).toBeNull();
-    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1);
-    const p = listProposals(w.db)[0];
-    expect(p).toMatchObject({ persona: 'analyst', agentRunId: result.run.id, status: 'pending', change: { kind: 'assumption_value', value: 1.2 } });
-    expect(result.committed!.proposalIds).toEqual([p.id]);
-  });
-
-  it('records research from a page fetched in the same turn, and the signal drops to grade C', async () => {
-    const record = toolUse('record_provisional_observation', { metric: 'revenue_run_rate_usd', value: 1100, observed_at: '2026-06-28', citation_url: PAGE_URL, quoted_text: QUOTE });
-    const result = await run([{ content: [...webFetch(PAGE_URL, PAGE_TEXT), record], stop_reason: 'tool_use' }, calls(journalCall()), say('Done.')]);
-    expect(model.toolResults(1)[0]).toMatchObject({ is_error: false, result: { recorded: true, in_signal: true } });
-    const row = listActiveObservations(w.db, 'mini', 'revenue_run_rate_usd').find((o) => o.status === 'provisional')!;
-    expect(row).toMatchObject({ value: 1100, source: 'manual', citationUrl: PAGE_URL, quotedText: QUOTE, sourceDetail: `research:analyst:run ${result.run.id}` });
-    expect(result.signal).toMatchObject({ data_quality: { grade: 'C', provisional_metrics: ['revenue_run_rate_usd'] } });
-    expect(result.signal!.horizons!['12m'].expected_target).toBeCloseTo(11, 6);
+  it('files a figure from a page fetched in the same turn as an observation proposal, and writes no observation', async () => {
+    const result = await run([{ content: [...webFetch(PAGE_URL, PAGE_TEXT), revenueCall(PAGE_URL)], stop_reason: 'tool_use' }, calls(journalCall()), say('Done.')]);
+    expect(model.toolResults(1)[0]).toMatchObject({ is_error: false, result: { recorded: false } });
+    expect(listActiveObservations(w.db, 'mini', 'revenue_run_rate_usd').filter((o) => o.status === 'provisional')).toEqual([]);
+    expect(listProposals(w.db).map((p) => [p.change, p.effect])).toMatchObject([[{ kind: 'observation', value: 1100, citationUrl: PAGE_URL }, null]]);
+    expect(result.committed!.proposalIds).toHaveLength(1);
   });
 
   it('refuses research whose page was never fetched, and the run goes on', async () => {
-    const record = toolUse('record_provisional_observation', { metric: 'revenue_run_rate_usd', value: 1100, observed_at: '2026-06-28', citation_url: PAGE_URL, quoted_text: QUOTE });
-    const result = await run([calls(record), calls(journalCall()), say('Done.')]);
+    const result = await run([calls(revenueCall(PAGE_URL)), calls(journalCall()), say('Done.')]);
     expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'citation_not_fetched' } });
     expect(result.run.outcome).toBe('completed');
-    expect(count('observations')).toBe(7);
+    expect(count('observations') + count('proposals')).toBe(7);
   });
 
-  it('turns a large researched move into a proposal and writes no observation', async () => {
-    const big = 'The company reports annualized revenue of $2,000 this quarter.';
-    const record = toolUse('record_provisional_observation', {
-      metric: 'revenue_run_rate_usd', value: 2000, observed_at: '2026-06-28', citation_url: PAGE_URL, quoted_text: 'reports annualized revenue of $2,000',
-    });
-    const result = await run([{ content: [...webFetch(PAGE_URL, big), record], stop_reason: 'tool_use' }, calls(journalCall()), say('Done.')]);
-    expect(count('observations')).toBe(7);
-    expect(listProposals(w.db)[0].change).toMatchObject({ kind: 'observation', value: 2000 });
-    expect(result.signal).toBeNull();
+  it('refuses a valuation tool call, which no run is offered', async () => {
+    const result = await run([calls(toolUse('apply_assumption_change', { key: 'rev_growth_y1', scenario: 'base', value: 0.2, evidence: [w.ids.price_usd], rationale: 'r' })), calls(journalCall()), say('Done.')]);
+    expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'unknown_tool' } });
+    expect(result.run.outcome).toBe('completed');
   });
 });
 
 describe('runs that do not finish cleanly', () => {
   it('writes nothing when a budget runs out, but keeps the run row, the transcript, and what was staged', async () => {
-    w.loaded = { ...w.loaded, config: { ...w.loaded.config, agent: { budgets: { weekly: { requests: 1 } } } } };
-    const result = await run([calls(growthCall(0.2)), say('ok')]); // the reserve request writes no journal
+    w.loaded = { ...w.loaded, config: { ...w.loaded.config, agent: { budgets: { disclosure: { requests: 1 } } } } };
+    const result = await run([calls(stakedCall()), say('ok')]); // the reserve request writes no journal
     expect(result.run).toMatchObject({ outcome: 'budget_exhausted', error: 'requests (1)' });
     expect(result.committed).toBeNull();
-    expect(result.staged.assumptionChanges).toHaveLength(1);
-    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1);
-    expect(count('journal') + count('proposals') + count('assumption_changes') + count('valuation_runs')).toBe(0);
+    expect(result.staged.observations).toHaveLength(1);
+    expect(count('journal') + count('proposals')).toBe(0);
+    expect(count('observations')).toBe(7);
     expect(getTranscript(w.db, result.run.id)).not.toBeNull();
-    expect((result.run.summary as { staged: { assumptionChanges: unknown[] } }).staged.assumptionChanges).toHaveLength(1);
+    expect((result.run.summary as { staged: { observations: unknown[] } }).staged.observations).toHaveLength(1);
   });
 
   it('commits what was staged when it finishes on the reserve request, and records why', async () => {
-    runValuation(w.db, w.loaded, new Date(AS_OF)); // a previous signal to compare against
-    const result = await run([{ ...calls(growthCall(0.2)), usage: { input_tokens: 10_000_000 } }, calls(journalCall())]);
+    const result = await run([{ ...calls(stakedCall()), usage: { input_tokens: 10_000_000 } }, calls(journalCall())]);
     expect(result.run).toMatchObject({ outcome: 'completed', error: null });
-    expect(result.committed!.setVersion).not.toBeNull();
+    expect(result.committed!.observationIds).toHaveLength(1);
     expect(listJournal(w.db, 'mini')[0]).toMatchObject({ agentRunId: result.run.id, thesis: 'steady' });
-    expect((result.run.summary as { reserve?: unknown }).reserve).toEqual({ reason: 'input units (600000)' });
-    expect(result.signal).not.toBeNull();
+    expect((result.run.summary as { reserve?: unknown }).reserve).toEqual({ reason: 'input units (1200000)' });
   });
 
   it('still refuses to commit on reserve when the config changed during the run', async () => {
     const moved = { ...w.loaded, hash: 'c'.repeat(64) };
-    const result = await run([{ ...calls(growthCall(0.2)), usage: { input_tokens: 10_000_000 } }, calls(journalCall())], {}, { reload: () => moved });
+    const result = await run([{ ...calls(stakedCall()), usage: { input_tokens: 10_000_000 } }, calls(journalCall())], {}, { reload: () => moved });
     expect(result.run.outcome).toBe('conflict');
     expect(result.committed).toBeNull();
-    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1);
-    expect(count('journal') + count('assumption_changes') + count('valuation_runs')).toBe(0);
+    expect(count('journal')).toBe(0);
+    expect(count('observations')).toBe(7);
   });
 
   it('puts no reserve key in the summary when the reserve did not run', async () => {
@@ -236,80 +180,59 @@ describe('runs that do not finish cleanly', () => {
   });
 
   it('records the reserve on a run that still ran out', async () => {
-    const result = await run([{ ...calls(growthCall(0.2)), usage: { input_tokens: 10_000_000 } }, calls(toolUse('get_drivers', {}))]);
-    expect(result.run).toMatchObject({ outcome: 'budget_exhausted', error: 'input units (600000)' });
-    expect((result.run.summary as { reserve?: unknown }).reserve).toEqual({ reason: 'input units (600000)' });
+    const result = await run([{ ...calls(stakedCall()), usage: { input_tokens: 10_000_000 } }, calls(toolUse('get_observations', { metric: 'price_usd' }))]);
+    expect(result.run).toMatchObject({ outcome: 'budget_exhausted', error: 'input units (1200000)' });
+    expect((result.run.summary as { reserve?: unknown }).reserve).toEqual({ reason: 'input units (1200000)' });
     expect(result.committed).toBeNull();
-    expect(count('journal') + count('assumption_changes') + count('valuation_runs')).toBe(0);
+    expect(count('journal')).toBe(0);
   });
 
   it('ends as no_journal, refused, or error, each without writing', async () => {
-    expect((await run([calls(growthCall(0.2)), say('Done.'), say('Still done.')])).run.outcome).toBe('no_journal');
+    expect((await run([calls(stakedCall()), say('Done.'), say('Still done.')])).run.outcome).toBe('no_journal');
     expect((await run([{ content: [], stop_reason: 'refusal', stop_details: { type: 'refusal', category: null, explanation: null } }])).run.outcome).toBe('refused');
     expect((await run([new Error('socket hang up')])).run).toMatchObject({ outcome: 'error', error: 'Error: socket hang up' });
-    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1);
+    expect(count('observations')).toBe(7);
     expect(listAgentRuns(w.db)).toHaveLength(3);
   });
 
-  it('ends as conflict when the user saves a set mid-run, and leaves the user\'s set alone', async () => {
-    const userSavesASet = () => {
-      createAssumptionSet(w.db, { assetId: 'mini', author: 'user', rationale: 'mine', values: miniAssumptions({ rev_growth_y1: 0.3 }), createdAt: AS_OF });
+  it('ends as conflict when the user decides the anomaly it resolved mid-run, and leaves the user\'s decision alone', async () => {
+    const a = anomaly();
+    const userAcknowledges = () => {
+      decideAnomaly(w.db, a.id, 'acknowledged', 'known lag', AS_OF);
       return calls(journalCall());
     };
-    const result = await run([calls(growthCall(0.2)), userSavesASet, say('Done.')]);
+    const result = await run([calls(toolUse('resolve_anomaly', { id: a.id, note: 'cleared', evidence: [w.ids.price_usd] })), userAcknowledges, say('Done.')]);
     expect(result.run.outcome).toBe('conflict');
-    expect(result.run.error).toMatch(/assumption set v2 was saved during the run/);
-    expect(getLatestAssumptionSet(w.db, 'mini')).toMatchObject({ version: 2, author: 'user' });
+    expect(result.run.error).toMatch(/anomaly \d+ is no longer open \(acknowledged\)/);
+    expect(getAnomaly(w.db, a.id)).toMatchObject({ status: 'acknowledged', note: 'known lag' });
     expect(count('journal')).toBe(0);
   });
 
   it('ends as conflict when the asset config changed under the run, and writes nothing', async () => {
-    // The run began on w.loaded; halfway through, the file on disk becomes a tightened config with a different hash.
-    const tightened = {
-      ...w.loaded,
-      hash: `${'b'.repeat(64)}`,
-      config: { ...w.loaded.config, assumptions: { ...w.loaded.config.assumptions, rev_growth_y1: { min: -0.5, max: 0.05 } } },
-    };
+    // The run began on w.loaded; halfway through, the file on disk becomes a different config with a different hash.
+    const edited = { ...w.loaded, hash: `${'b'.repeat(64)}`, config: { ...w.loaded.config, name: 'Mini Renamed' } };
     let current = w.loaded;
     const userEditsTheConfig = () => {
-      current = tightened;
+      current = edited;
       return calls(journalCall());
     };
-    const result = await run([calls(growthCall(0.2)), userEditsTheConfig, say('Done.')], {}, { reload: () => current });
+    const result = await run([calls(stakedCall()), userEditsTheConfig, say('Done.')], {}, { reload: () => current });
     expect(result.run.outcome).toBe('conflict');
     expect(result.run.error).toBe(`the asset config changed during the run (${w.loaded.hash.slice(0, 12)} -> ${'b'.repeat(12)}); nothing was committed`);
     expect(result.committed).toBeNull();
-    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1);
     expect(count('journal')).toBe(0);
+    expect(count('observations')).toBe(7);
   });
 
   it('ends as conflict, not error, when the config on disk cannot be reloaded: the file moved under the run, half-edited', async () => {
     const halfEdited = () => {
-      throw new Error('assumptions: "rev_growth_y1" has min greater than max');
+      throw new Error('metrics: \"price_usd\" has no type');
     };
-    const result = await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')], {}, { reload: halfEdited });
+    const result = await run([calls(stakedCall()), calls(journalCall()), say('Done.')], {}, { reload: halfEdited });
     expect(result.run.outcome).toBe('conflict');
-    expect(result.run.error).toBe('the asset config could not be reloaded at the end of the run (Error: assumptions: "rev_growth_y1" has min greater than max); nothing was committed');
+    expect(result.run.error).toBe('the asset config could not be reloaded at the end of the run (Error: metrics: "price_usd" has no type); nothing was committed');
     expect(result.committed).toBeNull();
-    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1);
     expect(count('journal')).toBe(0);
-  });
-
-  it('keeps a commit that stood when something after it throws, and records the message as a valuation error', async () => {
-    // deps.now is called for the run start, the commit, the valuation, and the finish. Blow up on the valuation's call.
-    let calledNow = 0;
-    const now = () => {
-      calledNow += 1;
-      if (calledNow === 3) throw new Error('the clock stopped');
-      return new Date(AS_OF);
-    };
-    const result = await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')], {}, { now });
-    expect(result.run.outcome).toBe('completed');
-    expect(result.run.error).toBeNull();
-    expect(result.committed).toMatchObject({ setVersion: 2 });
-    expect(result.signal).toBeNull();
-    expect(result.run.summary!.valuation_error).toContain('the clock stopped');
-    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(2);
   });
 
   it('still finishes the run row when the transcript cannot be stored, keeping a minimal one instead', async () => {
@@ -319,72 +242,58 @@ describe('runs that do not finish cleanly', () => {
       "CREATE TRIGGER no_large_transcripts BEFORE INSERT ON agent_transcripts WHEN length(NEW.messages_json) > 400 " +
         "BEGIN SELECT RAISE(ABORT, 'transcript too large'); END",
     );
-    const result = await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')]);
+    const result = await run([calls(stakedCall()), calls(journalCall()), say('Done.')]);
     expect(result.run).toMatchObject({ outcome: 'completed', error: null });
-    expect(result.committed).toMatchObject({ setVersion: 2 });
+    expect(result.committed!.observationIds).toHaveLength(1);
     expect(getTranscript(w.db, result.run.id)).toEqual({
       error: expect.stringContaining('transcript too large'),
       note: 'the full transcript could not be stored',
     });
-    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(2);
   });
 
   it('does everything but commit on a dry run', async () => {
-    const result = await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')], { dryRun: true });
+    const result = await run([calls(stakedCall()), calls(journalCall()), say('Done.')], { dryRun: true });
     expect(result.run).toMatchObject({ outcome: 'completed', dryRun: true });
     expect(result.committed).toBeNull();
-    expect(result.staged.assumptionChanges).toHaveLength(1);
+    expect(result.staged.observations).toHaveLength(1);
     expect(result.staged.journal).not.toBeNull();
-    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1);
     expect(count('journal')).toBe(0);
+    expect(count('observations')).toBe(7);
   });
 
   it('catalysts on a dry run appear in staged.journal and nothing is written', async () => {
-    const catalysts = [{ event: 'revenue milestone', kind: 'product', by: '2026-09-30', citations: [{ source: PAGE_URL, quoted_text: QUOTE }] }];
-    const result = await run([{ content: [...webFetch(PAGE_URL, PAGE_TEXT), journalCall({ catalysts })], stop_reason: 'tool_use' }, say('Done.')], { dryRun: true });
+    const catalysts = [{ event: 'revenue milestone', kind: 'product', by: '2026-09-30', citations: [{ source: 'doc:1', quoted_text: QUOTE }] }];
+    const result = await run([calls(journalCall({ catalysts })), say('Done.')], { dryRun: true });
     expect(result.run).toMatchObject({ outcome: 'completed', dryRun: true });
     expect(result.committed).toBeNull();
     expect(result.staged.journal!.catalysts).toEqual([
-      { event: 'revenue milestone', kind: 'product', by: '2026-09-30', citations: [{ source: PAGE_URL, quotedText: QUOTE, locator: null, docSha256: null, docKind: null }] },
+      { event: 'revenue milestone', kind: 'product', by: '2026-09-30', citations: [{ source: 'doc:1', quotedText: QUOTE, locator: null, docSha256: w.doc.sha256, docKind: 'post' }] },
     ]);
     expect(count('journal')).toBe(0);
   });
 });
 
 describe('preflight', () => {
-  const codeOf = async (p: Promise<unknown>): Promise<string | undefined> => p.then(() => undefined, (err: OrionError) => err.code);
-
-  it('records why tick launched it: the trigger kind on the row, the firings in the detail and the pack; a tick triage needs no anomaly or note', async () => {
-    const firing = insertFiring(w.db, { assetId: 'mini', kind: 'calendar', key: '2026-07-01', firedAt: AS_OF, detail: { note: 'Emission cut' } });
-    const triage = await run([calls(journalCall()), say('Done.')], { runType: 'triage', trigger: { kind: 'trigger', firings: [firing] } });
-    expect(triage.run).toMatchObject({ outcome: 'completed', runType: 'triage', trigger: 'trigger', triggerDetail: { firings: [{ kind: 'calendar', key: '2026-07-01', detail: { note: 'Emission cut' } }] } });
-    const pack = JSON.parse((model.requests[0].messages[0].content as string).slice((model.requests[0].messages[0].content as string).indexOf('{'))) as { trigger: { triggers_this_tick: unknown[] } };
-    expect(pack.trigger.triggers_this_tick).toEqual([{ kind: 'calendar', key: '2026-07-01', fired_at: AS_OF, detail: { note: 'Emission cut' } }]);
-
-    const scheduled = await run([calls(journalCall()), say('Done.')], { runType: 'deep', trigger: { kind: 'schedule', firings: [] } });
-    expect(scheduled.run).toMatchObject({ trigger: 'schedule', triggerDetail: { firings: [] } });
-    expect(triage.run.trigger).not.toBe(scheduled.run.trigger);
-  });
-
   it('fails before any model call and before a run row exists', async () => {
-    expect(await codeOf(run([], { runType: 'triage' }))).toBe('triage_needs_target');
-    expect(await codeOf(run([], { runType: 'triage', trigger: { kind: 'trigger', firings: [] } }))).toBe('triage_needs_target');
-    expect(await codeOf(run([], { runType: 'triage', anomalyId: 999 }))).toBe('anomaly_not_found');
+    const foreign = insertDocument(w.db, {
+      assetId: 'hype', kind: 'post', sourceUrl: 'https://x.com/hype/status/1', sourceId: null, title: null, publishedAt: AS_OF, addedAt: AS_OF, meta: {},
+      text: 'Hype said something else entirely about its revenue.\n',
+    }).doc;
+    const decided = anomaly('decided');
+    decideAnomaly(w.db, decided.id, 'resolved', 'fixed', AS_OF);
+    expect(await codeOf(run([], { runType: 'weekly' as never }))).toBe('invalid_run_type');
+    expect(await codeOf(run([], { docId: undefined }))).toBe('disclosure_needs_doc');
+    expect(await codeOf(run([], { docId: 999 }))).toBe('doc_not_found');
+    expect(await codeOf(run([], { docId: foreign.id }))).toBe('doc_not_found');
+    expect(await codeOf(run([], { assetYaml: undefined }))).toBe('disclosure_needs_asset_yaml');
+    expect(await codeOf(run([], { anomalyId: 999 }))).toBe('anomaly_not_found');
+    expect(await codeOf(run([], { anomalyId: decided.id }))).toBe('anomaly_not_open');
+    w.db.prepare('UPDATE coverage SET persona = ?').run('ghost');
+    expect(await codeOf(run([]))).toBe('persona_not_found');
     w.db.prepare('DELETE FROM coverage').run();
     expect(await codeOf(run([]))).toBe('no_persona_assigned');
     expect(model.requests).toHaveLength(0);
     expect(count('agent_runs')).toBe(0);
-  });
-
-  it('needs an assumption set, and a persona file that exists', async () => {
-    w.db.prepare('UPDATE coverage SET persona = ?').run('ghost');
-    expect(await codeOf(run([]))).toBe('persona_not_found');
-    w.db.prepare('UPDATE coverage SET persona = ?').run('analyst');
-    w.db.prepare('DELETE FROM assumptions').run();
-    w.db.prepare('DELETE FROM assumption_sets').run();
-    expect(await codeOf(run([]))).toBe('no_assumption_set');
-    expect(await codeOf(run([], { runType: 'deep' }))).toBe('no_assumption_set');
-    expect(await codeOf(run([calls(journalCall()), say('Done.')], { runType: 'bootstrap' }))).toBeUndefined(); // the one run type that needs no set
   });
 
   it('records a config hash that moves with the persona file', async () => {
@@ -397,103 +306,52 @@ describe('preflight', () => {
     expect(same).toBe(first);
     expect(changed).not.toBe(first);
   });
+
+  it('runs under tool layer 2.0.0', () => {
+    expect(TOOL_LAYER_VERSION).toBe('2.0.0');
+  });
 });
 
 describe('a disclosure run', () => {
-  const POST = 'Mini said its annualized revenue reached $1,100 in September, up from $1,000.\n';
-  const addDoc = (assetId = 'mini', text = POST) =>
-    insertDocument(w.db, {
-      assetId, kind: 'post', sourceUrl: `https://x.com/mini/status/${text.length}${assetId}`, sourceId: null, title: null, publishedAt: '2026-06-29T00:00:00.000Z',
-      addedAt: AS_OF, meta: {}, text,
+  it('can cite doc:<id> of its target doc and nothing else', async () => {
+    const other = insertDocument(w.db, {
+      assetId: 'mini', kind: 'post', sourceUrl: 'https://x.com/mini/status/2', sourceId: null, title: null, publishedAt: AS_OF, addedAt: AS_OF, meta: {},
+      text: 'Mini also said its annualized revenue reached $1,100 in September, per a second post.\n',
     }).doc;
-  const codeOf = async (p: Promise<unknown>): Promise<string | undefined> => p.then(() => undefined, (err: OrionError) => err.code);
-  const toolNames = (i = 0) => model.requests[i].tools.map((t) => ('name' in t ? t.name : t.type));
-
-  it('a disclosure run needs --doc, refuses a doc of another asset, and refuses --doc on other types', async () => {
-    const own = addDoc();
-    const foreign = addDoc('hype', 'Hype said something else entirely about its revenue.\n');
-    expect(await codeOf(run([], { runType: 'disclosure' }))).toBe('disclosure_needs_doc');
-    expect(await codeOf(run([], { runType: 'disclosure', docId: 999 }))).toBe('doc_not_found');
-    expect(await codeOf(run([], { runType: 'disclosure', docId: foreign.id }))).toBe('doc_not_found');
-    for (const runType of ['weekly', 'triage', 'deep', 'bootstrap'] as const) {
-      expect(await codeOf(run([], { runType, docId: own.id, note: 'a lead' }))).toBe('doc_only_for_disclosure');
-    }
-    expect(model.requests).toHaveLength(0);
-    expect(count('agent_runs')).toBe(0);
-  });
-
-  it('a disclosure run without the asset YAML fails at preflight: no model call, no run row', async () => {
-    const doc = addDoc();
-    expect(await codeOf(run([calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id }))).toBe('disclosure_needs_asset_yaml');
-    expect(model.requests).toHaveLength(0);
-    expect(count('agent_runs')).toBe(0);
-  });
-
-  it('a disclosure run gets no apply_assumption_change; a weekly run gets no disclosure-only tools', async () => {
-    const doc = addDoc();
-    await run([calls(growthCall(0.2)), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id, assetYaml: AGENT_ASSET_YAML });
-    expect(toolNames()).not.toContain('apply_assumption_change');
-    expect(toolNames()).toEqual(expect.arrayContaining([
-      'get_assumptions', 'run_whatif', 'propose_change', 'resolve_anomaly', 'record_provisional_observation', 'write_journal', 'web_search', 'web_fetch',
-      'get_flow_total', 'record_dev_finding',
-    ]));
-    expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'unknown_tool' } });
-    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1);
-    expect(model.requests[0].system).toContain('This is a disclosure run.');
-
-    await run([calls(journalCall()), say('Done.')], { runType: 'weekly' });
-    expect(toolNames()).toContain('apply_assumption_change');
-    expect(toolNames().filter((n) => (DISCLOSURE_ONLY_TOOLS as readonly string[]).includes(n))).toEqual([]);
-  });
-
-  it('a disclosure run can cite doc:<id> of its target doc and nothing else', async () => {
-    const doc = addDoc();
-    const other = addDoc('mini', 'Mini also said its annualized revenue reached $1,100 in September, per a second post.\n');
-    const research = (source: string) =>
-      toolUse('record_provisional_observation', { metric: 'revenue_run_rate_usd', value: 1100, observed_at: '2026-06-28', citation_url: source, quoted_text: QUOTE });
-    const result = await run([calls(research(`doc:${other.id}`)), calls(research(`doc:${doc.id}`)), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id, assetYaml: AGENT_ASSET_YAML });
-    expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'doc_not_in_run', citable_docs: [`doc:${doc.id}`] } });
+    const result = await run([calls(revenueCall(`doc:${other.id}`)), calls(revenueCall(`doc:${w.doc.id}`)), calls(journalCall()), say('Done.')]);
+    expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'doc_not_in_run', citable_docs: [`doc:${w.doc.id}`] } });
     // A figure from a disclosure run waits for the user (spec section 15, Ruling 18): on an allow_provisional metric it is a proposal.
     expect(model.toolResults(2)[0]).toMatchObject({ is_error: false, result: { recorded: false } });
     expect(result.run.outcome).toBe('completed');
-    expect(listActiveObservations(w.db, 'mini', 'revenue_run_rate_usd').filter((o) => o.citationUrl === `doc:${doc.id}`)).toEqual([]);
-    expect(listProposals(w.db).map((p) => p.change)).toMatchObject([{ kind: 'observation', value: 1100, citationUrl: `doc:${doc.id}`, quotedText: QUOTE }]);
+    expect(listActiveObservations(w.db, 'mini', 'revenue_run_rate_usd').filter((o) => o.citationUrl === `doc:${w.doc.id}`)).toEqual([]);
+    expect(listProposals(w.db).map((p) => p.change)).toMatchObject([{ kind: 'observation', value: 1100, citationUrl: `doc:${w.doc.id}`, quotedText: QUOTE }]);
   });
 
   it('keeps dev findings in the run summary: staged on a dry run, committed too after a commit, and in no table', async () => {
-    const doc = addDoc();
     const devFinding = toolUse('record_dev_finding', {
       category: 'revenue', title: 'Revenue claim', metric_keys: ['revenue_run_rate_usd'], claim: 'The post says $1,100.', orion_reading: 'Orion has 1000.',
       value_direction: 'up', proposed_fix: 'Read the revenue page.', evidence: [w.ids.revenue_run_rate_usd],
-      citations: [{ source: `doc:${doc.id}`, quoted_text: QUOTE }],
+      citations: [{ source: `doc:${w.doc.id}`, quoted_text: QUOTE }],
     });
-    const dry = await run([calls(devFinding), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id, assetYaml: AGENT_ASSET_YAML, dryRun: true });
+    const dry = await run([calls(devFinding), calls(journalCall()), say('Done.')], { dryRun: true });
     expect(model.toolResults(1)[0]).toMatchObject({ is_error: false, result: { staged: true } });
     const drySummary = getAgentRun(w.db, dry.run.id)!.summary as { committed: unknown; staged: { devFindings: { category: string; fingerprint: string }[] } };
     expect(drySummary.committed).toBeNull();
     expect(drySummary.staged.devFindings).toMatchObject([{ category: 'revenue', metricKeys: ['revenue_run_rate_usd'], fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/) }]);
 
-    const done = await run([calls(devFinding), calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id, assetYaml: AGENT_ASSET_YAML });
+    const done = await run([calls(devFinding), calls(journalCall()), say('Done.')]);
     const summary = getAgentRun(w.db, done.run.id)!.summary as { committed: { devFindings: unknown[] }; staged: { devFindings: unknown[] } };
     expect(summary.committed.devFindings).toEqual(drySummary.staged.devFindings);
     expect(summary.staged.devFindings).toEqual(drySummary.staged.devFindings);
-    expect(done.signal).toBeNull();
-  });
-
-  it('a weekly run can cite no stored document', async () => {
-    const doc = addDoc();
-    await run([calls(toolUse('record_provisional_observation', { metric: 'revenue_run_rate_usd', value: 1100, observed_at: '2026-06-28', citation_url: `doc:${doc.id}`, quoted_text: QUOTE })), calls(journalCall()), say('Done.')]);
-    expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'doc_not_in_run', citable_docs: [] } });
   });
 
   it('records docId and docSha256 in trigger_detail and runs under budget disclosure', async () => {
-    const doc = addDoc();
-    const result = await run([calls(journalCall()), say('Done.')], { runType: 'disclosure', docId: doc.id, assetYaml: AGENT_ASSET_YAML, note: 'see the post' });
-    expect(result.run).toMatchObject({ outcome: 'completed', runType: 'disclosure', trigger: 'manual', triggerDetail: { note: 'see the post', docId: doc.id, docSha256: doc.sha256 } });
-    expect(getAgentRun(w.db, result.run.id)!.triggerDetail).toEqual({ note: 'see the post', docId: doc.id, docSha256: doc.sha256 });
-    const pack = JSON.parse((model.requests[0].messages[0].content as string).slice((model.requests[0].messages[0].content as string).indexOf('{')));
-    expect(pack.run).toMatchObject({ type: 'disclosure', budgets: DEFAULT_BUDGETS.disclosure });
-    expect(pack.document).toMatchObject({ id: doc.id, kind: 'post', sha256: doc.sha256, text: POST });
+    const result = await run([calls(journalCall()), say('Done.')], { note: 'see the post' });
+    expect(result.run).toMatchObject({ outcome: 'completed', runType: 'disclosure', trigger: 'manual', triggerDetail: { note: 'see the post', docId: w.doc.id, docSha256: w.doc.sha256 } });
+    expect(getAgentRun(w.db, result.run.id)!.triggerDetail).toEqual({ note: 'see the post', docId: w.doc.id, docSha256: w.doc.sha256 });
+    const pack = packOf();
+    expect(pack.run).toEqual({ type: 'disclosure', now: AS_OF, budgets: DEFAULT_BUDGETS.disclosure });
+    expect(pack.document).toMatchObject({ id: w.doc.id, kind: 'post', sha256: w.doc.sha256, text: DOC_TEXT });
     // 25 requests, 3 searches, 5 fetches: the web tools carry the disclosure budget's limits.
     expect(DEFAULT_BUDGETS.disclosure).toEqual({ requests: 25, inputUnits: 1_200_000, outputTokens: 40_000, webSearches: 3, webFetches: 5, proposals: 5 });
     expect(model.requests[0].tools.find((t) => 'name' in t && t.name === 'web_search')).toMatchObject({ max_uses: 3 });
@@ -504,14 +362,9 @@ describe('a disclosure run', () => {
 describe('which tools a run is offered', () => {
   // The filter goes by name, so stand-ins with those names test it apart from what the real tools do.
   const stand = (name: string): AgentTool => ({ name, description: name, input: {} as AgentTool['input'], run: () => null });
-  const ALL = ['get_assumptions', 'apply_assumption_change', 'write_journal', ...DISCLOSURE_ONLY_TOOLS].map(stand);
-  const offered = (runType: Parameters<typeof toolsForRun>[1], hasSet = true) => toolsForRun(ALL, runType, hasSet).map((t) => t.name);
 
-  it('offers the disclosure-only tools to a disclosure run only, and apply_assumption_change to neither disclosure nor bootstrap', () => {
-    expect(DISCLOSURE_ONLY_TOOLS).toEqual(['get_flow_total', 'record_dev_finding']);
-    expect(offered('disclosure')).toEqual(['get_assumptions', 'write_journal', 'get_flow_total', 'record_dev_finding']);
-    for (const runType of ['weekly', 'triage', 'deep'] as const) expect(offered(runType)).toEqual(['get_assumptions', 'apply_assumption_change', 'write_journal']);
-    expect(offered('bootstrap')).toEqual(['get_assumptions', 'write_journal']);
-    expect(offered('bootstrap', false)).toEqual(['write_journal']);
+  it('offers a disclosure run the nine tools, in the order it is given them, and nothing else', () => {
+    const given = ['write_journal', 'get_drivers', ...NINE.filter((n) => n !== 'write_journal'), 'apply_assumption_change', 'run_whatif'].map(stand);
+    expect(toolsForRun(given, 'disclosure').map((t) => t.name)).toEqual(['write_journal', ...NINE.filter((n) => n !== 'write_journal')]);
   });
 });

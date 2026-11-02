@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z, ZodError } from 'zod';
-import { OrionError, RUN_TYPES, type RunType } from '../types.js';
+import { OrionError, RUNNABLE_RUN_TYPES, type RunnableRunType } from '../types.js';
 import { sha256 } from '../util/canonical.js';
 
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
@@ -23,7 +23,8 @@ const PersonaFrontmatter = z.strictObject({
 const SkillFrontmatter = z.strictObject({
   name: z.string().regex(NAME),
   description: z.string().min(1),
-  run_types: z.array(z.enum(RUN_TYPES)).min(1),
+  // A runnable type only: a skill file still naming a retired one fails the load, loudly, rather than lying dormant.
+  run_types: z.array(z.enum(RUNNABLE_RUN_TYPES)).min(1),
 });
 
 export interface Persona {
@@ -41,7 +42,7 @@ export interface Persona {
 export interface Skill {
   name: string;
   description: string;
-  runTypes: RunType[];
+  runTypes: RunnableRunType[];
   body: string;
   hash: string;
 }
@@ -116,6 +117,6 @@ export function loadSkills(home: string): Skill[] {
 }
 
 /** The skills a run type loads, sorted by name so the system prompt is byte-stable. */
-export function skillsFor(home: string, runType: RunType): Skill[] {
+export function skillsFor(home: string, runType: RunnableRunType): Skill[] {
   return loadSkills(home).filter((s) => s.runTypes.includes(runType));
 }

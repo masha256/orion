@@ -21,9 +21,16 @@ const REVENUE_60_YAML = shortWindow('revenue_run_rate_usd', 60);
 const PRICE_3_YAML = shortWindow('price_usd', 3);
 const withCalendar = (yaml: string, date: string) => `${yaml}review_triggers:\n  calendar:\n    - { date: "${date}", note: "Emission cut" }\n`;
 
+/** The agent world with the assumption set it used to seed: driver_deviation measures from the latest set. */
+function world(yaml?: string): AgentWorld {
+  const out = agentWorld(yaml);
+  createAssumptionSet(out.db, { assetId: 'mini', author: 'user', rationale: 'initial', values: miniAssumptions(), createdAt: AS_OF });
+  return out;
+}
+
 let w: AgentWorld;
 beforeEach(() => {
-  w = agentWorld();
+  w = world();
 });
 
 const set = (metric: string, value: number, at: Date, extra: { status?: 'confirmed' | 'provisional'; sourceDetail?: string; citationUrl?: string } = {}) =>
@@ -57,7 +64,7 @@ describe('trigger conditions', () => {
   });
 
   it('staleness detail uses eligible observations, ignoring provisional and future-dated rows', () => {
-    w = agentWorld(PRICE_3_YAML);
+    w = world(PRICE_3_YAML);
     set('price_usd', 15, daysLater(4), { status: 'provisional', citationUrl: 'https://example.com/p' });
     expect(evaluate(daysLater(4)).fired[0].detail).toEqual({ staleness_days: 3, newest_observed_at: '2026-06-29T00:00:00.000Z' });
   });
@@ -72,7 +79,7 @@ describe('trigger conditions', () => {
   });
 
   it('calendar: from the event date for a week, keyed by the date', () => {
-    w = agentWorld(withCalendar(RELAXED_YAML, '2026-07-02'));
+    w = world(withCalendar(RELAXED_YAML, '2026-07-02'));
     expect(instances(daysLater(1))).toEqual([]);
     expect(instances(daysLater(2))).toEqual(['calendar:2026-07-02']);
     expect(evaluate(daysLater(2)).fired[0].detail).toEqual({ note: 'Emission cut' });
@@ -83,7 +90,7 @@ describe('trigger conditions', () => {
 
 describe('driver_deviation', () => {
   beforeEach(() => {
-    w = agentWorld(RELAXED_YAML);
+    w = world(RELAXED_YAML);
   });
 
   it('fires when revenue sits further from the base path than the threshold, with the numbers in the detail', () => {
@@ -100,7 +107,7 @@ describe('driver_deviation', () => {
     expect(instances(daysLater(10))).toEqual([]); // 20 percent
     set('revenue_run_rate_usd', 1300, daysLater(3));
     expect(instances(daysLater(3))).toEqual([]); // anchor 3 days old
-    w = agentWorld(REVENUE_60_YAML);
+    w = world(REVENUE_60_YAML);
     set('revenue_run_rate_usd', 1300, daysLater(10));
     expect(instances(daysLater(70))).toEqual(['driver_deviation:revenue_run_rate_usd']); // 60 days old is not yet stale
     expect(instances(daysLater(71))).toEqual(['staleness:revenue_run_rate_usd']); // now it is: staleness owns the datum
@@ -115,7 +122,7 @@ describe('driver_deviation', () => {
     expect(instances(daysLater(28))).toEqual([]); // anchor 8 days old, now at 1300: the path starts there
     set('revenue_run_rate_usd', 1690, daysLater(28));
     expect(instances(daysLater(28))).toEqual(['driver_deviation:revenue_run_rate_usd']); // 30 percent over 1300
-    w = agentWorld(`${RELAXED_YAML}review_triggers:\n  driver_deviation_pct: 40\n`);
+    w = world(`${RELAXED_YAML}review_triggers:\n  driver_deviation_pct: 40\n`);
     set('revenue_run_rate_usd', 1300, daysLater(10));
     expect(instances(daysLater(10))).toEqual([]);
   });
@@ -123,7 +130,7 @@ describe('driver_deviation', () => {
 
 describe('evaluateTriggers: firing once, standing, re-arming', () => {
   it('fires an instance once, then reports it standing, and re-arms a re-arming kind when its condition clears', () => {
-    w = agentWorld(PRICE_3_YAML);
+    w = world(PRICE_3_YAML);
     const first = evaluate(daysLater(4)); // price stale
     expect(fired(first)).toEqual(['staleness:price_usd']);
     expect(listFirings(w.db, 'mini')).toHaveLength(1);

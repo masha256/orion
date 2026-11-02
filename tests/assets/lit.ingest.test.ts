@@ -4,12 +4,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
-import { structuralNotes } from '../../src/agent/describe.js';
-import { Ledger } from '../../src/agent/ledger.js';
-import { AGENT_TOOLS, runTool, type ToolContext } from '../../src/agent/tools/index.js';
 import { updateAsset } from '../../src/app/update.js';
 import { buildProgram } from '../../src/cli/program.js';
-import { budgetsFor } from '../../src/config/agentPolicy.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
 import { loadPersona } from '../../src/config/personas.js';
 import { listActiveObservations } from '../../src/db/observations.js';
@@ -333,23 +329,6 @@ describe('assets/lit.yaml', () => {
     expect(out.volume.annualized).toBeCloseTo(140_000 * 365, -2);
     expect(out.marketCap).toBeCloseTo(PRICE * 250_000_000, 0);
     expect(out.fdv).toBeCloseTo(PRICE * 981_909_280, 0);
-  });
-
-  it('get_drivers marks staked_ratio structural with the staked_supply note, as the analyst pack does (Ruling 13)', async () => {
-    const w = world();
-    const loaded = loadAsset(ROOT, 'lit');
-    await fetchAsset(w.db, loaded, NOW, w.deps);
-    const ctx: ToolContext = {
-      db: w.db, loaded, ledger: new Ledger('lit', 'analyst', null), now: () => NOW, budgets: budgetsFor(loaded.config, 'weekly'), runType: 'weekly',
-      fetchedPages: () => [], citableDocs: () => [], targetDoc: null,
-    };
-    const out = runTool(AGENT_TOOLS, ctx, 'get_drivers', {});
-    expect(out.isError).toBe(false);
-    const drivers = (JSON.parse(out.content) as { drivers: Record<string, { structural?: string }> }).drivers;
-    const note = (config.metrics.staked_supply.source as { note: string }).note;
-    expect(note).toMatch(/not a fee share/);
-    expect(drivers.staked_ratio.structural).toBe(note);
-    expect(drivers.staker_emission_share.structural).toBe(structuralNotes(config).staker_emission_share);
   });
 
   it('is covered by the perp exchange analyst, who knows the burn is drawn from the reserve', () => {

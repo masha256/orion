@@ -28,7 +28,6 @@
   "summary": {
    "committed": null,
    "staged": {
-    "assumptionChanges": [],
     "resolutions": [],
     "observations": [],
     "proposals": [
@@ -83,16 +82,7 @@
         "docKind": "machine_transcript"
        }
       ],
-      "effect": {
-       "6m": {
-        "from": 0.3177979773977757,
-        "to": 0.3177979773977757
-       },
-       "12m": {
-        "from": 0.3544432006757628,
-        "to": 0.3544432006757628
-       }
-      }
+      "effect": null
      }
     ],
     "journal": {
@@ -219,13 +209,10 @@
       "fingerprint": "4abd7590d82085890aebd0074fbe2c989f7ce991dae317b83de1b59c19914b4f"
      }
     ]
-   },
-   "signal_id": null,
-   "valuation_error": null
+   }
   }
  },
  "staged": {
-  "assumptionChanges": [],
   "resolutions": [],
   "observations": [],
   "proposals": [
@@ -280,16 +267,7 @@
       "docKind": "machine_transcript"
      }
     ],
-    "effect": {
-     "6m": {
-      "from": 0.3177979773977757,
-      "to": 0.3177979773977757
-     },
-     "12m": {
-      "from": 0.3544432006757628,
-      "to": 0.3544432006757628
-     }
-    }
+    "effect": null
    }
   ],
   "journal": {
@@ -417,6 +395,5 @@
    }
   ]
  },
- "committed": null,
- "signal": null
+ "committed": null
 }

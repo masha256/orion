@@ -21,7 +21,7 @@ import { sourceCtx } from '../helpers/sourceCtx.js';
 /**
  * Level 2 of the disclosure watcher's acceptance test (spec 11.2, with the amendments of section 15): the full pipeline on
  * the Q3 2026 Lighter call, a scripted model standing in for the analyst. A temp ORION_HOME holds the real
- * assets/lit.yaml, personas/, skills/ and LIT's calibrated set; the fixture is stored with `doc add`; the run is
+ * assets/lit.yaml, personas/ and skills/ (no assumption set: a disclosure run needs none); the fixture is stored with `doc add`; the run is
  * `agent run lit --type disclosure --doc 1 --dry-run --json`, in process, so its JSON is the CLI's own output. The script
  * makes the calls the manual review's outcome needs, and every one must pass the real guardrails. It proves the plumbing
  * accepts that outcome, not that an analyst finds it (level 3 does).
@@ -41,7 +41,7 @@ const Q3_DAYS = 92;
 const BUYBACK_Q3 = 7_410_898;
 const LLAMA_Q3 = 9_846_397;
 const UNLOCKS_NOW = 135_982_827;
-/** What the valuation needs beyond the flows; the run rate is the Q3 buys annualized. */
+/** The levels in force on 2026-10-23 beyond the flows; the run rate is the Q3 buys annualized. */
 const VALUATION_LEVELS: [string, number][] = [
   ['price_usd', 3.04],
   ['total_supply', 981_909_280],
@@ -95,7 +95,7 @@ async function orion(h: string, ...args: string[]): Promise<string> {
   return lines.join('\n');
 }
 
-const TABLES = ['proposals', 'journal', 'observations', 'assumption_sets', 'documents', 'agent_runs'] as const;
+const TABLES = ['proposals', 'journal', 'observations', 'documents', 'agent_runs'] as const;
 const counts = (h: string): Record<string, number> =>
   withDb(h, (db) => Object.fromEntries(TABLES.map((t) => [t, (db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n])));
 
@@ -180,7 +180,7 @@ function script(docId: number): (Step | ((r: ModelRequest) => Step))[] {
  * injected clock), but a fixture pinned to them would break for reasons Task 12 does not care about:
  * - run.startedAt, run.endedAt: wall-clock fields in a real run (here NOW).
  * - run.configHash: hashes the persona, skill and asset texts, so any later edit of those files would move it.
- * The shape (RunAgentResult: run, staged, committed, signal) is kept; only those values become placeholders.
+ * The shape (RunAgentResult: run, staged, committed) is kept; only those values become placeholders.
  */
 /**
  * assets/lit.yaml as it stood when the Q3 2026 run was filed (2026-10-23): proposal #3's tranches were approved later
@@ -209,7 +209,6 @@ beforeAll(async () => {
   writeFileSync(join(home, 'assets/lit.yaml'), preApprovalLitYaml());
   cpSync(join(ROOT, 'personas'), join(home, 'personas'), { recursive: true });
   cpSync(join(ROOT, 'skills'), join(home, 'skills'), { recursive: true });
-  await orion(home, 'model', 'assumptions', 'import', 'lit', join(ROOT, 'calibration/lit-assumptions.yaml'), '--rationale', 'central package (Mike, 2026-10-16)');
   await orion(home, 'persona', 'assign', 'lit', 'perp-exchange-analyst');
 
   withDb(home, (db) => {
@@ -218,8 +217,8 @@ beforeAll(async () => {
     const level = (metricKey: string, value: number, source: 'api' | 'onchain' = 'api') =>
       insertObservation(db, { assetId: 'lit', metricKey, observedAt: '2026-10-23T00:00:00.000Z', value, source, fetchedAt: NOW });
     level('unlocks_next_year', UNLOCKS_NOW);
-    // The minimum the LIT valuation needs to price (without them the proposal's effect is blocked on missing_metric), as
-    // the 2026-10-23 fetch would stamp them: constants and the derived run rate are `api`, the supply read `onchain`.
+    // The levels the 2026-10-23 fetch stamped (the pack shows them as observations in force): constants and the derived
+    // run rate are `api`, the supply read `onchain`.
     for (const [key, value] of VALUATION_LEVELS) level(key, value, key === 'total_supply' ? 'onchain' : 'api');
   });
 
@@ -260,11 +259,9 @@ describe('disclosure dry run on the Q3 2026 Lighter call (scripted model)', () =
     expect(result.run.runType).toBe('disclosure');
     expect(result.run.triggerDetail).toMatchObject({ docId: 1 });
     expect(result.committed).toBeNull();
-    expect(result.signal).toBeNull();
-    expect(result.staged.assumptionChanges).toEqual([]);
   });
 
-  it('stages the unlock-cadence config proposal, citing 12:33 and 12:29, with an effect that moves no target', () => {
+  it('stages the unlock-cadence config proposal, citing 12:33 and 12:29, with effect null', () => {
     expect(result.staged.proposals).toHaveLength(1);
     const prop = result.staged.proposals[0]!;
     expect(prop.change.kind).toBe('config');
@@ -275,11 +272,8 @@ describe('disclosure dry run on the Q3 2026 Lighter call (scripted model)', () =
         { path: ['reporting', 'dilution', 'unlocks', 'note'], value: DILUTION_NOTE },
       ],
     });
-    // unlocks_next_year is monitor_only: the config moves the report's dilution line, never a target.
-    const effect = prop.effect as { '6m': { from: number; to: number }; '12m': { from: number; to: number } };
-    expect(typeof effect['6m'].to).toBe('number');
-    expect(typeof effect['12m'].to).toBe('number');
-    expect(prop.effect).toMatchObject({ '6m': { from: effect['6m'].to, to: effect['6m'].to }, '12m': { from: effect['12m'].to, to: effect['12m'].to } });
+    // No proposal carries a target effect any more: the valuation that computed one is gone.
+    expect(prop.effect === null).toBe(true);
     expect(prop.citations.map((c) => c.locator)).toEqual([Q.firstTranche.locator, Q.thirtySix.locator]);
   });
 
@@ -316,19 +310,21 @@ describe('disclosure dry run on the Q3 2026 Lighter call (scripted model)', () =
   });
 
   it('leaves the database as it was, except the one run row', () => {
-    expect(before).toMatchObject({ documents: 1, agent_runs: 0, proposals: 0, journal: 0, assumption_sets: 1, observations: 2 * Q3_DAYS + 1 + VALUATION_LEVELS.length });
+    expect(before).toMatchObject({ documents: 1, agent_runs: 0, proposals: 0, journal: 0, observations: 2 * Q3_DAYS + 1 + VALUATION_LEVELS.length });
     expect(after).toEqual({ ...before, agent_runs: 1 });
   });
 
-  it('offers the disclosure tools and never apply_assumption_change', () => {
+  it('offers exactly the nine disclosure tools and the two web tools', () => {
     const names = model.requests[0]!.tools.map((t) => ('name' in t ? t.name : t.type));
-    expect(names).not.toContain('apply_assumption_change');
-    expect(names).toEqual(expect.arrayContaining(['get_flow_total', 'record_dev_finding', 'propose_change', 'write_journal']));
+    expect(names).toEqual([
+      'get_observations', 'get_anomalies', 'get_journal', 'get_flow_total', 'resolve_anomaly', 'record_provisional_observation', 'propose_change',
+      'write_journal', 'record_dev_finding', 'web_search', 'web_fetch',
+    ]);
   });
 
   it('the run JSON matches tests/fixtures/disclosure/lit-q3-run.json (UPDATE_FIXTURES=1 rewrites it)', () => {
     // The CLI printed exactly what runAgent returned.
-    expect(Object.keys(result)).toEqual(['run', 'staged', 'committed', 'signal']);
+    expect(Object.keys(result)).toEqual(['run', 'staged', 'committed']);
     const text = `${JSON.stringify(normalized(result), null, 1)}\n`;
     if (process.env.UPDATE_FIXTURES === '1') {
       mkdirSync(join(ROOT, 'tests/fixtures/disclosure'), { recursive: true });
@@ -346,7 +342,6 @@ describe('approving the config proposal on a copy of assets/lit.yaml', () => {
     home2 = h2;
     await orion(h2, 'init');
     writeFileSync(join(h2, 'assets/lit.yaml'), preApprovalLitYaml());
-    await orion(h2, 'model', 'assumptions', 'import', 'lit', join(ROOT, 'calibration/lit-assumptions.yaml'), '--rationale', 'central package');
 
     const approved = withDb(h2, (db) => {
       const filed = insertProposal(db, {

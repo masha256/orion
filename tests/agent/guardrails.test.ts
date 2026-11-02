@@ -1,27 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  allowedRange, blockingAnomalies, checkEvidence, checkStep, cleanText, findInTranscript, maxStep, normalizeText, normalizeUrl, placeValue,
-  routeObservation, textBlocks, TRANSCRIPT_WINDOW, verifyAnyCitation, verifyCitation, type CitableDoc, type EvidenceRef,
+  checkEvidence, cleanText, findInTranscript, normalizeText, normalizeUrl, routeObservation, textBlocks, TRANSCRIPT_WINDOW, verifyAnyCitation,
+  verifyCitation, type CitableDoc, type EvidenceRef,
 } from '../../src/agent/guardrails.js';
 import { normalizeDocText } from '../../src/db/documents.js';
-import { parseAssetYaml } from '../../src/config/load.js';
-import { MINI_ASSET_YAML } from '../helpers/assets.js';
-
-// rev_growth_y1: key-wide [-0.5, 5]; base band [0, 1] (width 1, so the default step is 0.25); no bull band.
-const asset = parseAssetYaml(
-  MINI_ASSET_YAML.replace('  rev_growth_y1: { min: -0.5, max: 5 }', '  rev_growth_y1: { min: -0.5, max: 5, base: { min: 0, max: 1 } }'),
-).config;
-
-describe('anomaly block', () => {
-  it('blocks on open degrading anomalies only, and a staged resolution lifts it', () => {
-    const open = [{ id: 1, severity: 'degrading' as const }, { id: 2, severity: 'advisory' as const }, { id: 3, severity: 'degrading' as const }];
-    expect(blockingAnomalies(open, new Set())).toEqual([1, 3]);
-    expect(blockingAnomalies(open, new Set([1]))).toEqual([3]);
-    expect(blockingAnomalies(open, new Set([1, 3]))).toEqual([]);
-    expect(blockingAnomalies([{ id: 2, severity: 'advisory' }], new Set())).toEqual([]);
-  });
-});
 
 describe('cleaning model-authored text', () => {
   it('drops control characters, keeps newlines and tabs, and trims', () => {
@@ -60,57 +43,6 @@ describe('evidence', () => {
     expect(checkEvidence([3], 'mini', lookup, shown)).toMatchObject({ refused: 'evidence_invalid', ids: [3] });
     expect(checkEvidence([99], 'mini', lookup, shown)).toMatchObject({ refused: 'evidence_invalid', ids: [99] });
     expect(checkEvidence([1], 'mini', lookup, shown)).toBeNull();
-  });
-});
-
-describe('bounds and bands', () => {
-  it('places a value in the band, in the bounds only, or outside both', () => {
-    expect(placeValue(asset, 'rev_growth_y1', 'base', 0.5)).toBe('in_band');
-    expect(placeValue(asset, 'rev_growth_y1', 'base', 1)).toBe('in_band'); // edges are inside
-    expect(placeValue(asset, 'rev_growth_y1', 'base', 1.2)).toBe('out_of_band');
-    expect(placeValue(asset, 'rev_growth_y1', 'base', 5.1)).toBe('out_of_bounds');
-    expect(placeValue(asset, 'rev_growth_y1', 'bull', 4)).toBe('in_band'); // no band: the key-wide bounds are the band
-    expect(placeValue(asset, 'nope', 'base', 0)).toBe('unknown_key');
-  });
-});
-
-describe('max step', () => {
-  it('is a fraction of the band width, or of the key-wide range when there is no band', () => {
-    expect(maxStep(asset, 'rev_growth_y1', 'base')).toBeCloseTo(0.25, 12);
-    expect(maxStep(asset, 'rev_growth_y1', 'bull')).toBeCloseTo(1.375, 12);
-  });
-
-  it('allows a move of exactly one step and refuses more, returning the allowed range', () => {
-    expect(checkStep(asset, 'rev_growth_y1', 'base', 0.5, 0.75)).toBeNull();
-    expect(checkStep(asset, 'rev_growth_y1', 'base', 0.5, 0.25)).toBeNull();
-    const r = checkStep(asset, 'rev_growth_y1', 'base', 0.5, 0.9);
-    expect(r).toMatchObject({ refused: 'max_step', start: 0.5, allowed: { min: 0.25, max: 0.75 } });
-  });
-
-  it('clips the allowed range to the band', () => {
-    expect(allowedRange(asset, 'rev_growth_y1', 'base', 0.9)).toEqual({ min: 0.65, max: 1 });
-    expect(allowedRange(asset, 'rev_growth_y1', 'base', 0.1)).toEqual({ min: 0, max: 0.35 });
-  });
-
-  it('measures from the run-start value, so the range does not depend on anything staged', () => {
-    // Whatever was staged in between, the second call is judged against 0.5 again.
-    expect(checkStep(asset, 'rev_growth_y1', 'base', 0.5, 0.75)).toBeNull();
-    expect(checkStep(asset, 'rev_growth_y1', 'base', 0.5, 1.0)?.refused).toBe('max_step');
-  });
-
-  it('handles a committed value outside its band: toward the band only, or nothing at all', () => {
-    // 1.1 is out of band but within a step of it: the agent may move it to [0.85, 1].
-    const toward = allowedRange(asset, 'rev_growth_y1', 'base', 1.1)!;
-    expect(toward.min).toBeCloseTo(0.85, 12);
-    expect(toward.max).toBe(1);
-    // 2.0 is more than a step away: nothing in the band is reachable.
-    expect(allowedRange(asset, 'rev_growth_y1', 'base', 2)).toBeNull();
-    expect(checkStep(asset, 'rev_growth_y1', 'base', 2, 1)).toMatchObject({ refused: 'max_step', allowed: null });
-  });
-
-  it('honours agent.max_step_fraction', () => {
-    const tight = parseAssetYaml(`${MINI_ASSET_YAML}agent: { max_step_fraction: 0.1 }\n`).config;
-    expect(maxStep(tight, 'discount_rate_base', 'base')).toBeCloseTo(0.045, 12);
   });
 });
 

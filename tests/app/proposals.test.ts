@@ -5,8 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { approveProposal, rejectProposal } from '../../src/app/proposals.js';
 import { loadAsset } from '../../src/config/load.js';
 import { decideAnomaly, getAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
-import { listAssumptionChanges } from '../../src/db/assumptionChanges.js';
-import { createAssumptionSet, getLatestAssumptionSet } from '../../src/db/assumptions.js';
+import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { getObservationsByIds, insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { getProposal, insertProposal, type NewProposal, type ProposalChange } from '../../src/db/proposals.js';
 import type { OrionError } from '../../src/types.js';
@@ -56,33 +55,17 @@ describe('a proposal row that is not what the agent files', () => {
   });
 });
 
-describe('approving an assumption value', () => {
-  const growth = (value: number) => file({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value }, { value: 0 });
-
-  it('saves a new set as the user, outside the agent band but inside the key-wide bounds, with the change and its evidence', () => {
-    const p = growth(1.8);
-    const { proposal, result } = approve(p.id, 'agreed');
-    expect(result).toEqual({ kind: 'assumption_value', setVersion: 2 });
-    expect(proposal).toMatchObject({ status: 'approved', decisionNote: 'agreed', decidedAt: NOW.toISOString() });
-    const set = getLatestAssumptionSet(w.db, 'mini')!;
-    expect(set).toMatchObject({ author: 'user', rationale: `Approved proposal #${p.id} from analyst: usage is accelerating` });
-    expect(set.values.base.rev_growth_y1).toBe(1.8);
-    expect(set.values.bull.rev_growth_y1).toBe(0);
-    expect(listAssumptionChanges(w.db, set.id)).toMatchObject([{ key: 'rev_growth_y1', scenario: 'base', fromValue: 0, toValue: 1.8, evidence: [w.ids.revenue_run_rate_usd] }]);
-  });
-
-  it('refuses a value outside the key-wide bounds, says what to widen, and leaves the proposal pending', () => {
-    const p = growth(6);
-    expect(codeOf(() => approve(p.id))).toBe('outside_key_bounds');
-    expect(getProposal(w.db, p.id)!.status).toBe('pending');
-    expect(getLatestAssumptionSet(w.db, 'mini')!.version).toBe(1);
-  });
-
-  it('is stale once the value it was filed against has moved', () => {
-    const p = growth(1.8);
-    createAssumptionSet(w.db, { assetId: 'mini', author: 'user', rationale: 'mine', values: miniAssumptions({ rev_growth_y1: 0.3 }), createdAt: AS_OF });
-    expect(codeOf(() => approve(p.id))).toBe('stale_proposal');
-    expect(getProposal(w.db, p.id)!.status).toBe('pending');
+describe('proposals', () => {
+  it('approving a stored assumption_value proposal throws proposal_kind_retired; rejecting it works', () => {
+    // VVV #1 and CAKE #4 are such rows: pending assumption_value proposals from the valuation era, with a 6m/12m effect.
+    const effect = { '6m': { from: 10, to: 11 }, '12m': { from: 10, to: 12 } };
+    const p = file({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 }, { effect });
+    expect(codeOf(() => approve(p.id, 'agreed'))).toBe('proposal_kind_retired');
+    expect(() => approve(p.id)).toThrow(/assumption/);
+    expect(getProposal(w.db, p.id)).toMatchObject({ status: 'pending', effect });
+    expect(w.db.prepare('SELECT COUNT(*) AS n FROM assumption_sets').get()).toEqual({ n: 0 });
+    expect(rejectProposal(w.db, p.id, 'assumption values are retired', NOW)).toMatchObject({ status: 'rejected', decisionNote: 'assumption values are retired', effect });
+    expect(codeOf(() => approve(p.id))).toBe('proposal_not_pending');
   });
 });
 
@@ -191,6 +174,8 @@ describe('approving a config proposal', () => {
   });
 
   it('refuses an edit that would break the config or the current assumptions, and leaves the file untouched', () => {
+    // Until the valuation code goes, approve still checks an edited config against a stored assumption set.
+    createAssumptionSet(w.db, { assetId: 'mini', author: 'user', rationale: 'initial', values: miniAssumptions(), createdAt: AS_OF });
     const before = readFileSync(yamlPath, 'utf8');
     const weights = file({ kind: 'config', edits: [{ path: ['modules', 'hc', 'weight'], value: 0.5 }] }, [1]);
     expect(codeOf(() => approve(weights.id))).toBe('invalid_asset_config');

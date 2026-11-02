@@ -11,8 +11,12 @@ export const PROVENANCE_RANK: Record<Provenance, number> = { onchain: 0, api: 1,
 export type ObservationSource = 'onchain' | 'api' | 'manual';
 export type ObservationStatus = 'confirmed' | 'provisional' | 'rejected';
 
+/** Every run type an `agent_runs` row may carry: rows of the retired types stay readable (`agent runs list` / `show`). */
 export const RUN_TYPES = ['weekly', 'triage', 'deep', 'bootstrap', 'disclosure'] as const;
 export type RunType = (typeof RUN_TYPES)[number];
+/** The run types `agent run` starts. The others went with the valuation layer. */
+export const RUNNABLE_RUN_TYPES = ['disclosure'] as const;
+export type RunnableRunType = (typeof RUNNABLE_RUN_TYPES)[number];
 
 /** A monitor-only metric's watch rules (config `metrics.<key>.watch`; evaluated in src/ingest/watch.ts). */
 export const WATCH_RULES = ['above', 'change_pct', 'outside'] as const;

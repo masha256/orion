@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { AGENT_TOOLS, runTool, toApiTools } from '../../src/agent/tools/index.js';
+import { AGENT_TOOLS, toApiTools, toolsForRun } from '../../src/agent/tools/index.js';
 import { decideAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
 import { eligibleObservations, valueInForce } from '../../src/app/eligibility.js';
 import { TRANSCRIPT_WINDOW } from '../../src/agent/guardrails.js';
 import { confirmObservation, insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { insertProposal } from '../../src/db/proposals.js';
-import { AGENT_ASSET_YAML, agentWorld, PAGE_URL, QUOTE, type AgentWorld } from '../helpers/agentWorld.js';
+import { AGENT_ASSET_YAML, agentWorld, DOC_CITE, PAGE_URL, QUOTE, STAKED_QUOTE, type AgentWorld } from '../helpers/agentWorld.js';
 import { sha256 } from '../../src/util/canonical.js';
 import { AS_OF } from '../helpers/obs.js';
 
@@ -14,7 +14,10 @@ beforeEach(() => {
   w = agentWorld();
 });
 
-const count = (table: string): number => (w.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+const NINE = [
+  'get_observations', 'get_anomalies', 'get_journal', 'get_flow_total', 'resolve_anomaly', 'record_provisional_observation', 'propose_change',
+  'write_journal', 'record_dev_finding',
+];
 const anomaly = (severity: 'degrading' | 'advisory', dedupeKey = 'x') =>
   raiseAnomaly(w.db, { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey, severity, detail: {}, seenAt: AS_OF });
 /** Reads revenue observations so their ids count as shown, and returns the seeded revenue id. */
@@ -22,153 +25,62 @@ const seeRevenue = (): number => {
   w.call('get_observations', { metric: 'revenue_run_rate_usd' });
   return w.ids.revenue_run_rate_usd;
 };
-const growth = (value: number, scenario = 'base', evidence = [w.ids.revenue_run_rate_usd]) =>
-  w.call('apply_assumption_change', { key: 'rev_growth_y1', scenario, value, evidence, rationale: 'usage is accelerating' });
 const research = (over: Record<string, unknown> = {}) =>
   w.call('record_provisional_observation', {
     metric: 'revenue_run_rate_usd', value: 1100, observed_at: '2026-06-28', citation_url: PAGE_URL, quoted_text: QUOTE, ...over,
   });
+/** A figure for staked supply, which does not allow provisional data: staged as an inert row. */
+const researchStaked = (over: Record<string, unknown> = {}) => research({ metric: 'staked_supply', value: 55, citation_url: 'doc:1', quoted_text: STAKED_QUOTE, ...over });
 
-describe('the tool list', () => {
-  it('has fourteen uniquely named tools whose API schemas are plain objects generated from zod', () => {
+describe('tools', () => {
+  it('a disclosure run is offered exactly the nine tools', () => {
+    expect(toolsForRun(AGENT_TOOLS, 'disclosure').map((t) => t.name)).toEqual(NINE);
+  });
+
+  it('has nine uniquely named tools whose API schemas are plain objects generated from zod', () => {
     const api = toApiTools(AGENT_TOOLS);
-    expect(api.map((t) => t.name)).toEqual([
-      'get_drivers', 'get_observations', 'get_anomalies', 'get_assumptions', 'get_signal_history', 'get_journal', 'get_flow_total', 'run_whatif',
-      'apply_assumption_change', 'propose_change', 'resolve_anomaly', 'record_provisional_observation', 'write_journal', 'record_dev_finding',
-    ]);
+    expect(api.map((t) => t.name)).toEqual(NINE);
     for (const t of api) {
       expect(t.input_schema.type).toBe('object');
       expect(t.input_schema).not.toHaveProperty('$schema');
       expect(t.description!.length).toBeGreaterThan(40);
     }
-    const apply = api.find((t) => t.name === 'apply_assumption_change')!;
-    expect(apply.input_schema.required).toEqual(['key', 'scenario', 'value', 'evidence', 'rationale']);
+    const propose = api.find((t) => t.name === 'propose_change')!;
+    expect(Object.keys(propose.input_schema.properties as object)).not.toContain('scenario');
   });
 
   it('answers an unknown tool and invalid input as errors the model can read, without throwing', () => {
     expect(w.call('delete_everything', {})).toMatchObject({ isError: true, result: { refused: 'unknown_tool' } });
     expect(w.call('get_observations', { metric: 7 })).toMatchObject({ isError: true, result: { refused: 'invalid_input' } });
     expect(w.call('get_observations', { metric: 'price_usd', extra: true })).toMatchObject({ isError: true, result: { refused: 'invalid_input' } });
-    expect(w.call('get_drivers', { as_of: 'yesterday' })).toMatchObject({ isError: true, result: { refused: 'invalid_timestamp' } });
+  });
+
+  it('has none of the valuation tools: drivers, assumptions, signal history, what-ifs and assumption changes are unknown', () => {
+    for (const name of ['get_drivers', 'get_assumptions', 'get_signal_history', 'run_whatif', 'apply_assumption_change']) {
+      expect(w.call(name, {})).toMatchObject({ isError: true, result: { refused: 'unknown_tool' } });
+    }
   });
 });
 
 describe('read tools', () => {
-  it('get_drivers reports drivers and marks the observations behind them as shown', () => {
-    expect(w.ledger.shown.size).toBe(0);
-    const { result } = w.call('get_drivers', {});
-    expect((result.drivers as { price: { value: number } }).price.value).toBe(10);
-    expect((result.observations_in_force as { id: number }[]).map((o) => o.id)).toContain(w.ids.price_usd);
-    expect(w.ledger.shown.has(w.ids.price_usd)).toBe(true);
-  });
-
-  it('get_observations lists staged rows first and refuses an unknown metric', () => {
-    research();
-    const { result } = w.call('get_observations', { metric: 'revenue_run_rate_usd' });
-    expect((result.observations as { id: number }[]).map((o) => o.id)).toEqual([-1, w.ids.revenue_run_rate_usd]);
+  it('get_observations lists staged rows first, marks the stored ones shown, and refuses an unknown metric', () => {
+    researchStaked();
+    expect(w.ledger.shown.has(w.ids.staked_supply)).toBe(false);
+    const { result } = w.call('get_observations', { metric: 'staked_supply' });
+    expect((result.observations as { id: number }[]).map((o) => o.id)).toEqual([-1, w.ids.staked_supply]);
+    expect(w.ledger.shown.has(w.ids.staked_supply)).toBe(true);
     expect(w.call('get_observations', { metric: 'nope' })).toMatchObject({ isError: true, result: { refused: 'unknown_metric' } });
-  });
-
-  it('get_assumptions shows bounds, the band, the range allowed this run, and staged values', () => {
-    seeRevenue();
-    growth(0.2);
-    const { result } = w.call('get_assumptions', {});
-    const row = (result.assumptions as { key: string; bounds: unknown; scenarios: Record<string, Record<string, unknown>> }[]).find((a) => a.key === 'rev_growth_y1')!;
-    expect(row.bounds).toEqual({ min: -0.5, max: 5 });
-    expect(row.scenarios.base).toEqual({ committed: 0, staged: 0.2, band: { min: 0, max: 1 }, allowed_this_run: { min: 0, max: 0.25 } });
-    expect(row.scenarios.bull).toEqual({ committed: 0, band: { min: -0.5, max: 5 }, allowed_this_run: { min: -0.5, max: 1.375 } });
-  });
-
-  it('run_whatif layers overrides over staged changes and staged live research, and persists nothing', () => {
-    const base = w.call('run_whatif', { overrides: [] }).result as Record<string, { expected_target: number }>;
-    expect(base['12m'].expected_target).toBeCloseTo(10, 6);
-    research(); // revenue 1000 -> 1100 at a constant 10 percent capture
-    const after = w.call('run_whatif', { overrides: [] }).result as Record<string, { expected_target: number }>;
-    expect(after['12m'].expected_target).toBeCloseTo(11, 6);
-    const bull = w.call('run_whatif', { overrides: [{ key: 'discount_rate_base', value: 0.05, scenario: 'bull' }] }).result as Record<string, { scenarios: Record<string, number> }>;
-    expect(bull['12m'].scenarios.bull).toBeCloseTo(22, 6);
-    expect(count('valuation_runs')).toBe(0);
-    expect(count('observations')).toBe(7);
-  });
-});
-
-describe('apply_assumption_change', () => {
-  it('needs evidence the agent has actually been shown', () => {
-    expect(growth(0.2, 'base', [])).toMatchObject({ isError: true, result: { refused: 'evidence_required' } });
-    expect(growth(0.2)).toMatchObject({ isError: true, result: { refused: 'evidence_not_shown' } });
-    seeRevenue();
-    expect(growth(0.2)).toMatchObject({ isError: false, result: { applied: true, changes: [{ key: 'rev_growth_y1', scenario: 'base', from: 0, to: 0.2 }] } });
-    expect(w.ledger.mergedValues().base.rev_growth_y1).toBe(0.2);
-    expect(count('assumption_sets')).toBe(1);
-  });
-
-  it('refuses more than one step, returns the allowed range, and stages nothing', () => {
-    seeRevenue();
-    expect(growth(0.5)).toMatchObject({ isError: true, result: { refused: 'max_step', allowed: { min: 0, max: 0.25 } } });
-    expect(w.ledger.assumptionChanges()).toEqual([]);
-  });
-
-  it('judges every call from the run-start value: two calls cannot ratchet', () => {
-    seeRevenue();
-    expect(growth(0.25).isError).toBe(false);
-    expect(growth(0.5)).toMatchObject({ isError: true, result: { refused: 'max_step' } });
-    expect(w.ledger.mergedValues().base.rev_growth_y1).toBe(0.25);
-  });
-
-  it('turns an out-of-band value into a proposal with its computed effect, and says when bounds must change too', () => {
-    seeRevenue();
-    const outOfBand = growth(1.2);
-    expect(outOfBand).toMatchObject({ isError: false, result: { applied: false, reason: '1.2 is outside your band for base' } });
-    const outOfBounds = growth(6);
-    expect(outOfBounds.result.reason).toMatch(/outside the key-wide bounds/);
-    const staged = w.ledger.proposals();
-    expect(staged.map((p) => p.change)).toEqual([
-      { kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.2 },
-      { kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 6 },
-    ]);
-    expect(staged[0]).toMatchObject({ filedAgainst: { value: 0 }, rationale: 'usage is accelerating', evidence: [w.ids.revenue_run_rate_usd] });
-    const effect = staged[0].effect as { '12m': { from: number; to: number } };
-    expect(effect['12m'].from).toBeCloseTo(10, 6);
-    expect(effect['12m'].to).toBeGreaterThan(10);
-    expect(w.ledger.assumptionChanges()).toEqual([]);
-  });
-
-  it('applies to all scenarios together or not at all', () => {
-    seeRevenue();
-    expect(growth(0.2, 'all').result.changes).toHaveLength(3);
-    expect(growth(-0.2, 'all')).toMatchObject({ isError: true, result: { refused: 'out_of_band', scenarios: ['base'] } });
-    expect(w.ledger.mergedValues().bear.rev_growth_y1).toBe(0.2);
-  });
-
-  it('is blocked by an open degrading anomaly, not by an advisory one, and a staged resolution lifts the block', () => {
-    seeRevenue();
-    anomaly('advisory', 'a');
-    expect(growth(0.1).isError).toBe(false);
-    const d = anomaly('degrading', 'd');
-    expect(growth(0.2)).toMatchObject({ isError: true, result: { refused: 'anomaly_block', anomaly_ids: [d.id] } });
-    const resolved = w.call('resolve_anomaly', { id: d.id, note: 'sources agree again', evidence: [w.ids.revenue_run_rate_usd] });
-    expect(resolved).toMatchObject({ isError: false, result: { staged: true, anomalies_still_blocking_assumption_writes: [] } });
-    expect(growth(0.2).isError).toBe(false);
-  });
-
-  it('refuses a change that would make the whole set invalid', () => {
-    w = agentWorld(AGENT_ASSET_YAML, { terminal_growth: 0.045 });
-    seeRevenue();
-    const e = [w.ids.revenue_run_rate_usd];
-    expect(w.call('apply_assumption_change', { key: 'terminal_growth', scenario: 'base', value: 0.05, evidence: e, rationale: 'r' }).isError).toBe(false);
-    const r = w.call('apply_assumption_change', { key: 'discount_rate_base', scenario: 'base', value: 0.05, evidence: e, rationale: 'r' });
-    expect(r).toMatchObject({ isError: true, result: { refused: 'invalid_set' } });
-  });
-
-  it('refuses an unknown key and a blank rationale', () => {
-    seeRevenue();
-    const e = [w.ids.revenue_run_rate_usd];
-    expect(w.call('apply_assumption_change', { key: 'nope', scenario: 'base', value: 1, evidence: e, rationale: 'r' }).result.refused).toBe('unknown_key');
-    expect(w.call('apply_assumption_change', { key: 'rev_growth_y1', scenario: 'base', value: 0.1, evidence: e, rationale: '  ' }).result.refused).toBe('invalid_input');
   });
 });
 
 describe('resolve_anomaly', () => {
+  it('stages a resolution with its evidence', () => {
+    const e = [seeRevenue()];
+    const open = anomaly('degrading', 'a');
+    expect(w.call('resolve_anomaly', { id: open.id, note: 'sources agree again', evidence: e })).toEqual({ isError: false, result: { staged: true, anomaly_id: open.id } });
+    expect([...w.ledger.resolvedAnomalyIds()]).toEqual([open.id]);
+  });
+
   it('leaves the user\'s acknowledgement alone, and refuses one that is already resolved or belongs elsewhere', () => {
     seeRevenue();
     const e = [w.ids.revenue_run_rate_usd];
@@ -185,15 +97,25 @@ describe('resolve_anomaly', () => {
   });
 });
 
-describe('record_provisional_observation', () => {
-  it('stages a small move on a critical metric as a live provisional row that can be cited at once', () => {
-    const r = research();
-    expect(r).toMatchObject({ isError: false, result: { recorded: true, observation_id: -1, in_signal: true } });
-    expect(growth(0.1, 'base', [-1]).isError).toBe(false);
-    expect(count('observations')).toBe(7);
+describe('record_provisional_observation (spec section 15, Ruling 18): every figure waits for the user', () => {
+  const NON_CRITICAL = AGENT_ASSET_YAML.replace('critical: true, allow_provisional: true', 'critical: false, allow_provisional: true');
+
+  it('a URL citation on a non-critical allow_provisional metric becomes an observation proposal, not a live row', () => {
+    w = agentWorld(NON_CRITICAL);
+    const r = research({ note: 'from the call' });
+    expect(r).toMatchObject({ isError: false, result: { recorded: false } });
+    expect(r.result.converted_to_proposal).toBeDefined();
+    expect(r.result.reason).toMatch(/disclosure run/);
+    expect(r.result.reason).toMatch(/always goes to the user/);
+    expect(w.ledger.observations()).toEqual([]);
+    const proposals = w.ledger.proposals();
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].change).toMatchObject({ kind: 'observation', metricKey: 'revenue_run_rate_usd', value: 1100, citationUrl: PAGE_URL, quotedText: QUOTE });
+    expect(proposals[0].rationale).toMatch(/^from the call \(.*disclosure run.*\)$/);
+    expect(proposals[0].effect).toBeNull();
   });
 
-  it('turns a large move on a critical metric into a proposal with its effect; it cannot be cited', () => {
+  it('a large move on a critical metric is a proposal like any other figure, filed against the confirmed value, with effect null', () => {
     w.pages.push({ url: 'https://news.example.com/big', text: 'The company now reports annualized revenue of $2,000.' });
     const r = research({ value: 2000, citation_url: 'https://news.example.com/big', quoted_text: 'reports annualized revenue of $2,000', note: 'Founder interview' });
     expect(r).toMatchObject({ isError: false, result: { recorded: false } });
@@ -201,34 +123,26 @@ describe('record_provisional_observation', () => {
     const p = w.ledger.proposals()[0];
     expect(p.change).toMatchObject({ kind: 'observation', metricKey: 'revenue_run_rate_usd', value: 2000, observedAt: '2026-06-28T00:00:00.000Z' });
     expect(p.filedAgainst).toEqual({ inForce: 1000 });
-    expect(p.rationale).toMatch(/^Founder interview \(revenue_run_rate_usd is critical and 2000 is more than 25% from the last confirmed value \(1000\)\)$/);
-    const effect = p.effect as { '12m': { from: number; to: number } };
-    expect(effect['12m'].from).toBeCloseTo(10, 6);
-    expect(effect['12m'].to).toBeCloseTo(20, 6);
+    expect(p.rationale).toBe('Founder interview (this is a disclosure run: a figure from a disclosure run always goes to the user)');
+    expect(p.effect).toBeNull();
   });
 
-  it('measures the move from the last CONFIRMED value, so provisional rows cannot compound the guard across runs', () => {
-    // An earlier run's research is live in the signal: 1250, provisional. The confirmed value is still 1000.
+  it('files an observation proposal against the last CONFIRMED value, the baseline approve checks it against', () => {
+    // An earlier run's figure is provisional: 1250. The confirmed value is still 1000.
     insertObservation(w.db, {
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-20', value: 1250, source: 'manual', status: 'provisional',
       citationUrl: 'https://news.example.com/earlier', fetchedAt: AS_OF,
     });
-    w.pages.push({ url: 'https://news.example.com/next', text: 'The company now reports annualized revenue of $1,500.' });
-    // 1500 is 20 percent above 1250, but 50 percent above the confirmed 1000: it must go to the user.
-    const r = research({ value: 1500, citation_url: 'https://news.example.com/next', quoted_text: 'reports annualized revenue of $1,500' });
-    expect(r).toMatchObject({ isError: false, result: { recorded: false } });
-    expect(w.ledger.observations()).toEqual([]);
+    expect(research()).toMatchObject({ isError: false, result: { recorded: false } });
     expect(w.ledger.proposals()[0].filedAgainst).toEqual({ inForce: 1000 });
-    // A value within 25 percent of the confirmed 1000 still goes live.
-    w.pages.push({ url: 'https://news.example.com/small', text: 'The company now reports annualized revenue of $1,200.' });
-    expect(research({ value: 1200, observed_at: '2026-06-29', citation_url: 'https://news.example.com/small', quoted_text: 'reports annualized revenue of $1,200' }))
-      .toMatchObject({ isError: false, result: { recorded: true, in_signal: true } });
   });
 
-  it('keeps a row inert when the metric does not allow provisional data', () => {
+  it('a citation on a metric that does not allow provisional data stages an inert row', () => {
     const r = research({ metric: 'staked_supply', value: 55 });
     expect(r).toMatchObject({ isError: false, result: { recorded: true, in_signal: false } });
-    expect(w.ledger.observations()[0].live).toBe(false);
+    expect(r.result.note).toMatch(/^provisional; it comes from a disclosure run, so it stays out of the signal/);
+    expect(w.ledger.observations()).toEqual([expect.objectContaining({ citationUrl: PAGE_URL, live: false })]);
+    expect(w.ledger.proposals()).toEqual([]);
   });
 
   it('refuses to write where an observation already exists, and names it: the agent never supersedes one', () => {
@@ -238,55 +152,20 @@ describe('record_provisional_observation', () => {
     expect(w.ledger.proposals()).toEqual([]);
   });
 
-  describe('in a disclosure run (spec section 15, Ruling 18): every figure waits for the user', () => {
-    const NON_CRITICAL = AGENT_ASSET_YAML.replace('critical: true, allow_provisional: true', 'critical: false, allow_provisional: true');
-
-    it('a URL citation on a non-critical allow_provisional metric becomes an observation proposal, not a live row', () => {
-      w = agentWorld(NON_CRITICAL);
-      w.ctx.runType = 'disclosure';
-      const r = research({ note: 'from the call' });
-      expect(r).toMatchObject({ isError: false, result: { recorded: false } });
-      expect(r.result.converted_to_proposal).toBeDefined();
-      expect(r.result.reason).toMatch(/disclosure run/);
-      expect(r.result.reason).toMatch(/always goes to the user/);
-      expect(w.ledger.observations()).toEqual([]);
-      const proposals = w.ledger.proposals();
-      expect(proposals).toHaveLength(1);
-      expect(proposals[0].change).toMatchObject({ kind: 'observation', metricKey: 'revenue_run_rate_usd', value: 1100, citationUrl: PAGE_URL, quotedText: QUOTE });
-      expect(proposals[0].rationale).toMatch(/^from the call \(.*disclosure run.*\)$/);
-    });
-
-    it('a URL citation on a metric that does not allow provisional data stages an inert row', () => {
-      w.ctx.runType = 'disclosure';
-      const r = research({ metric: 'staked_supply', value: 55 });
-      expect(r).toMatchObject({ isError: false, result: { recorded: true, in_signal: false } });
-      expect(r.result.note).toMatch(/^provisional; it comes from a disclosure run, so it stays out of the signal/);
-      expect(w.ledger.observations()).toEqual([expect.objectContaining({ citationUrl: PAGE_URL, live: false })]);
-      expect(w.ledger.proposals()).toEqual([]);
-    });
-
-    it('a weekly run with the same URL citation on the same metric still goes live (unchanged)', () => {
-      w = agentWorld(NON_CRITICAL);
-      expect(w.ctx.runType).toBe('weekly');
-      expect(research()).toMatchObject({ isError: false, result: { recorded: true, observation_id: -1, in_signal: true } });
-      expect(w.ledger.proposals()).toEqual([]);
-      expect(w.ledger.observations()[0].live).toBe(true);
-    });
-  });
-
   describe('citing a machine transcript', () => {
     const TEXT =
       '[00:01] Our annualized revenue reached $1,100 in September,\n[00:04] up from a thousand.\n' +
       '[00:09] Staked supply now stands at 55 tokens across the network.\n';
     const REVENUE_QUOTE = 'annualized revenue reached $1,100 in September, up from a thousand';
-    const STAKED_QUOTE = 'Staked supply now stands at 55 tokens across the network.';
     const withTranscript = (yaml?: string) => {
       w = agentWorld(yaml);
-      w.ctx.citableDocs = () => [{ id: 1, kind: 'machine_transcript', sha256: 'c'.repeat(64), text: TEXT }];
+      const doc = { id: 1, kind: 'machine_transcript' as const, sha256: 'c'.repeat(64), text: TEXT };
+      w.ctx.citableDocs = () => [doc];
+      w.ctx.targetDoc = doc;
     };
     /** Commits the run and returns the eligible rows that cite a document. */
     const eligibleFromDocs = () => {
-      w.ledger.commit(w.db, w.loaded.config, { agentRunId: null, now: new Date(AS_OF) });
+      w.ledger.commit(w.db, { agentRunId: null, now: new Date(AS_OF) });
       return eligibleObservations(w.db, w.loaded.config, AS_OF).filter((o) => o.citationUrl?.startsWith('doc:'));
     };
 
@@ -312,7 +191,7 @@ describe('record_provisional_observation', () => {
 
     it('on a metric that does not allow provisional data, stages an inert row that stays out of the signal after commit', () => {
       withTranscript();
-      const r = research({ metric: 'staked_supply', value: 55, citation_url: 'doc:1', quoted_text: STAKED_QUOTE });
+      const r = researchStaked();
       expect(r).toMatchObject({ isError: false, result: { recorded: true, in_signal: false } });
       expect(r.result.note).toMatch(/^provisional; it cites a machine transcript, so it stays out of the signal/);
       expect(w.ledger.observations()).toEqual([expect.objectContaining({ citationUrl: 'doc:1', quotedText: STAKED_QUOTE, live: false })]);
@@ -320,14 +199,6 @@ describe('record_provisional_observation', () => {
       expect(eligibleFromDocs()).toEqual([]);
       // It is stored, as a provisional row, for the user to confirm.
       expect(listActiveObservations(w.db, 'mini', 'staked_supply').filter((o) => o.citationUrl === 'doc:1').map((o) => o.status)).toEqual(['provisional']);
-    });
-
-    it('leaves a URL citation on the same metric exactly as before', () => {
-      withTranscript(AGENT_ASSET_YAML.replace('critical: true, allow_provisional: true', 'critical: false, allow_provisional: true'));
-      expect(research()).toMatchObject({ isError: false, result: { recorded: true, observation_id: -1, in_signal: true } });
-      expect(w.ledger.proposals()).toEqual([]);
-      w.ledger.commit(w.db, w.loaded.config, { agentRunId: null, now: new Date(AS_OF) });
-      expect(eligibleObservations(w.db, w.loaded.config, AS_OF).filter((o) => o.citationUrl === PAGE_URL)).toHaveLength(1);
     });
 
     it('refuses a non-canonical doc id', () => {
@@ -342,11 +213,13 @@ describe('record_provisional_observation', () => {
     expect(tool.description).toContain(`within ${TRANSCRIPT_WINDOW} consecutive segments`);
   });
 
-  it('verifies the citation against the pages fetched in this run', () => {
+  it('verifies the citation against the pages fetched in this run and the target document', () => {
     expect(research({ citation_url: 'https://elsewhere.example.com/' }).result.refused).toBe('citation_not_fetched');
     expect(research({ quoted_text: 'annualized revenue reached $9,999 in September' }).result.refused).toBe('quote_not_found');
     expect(research({ quoted_text: '$1,100' }).result.refused).toBe('quote_too_short');
+    expect(research({ citation_url: 'doc:1', quoted_text: 'annualized revenue reached $9,999 in September' }).result.refused).toBe('quote_not_found');
     expect(w.ledger.observations()).toEqual([]);
+    expect(w.ledger.proposals()).toEqual([]);
   });
 
   it('never writes onto a fetched level, dates only schedules and events in the future, and needs a period for a flow', () => {
@@ -392,19 +265,34 @@ describe('record_provisional_observation', () => {
 });
 
 describe('propose_change', () => {
-  const propose = (input: Record<string, unknown>) => w.call('propose_change', { rationale: 'because', ...input });
+  /** Every proposal in a disclosure run cites the target document; the default citation does. */
+  const propose = (input: Record<string, unknown>) => w.call('propose_change', { rationale: 'because', citations: [DOC_CITE], ...input });
 
-  it('files a config proposal with what it was filed against and its effect, validated as a whole', () => {
+  it('propose_change: a config proposal stores effect null', () => {
     const r = propose({ kind: 'config', edits: [{ path: ['scenario_probabilities'], value: { bear: 0.2, base: 0.5, bull: 0.3 } }] });
     expect(r.isError).toBe(false);
+    expect(r.result).not.toHaveProperty('effect');
     const p = w.ledger.proposals()[0];
     expect(p.filedAgainst).toEqual([null]); // the YAML leaves scenario_probabilities to its default
-    expect(p.effect).toMatchObject({ '12m': { from: expect.any(Number), to: expect.any(Number) } });
+    expect(p.effect).toBeNull();
+    const { proposalIds } = w.ledger.commit(w.db, { agentRunId: null, now: new Date(AS_OF) });
+    expect((w.db.prepare('SELECT effect_json FROM proposals WHERE id = ?').get(proposalIds[0]) as { effect_json: string | null }).effect_json).toBeNull();
+  });
+
+  it('propose_change: kind assumption_value is invalid input', () => {
+    const e = [seeRevenue()];
+    const r = propose({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'bull', value: 3, evidence: e });
+    expect(r).toMatchObject({ isError: true, result: { refused: 'invalid_input' } });
+    expect(propose({ kind: 'assumption_value' }).result.refused).toBe('invalid_input');
+    expect(w.ledger.proposals()).toEqual([]);
+  });
+
+  it('validates a config proposal as a whole config, and refuses one that changes nothing or points nowhere', () => {
     expect(propose({ kind: 'config', edits: [{ path: ['scenario_probabilities'], value: { bear: 0.5, base: 0.5, bull: 0.5 } }] }).result.refused).toBe('invalid_asset_config');
-    expect(propose({ kind: 'config', edits: [{ path: ['modules', 'hc', 'type'], value: 'no_such_module' }] }).result.refused).toBe('invalid_config');
-    expect(propose({ kind: 'config', edits: [{ path: ['assumptions', 'discount_rate_base', 'min'], value: 0.2 }] }).result.refused).toBe('assumptions_invalid_under_config');
     expect(propose({ kind: 'config', edits: [{ path: ['symbol'], value: 'MINI' }] }).result.refused).toBe('no_change');
     expect(propose({ kind: 'config', edits: [{ path: ['modules', 'nope', 'weight'], value: 1 }] }).result.refused).toBe('invalid_path');
+    expect(propose({ kind: 'config' }).result.refused).toBe('invalid_input');
+    expect(w.ledger.proposals()).toEqual([]);
   });
 
   it('cannot reach its own limits or the asset id', () => {
@@ -423,7 +311,7 @@ describe('propose_change', () => {
     expect(propose({ kind: 'acknowledge_anomaly' }).result.refused).toBe('invalid_input');
   });
 
-  it('previews confirming and rejecting an observation', () => {
+  it('files confirming and rejecting an observation, with effect null', () => {
     const provisional = insertObservation(w.db, {
       assetId: 'mini', metricKey: 'staked_supply', observedAt: '2026-06-29T12:00:00Z', value: 80, source: 'manual', status: 'provisional',
       citationUrl: 'https://example.com', fetchedAt: AS_OF,
@@ -431,15 +319,18 @@ describe('propose_change', () => {
     expect(propose({ kind: 'confirm_observation', observation_id: provisional.id }).isError).toBe(false);
     expect(propose({ kind: 'confirm_observation', observation_id: w.ids.price_usd }).result.refused).toBe('not_provisional');
     expect(propose({ kind: 'reject_observation', observation_id: w.ids.revenue_run_rate_usd }).isError).toBe(false);
-    expect(w.ledger.proposals()[1].effect).toEqual({ blocked: ['missing_metric:revenue_run_rate_usd'] });
+    expect(w.ledger.proposals().map((p) => [p.change.kind, p.filedAgainst, p.effect])).toEqual([
+      ['confirm_observation', { status: 'provisional', active: true }, null],
+      ['reject_observation', { status: 'confirmed', active: true }, null],
+    ]);
     expect(propose({ kind: 'reject_observation', observation_id: 999 }).result.refused).toBe('observation_not_found');
   });
 
-  it('needs evidence for an assumption value, and refuses a no-op', () => {
-    expect(propose({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'bull', value: 3 }).result.refused).toBe('evidence_required');
-    const e = [seeRevenue()];
-    expect(propose({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'bull', value: 0, evidence: e }).result.refused).toBe('no_change');
-    expect(propose({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'bull', value: 3, evidence: e }).isError).toBe(false);
+  it('checks evidence when it is given', () => {
+    const open = anomaly('degrading', 'a');
+    expect(propose({ kind: 'acknowledge_anomaly', anomaly_id: open.id, evidence: [w.ids.revenue_run_rate_usd] }).result.refused).toBe('evidence_not_shown');
+    seeRevenue();
+    expect(propose({ kind: 'acknowledge_anomaly', anomaly_id: open.id, evidence: [w.ids.revenue_run_rate_usd] }).isError).toBe(false);
   });
 
   it('refuses a duplicate of a pending or a staged proposal, and stops at the run\'s proposal budget', () => {
@@ -478,46 +369,27 @@ describe('propose_change', () => {
     expect(propose({ kind: 'acknowledge_anomaly', anomaly_id: third.id, rationale: 'first wording' }).isError).toBe(false);
   });
 
-  it('is closed to config edits on a bootstrap run', () => {
-    const outcome = runTool(AGENT_TOOLS, { ...w.ctx, runType: 'bootstrap' }, 'propose_change', {
-      kind: 'config',
-      edits: [{ path: ['scenario_probabilities'], value: { bear: 0.15, base: 0.6, bull: 0.25 } }],
-      rationale: 'because',
-    });
-    expect(outcome.isError).toBe(true);
-    expect(JSON.parse(outcome.content).refused).toBe('not_in_bootstrap');
-    // The same call with w.ctx (weekly) must not be refused for that reason
-    const outcome2 = runTool(AGENT_TOOLS, w.ctx, 'propose_change', {
-      kind: 'config',
-      edits: [{ path: ['scenario_probabilities'], value: { bear: 0.15, base: 0.6, bull: 0.25 } }],
-      rationale: 'because',
-    });
-    expect(outcome2.isError).toBe(false);
-  });
-
   describe('citations', () => {
     const DOC_TEXT = '[12:30] Thanks for joining the call.\n[12:33] We are moving the base scenario weight to one half,\n[12:37] because the fee switch is now live.\n';
     const DOC_QUOTE = 'moving the base scenario weight to one half, because the fee switch is now live';
     const DOC = { id: 1, kind: 'transcript' as const, sha256: 'd'.repeat(64), text: DOC_TEXT };
+    const ON_DOC = { source: 'doc:1', quoted_text: DOC_QUOTE };
     const probabilities = (base: number) => ({
       kind: 'config', edits: [{ path: ['scenario_probabilities'], value: { bear: (1 - base) / 2, base, bull: (1 - base) / 2 } }],
     });
-    const withDoc = (runType: 'weekly' | 'disclosure' = 'weekly') => {
+    const withDoc = () => {
       w.ctx.citableDocs = () => [DOC];
-      if (runType === 'disclosure') {
-        w.ctx.runType = 'disclosure';
-        w.ctx.targetDoc = DOC;
-      }
+      w.ctx.targetDoc = DOC;
     };
     const storedCitations = (): unknown => {
-      w.ledger.commit(w.db, w.loaded.config, { agentRunId: null, now: new Date(AS_OF) });
+      w.ledger.commit(w.db, { agentRunId: null, now: new Date(AS_OF) });
       const row = w.db.prepare('SELECT citations_json FROM proposals ORDER BY id DESC LIMIT 1').get() as { citations_json: string | null };
       return row.citations_json === null ? null : JSON.parse(row.citations_json);
     };
 
     it('propose_change verifies each citation and stores it', () => {
       withDoc();
-      const r = propose({ ...probabilities(0.5), citations: [{ source: 'doc:1', quoted_text: DOC_QUOTE }, { source: PAGE_URL, quoted_text: QUOTE }] });
+      const r = propose({ ...probabilities(0.5), citations: [ON_DOC, { source: PAGE_URL, quoted_text: QUOTE }] });
       expect(r.isError).toBe(false);
       const expected = [
         { source: 'doc:1', quotedText: DOC_QUOTE, locator: '12:33', docSha256: 'd'.repeat(64), docKind: 'transcript' },
@@ -533,7 +405,7 @@ describe('propose_change', () => {
         ...probabilities(0.5),
         citations: [
           { source: PAGE_URL, quoted_text: QUOTE },
-          { source: 'doc:1', quoted_text: DOC_QUOTE },
+          ON_DOC,
           { source: PAGE_URL, quoted_text: QUOTE },
           { source: 'doc:1', quoted_text: `  ${DOC_QUOTE}  ` },
         ],
@@ -544,40 +416,33 @@ describe('propose_change', () => {
 
     it('a bad citation refuses the whole proposal', () => {
       withDoc();
-      const bad = propose({ ...probabilities(0.5), citations: [{ source: 'doc:1', quoted_text: DOC_QUOTE }, { source: 'doc:1', quoted_text: 'the fee switch was never discussed at all' }] });
+      const bad = propose({ ...probabilities(0.5), citations: [ON_DOC, { source: 'doc:1', quoted_text: 'the fee switch was never discussed at all' }] });
       expect(bad).toMatchObject({ isError: true, result: { refused: 'quote_not_found' } });
       expect(propose({ ...probabilities(0.5), citations: [{ source: 'doc:2', quoted_text: DOC_QUOTE }] }).result.refused).toBe('doc_not_in_run');
       expect(w.ledger.proposals()).toEqual([]);
       // At most five.
-      const six = Array.from({ length: 6 }, () => ({ source: 'doc:1', quoted_text: DOC_QUOTE }));
+      const six = Array.from({ length: 6 }, () => ON_DOC);
       expect(propose({ ...probabilities(0.5), citations: six }).result.refused).toBe('invalid_input');
       expect(w.ledger.proposals()).toEqual([]);
     });
 
-    it('a disclosure run refuses a proposal without a citation of the target doc', () => {
-      withDoc('disclosure');
-      expect(propose(probabilities(0.5))).toMatchObject({ isError: true, result: { refused: 'citation_required' } });
+    it('refuses a proposal without a citation of the target doc', () => {
+      withDoc();
+      expect(w.call('propose_change', { rationale: 'because', ...probabilities(0.5) })).toMatchObject({ isError: true, result: { refused: 'citation_required' } });
       expect(propose({ ...probabilities(0.5), citations: [] }).result.refused).toBe('citation_required');
       expect(propose({ ...probabilities(0.5), citations: [{ source: PAGE_URL, quoted_text: QUOTE }] }).result.refused).toBe('citation_required');
       expect(w.ledger.proposals()).toEqual([]);
-      expect(propose({ ...probabilities(0.5), citations: [{ source: PAGE_URL, quoted_text: QUOTE }, { source: 'doc:1', quoted_text: DOC_QUOTE }] }).isError).toBe(false);
+      expect(propose({ ...probabilities(0.5), citations: [{ source: PAGE_URL, quoted_text: QUOTE }, ON_DOC] }).isError).toBe(false);
       expect(w.ledger.proposals()[0].citations.map((c) => c.source)).toEqual([PAGE_URL, 'doc:1']);
-    });
-
-    it('other run types may file without citations, as before', () => {
-      withDoc();
-      expect(propose(probabilities(0.5)).isError).toBe(false);
-      expect(w.ledger.proposals()[0].citations).toEqual([]);
-      expect(storedCitations()).toBeNull();
     });
 
     it('citations do not change duplicate detection', () => {
       withDoc();
-      expect(propose({ ...probabilities(0.5), citations: [{ source: 'doc:1', quoted_text: DOC_QUOTE }] }).isError).toBe(false);
-      expect(propose({ ...probabilities(0.5), citations: [{ source: PAGE_URL, quoted_text: QUOTE }] }))
+      expect(propose({ ...probabilities(0.5), citations: [ON_DOC] }).isError).toBe(false);
+      expect(propose({ ...probabilities(0.5), citations: [{ source: PAGE_URL, quoted_text: QUOTE }, ON_DOC] }))
         .toMatchObject({ isError: true, result: { refused: 'duplicate_proposal', staged_in_this_run: true } });
-      w.ledger.commit(w.db, w.loaded.config, { agentRunId: null, now: new Date(AS_OF) });
-      expect(propose(probabilities(0.5))).toMatchObject({ isError: true, result: { refused: 'duplicate_proposal', proposal_id: expect.any(Number) } });
+      w.ledger.commit(w.db, { agentRunId: null, now: new Date(AS_OF) });
+      expect(propose({ ...probabilities(0.5), citations: [ON_DOC] })).toMatchObject({ isError: true, result: { refused: 'duplicate_proposal', proposal_id: expect.any(Number) } });
     });
 
     it('a machine-transcript observation proposal carries the verified citation it came from', () => {
@@ -594,17 +459,15 @@ describe('propose_change', () => {
 
 describe('model-authored text', () => {
   it('is stripped of control characters before it is staged, with newlines kept', () => {
-    seeRevenue();
-    w.call('apply_assumption_change', {
-      key: 'rev_growth_y1', scenario: 'base', value: 0.1, evidence: [w.ids.revenue_run_rate_usd], rationale: ' usage\u0007 is up\nand steady ',
-    });
-    expect(w.ledger.assumptionChanges()[0].rationale).toBe('usage is up\nand steady');
+    const open = anomaly('advisory');
+    w.call('propose_change', { kind: 'acknowledge_anomaly', anomaly_id: open.id, rationale: ' lags\u0007 by design\nand steady ', citations: [DOC_CITE] });
+    expect(w.ledger.proposals()[0].rationale).toBe('lags by design\nand steady');
     w.call('write_journal', { thesis: 'steady\u0007', open_questions: ['what\u0000 next?', ' \u0007 '], summary: 'review\u001Bed' });
     expect(w.ledger.journal()).toEqual({ thesis: 'steady', openQuestions: ['what next?'], summary: 'reviewed', catalysts: [] });
   });
 
   it('is cleaned before the citation is verified, so a stray control character in a quote costs nothing', () => {
-    const r = research({ quoted_text: 'annualized revenue reached \u0000$1,100 in September' });
+    const r = research({ metric: 'staked_supply', value: 55, quoted_text: 'annualized revenue reached \u0000$1,100 in September' });
     expect(r).toMatchObject({ isError: false, result: { recorded: true } });
     expect(w.ledger.observations()[0].quotedText).toBe(QUOTE); // the CLEANED quote is what is stored
   });
@@ -612,13 +475,12 @@ describe('model-authored text', () => {
   it('is refused as ordinary invalid input when it is too long, so the model can shorten it and retry', () => {
     seeRevenue();
     const e = [w.ids.revenue_run_rate_usd];
-    const apply = (rationale: string) => w.call('apply_assumption_change', { key: 'rev_growth_y1', scenario: 'base', value: 0.1, evidence: e, rationale });
-    expect(apply('r'.repeat(2001)).result.refused).toBe('invalid_input');
-    expect(apply('r'.repeat(2000)).isError).toBe(false);
+    const resolve = (note: string) => w.call('resolve_anomaly', { id: anomaly('advisory').id, note, evidence: e });
+    expect(resolve('n'.repeat(2001)).result.refused).toBe('invalid_input');
+    expect(resolve('n'.repeat(2000)).isError).toBe(false);
     expect(research({ quoted_text: QUOTE + 'x'.repeat(601) }).result.refused).toBe('invalid_input');
     expect(research({ citation_url: `https://x.example.com/${'a'.repeat(2000)}` }).result.refused).toBe('invalid_input');
     expect(research({ note: 'n'.repeat(2001) }).result.refused).toBe('invalid_input');
-    expect(w.call('resolve_anomaly', { id: anomaly('advisory').id, note: 'n'.repeat(2001), evidence: e }).result.refused).toBe('invalid_input');
     expect(w.call('propose_change', { kind: 'acknowledge_anomaly', anomaly_id: 1, rationale: 'r'.repeat(2001) }).result.refused).toBe('invalid_input');
     const journal = (over: Record<string, unknown>) => w.call('write_journal', { thesis: 't', open_questions: [], summary: 's', ...over });
     expect(journal({ thesis: 't'.repeat(4001) }).result.refused).toBe('invalid_input');
@@ -645,33 +507,36 @@ describe('write_journal', () => {
       event: 'exchange license granted', kind: 'regulatory', by: '2026-09-30', citations: [{ source: 'doc:1', quoted_text: DOC_QUOTE }], ...over,
     });
     const journal = (catalysts: unknown[]) => w.call('write_journal', { thesis: 't', open_questions: [], summary: 's', catalysts });
+    beforeEach(() => {
+      w.ctx.citableDocs = () => [DOC];
+      w.ctx.targetDoc = DOC;
+    });
 
     it('write_journal stages catalysts with verified citations; commit stores them', () => {
-      w.ctx.citableDocs = () => [DOC];
       const r = journal([
         catalyst({ event: ' exchange license\u0007 granted ' }),
-        { event: 'revenue milestone', kind: 'product', from: '2026-07-01', to: '2026-09-30', citations: [{ source: PAGE_URL, quoted_text: QUOTE }] },
-      ]);
-      expect(r.isError).toBe(false);
-      const expected = [
-        {
-          event: 'exchange license granted', kind: 'regulatory', by: '2026-09-30',
-          citations: [{ source: 'doc:1', quotedText: DOC_QUOTE, locator: '00:04', docSha256: 'e'.repeat(64), docKind: 'transcript' }],
-        },
         {
           event: 'revenue milestone', kind: 'product', from: '2026-07-01', to: '2026-09-30',
-          citations: [{ source: PAGE_URL, quotedText: QUOTE, locator: null, docSha256: null, docKind: null }],
+          citations: [{ source: PAGE_URL, quoted_text: QUOTE }, { source: 'doc:1', quoted_text: DOC_QUOTE }],
+        },
+      ]);
+      expect(r.isError).toBe(false);
+      const onDoc = { source: 'doc:1', quotedText: DOC_QUOTE, locator: '00:04', docSha256: 'e'.repeat(64), docKind: 'transcript' };
+      const expected = [
+        { event: 'exchange license granted', kind: 'regulatory', by: '2026-09-30', citations: [onDoc] },
+        {
+          event: 'revenue milestone', kind: 'product', from: '2026-07-01', to: '2026-09-30',
+          citations: [{ source: PAGE_URL, quotedText: QUOTE, locator: null, docSha256: null, docKind: null }, onDoc],
         },
       ];
       expect(w.ledger.journal()!.catalysts).toEqual(expected);
-      const { journalId } = w.ledger.commit(w.db, w.loaded.config, { agentRunId: null, now: new Date(AS_OF) });
+      const { journalId } = w.ledger.commit(w.db, { agentRunId: null, now: new Date(AS_OF) });
       const row = w.db.prepare('SELECT catalysts_json FROM journal WHERE id = ?').get(journalId) as { catalysts_json: string };
       expect(JSON.parse(row.catalysts_json)).toEqual(expected);
       expect((w.call('get_journal', {}).result.entries as { catalysts: unknown }[])[0].catalysts).toEqual(expected);
     });
 
     it('refuses by together with from/to, from after to, a bad date, a 9th catalyst, an unverified quote', () => {
-      w.ctx.citableDocs = () => [DOC];
       const refused = (c: Record<string, unknown>) => journal([catalyst(c)]).result.refused;
       expect(refused({ from: '2026-07-01', to: '2026-09-30' })).toBe('invalid_catalyst_dates');
       expect(refused({ by: undefined })).toBe('invalid_catalyst_dates');
@@ -697,10 +562,7 @@ describe('write_journal', () => {
       expect(w.ledger.journal()!.catalysts).toHaveLength(8);
     });
 
-    it('in a disclosure run each catalyst must cite the target doc: a URL alone refuses citation_required, naming the event', () => {
-      w.ctx.citableDocs = () => [DOC];
-      w.ctx.runType = 'disclosure';
-      w.ctx.targetDoc = DOC;
+    it('each catalyst must cite the target doc: a URL alone refuses citation_required, naming the event', () => {
       const r = journal([catalyst(), catalyst({ event: 'revenue milestone', citations: [{ source: PAGE_URL, quoted_text: QUOTE }] })]);
       expect(r.result.refused).toBe('citation_required');
       expect(r.result.message).toContain('catalyst "revenue milestone"');
@@ -708,30 +570,17 @@ describe('write_journal', () => {
       expect(w.ledger.journal()).toBeNull();
     });
 
-    it('in a disclosure run a catalyst citing the target doc stages, alongside a URL citation', () => {
-      w.ctx.citableDocs = () => [DOC];
-      w.ctx.runType = 'disclosure';
-      w.ctx.targetDoc = DOC;
+    it('a catalyst citing the target doc stages, alongside a URL citation', () => {
       const r = journal([catalyst({ citations: [{ source: PAGE_URL, quoted_text: QUOTE }, { source: 'doc:1', quoted_text: DOC_QUOTE }] })]);
       expect(r.isError).toBe(false);
       expect(r.result).toEqual({ staged: true });
       expect(w.ledger.journal()!.catalysts.map((c) => c.citations.map((x) => x.source))).toEqual([[PAGE_URL, 'doc:1']]);
     });
 
-    it('outside a disclosure run a catalyst needs no stored document: a weekly catalyst citing a URL stages', () => {
-      expect(w.ctx.runType).toBe('weekly');
-      expect(journal([catalyst({ citations: [{ source: PAGE_URL, quoted_text: QUOTE }] })]).isError).toBe(false);
-      expect(w.ledger.journal()!.catalysts).toHaveLength(1);
-    });
-
-    it('checks the dates before the citations, in every run type: a bad date refuses invalid_catalyst_dates even when a quote fails too', () => {
-      w.ctx.citableDocs = () => [DOC];
+    it('checks the dates before the citations: a bad date refuses invalid_catalyst_dates even when a quote fails too', () => {
       const badBoth = catalyst({ by: 'end of Q3', citations: [{ source: PAGE_URL, quoted_text: 'a sentence the page never said at all' }] });
       expect(journal([badBoth]).result.refused).toBe('invalid_catalyst_dates');
-      w.ctx.runType = 'disclosure';
-      w.ctx.targetDoc = DOC;
-      expect(journal([badBoth]).result.refused).toBe('invalid_catalyst_dates');
-      // A bad date with a verified URL-only citation in a disclosure run: the date is named first, not citation_required.
+      // A bad date with a verified URL-only citation: the date is named first, not citation_required.
       expect(journal([catalyst({ by: '2026-02-30', citations: [{ source: PAGE_URL, quoted_text: QUOTE }] })]).result.refused).toBe('invalid_catalyst_dates');
       expect(w.ledger.journal()).toBeNull();
     });
@@ -744,7 +593,7 @@ describe('write_journal', () => {
 
     it('a journal without catalysts stores NULL', () => {
       journal([]);
-      const { journalId } = w.ledger.commit(w.db, w.loaded.config, { agentRunId: null, now: new Date(AS_OF) });
+      const { journalId } = w.ledger.commit(w.db, { agentRunId: null, now: new Date(AS_OF) });
       expect((w.db.prepare('SELECT catalysts_json FROM journal WHERE id = ?').get(journalId) as { catalysts_json: string | null }).catalysts_json).toBeNull();
     });
   });
@@ -877,11 +726,10 @@ describe('record_dev_finding', () => {
   const DOC_TEXT = 'Mini says its holders received $9,000 in fees in the third quarter, all of it paid out on chain.\n';
   const DOC_QUOTE = 'holders received $9,000 in fees in the third quarter';
   const DOC = { id: 1, kind: 'post' as const, sha256: 'd'.repeat(64), text: DOC_TEXT };
-  const disclosure = () => {
+  beforeEach(() => {
     w.ctx.citableDocs = () => [DOC];
-    w.ctx.runType = 'disclosure';
     w.ctx.targetDoc = DOC;
-  };
+  });
   const finding = (over: Record<string, unknown> = {}) =>
     w.call('record_dev_finding', {
       category: 'holder_flow', title: 'Fees paid to holders are under-counted', metric_keys: ['revenue_run_rate_usd', 'flow_usd.fees'],
@@ -891,7 +739,6 @@ describe('record_dev_finding', () => {
     });
 
   it('record_dev_finding stages a cited finding with its fingerprint', () => {
-    disclosure();
     seeRevenue();
     const r = finding();
     expect(r).toMatchObject({ isError: false, result: { staged: true, findings_staged: 1 } });
@@ -907,7 +754,6 @@ describe('record_dev_finding', () => {
   });
 
   it('refuses an undeclared metric key, unshown evidence, no doc citation, and a sixth finding', () => {
-    disclosure();
     expect(finding()).toMatchObject({ isError: true, result: { refused: 'evidence_not_shown' } });
     seeRevenue();
     expect(finding({ evidence: [] })).toMatchObject({ isError: true, result: { refused: 'evidence_required' } });
@@ -928,15 +774,14 @@ describe('record_dev_finding', () => {
     expect(w.ledger.devFindings()).toHaveLength(5);
   });
 
-  it('refuses defensively outside a disclosure run: there is no target document to cite', () => {
-    w.ctx.citableDocs = () => [DOC];
+  it('refuses defensively when the run has no target document to cite', () => {
+    w.ctx.targetDoc = null;
     seeRevenue();
     expect(finding()).toMatchObject({ isError: true, result: { refused: 'citation_required' } });
     expect(w.ledger.devFindings()).toEqual([]);
   });
 
   it('the same category and keys replace the earlier finding', () => {
-    disclosure();
     seeRevenue();
     for (const category of ['holder_flow', 'revenue', 'supply', 'unlocks', 'source']) finding({ category });
     // At the limit, a replacement still goes through: it adds nothing.

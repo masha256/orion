@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildProgram } from '../../src/cli/program.js';
+import { finishAgentRun, startAgentRun } from '../../src/db/agentRuns.js';
 import { raiseAnomaly } from '../../src/db/anomalies.js';
 import { openDb } from '../../src/db/connection.js';
 import { insertDocument } from '../../src/db/documents.js';
@@ -10,12 +11,13 @@ import { insertProposal, type ProposalChange } from '../../src/db/proposals.js';
 import { acquireRunLock, getRunLock, releaseRunLock } from '../../src/db/runLocks.js';
 import type { OrionError } from '../../src/types.js';
 import { AGENT_ASSET_YAML, PERSONA_MD } from '../helpers/agentWorld.js';
-import { calls, journalCall, say, scriptedModel, toolUse, webFetch, type ScriptStep } from '../helpers/fakeModel.js';
+import { calls, journalCall, say, scriptedModel, toolUse, type ScriptStep } from '../helpers/fakeModel.js';
 import { AS_OF } from '../helpers/obs.js';
 
 let home: string;
 let exitCode: number | undefined;
 let script: ScriptStep[];
+let docId: number;
 
 async function orion(...args: string[]): Promise<string> {
   const lines: string[] = [];
@@ -27,9 +29,9 @@ async function orion(...args: string[]): Promise<string> {
   return lines.join('\n');
 }
 
-const SKILL = '---\nname: assumption-review\ndescription: Review assumptions.\nrun_types: [weekly, triage, deep]\n---\nReview them.\n';
-const ASSUMPTIONS =
-  'all:\n  rev_growth_y1: 0\n  growth_fade_years: 1\n  terminal_growth: 0\n  capture_rate_terminal.fees: 0.1\n  capture_ramp_years.fees: 0\n  discount_rate_base: 0.1\n  staked_ratio_horizon: 0.5\n';
+const SKILL = '---\nname: disclosure-review\ndescription: Review a disclosure.\nrun_types: [disclosure]\n---\nReview it.\n';
+const POST = 'Mini said its annualized revenue reached $1,100 in September.\n\nStaked supply now stands at 55 tokens across the network.\n';
+const STAKED_QUOTE = 'Staked supply now stands at 55 tokens across the network.';
 
 async function seed(skip: string[] = []) {
   const rows: [string, string, string, string[]][] = [
@@ -51,10 +53,15 @@ const withDb = <T>(fn: (db: ReturnType<typeof openDb>) => T): T => {
   }
 };
 const revenueId = () => withDb((db) => (db.prepare("SELECT id FROM observations WHERE metric_key = 'revenue_run_rate_usd'").get() as { id: number }).id);
-const fileProposal = (change: ProposalChange, filedAgainst: unknown) =>
+const fileProposal = (change: ProposalChange, filedAgainst: unknown, effect: unknown = null) =>
   withDb((db) =>
-    insertProposal(db, { assetId: 'mini', persona: 'analyst', agentRunId: null, change, filedAgainst, rationale: 'because', evidence: [revenueId()], effect: null, createdAt: AS_OF }),
+    insertProposal(db, {
+      assetId: 'mini', persona: 'analyst', agentRunId: null, change, filedAgainst, rationale: 'because', evidence: [revenueId()], effect: effect as never, createdAt: AS_OF,
+    }),
   );
+/** `agent run mini --type disclosure --doc <the post> ...extra` */
+const runArgs = (...extra: string[]) => ['agent', 'run', 'mini', '--type', 'disclosure', '--doc', String(docId), ...extra];
+const staked = () => toolUse('record_provisional_observation', { metric: 'staked_supply', value: 55, observed_at: '2026-06-28', citation_url: `doc:${docId}`, quoted_text: STAKED_QUOTE });
 
 beforeEach(async () => {
   home = mkdtempSync(join(tmpdir(), 'orion-agent-cli-'));
@@ -62,8 +69,7 @@ beforeEach(async () => {
   await orion('init');
   writeFileSync(join(home, 'assets', 'mini.yaml'), AGENT_ASSET_YAML.trimStart());
   writeFileSync(join(home, 'personas', 'analyst.md'), PERSONA_MD);
-  writeFileSync(join(home, 'skills', 'assumption-review.md'), SKILL);
-  writeFileSync(join(home, 'assumptions.yaml'), ASSUMPTIONS);
+  writeFileSync(join(home, 'skills', 'disclosure-review.md'), SKILL);
 });
 
 describe('orion persona', () => {
@@ -72,7 +78,7 @@ describe('orion persona', () => {
     expect(await orion('persona', 'assign', 'mini', 'analyst')).toBe('analyst now covers mini');
     const listed = await orion('persona', 'list');
     expect(listed).toContain('covers: mini');
-    expect(listed).toContain('skill assumption-review  [weekly, triage, deep]');
+    expect(listed).toContain('skill disclosure-review  [disclosure]');
     expect(await orion('persona', 'show', 'analyst')).toContain('You are the analyst covering the mini test asset.');
   });
 
@@ -88,83 +94,85 @@ describe('orion persona', () => {
 describe('orion agent run', () => {
   beforeEach(async () => {
     await seed();
-    await orion('model', 'assumptions', 'import', 'mini', join(home, 'assumptions.yaml'), '--rationale', 'initial');
     await orion('persona', 'assign', 'mini', 'analyst');
+    const docPath = join(home, 'post.txt');
+    writeFileSync(docPath, POST);
+    docId = (JSON.parse(await orion('doc', 'add', 'mini', '--file', docPath, '--kind', 'post', '--url', 'https://x.com/mini/status/1', '--json')) as { id: number }).id;
   });
 
-  const growth = () =>
-    toolUse('apply_assumption_change', { key: 'rev_growth_y1', scenario: 'base', value: 0.2, evidence: [revenueId()], rationale: 'usage is accelerating' });
-
-  it('runs, prints what was committed and the signal, appends the signal to --out, and exits 0', async () => {
-    script = [calls(growth()), calls(journalCall()), say('Done.')];
-    const out = await orion('agent', 'run', 'mini', '--type', 'weekly', '--out', join(home, 'signals.jsonl'));
-    expect(out).toContain('#1  2026-06-30T00:00:00.000Z  mini  weekly  analyst  completed');
+  it('runs, prints what was committed, and exits 0', async () => {
+    script = [calls(staked()), calls(journalCall()), say('Done.')];
+    const out = await orion(...runArgs());
+    expect(out).toContain('#1  2026-06-30T00:00:00.000Z  mini  disclosure  analyst  completed');
     expect(out).toContain('3 requests');
     expect(out).toContain('about $0.00 at list price'); // 300 input and 150 output tokens at Opus 5.5 prices is 0.42 cents
-    expect(out).toContain('committed rev_growth_y1 (base) 0 -> 0.2: usage is accelerating');
+    expect(out).toContain(`committed provisional staked_supply = 55 at 2026-06-28T00:00:00.000Z (inert until confirmed) doc:${docId}`);
     expect(out).toContain('committed journal: reviewed');
-    expect(out).toContain('MINI  ok  grade');
+    expect(out).not.toContain('signal');
     expect(exitCode).toBeUndefined();
-    const appended = JSON.parse(readFileSync(join(home, 'signals.jsonl'), 'utf8').trim()) as { provenance: { agent_run_id: number } };
-    expect(appended.provenance.agent_run_id).toBe(1);
   });
 
-  it('prints one JSON object under --json, and on a dry run says what it would commit and writes no signal file', async () => {
-    script = [calls(growth()), calls(journalCall()), say('Done.')];
-    const json = JSON.parse(await orion('agent', 'run', 'mini', '--type', 'weekly', '--dry-run', '--json', '--out', join(home, 's.jsonl'))) as {
-      run: { outcome: string; dryRun: boolean }; committed: unknown; signal: unknown; staged: { assumptionChanges: unknown[] };
-    };
+  it('cli: agent run --out <file> is accepted, writes no file, JSON keys are run, staged, committed', async () => {
+    // The disclosure watcher's own command line: agent run <a> --type disclosure --doc <id> --out <home>/signals.jsonl --json.
+    script = [calls(staked()), calls(journalCall()), say('Done.')];
+    const out = join(home, 'signals.jsonl');
+    const json = JSON.parse(await orion(...runArgs('--out', out, '--json'))) as Record<string, unknown> & { run: { outcome: string }; committed: { observationIds: number[] } };
+    expect(Object.keys(json)).toEqual(['run', 'staged', 'committed']);
+    expect(json.run.outcome).toBe('completed');
+    expect(json.committed.observationIds).toHaveLength(1);
+    expect(exitCode).toBeUndefined();
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it('prints one JSON object under --json, and on a dry run says what it would commit', async () => {
+    script = [calls(staked()), calls(journalCall()), say('Done.')];
+    const json = JSON.parse(await orion(...runArgs('--dry-run', '--json'))) as { run: { outcome: string; dryRun: boolean }; committed: unknown; staged: { observations: unknown[] } };
     expect(json.run).toMatchObject({ outcome: 'completed', dryRun: true });
     expect(json.committed).toBeNull();
-    expect(json.signal).toBeNull();
-    expect(json.staged.assumptionChanges).toHaveLength(1);
-    expect(existsSync(join(home, 's.jsonl'))).toBe(false);
-    script = [calls(growth()), calls(journalCall()), say('Done.')];
-    const text = await orion('agent', 'run', 'mini', '--type', 'weekly', '--dry-run');
-    expect(text).toContain('would commit rev_growth_y1 (base) 0 -> 0.2');
-    // A dry run never runs the valuation, so it must not claim that nothing could move a signal.
-    expect(text).toContain('no signal: a dry run commits nothing');
-    expect(text).not.toContain('nothing this run committed');
+    expect(json.staged.observations).toHaveLength(1);
+    script = [calls(staked()), calls(journalCall()), say('Done.')];
+    const text = await orion(...runArgs('--dry-run'));
+    expect(text).toContain('would commit provisional staked_supply = 55');
+    expect(text).not.toContain('signal');
   });
 
   it('prints one line per staged catalyst: the date or range, kind, event, and where each citation points', async () => {
-    const page = 'https://news.example.com/mini-roadmap';
-    const quote = 'the mainnet launch is planned for the third quarter';
+    const quote = 'annualized revenue reached $1,100 in September';
     const catalysts = [
-      { event: 'mainnet launch', kind: 'product', from: '2026-07-01', to: '2026-09-30', citations: [{ source: page, quoted_text: quote }] },
-      { event: 'token unlock', kind: 'token', by: '2026-08-01', citations: [{ source: page, quoted_text: quote }] },
+      { event: 'mainnet launch', kind: 'product', from: '2026-07-01', to: '2026-09-30', citations: [{ source: `doc:${docId}`, quoted_text: quote }] },
+      { event: 'token unlock', kind: 'token', by: '2026-08-01', citations: [{ source: `doc:${docId}`, quoted_text: quote }] },
     ];
-    script = [{ content: [...webFetch(page, `<p>Mini said ${quote}.</p>`), journalCall({ catalysts })], stop_reason: 'tool_use' }, say('Done.')];
-    const text = await orion('agent', 'run', 'mini', '--type', 'weekly', '--dry-run');
-    expect(text).toContain(`would commit catalyst 2026-07-01..2026-09-30 product: mainnet launch [${page}]`);
-    expect(text).toContain(`would commit catalyst by 2026-08-01 token: token unlock [${page}]`);
+    script = [calls(journalCall({ catalysts })), say('Done.')];
+    const text = await orion(...runArgs('--dry-run'));
+    expect(text).toContain(`would commit catalyst 2026-07-01..2026-09-30 product: mainnet launch [doc:${docId}]`);
+    expect(text).toContain(`would commit catalyst by 2026-08-01 token: token unlock [doc:${docId}]`);
   });
 
   it('says when a run finished on the reserve request', async () => {
-    script = [{ ...calls(growth()), usage: { input_tokens: 10_000_000 } }, calls(journalCall())];
-    const out = await orion('agent', 'run', 'mini', '--type', 'weekly', '--dry-run');
-    expect(out).toContain('finished on reserve after input units (600000)');
+    script = [{ ...calls(staked()), usage: { input_tokens: 10_000_000 } }, calls(journalCall())];
+    const out = await orion(...runArgs('--dry-run'));
+    expect(out).toContain('finished on reserve after input units (1200000)');
     expect(exitCode).toBeUndefined();
-    expect(await orion('agent', 'runs', 'show', '1')).toContain('finished on reserve after input units (600000)');
+    expect(await orion('agent', 'runs', 'show', '1')).toContain('finished on reserve after input units (1200000)');
   });
 
   it('says when the reserve request was used and the run still ran out, and says nothing of it otherwise', async () => {
-    script = [{ ...calls(growth()), usage: { input_tokens: 10_000_000 } }, calls(toolUse('get_drivers', {}))];
-    const out = await orion('agent', 'run', 'mini', '--type', 'weekly', '--dry-run');
-    expect(out).toContain('reserve request used after input units (600000); nothing committed');
+    script = [{ ...calls(staked()), usage: { input_tokens: 10_000_000 } }, calls(toolUse('get_observations', { metric: 'price_usd' }))];
+    const out = await orion(...runArgs('--dry-run'));
+    expect(out).toContain('reserve request used after input units (1200000); nothing committed');
     expect(out).not.toContain('finished on reserve');
-    expect(await orion('agent', 'runs', 'show', '1')).toContain('reserve request used after input units (600000); nothing committed');
+    expect(await orion('agent', 'runs', 'show', '1')).toContain('reserve request used after input units (1200000); nothing committed');
     script = [calls(journalCall()), say('Done.')];
-    const plain = await orion('agent', 'run', 'mini', '--type', 'weekly', '--dry-run');
+    const plain = await orion(...runArgs('--dry-run'));
     expect(plain).not.toContain('reserve');
     expect(await orion('agent', 'runs', 'show', '2')).not.toContain('reserve');
   });
 
   it('exits 1 when the run does not complete, and says what was discarded', async () => {
-    script = [calls(growth()), say('Done.'), say('Still done.')];
-    const out = await orion('agent', 'run', 'mini', '--type', 'weekly');
+    script = [calls(staked()), say('Done.'), say('Still done.')];
+    const out = await orion(...runArgs());
     expect(out).toContain('no_journal');
-    expect(out).toContain('discarded rev_growth_y1 (base) 0 -> 0.2');
+    expect(out).toContain('discarded provisional staked_supply = 55');
     expect(exitCode).toBe(1);
   });
 
@@ -174,73 +182,74 @@ describe('orion agent run', () => {
       writeFileSync(file, readFileSync(file, 'utf8').replace('name: Mini Test Asset', 'name: Mini Test Asset Renamed'));
       return calls(journalCall());
     };
-    script = [calls(growth()), editTheConfigMidRun, say('Done.')];
-    const out = await orion('agent', 'run', 'mini', '--type', 'weekly');
+    script = [calls(staked()), editTheConfigMidRun, say('Done.')];
+    const out = await orion(...runArgs());
     expect(out).toContain('conflict');
     expect(out).toContain('the asset config changed during the run');
-    expect(out).toContain('discarded rev_growth_y1 (base) 0 -> 0.2');
+    expect(out).toContain('discarded provisional staked_supply = 55');
     expect(exitCode).toBe(1);
     expect(withDb((db) => db.prepare('SELECT COUNT(*) AS n FROM journal').get() as { n: number }).n).toBe(0);
   });
 
-  it('exits 2 when the run completes but its signal is blocked', async () => {
-    withDb((db) => db.prepare("UPDATE observations SET status = 'rejected' WHERE metric_key = 'price_usd'").run());
+  it('passes --anomaly and --note to the run as pack context, and the run can resolve that anomaly', async () => {
     const a = withDb((db) =>
       raiseAnomaly(db, { assetId: 'mini', kind: 'source_failure_streak', metricKey: '', dedupeKey: 'coingecko', severity: 'advisory', detail: {}, seenAt: AS_OF }),
     );
     script = [calls(toolUse('resolve_anomaly', { id: a.id, note: 'the source is back', evidence: [revenueId()] })), calls(journalCall()), say('Done.')];
-    const out = await orion('agent', 'run', 'mini', '--type', 'triage', '--anomaly', String(a.id));
-    expect(out).toContain('committed anomaly #1 resolved: the source is back');
-    expect(out).toContain('MINI  blocked');
-    expect(exitCode).toBe(2);
+    const out = await orion(...runArgs('--anomaly', String(a.id), '--note', 'see the status page'));
+    expect(out).toContain(`committed anomaly #${a.id} resolved: the source is back`);
+    expect(exitCode).toBeUndefined();
+    const shown = JSON.parse(await orion('agent', 'runs', 'show', '1', '--transcript', '--json')) as { triggerDetail: unknown; transcript: { messages: { content: unknown }[] } };
+    expect(shown.triggerDetail).toMatchObject({ anomalyId: a.id, note: 'see the status page', docId });
+    const first = shown.transcript.messages[0].content as string;
+    const pack = JSON.parse(first.slice(first.indexOf('{'))) as { trigger: Record<string, any> };
+    expect(pack.trigger).toEqual({ anomaly: expect.objectContaining({ id: a.id }), unverified_note: 'see the status page' });
   });
 
-  it('fails preflight without calling the model', async () => {
-    await expect(orion('agent', 'run', 'mini', '--type', 'hourly')).rejects.toMatchObject({ code: 'invalid_run_type' });
-    await expect(orion('agent', 'run', 'mini', '--type', 'triage')).rejects.toMatchObject({ code: 'triage_needs_target' });
-    const out = JSON.parse(await orion('agent', 'run', 'mini', '--type', 'triage', '--json')) as { error: { code: string } };
-    expect(out.error.code).toBe('triage_needs_target');
+  it('cli: --type weekly is refused with invalid_run_type, and the message lists only disclosure', async () => {
+    for (const type of ['weekly', 'triage', 'deep', 'bootstrap', 'hourly']) {
+      await expect(orion('agent', 'run', 'mini', '--type', type, '--doc', String(docId))).rejects.toMatchObject({
+        code: 'invalid_run_type', message: '--type must be one of disclosure',
+      } satisfies Partial<OrionError>);
+    }
+    const out = JSON.parse(await orion('agent', 'run', 'mini', '--type', 'weekly', '--json')) as { error: { code: string; message: string } };
+    expect(out.error).toEqual({ code: 'invalid_run_type', message: '--type must be one of disclosure' });
     expect(exitCode).toBe(1);
     expect(await orion('agent', 'runs', 'list')).toBe('no agent runs');
   });
 
-  it('--type disclosure without --doc fails with disclosure_needs_doc and spends nothing', async () => {
+  it('fails preflight without calling the model', async () => {
+    await expect(orion(...runArgs('--anomaly', '999'))).rejects.toMatchObject({ code: 'anomaly_not_found' });
     await expect(orion('agent', 'run', 'mini', '--type', 'disclosure')).rejects.toMatchObject({ code: 'disclosure_needs_doc' });
     const out = JSON.parse(await orion('agent', 'run', 'mini', '--type', 'disclosure', '--json')) as { error: { code: string } };
     expect(out.error.code).toBe('disclosure_needs_doc');
     expect(exitCode).toBe(1);
     await expect(orion('agent', 'run', 'mini', '--type', 'disclosure', '--doc', '7')).rejects.toMatchObject({ code: 'doc_not_found' });
-    await expect(orion('agent', 'run', 'mini', '--type', 'weekly', '--doc', '7')).rejects.toMatchObject({ code: 'doc_only_for_disclosure' });
     expect(await orion('agent', 'runs', 'list')).toBe('no agent runs');
   });
 
   it('runs a disclosure run on --doc with the document and the asset YAML text in its pack', async () => {
-    const docPath = join(home, 'post.txt');
-    writeFileSync(docPath, 'Mini said its annualized revenue reached $1,100 in September.\n');
-    const added = JSON.parse(await orion('doc', 'add', 'mini', '--file', docPath, '--kind', 'post', '--url', 'https://x.com/mini/status/1', '--json')) as { id: number; sha256: string };
+    const sha = withDb((db) => (db.prepare('SELECT sha256 FROM documents WHERE id = ?').get(docId) as { sha256: string }).sha256);
     script = [calls(journalCall()), say('Done.')];
-    const run = JSON.parse(await orion('agent', 'run', 'mini', '--type', 'disclosure', '--doc', String(added.id), '--json')) as { run: { id: number; runType: string; outcome: string; triggerDetail: unknown } };
-    expect(run.run).toMatchObject({ runType: 'disclosure', outcome: 'completed', triggerDetail: { docId: added.id, docSha256: added.sha256 } });
+    const run = JSON.parse(await orion(...runArgs('--json'))) as { run: { id: number; runType: string; outcome: string; triggerDetail: unknown } };
+    expect(run.run).toMatchObject({ runType: 'disclosure', outcome: 'completed', triggerDetail: { docId, docSha256: sha } });
     const shown = JSON.parse(await orion('agent', 'runs', 'show', String(run.run.id), '--transcript', '--json')) as { transcript: { messages: { content: unknown }[] } };
     const first = shown.transcript.messages[0].content as string;
     const pack = JSON.parse(first.slice(first.indexOf('{'))) as Record<string, any>;
-    expect(pack.document).toMatchObject({ id: added.id, kind: 'post', label: "the issuer's own post: a dated claim" });
+    expect(pack.document).toMatchObject({ id: docId, kind: 'post', label: "the issuer's own post: a dated claim" });
     expect(pack.asset_config_yaml).toBe(readFileSync(join(home, 'assets', 'mini.yaml'), 'utf8'));
     expect(pack.adapter_params).toEqual([]);
   });
 
   it('prints each dev finding with its category, metric keys, title, and where each citation points', async () => {
-    const docPath = join(home, 'post.txt');
-    writeFileSync(docPath, 'Mini said its annualized revenue reached $1,100 in September.\n');
-    const added = JSON.parse(await orion('doc', 'add', 'mini', '--file', docPath, '--kind', 'post', '--url', 'https://x.com/mini/status/1', '--json')) as { id: number };
     const devFinding = toolUse('record_dev_finding', {
       category: 'revenue', title: 'Revenue claim not measured', metric_keys: ['revenue_run_rate_usd', 'flow_usd.fees'], claim: 'The post says $1,100.',
       orion_reading: 'Orion has 1000.', value_direction: 'up', proposed_fix: 'Read the revenue page.', evidence: [revenueId()],
-      citations: [{ source: `doc:${added.id}`, quoted_text: 'annualized revenue reached $1,100 in September' }],
+      citations: [{ source: `doc:${docId}`, quoted_text: 'annualized revenue reached $1,100 in September' }],
     });
     script = [calls(devFinding), calls(journalCall()), say('Done.')];
-    const text = await orion('agent', 'run', 'mini', '--type', 'disclosure', '--doc', String(added.id), '--dry-run');
-    const line = `would commit dev finding revenue [flow_usd.fees, revenue_run_rate_usd]: Revenue claim not measured [doc:${added.id} (post)]`;
+    const text = await orion(...runArgs('--dry-run'));
+    const line = `would commit dev finding revenue [flow_usd.fees, revenue_run_rate_usd]: Revenue claim not measured [doc:${docId} (post)]`;
     expect(text).toContain(line);
     expect(await orion('agent', 'runs', 'show', '1')).toContain(line);
   });
@@ -248,7 +257,7 @@ describe('orion agent run', () => {
   it('labels a machine-transcript citation in the dev finding line after its locator', async () => {
     const docPath = join(home, 'call.txt');
     writeFileSync(docPath, '[12:33] Our annualized revenue reached $1,100 in September.\n');
-    const added = JSON.parse(await orion('doc', 'add', 'mini', '--file', docPath, '--kind', 'machine_transcript', '--url', 'https://x.com/mini/status/1', '--json')) as { id: number };
+    const added = JSON.parse(await orion('doc', 'add', 'mini', '--file', docPath, '--kind', 'machine_transcript', '--url', 'https://x.com/mini/status/2', '--json')) as { id: number };
     const devFinding = toolUse('record_dev_finding', {
       category: 'revenue', title: 'Revenue claim not measured', metric_keys: ['revenue_run_rate_usd'], claim: 'The call says $1,100.',
       orion_reading: 'Orion has 1000.', value_direction: 'up', proposed_fix: 'Read the revenue page.', evidence: [revenueId()],
@@ -262,30 +271,61 @@ describe('orion agent run', () => {
   it('exits 1 with run_in_progress while another holder has the asset\'s lock, and releases its own lock afterwards', async () => {
     withDb((db) => acquireRunLock(db, 'mini', 'tick pid 999', AS_OF));
     script = [calls(journalCall()), say('Done.')];
-    await expect(orion('agent', 'run', 'mini', '--type', 'weekly')).rejects.toMatchObject({ code: 'run_in_progress' });
-    const out = JSON.parse(await orion('agent', 'run', 'mini', '--type', 'weekly', '--json')) as { error: { code: string; message: string } };
+    await expect(orion(...runArgs())).rejects.toMatchObject({ code: 'run_in_progress' });
+    const out = JSON.parse(await orion(...runArgs('--json'))) as { error: { code: string; message: string } };
     expect(out.error).toEqual({ code: 'run_in_progress', message: 'asset mini is locked by tick pid 999 since 2026-06-30T00:00:00.000Z' });
     expect(exitCode).toBe(1);
     expect(await orion('agent', 'runs', 'list')).toBe('no agent runs');
     withDb((db) => releaseRunLock(db, 'mini', 'tick pid 999'));
-    await orion('agent', 'run', 'mini', '--type', 'weekly');
+    await orion(...runArgs());
     expect(exitCode).toBeUndefined();
     expect(withDb((db) => getRunLock(db, 'mini'))).toBeNull();
   });
 
   it('lists past runs and shows one with its cost estimate and, on request, its transcript', async () => {
-    script = [calls(growth()), calls(journalCall()), say('Done.')];
-    await orion('agent', 'run', 'mini', '--type', 'weekly');
-    expect(await orion('agent', 'runs', 'list', 'mini')).toContain('#1  2026-06-30T00:00:00.000Z  mini  weekly  analyst  completed');
+    script = [calls(staked()), calls(journalCall()), say('Done.')];
+    await orion(...runArgs());
+    expect(await orion('agent', 'runs', 'list', 'mini')).toContain('#1  2026-06-30T00:00:00.000Z  mini  disclosure  analyst  completed');
     const shown = await orion('agent', 'runs', 'show', '1');
     expect(shown).toContain('model claude-opus-5-5');
-    expect(shown).toContain('committed rev_growth_y1 (base) 0 -> 0.2');
-    expect(shown).toContain('signal mini-');
+    expect(shown).toContain('committed provisional staked_supply = 55');
+    expect(shown).not.toContain('signal');
     expect(shown).not.toContain('context pack');
     expect(await orion('agent', 'runs', 'show', '1', '--transcript')).toContain('This is your context pack');
     const json = JSON.parse(await orion('agent', 'runs', 'show', '1', '--json')) as { estimated_cost_usd: number };
     expect(json.estimated_cost_usd).toBeCloseTo((300 * 4 + 150 * 20) / 1_000_000, 9);
     await expect(orion('agent', 'runs', 'show', '9')).rejects.toMatchObject({ code: 'agent_run_not_found' });
+  });
+
+  it('agent runs: list and show read a stored weekly run', async () => {
+    // A row the valuation era wrote: a weekly run that changed an assumption and moved the signal.
+    withDb((db) => {
+      const id = startAgentRun(db, {
+        assetId: 'mini', persona: 'analyst', runType: 'weekly', trigger: 'schedule', triggerDetail: { firings: [] }, dryRun: false, configHash: 'a'.repeat(64),
+        model: 'claude-opus-5-5', startedAt: '2026-06-01T00:00:00.000Z',
+      });
+      const change = { key: 'rev_growth_y1', scenario: 'base', start: 0, value: 0.2, rationale: 'usage is accelerating', evidence: [1] };
+      finishAgentRun(db, id, {
+        outcome: 'completed', endedAt: '2026-06-01T00:05:00.000Z', usage: { requests: 3, inputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 150, webSearches: 0, webFetches: 0 },
+        error: null,
+        summary: {
+          committed: { setVersion: 2, observationIds: [], resolvedAnomalyIds: [], proposalIds: [], journalId: 1 },
+          staged: { assumptionChanges: [change], resolutions: [], observations: [], proposals: [], journal: { thesis: 't', openQuestions: [], summary: 'raised growth' } },
+          signal_id: 'mini-2026-06-01T00:05:00.000Z', valuation_error: null,
+        },
+        transcript: { system: 's', tools: ['apply_assumption_change'], messages: [], responses: [] },
+      });
+    });
+    expect(await orion('agent', 'runs', 'list')).toContain('#1  2026-06-01T00:00:00.000Z  mini  weekly  analyst  completed');
+    const shown = await orion('agent', 'runs', 'show', '1');
+    expect(shown).toContain('#1  2026-06-01T00:00:00.000Z  mini  weekly  analyst  completed');
+    expect(shown).toContain('trigger schedule {"firings":[]}');
+    expect(shown).toContain('committed rev_growth_y1 (base) 0 -> 0.2: usage is accelerating');
+    expect(shown).toContain('committed journal: raised growth');
+    expect(shown).toContain('signal mini-2026-06-01T00:05:00.000Z');
+    const json = JSON.parse(await orion('agent', 'runs', 'show', '1', '--json')) as { runType: string; summary: { signal_id: string } };
+    expect(json).toMatchObject({ runType: 'weekly', summary: { signal_id: 'mini-2026-06-01T00:05:00.000Z' } });
+    expect(JSON.parse(await orion('agent', 'runs', 'list', '--json'))).toMatchObject([{ id: 1, runType: 'weekly' }]);
   });
 
   it('refuses a --limit that is not a positive whole number, rather than let SQLite read it as no limit', async () => {
@@ -302,20 +342,23 @@ describe('orion agent run', () => {
 describe('orion model proposals', () => {
   beforeEach(async () => {
     await seed();
-    await orion('model', 'assumptions', 'import', 'mini', join(home, 'assumptions.yaml'), '--rationale', 'initial');
   });
 
-  it('lists pending proposals, shows one with its evidence, and approves a value as a new set', async () => {
+  it('lists and shows a stored assumption_value proposal with its effect, refuses to approve it, and rejects it', async () => {
     expect(await orion('model', 'proposals', 'list')).toBe('no proposals');
-    const p = fileProposal({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 });
-    expect(await orion('model', 'proposals', 'list', 'mini')).toContain(`#${p.id}  mini  analyst  assumption_value  pending  rev_growth_y1 (base) -> 1.8  0d old`);
+    const p = fileProposal({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 }, { '6m': { from: 10, to: 11 }, '12m': { from: 10, to: 12.5 } });
+    expect(await orion('model', 'proposals', 'list', 'mini')).toContain(`#${p.id}  mini  analyst  assumption_value  pending  rev_growth_y1 (base) -> 1.8  [12m 10.00 -> 12.50]  0d old`);
     const shown = await orion('model', 'proposals', 'show', String(p.id));
     expect(shown).toContain('rationale: because');
     expect(shown).toContain('revenue_run_rate_usd = 1000');
-    expect(await orion('model', 'proposals', 'approve', String(p.id), '--note', 'agreed')).toBe(`proposal #${p.id} approved\nsaved as assumption set v2`);
+    await expect(orion('model', 'proposals', 'approve', String(p.id))).rejects.toMatchObject({ code: 'proposal_kind_retired' });
+    const refused = JSON.parse(await orion('model', 'proposals', 'approve', String(p.id), '--json')) as { error: { code: string } };
+    expect(refused.error.code).toBe('proposal_kind_retired');
+    expect(exitCode).toBe(1);
+    expect(await orion('model', 'proposals', 'list', 'mini')).toContain('pending');
+    expect(await orion('model', 'proposals', 'reject', String(p.id), '--note', 'assumptions are retired')).toBe(`proposal #${p.id} rejected: assumptions are retired`);
     expect(await orion('model', 'proposals', 'list')).toBe('no proposals');
-    expect(await orion('model', 'proposals', 'list', '--all')).toContain('approved');
-    expect(await orion('model', 'assumptions', 'history', 'mini')).toContain(`Approved proposal #${p.id} from analyst: because`);
+    expect(await orion('model', 'proposals', 'list', '--all')).toContain('rejected');
   });
 
   it('shows each citation with its locator and the label of its document', async () => {
@@ -327,8 +370,8 @@ describe('orion model proposals', () => {
     );
     const p = withDb((db) =>
       insertProposal(db, {
-        assetId: 'mini', persona: 'analyst', agentRunId: null, change: { kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 },
-        filedAgainst: { value: 0 }, rationale: 'because', evidence: [], effect: null, createdAt: AS_OF,
+        assetId: 'mini', persona: 'analyst', agentRunId: null, change: { kind: 'acknowledge_anomaly', anomalyId: 1, note: 'lags' },
+        filedAgainst: { status: 'open' }, rationale: 'because', evidence: [], effect: null, createdAt: AS_OF,
         citations: [
           { source: `doc:${doc.id}`, quotedText: 'revenue reached $1,100 in September', locator: '12:33', docSha256: doc.sha256, docKind: 'machine_transcript' },
           { source: 'https://news.example.com/a', quotedText: 'annualized revenue of $1,100', locator: null, docSha256: null, docKind: null },
@@ -365,7 +408,7 @@ describe('orion model proposals', () => {
   });
 
   it('rejects with a required note, and reports a stale or missing proposal as JSON under --json', async () => {
-    const p = fileProposal({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0.5 });
+    const p = fileProposal({ kind: 'config', edits: [{ path: ['symbol'], value: 'MIN2' }] }, ['OLD']);
     const stale = JSON.parse(await orion('model', 'proposals', 'approve', String(p.id), '--json')) as { error: { code: string } };
     expect(stale.error.code).toBe('stale_proposal');
     expect(exitCode).toBe(1);

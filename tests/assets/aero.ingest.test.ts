@@ -153,6 +153,6 @@ describe('the AERO persona', () => {
     expect(persona).toMatchObject({ model: 'claude-opus-5-5', effort: 'high', sectors: ['dex', 'onchain-fee-share'] });
     expect(persona.body).toContain('Locking is the thesis');
     expect(/^[\x00-\x7F]*$/.test(persona.body)).toBe(true);
-    expect(skillsFor(ROOT, 'bootstrap').map((s) => s.name)).toEqual(['bootstrap-research', 'disclosure-research']);
+    expect(skillsFor(ROOT, 'disclosure').map((s) => s.name)).toEqual(['disclosure-research', 'disclosure-review']);
   });
 });

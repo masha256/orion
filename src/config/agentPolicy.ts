@@ -1,4 +1,4 @@
-import type { RunType, Scenario } from '../types.js';
+import type { RunnableRunType, Scenario } from '../types.js';
 import type { AgentUsage } from '../db/agentRuns.js';
 import type { AssetConfig } from './schema.js';
 
@@ -46,12 +46,11 @@ export interface CalendarEvent {
   note: string;
 }
 
-export const DEFAULT_BUDGETS: Record<RunType, RunBudgets> = {
-  weekly: { requests: 25, inputUnits: 600_000, outputTokens: 40_000, webSearches: 5, webFetches: 5, proposals: 10 },
-  triage: { requests: 20, inputUnits: 500_000, outputTokens: 30_000, webSearches: 8, webFetches: 8, proposals: 10 },
-  deep: { requests: 40, inputUnits: 2_000_000, outputTokens: 80_000, webSearches: 15, webFetches: 15, proposals: 10 },
-  /** Populates a new asset's manual metrics from research: more searches and fetches than a deep, almost no proposals. About $8 to $12 at list price. */
-  bootstrap: { requests: 60, inputUnits: 3_000_000, outputTokens: 100_000, webSearches: 30, webFetches: 30, proposals: 2 },
+/**
+ * Per runnable run type. An asset YAML may still carry `agent.budgets` for the retired types (the schema accepts them
+ * until the config keys go); nothing reads them.
+ */
+export const DEFAULT_BUDGETS: Record<RunnableRunType, RunBudgets> = {
   /** Reviews one stored document (an issuer's call or post) against Orion's numbers. Expected $1 to $3, about $7 worst case with no cache hits. */
   disclosure: { requests: 25, inputUnits: 1_200_000, outputTokens: 40_000, webSearches: 3, webFetches: 5, proposals: 5 },
 };
@@ -93,7 +92,7 @@ export function cadenceFor(asset: AssetConfig): Cadence {
   return { weeklyDays: c?.weekly_days ?? DEFAULT_CADENCE.weeklyDays, deepDays: c?.deep_days ?? DEFAULT_CADENCE.deepDays, enabled: c?.enabled ?? DEFAULT_CADENCE.enabled };
 }
 
-export function budgetsFor(asset: AssetConfig, runType: RunType): RunBudgets {
+export function budgetsFor(asset: AssetConfig, runType: RunnableRunType): RunBudgets {
   const d = DEFAULT_BUDGETS[runType];
   const o = asset.agent?.budgets?.[runType] ?? {};
   return {

@@ -3,20 +3,14 @@ import { valueInForce } from '../../app/eligibility.js';
 import { provisionalMovePct } from '../../config/agentPolicy.js';
 import { applyEditsToObject, getAtPath, UNPROPOSABLE_ROOTS, unproposableEdits } from '../../config/edit.js';
 import { parseAssetObject, rawConfig } from '../../config/load.js';
-import { getAnomaly, listOpenAnomalies } from '../../db/anomalies.js';
+import { getAnomaly } from '../../db/anomalies.js';
 import { CATALYST_KINDS, type Catalyst } from '../../db/journal.js';
 import { getObservationsByIds, listActiveObservations, type Observation } from '../../db/observations.js';
-import { findPendingDuplicate, proposalIdentity, type ProposalChange, type ProposalEffect } from '../../db/proposals.js';
-import { requiredAssumptionKeys, validateAssetModules, validateAssumptions } from '../../engine/requirements.js';
+import { findPendingDuplicate, proposalIdentity, type ProposalChange } from '../../db/proposals.js';
 import { isIsoDate } from '../../ingest/time.js';
-import { SCENARIOS, type Scenario } from '../../types.js';
 import { canonicalJson, sha256 } from '../../util/canonical.js';
-import {
-  allowedRange, blockingAnomalies, checkEvidence, checkStep, cleanText, placeValue, routeObservation, verifyAnyCitation, TRANSCRIPT_WINDOW, type EvidenceRef,
-  type StoredCitation,
-} from '../guardrails.js';
-import { DEV_FINDING_CATEGORIES, VALUE_DIRECTIONS } from '../ledger.js';
-import { computeEffect } from './think.js';
+import { checkEvidence, cleanText, routeObservation, verifyAnyCitation, TRANSCRIPT_WINDOW, type EvidenceRef, type StoredCitation } from '../guardrails.js';
+import { DEV_FINDING_CATEGORIES, VALUE_DIRECTIONS, type StagedProposal } from '../ledger.js';
 import { defineTool, refuse, ToolRefusal, type AgentTool, type ToolContext } from './types.js';
 
 const isActive = (o: Observation): boolean => o.supersededBy === null && o.status !== 'rejected';
@@ -97,11 +91,12 @@ function verifyProposalCitations(ctx: ToolContext, input: { source: string; quot
   return citations;
 }
 
-/** Stages a proposal after the checks every kind shares: the run's proposal budget, and no duplicate of a pending or staged one. */
-function fileProposal(
-  ctx: ToolContext,
-  p: { change: ProposalChange; filedAgainst: unknown; rationale: string; evidence: number[]; effect: ProposalEffect | null; citations: StoredCitation[] },
-): Record<string, unknown> {
+/**
+ * Stages a proposal after the checks every kind shares: the run's proposal budget, and no duplicate of a pending or staged
+ * one. Its effect is null: the 6m/12m target move a proposal used to carry went with the valuation.
+ */
+function fileProposal(ctx: ToolContext, filed: Omit<StagedProposal, 'effect'>): Record<string, unknown> {
+  const p: StagedProposal = { ...filed, effect: null };
   if (ctx.ledger.proposals().length >= ctx.budgets.proposals) {
     refuse('proposal_budget', `this run may file at most ${ctx.budgets.proposals} proposals`);
   }
@@ -111,82 +106,8 @@ function fileProposal(
     refuse('duplicate_proposal', 'an identical proposal is already pending', pending ? { proposal_id: pending.id } : { staged_in_this_run: true });
   }
   ctx.ledger.stageProposal(p);
-  return { kind: p.change.kind, change: p.change, effect: p.effect, note: 'staged; the user decides after this run commits' };
+  return { kind: p.change.kind, change: p.change, note: 'staged; the user decides after this run commits' };
 }
-
-// ---- apply_assumption_change ---------------------------------------------------------------------------------------
-
-const applyAssumptionChange = defineTool({
-  name: 'apply_assumption_change',
-  description:
-    'Changes one assumption, for one scenario or all three, within your band and the max step per run. Needs at least one observation id ' +
-    'you have seen in this run as evidence, and a rationale a reader can check. A value outside your band becomes a proposal ' +
-    'automatically. A value beyond the max step is refused with the range you may apply. Blocked while a degrading anomaly is open.',
-  input: z.strictObject({
-    key: z.string(),
-    scenario: z.enum([...SCENARIOS, 'all']),
-    value: z.number(),
-    evidence: z.array(z.number().int()),
-    rationale: z.string().max(MAX_RATIONALE),
-  }),
-  run(ctx, input) {
-    const asset = ctx.loaded.config;
-    const keys = requiredAssumptionKeys(asset);
-    if (!keys.includes(input.key)) refuse('unknown_key', `${input.key} is not an assumption of ${asset.id}`, { keys });
-    const rationale = requireText(input.rationale, 'rationale');
-
-    const blocking = blockingAnomalies(listOpenAnomalies(ctx.db, asset.id), ctx.ledger.resolvedAnomalyIds());
-    if (blocking.length > 0) {
-      refuse('anomaly_block', `open degrading anomalies block assumption writes: ${blocking.map((id) => `#${id}`).join(', ')}. Resolve them first, or propose.`, {
-        anomaly_ids: blocking,
-      });
-    }
-    requireEvidence(ctx, input.evidence);
-
-    const scenarios: Scenario[] = input.scenario === 'all' ? [...SCENARIOS] : [input.scenario];
-    const starts = new Map<Scenario, number>();
-    for (const s of scenarios) {
-      const start = ctx.ledger.startValue(input.key, s);
-      if (start === undefined) refuse('no_committed_value', `${input.key} (${s}) has no committed value to change`);
-      starts.set(s, start as number);
-    }
-
-    const outside = scenarios.filter((s) => placeValue(asset, input.key, s, input.value) !== 'in_band');
-    if (outside.length > 0) {
-      if (input.scenario === 'all') {
-        refuse('out_of_band', `${input.value} is outside your band for ${outside.join(', ')}; with scenario "all" every scenario must pass. Call once per scenario.`, {
-          scenarios: outside,
-        });
-      }
-      const s = outside[0];
-      const placement = placeValue(asset, input.key, s, input.value);
-      const change: ProposalChange = { kind: 'assumption_value', key: input.key, scenario: s, value: input.value };
-      const staged = fileProposal(ctx, {
-        change, filedAgainst: { value: starts.get(s) }, rationale, evidence: input.evidence,
-        effect: computeEffect(ctx, [{ key: input.key, value: input.value, scenario: s }]), citations: [],
-      });
-      return {
-        applied: false,
-        converted_to_proposal: staged,
-        reason:
-          placement === 'out_of_bounds'
-            ? `${input.value} is outside the key-wide bounds; approving it will also need a bounds change in the asset config`
-            : `${input.value} is outside your band for ${s}`,
-        allowed_this_run: allowedRange(asset, input.key, s, starts.get(s) as number),
-      };
-    }
-
-    for (const s of scenarios) {
-      const refusal = checkStep(asset, input.key, s, starts.get(s) as number, input.value);
-      if (refusal) throw new ToolRefusal(refusal);
-    }
-    const errors = validateAssumptions(asset, ctx.ledger.mergedValues(scenarios.map((s) => ({ key: input.key, scenario: s, value: input.value }))));
-    if (errors.length > 0) refuse('invalid_set', `the assumption set would be invalid: ${errors.join('; ')}`, { errors });
-
-    for (const s of scenarios) ctx.ledger.stageAssumptionChange({ key: input.key, scenario: s, value: input.value, rationale, evidence: input.evidence });
-    return { applied: true, changes: scenarios.map((s) => ({ key: input.key, scenario: s, from: starts.get(s), to: input.value })) };
-  },
-});
 
 // ---- resolve_anomaly -----------------------------------------------------------------------------------------------
 
@@ -208,8 +129,7 @@ const resolveAnomaly = defineTool({
     const note = requireText(input.note, 'note');
     requireEvidence(ctx, input.evidence);
     ctx.ledger.stageResolution({ anomalyId: a.id, note, evidence: input.evidence });
-    const stillBlocking = blockingAnomalies(listOpenAnomalies(ctx.db, ctx.loaded.config.id), ctx.ledger.resolvedAnomalyIds());
-    return { staged: true, anomaly_id: a.id, anomalies_still_blocking_assumption_writes: stillBlocking };
+    return { staged: true, anomaly_id: a.id };
   },
 });
 
@@ -301,10 +221,6 @@ const recordProvisionalObservation = defineTool({
       const change: ProposalChange = {
         kind: 'observation', metricKey: input.metric, value: input.value, observedAt, periodDays, citationUrl: source, quotedText,
       };
-      const preview: Observation = {
-        id: -1_000_000, assetId: asset.id, metricKey: input.metric, observedAt, periodDays, value: input.value, source: 'manual',
-        sourceDetail: null, status: 'confirmed', citationUrl: source, quotedText, fetchedAt: now.toISOString(), supersededBy: null,
-      };
       const why = fromMachineTranscript
         ? `${source} is a machine transcript, which may be misheard: a figure from a machine transcript always goes to the user`
         : fromDisclosureRun
@@ -313,8 +229,7 @@ const recordProvisionalObservation = defineTool({
           ? `${input.metric} is critical and there is no confirmed value to compare ${input.value} against`
           : `${input.metric} is critical and ${input.value} is more than ${movePct}% from the last confirmed value (${inForce})`;
       const staged = fileProposal(ctx, {
-        change, filedAgainst: { inForce }, rationale: note ? `${note} (${why})` : why, evidence: [],
-        effect: computeEffect(ctx, [], { addObservations: [preview] }), citations: [verified.citation],
+        change, filedAgainst: { inForce }, rationale: note ? `${note} (${why})` : why, evidence: [], citations: [verified.citation],
       });
       return { recorded: false, converted_to_proposal: staged, reason: `${why}; it cannot be cited as evidence until the user approves it` };
     }
@@ -340,16 +255,16 @@ const recordProvisionalObservation = defineTool({
 
 // ---- propose_change ------------------------------------------------------------------------------------------------
 
-const PROPOSABLE_KINDS = ['assumption_value', 'config', 'acknowledge_anomaly', 'withdraw_acknowledgement', 'confirm_observation', 'reject_observation'] as const;
+/** assumption_value is retired: stored ones still list and reject, but none can be filed or approved. */
+const PROPOSABLE_KINDS = ['config', 'acknowledge_anomaly', 'withdraw_acknowledgement', 'confirm_observation', 'reject_observation'] as const;
 
 const proposeChange = defineTool({
   name: 'propose_change',
   description:
-    'Files a proposal for the user to approve or reject. Kinds and the fields each needs: assumption_value (key, scenario, value, evidence); ' +
-    'config (edits: a list of {path, value}, where path is a list of segments into the asset config, a string segment selects a map key or ' +
+    'Files a proposal for the user to approve or reject. Kinds and the fields each needs: config (edits: a list of {path, value}, where path is a list of segments into the asset config, a string segment selects a map key or ' +
     'the list item with that id, and a null value deletes; all edits must leave the config valid together, so change weights in one proposal); ' +
     'acknowledge_anomaly and withdraw_acknowledgement (anomaly_id); confirm_observation and reject_observation (observation_id). ' +
-    'Proposals that can move the target store the computed effect. The rationale is what the user reads: make the case. ' +
+    'evidence (optional) is observation ids you have seen in this run. The rationale is what the user reads: make the case. ' +
     `citations (at most ${MAX_PROPOSAL_CITATIONS}): each a {source, quoted_text}, source the URL of a page you fetched or doc:<id> for the stored ` +
     'document in your context pack, quoted_text its own words under the same rules as record_provisional_observation. Every citation is ' +
     'verified; one that fails refuses the whole proposal. In a disclosure run at least one must cite the target document.',
@@ -357,9 +272,6 @@ const proposeChange = defineTool({
     kind: z.enum(PROPOSABLE_KINDS),
     rationale: z.string().max(MAX_RATIONALE),
     evidence: z.array(z.number().int()).optional(),
-    key: z.string().optional(),
-    scenario: z.enum(SCENARIOS).optional(),
-    value: z.number().optional(),
     edits: z.array(z.strictObject({ path: z.array(z.union([z.string(), z.number().int()])).min(1), value: z.unknown() })).min(1).optional(),
     anomaly_id: z.number().int().optional(),
     observation_id: z.number().int().optional(),
@@ -369,31 +281,11 @@ const proposeChange = defineTool({
     const asset = ctx.loaded.config;
     const rationale = requireText(input.rationale, 'rationale');
     const evidence = input.evidence ?? [];
-    if (evidence.length > 0 || input.kind === 'assumption_value') requireEvidence(ctx, evidence);
+    if (evidence.length > 0) requireEvidence(ctx, evidence);
     const citations = verifyProposalCitations(ctx, input.citations ?? []);
 
     switch (input.kind) {
-      case 'assumption_value': {
-        if (input.key === undefined || input.scenario === undefined || input.value === undefined) {
-          refuse('invalid_input', 'assumption_value needs key, scenario, and value');
-        }
-        const key = input.key as string;
-        const scenario = input.scenario as Scenario;
-        const value = input.value as number;
-        const keys = requiredAssumptionKeys(asset);
-        if (!keys.includes(key)) refuse('unknown_key', `${key} is not an assumption of ${asset.id}`, { keys });
-        const committed = ctx.ledger.startValue(key, scenario);
-        if (committed === value) refuse('no_change', `${key} (${scenario}) is already ${value}`);
-        return fileProposal(ctx, {
-          change: { kind: 'assumption_value', key, scenario, value }, filedAgainst: { value: committed ?? null }, rationale, evidence, citations,
-          effect: computeEffect(ctx, [{ key, value, scenario }]),
-        });
-      }
-
       case 'config': {
-        if (ctx.runType === 'bootstrap') {
-          refuse('not_in_bootstrap', 'a bootstrap run files no config proposal: say in the journal what looks wrong with the metric definitions; the user reads it before calibrating');
-        }
         if (input.edits === undefined) refuse('invalid_input', 'config needs edits');
         const edits = (input.edits ?? []).map((e) => ({ path: e.path, value: e.value ?? null }));
         const blocked = unproposableEdits(edits);
@@ -403,18 +295,8 @@ const proposeChange = defineTool({
         const raw = rawConfig(ctx.loaded);
         const filedAgainst = edits.map((e) => getAtPath(raw, e.path));
         if (edits.every((e, i) => canonicalJson(e.value) === canonicalJson(filedAgainst[i]))) refuse('no_change', 'these edits change nothing');
-        const edited = parseAssetObject(applyEditsToObject(raw, edits)); // throws invalid_asset_config, which the model sees as a refusal
-        const moduleErrors = validateAssetModules(edited.config);
-        if (moduleErrors.length > 0) refuse('invalid_config', moduleErrors.join('; '), { errors: moduleErrors });
-        const assumptionErrors = validateAssumptions(edited.config, ctx.ledger.mergedValues());
-        if (assumptionErrors.length > 0) {
-          refuse('assumptions_invalid_under_config', `the current assumptions would be invalid under this config: ${assumptionErrors.join('; ')}`, {
-            errors: assumptionErrors,
-          });
-        }
-        return fileProposal(ctx, {
-          change: { kind: 'config', edits }, filedAgainst, rationale, evidence, citations, effect: computeEffect(ctx, [], { config: edited.config }),
-        });
+        parseAssetObject(applyEditsToObject(raw, edits)); // throws invalid_asset_config, which the model sees as a refusal
+        return fileProposal(ctx, { change: { kind: 'config', edits }, filedAgainst, rationale, evidence, citations });
       }
 
       case 'acknowledge_anomaly':
@@ -425,7 +307,7 @@ const proposeChange = defineTool({
         const needed = input.kind === 'acknowledge_anomaly' ? 'open' : 'acknowledged';
         if (anomaly!.status !== needed) refuse('wrong_anomaly_status', `anomaly ${anomaly!.id} is ${anomaly!.status}; ${input.kind} needs it ${needed}`);
         return fileProposal(ctx, {
-          change: { kind: input.kind, anomalyId: anomaly!.id, note: rationale }, filedAgainst: { status: needed }, rationale, evidence, citations, effect: null,
+          change: { kind: input.kind, anomalyId: anomaly!.id, note: rationale }, filedAgainst: { status: needed }, rationale, evidence, citations,
         });
       }
 
@@ -440,7 +322,6 @@ const proposeChange = defineTool({
         return fileProposal(ctx, {
           change: { kind: input.kind, observationId: o.id, note: rationale },
           filedAgainst: { status: o.status, active: true }, rationale, evidence, citations,
-          effect: computeEffect(ctx, [], confirming ? { addObservations: [{ ...o, status: 'confirmed' }] } : { removeObservationIds: [o.id] }),
         });
       }
     }
@@ -565,4 +446,4 @@ const recordDevFinding = defineTool({
   },
 });
 
-export const WRITE_TOOLS: AgentTool[] = [applyAssumptionChange, proposeChange, resolveAnomaly, recordProvisionalObservation, writeJournal, recordDevFinding];
+export const WRITE_TOOLS: AgentTool[] = [resolveAnomaly, recordProvisionalObservation, proposeChange, writeJournal, recordDevFinding];

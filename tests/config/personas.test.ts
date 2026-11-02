@@ -79,35 +79,37 @@ describe('personas', () => {
 });
 
 describe('skills', () => {
-  it('parses a skill and requires at least one known run type', () => {
-    expect(parseSkill(skill('assumption-review', 'weekly, deep'))).toMatchObject({
-      name: 'assumption-review', description: 'Does assumption-review.', runTypes: ['weekly', 'deep'], body: 'Instructions for assumption-review.',
+  it('parses a skill and requires at least one runnable run type: disclosure is the only one', () => {
+    expect(parseSkill(skill('disclosure-review', 'disclosure'))).toMatchObject({
+      name: 'disclosure-review', description: 'Does disclosure-review.', runTypes: ['disclosure'], body: 'Instructions for disclosure-review.',
     });
     expect(codeOf(() => parseSkill(skill('x', '')))).toBe('invalid_skill');
     expect(codeOf(() => parseSkill(skill('x', 'daily')))).toBe('invalid_skill');
+    // The retired run types: a skill file that still names one fails loudly instead of loading for a run that cannot start.
+    for (const retired of ['weekly', 'triage', 'deep', 'bootstrap', 'disclosure, weekly']) expect(codeOf(() => parseSkill(skill('x', retired)))).toBe('invalid_skill');
   });
 
   it('rejects unknown frontmatter keys and a missing description', () => {
-    expect(codeOf(() => parseSkill(skill('x', 'weekly').replace('description:', 'summary:')))).toBe('invalid_skill');
-    expect(codeOf(() => parseSkill(skill('x', 'weekly').replace('run_types:', 'priority: 1\nrun_types:')))).toBe('invalid_skill');
+    expect(codeOf(() => parseSkill(skill('x', 'disclosure').replace('description:', 'summary:')))).toBe('invalid_skill');
+    expect(codeOf(() => parseSkill(skill('x', 'disclosure').replace('run_types:', 'priority: 1\nrun_types:')))).toBe('invalid_skill');
   });
 
   it('selects the skills for a run type, sorted by name', () => {
-    writeFileSync(join(home, 'skills', 'tokenomics-audit.md'), skill('tokenomics-audit', 'deep'));
-    writeFileSync(join(home, 'skills', 'assumption-review.md'), skill('assumption-review', 'weekly, deep'));
-    writeFileSync(join(home, 'skills', 'anomaly-triage.md'), skill('anomaly-triage', 'triage'));
+    writeFileSync(join(home, 'skills', 'disclosure-review.md'), skill('disclosure-review', 'disclosure'));
+    writeFileSync(join(home, 'skills', 'disclosure-research.md'), skill('disclosure-research', 'disclosure'));
     writeFileSync(join(home, 'skills', 'notes.txt'), 'ignored');
-    expect(loadSkills(home).map((s) => s.name)).toEqual(['anomaly-triage', 'assumption-review', 'tokenomics-audit']);
-    expect(skillsFor(home, 'deep').map((s) => s.name)).toEqual(['assumption-review', 'tokenomics-audit']);
-    expect(skillsFor(home, 'triage').map((s) => s.name)).toEqual(['anomaly-triage']);
+    expect(loadSkills(home).map((s) => s.name)).toEqual(['disclosure-research', 'disclosure-review']);
+    expect(skillsFor(home, 'disclosure').map((s) => s.name)).toEqual(['disclosure-research', 'disclosure-review']);
   });
 
-  it('fails the whole load when one skill file is invalid or misnamed', () => {
-    writeFileSync(join(home, 'skills', 'assumption-review.md'), skill('assumption-review', 'weekly'));
+  it('fails the whole load when one skill file is invalid, misnamed, or names a retired run type', () => {
+    writeFileSync(join(home, 'skills', 'disclosure-review.md'), skill('disclosure-review', 'disclosure'));
     writeFileSync(join(home, 'skills', 'broken.md'), 'no frontmatter');
-    expect(codeOf(() => skillsFor(home, 'weekly'))).toBe('invalid_skill');
-    writeFileSync(join(home, 'skills', 'broken.md'), skill('renamed', 'weekly'));
-    expect(codeOf(() => skillsFor(home, 'weekly'))).toBe('invalid_skill');
+    expect(codeOf(() => skillsFor(home, 'disclosure'))).toBe('invalid_skill');
+    writeFileSync(join(home, 'skills', 'broken.md'), skill('renamed', 'disclosure'));
+    expect(codeOf(() => skillsFor(home, 'disclosure'))).toBe('invalid_skill');
+    writeFileSync(join(home, 'skills', 'broken.md'), skill('broken', 'weekly'));
+    expect(codeOf(() => skillsFor(home, 'disclosure'))).toBe('invalid_skill');
   });
 
   it('returns nothing when the directory does not exist', () => {
@@ -115,20 +117,20 @@ describe('skills', () => {
   });
 });
 
-describe('dominance rule in the sector personas (2026-10-17)', () => {
+describe('the shipped personas and skills', () => {
   const ROOT_DIR = fileURLToPath(new URL('../..', import.meta.url));
-  const SECTOR = ['onchain-dex-analyst', 'perp-exchange-analyst', 'consumer-launchpad-analyst', 'stablecoin-protocol-analyst', 'oracle-network-analyst'];
-  for (const name of SECTOR) {
-    it(`${name} carries the durability rule`, () => {
-      const p = loadPersona(ROOT_DIR, name);
-      expect(p.body).toContain('Dominance sets durability, not growth.');
-      expect(p.body).toContain('`dominance_share`');
-      expect(p.body).toContain('Never use it to move `rev_growth_y1` or a multiple');
-    });
-  }
-  it('only the oracle persona carries the manual-research sentence', () => {
-    for (const name of SECTOR) {
-      expect(loadPersona(ROOT_DIR, name).body.includes('is manual: when the latest is more than 90 days old')).toBe(name === 'oracle-network-analyst');
+
+  it('ship the two disclosure skills only: the four skills of the retired run types are gone', () => {
+    expect(loadSkills(ROOT_DIR).map((s) => s.name)).toEqual(['disclosure-research', 'disclosure-review']);
+    for (const s of loadSkills(ROOT_DIR)) expect(s.runTypes).toEqual(['disclosure']);
+  });
+
+  it('no persona tells the analyst about assumptions, bands, targets or dominance', () => {
+    expect(listPersonaNames(ROOT_DIR)).toHaveLength(6);
+    for (const name of listPersonaNames(ROOT_DIR)) {
+      const body = loadPersona(ROOT_DIR, name).body;
+      for (const gone of ['assumption', ' band', 'target', 'dominance', 'valuation', 'rev_growth_y1', 'bear case']) expect(body, `${name}: ${gone}`).not.toContain(gone);
+      expect(/^[\x00-\x7F]*$/.test(body)).toBe(true);
     }
   });
 });
@@ -157,9 +159,10 @@ describe('the disclosure run text (2026-10-23)', () => {
   it('the disclosure-review skill names the real tools and none of the Q3 findings', () => {
     const review = skillsFor(ROOT_DIR, 'disclosure').find((s) => s.name === 'disclosure-review')!;
     expect(review.runTypes).toEqual(['disclosure']);
-    for (const tool of ['get_flow_total', 'get_observations', 'propose_change', 'record_dev_finding', 'write_journal', 'apply_assumption_change', 'asset_config_yaml', 'adapter_params']) {
+    for (const tool of ['get_flow_total', 'get_observations', 'propose_change', 'record_dev_finding', 'write_journal', 'asset_config_yaml', 'adapter_params']) {
       expect(review.body).toContain(tool);
     }
+    for (const gone of ['apply_assumption_change', 'run_whatif', 'assumption', 'effect']) expect(review.body).not.toContain(gone);
     expect(/^[\x00-\x7F]*$/.test(review.body)).toBe(true);
     for (const leak of ['Robinhood', 'DefiLlama', '2027-01-29', 'CFTC', 'Q3']) expect(review.body).not.toContain(leak);
   });

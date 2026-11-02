@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { RunBudgets } from '../../config/agentPolicy.js';
 import type { LoadedAsset } from '../../config/load.js';
 import type { Db } from '../../db/connection.js';
-import { OrionError, type RunType } from '../../types.js';
+import { OrionError, type RunnableRunType } from '../../types.js';
 import type { CitableDoc, FetchedPage, Refusal } from '../guardrails.js';
 import type { Ledger } from '../ledger.js';
 
@@ -18,10 +18,10 @@ export interface ToolContext {
   fetchedPages: () => FetchedPage[];
   /** Stored documents this run may cite as `doc:<id>`. */
   citableDocs: () => CitableDoc[];
-  /** A disclosure run's target document (the run's own asset's, checked at preflight); null for every other run type. */
+  /** The run's target document (the run's own asset's, checked at preflight). Null only outside a run, in a test's world. */
   targetDoc: CitableDoc | null;
-  /** Which run this is: some writes are closed to a bootstrap. */
-  runType: RunType;
+  /** Which run this is. Disclosure is the only runnable type; the tools still name it where a rule is a disclosure rule. */
+  runType: RunnableRunType;
 }
 
 export interface AgentTool<I = unknown> {

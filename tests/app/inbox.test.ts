@@ -99,6 +99,21 @@ describe('buildInbox', () => {
   });
 });
 
+describe('inbox', () => {
+  it('a stored proposal with a 6m/12m effect still parses', () => {
+    // VVV #1 and CAKE #4 are pending assumption_value proposals from the valuation era, filed with a target effect. No
+    // run files one now (new proposals store effect null), but the inbox must keep reading the rows that exist.
+    const w = world();
+    insertProposal(w.db, {
+      assetId: 'mini', persona: 'analyst', agentRunId: w.runId, change: { kind: 'assumption_value', key: 'discount_rate_base', scenario: 'bull', value: 0.09 },
+      filedAgainst: { value: 0.1 }, rationale: 'r', evidence: [], effect: { blocked: ['missing_metric:revenue_run_rate_usd'] }, createdAt: T,
+    });
+    const inbox = InboxSchema.parse(JSON.parse(JSON.stringify(buildInbox(w.db, w.asset, T)))) as Inbox;
+    expect(inbox.proposals.map((p) => p.effect)).toEqual([{ blocked: ['missing_metric:revenue_run_rate_usd'] }, null, { '6m': { from: 10, to: 11 }, '12m': { from: 12, to: 14.5 } }]);
+    expect(inboxLines(inbox)).toContain(`prop #${w.withEffect.id}  assumption_value  filed 2026-09-20 by analyst run #${w.runId}  effect: 12m target 12 -> 14.5`);
+  });
+});
+
 describe('readingOf', () => {
   it('keeps numbers, booleans, and the names Orion wrote; drops every other string at any depth', () => {
     expect(

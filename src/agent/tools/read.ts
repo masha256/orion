@@ -1,36 +1,11 @@
 import { z } from 'zod';
-import { eligibleObservations } from '../../app/eligibility.js';
 import { listAnomalies } from '../../db/anomalies.js';
 import { listJournal } from '../../db/journal.js';
 import { listActiveObservations, listObservations, type Observation } from '../../db/observations.js';
-import { listSignals } from '../../db/runs.js';
-import { computeDrivers } from '../../drivers/compute.js';
-import { requiredExtraMetrics } from '../../engine/requirements.js';
 import { dayStartMs, isIsoDate, observationDays, utcDay } from '../../ingest/time.js';
-import { MS_PER_DAY, OrionError } from '../../types.js';
-import { describeAnomaly, describeAssumptions, describeDrivers, describeObservation, describeSignal, structuralNotes } from '../describe.js';
+import { MS_PER_DAY } from '../../types.js';
+import { describeAnomaly, describeObservation } from '../describe.js';
 import { defineTool, refuse, type AgentTool } from './types.js';
-
-const getDrivers = defineTool({
-  name: 'get_drivers',
-  description:
-    'The driver report: every driver with its value, provenance, and age, plus missing, stale, and provisional metrics. ' +
-    'Pass as_of (ISO timestamp) to see the drivers as they stood at an earlier time.',
-  input: z.strictObject({ as_of: z.string().optional() }),
-  run(ctx, input) {
-    const asOf = input.as_of === undefined ? ctx.now() : new Date(input.as_of);
-    if (Number.isNaN(asOf.getTime())) throw new OrionError('invalid_timestamp', `invalid as_of: ${input.as_of}`);
-    const asset = ctx.loaded.config;
-    const iso = asOf.toISOString();
-    const observations = eligibleObservations(ctx.db, asset, iso);
-    ctx.ledger.markShown(observations.map((o) => o.id));
-    return {
-      ...describeDrivers(computeDrivers(asset, observations, iso, requiredExtraMetrics(asset)), iso, structuralNotes(asset)),
-      // The observations behind these drivers: the ids you may cite as evidence.
-      observations_in_force: observations.map((o) => ({ id: o.id, metric: o.metricKey, value: o.value, observed_at: o.observedAt, status: o.status })),
-    };
-  },
-});
 
 const getObservations = defineTool({
   name: 'get_observations',
@@ -64,32 +39,6 @@ const getAnomalies = defineTool({
     return {
       anomalies: listAnomalies(ctx.db, { assetId: ctx.loaded.config.id, includeDecided: input.include_decided }).map((a) => describeAnomaly(a, staged.has(a.id))),
     };
-  },
-});
-
-const getAssumptions = defineTool({
-  name: 'get_assumptions',
-  description:
-    'Every assumption per scenario: the committed value, the value you staged in this run if any, the key-wide bounds, your band, and ' +
-    'allowed_this_run, the exact range apply_assumption_change will accept.',
-  input: z.strictObject({}),
-  run(ctx) {
-    if (ctx.ledger.startSet === null) refuse('no_assumption_set', `${ctx.loaded.config.id} has no assumption set yet; calibration comes after the data`);
-    return {
-      assumption_set_version: ctx.ledger.startSet!.version,
-      author: ctx.ledger.startSet!.author,
-      rationale: ctx.ledger.startSet!.rationale,
-      assumptions: describeAssumptions(ctx.loaded.config, ctx.ledger),
-    };
-  },
-});
-
-const getSignalHistory = defineTool({
-  name: 'get_signal_history',
-  description: 'Recent signals, newest first: status, grade, spot, expected targets, and what caused each change.',
-  input: z.strictObject({ limit: z.number().int().min(1).max(50).optional() }),
-  run(ctx, input) {
-    return { signals: listSignals(ctx.db, ctx.loaded.config.id, input.limit ?? 8).map(describeSignal) };
   },
 });
 
@@ -153,4 +102,4 @@ const getFlowTotal = defineTool({
   },
 });
 
-export const READ_TOOLS: AgentTool[] = [getDrivers, getObservations, getAnomalies, getAssumptions, getSignalHistory, getJournal, getFlowTotal];
+export const READ_TOOLS: AgentTool[] = [getObservations, getAnomalies, getJournal, getFlowTotal];

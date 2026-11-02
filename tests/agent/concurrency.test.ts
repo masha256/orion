@@ -5,8 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Ledger } from '../../src/agent/ledger.js';
 import { runValuation } from '../../src/app/valuation.js';
 import { parseAssetYaml } from '../../src/config/load.js';
-import type { AssetConfig } from '../../src/config/schema.js';
-import { createAssumptionSet, getLatestAssumptionSet } from '../../src/db/assumptions.js';
+import { createAssumptionSet } from '../../src/db/assumptions.js';
 import { openDb, type Db } from '../../src/db/connection.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { getLatestSignal } from '../../src/db/runs.js';
@@ -25,19 +24,16 @@ const NOW = new Date('2026-09-20T00:00:00.000Z');
 let dir: string;
 let A: Db;
 let B: Db;
-let asset: AssetConfig;
 let ledger: Ledger;
-let priceId: number;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'orion-concurrency-'));
   A = openDb(join(dir, 'orion.db'));
   B = openDb(join(dir, 'orion.db'));
-  asset = parseAssetYaml(MINI_ASSET_YAML).config;
-  const set = createAssumptionSet(A, { assetId: 'mini', author: 'user', rationale: 'initial', values: miniAssumptions(), createdAt: '2026-09-01T00:00:00Z' });
-  priceId = insertObservation(A, { assetId: 'mini', metricKey: 'price_usd', observedAt: '2026-09-19', value: 10, source: 'onchain', fetchedAt: '2026-09-19' }).id;
-  ledger = new Ledger('mini', 'analyst', set);
-  ledger.stageAssumptionChange({ key: 'rev_growth_y1', scenario: 'base', value: 0.1, rationale: 'up', evidence: [priceId] });
+  ledger = new Ledger('mini', 'analyst');
+  ledger.stageObservation({
+    metricKey: 'revenue_run_rate_usd', value: 1100, observedAt: '2026-09-18', periodDays: null, citationUrl: 'doc:1', quotedText: 'annualized revenue of $1,100', live: false,
+  });
   ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's', catalysts: [] });
 });
 
@@ -87,9 +83,9 @@ const otherWrite = (db: Db) =>
 describe('Ledger.commit against a second connection', () => {
   it('commits normally when nothing else holds the write lock, whatever the other connection wrote before it', () => {
     otherWrite(B);
-    const summary = ledger.commit(A, asset, { agentRunId: null, now: NOW });
-    expect(summary.setVersion).toBe(2);
-    expect(getLatestAssumptionSet(B, 'mini')!.version).toBe(2); // the other connection sees it
+    const summary = ledger.commit(A, { agentRunId: null, now: NOW });
+    expect(summary.observationIds).toHaveLength(1);
+    expect(listActiveObservations(B, 'mini', 'revenue_run_rate_usd').map((o) => o.id)).toEqual(summary.observationIds); // the other connection sees it
     expect(listActiveObservations(B, 'mini', 'staked_supply')).toHaveLength(1);
   });
 
@@ -106,8 +102,8 @@ describe('Ledger.commit against a second connection', () => {
     });
     // Deferred, this is where it comes apart: B commits against the same snapshot A just read, and A's first write is
     // then refused with SQLITE_BUSY_SNAPSHOT, which no timeout can retry away.
-    const summary = ledger.commit(watched, asset, { agentRunId: null, now: NOW });
-    expect(summary.setVersion).toBe(2);
+    const summary = ledger.commit(watched, { agentRunId: null, now: NOW });
+    expect(summary.observationIds).toHaveLength(1);
     expect(theOtherWrite).toMatch(/database is locked/);
     expect(listActiveObservations(A, 'mini', 'staked_supply')).toHaveLength(0);
   });
@@ -120,17 +116,18 @@ describe('Ledger.commit against a second connection', () => {
     B.exec('BEGIN IMMEDIATE');
     otherWrite(B);
     const startedAt = Date.now();
-    expect(() => ledger.commit(A, asset, { agentRunId: null, now: NOW })).toThrow(/database is locked/);
+    expect(() => ledger.commit(A, { agentRunId: null, now: NOW })).toThrow(/database is locked/);
     const waited = Date.now() - startedAt;
     B.exec('ROLLBACK');
     expect(waited).toBeGreaterThanOrEqual(200);
-    expect(getLatestAssumptionSet(A, 'mini')!.version).toBe(1); // nothing was written
+    expect(listActiveObservations(A, 'mini', 'revenue_run_rate_usd')).toEqual([]); // nothing was written
   });
 });
 
 describe('runValuation against a second connection', () => {
   it('keeps a competing writer out for the whole valuation (passes deferred too: runValuation writes first; .immediate() makes that independent of statement order)', () => {
     // Not a discriminating test: saveConfigVersion's INSERT OR IGNORE already takes the write lock before the first read. It pins the property, not the mechanism.
+    createAssumptionSet(A, { assetId: 'mini', author: 'user', rationale: 'initial', values: miniAssumptions(), createdAt: '2026-09-01T00:00:00Z' });
     for (const o of miniObservations()) {
       insertObservation(A, { assetId: o.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, source: o.source, fetchedAt: o.fetchedAt });
     }

@@ -4,20 +4,17 @@ import { parse as parseYaml } from 'yaml';
 import { applyEditsToYaml, getAtPath, unproposableEdits } from '../config/edit.js';
 import { loadAsset, parseAssetYaml } from '../config/load.js';
 import { decideAnomaly, getAnomaly } from '../db/anomalies.js';
-import { insertAssumptionChange } from '../db/assumptionChanges.js';
 import { getLatestAssumptionSet } from '../db/assumptions.js';
 import type { Db } from '../db/connection.js';
 import { confirmObservation, getObservationsByIds, insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
 import { decideProposal, getProposal, type Proposal } from '../db/proposals.js';
 import { validateAssetModules, validateAssumptions } from '../engine/requirements.js';
-import { OrionError, type AssumptionValues, type PathSegment } from '../types.js';
+import { OrionError, type PathSegment } from '../types.js';
 import { canonicalJson } from '../util/canonical.js';
-import { saveAssumptions } from './assumptions.js';
 import { valueInForce } from './eligibility.js';
 
 /** What approving did, for the command to print. */
 export type ApproveResult =
-  | { kind: 'assumption_value'; setVersion: number }
   | { kind: 'anomaly'; anomalyId: number; status: 'acknowledged' | 'resolved' }
   | { kind: 'observation'; observationId: number; action: 'confirmed' | 'rejected' | 'inserted' }
   | { kind: 'config'; file: string; changes: { path: PathSegment[]; from: unknown; to: unknown }[] };
@@ -45,7 +42,8 @@ export function rejectProposal(db: Db, id: number, note: string, now: Date): Pro
 /**
  * Applies a proposal through the same functions the CLI uses, after checking that what it was filed against still holds.
  * Database kinds are one transaction. A config proposal edits assets/<id>.yaml in place and restores the file if marking
- * the proposal approved fails. No valuation runs here: the next `orion update` picks the change up.
+ * the proposal approved fails. An `assumption_value` proposal (the valuation era's kind) is refused: a stored one can
+ * still be listed and rejected, never applied: nothing reads an assumption set any more.
  */
 export function approveProposal(db: Db, home: string, id: number, opts: { note?: string; now: Date }): { proposal: Proposal; result: ApproveResult } {
   const p = pending(db, id);
@@ -58,6 +56,12 @@ export function approveProposal(db: Db, home: string, id: number, opts: { note?:
   const note = opts.note?.trim() || null;
   const change = p.change;
 
+  if (change.kind === 'assumption_value') {
+    throw new OrionError(
+      'proposal_kind_retired',
+      `proposal ${id} changes an assumption (${change.key}, ${change.scenario}), and assumption values are retired with the valuation; reject it with a note`,
+    );
+  }
   if (change.kind === 'config') return approveConfig(db, home, p, note, nowIso);
 
   // IMMEDIATE: every kind below checks what the proposal was filed against before it writes, and a deferred transaction
@@ -66,32 +70,6 @@ export function approveProposal(db: Db, home: string, id: number, opts: { note?:
   return db.transaction(() => {
     let result: ApproveResult;
     switch (change.kind) {
-      case 'assumption_value': {
-        const { config } = loadAsset(home, p.assetId);
-        const latest = getLatestAssumptionSet(db, p.assetId);
-        if (!latest) throw new OrionError('no_assumption_set', `no assumption set for ${p.assetId}`);
-        const current = latest.values[change.scenario][change.key];
-        const filed = (p.filedAgainst as { value: number | null }).value;
-        if (current !== filed) stale(id, `${change.key} (${change.scenario}) was ${filed} when it was filed and is ${current} now`);
-        const bounds = config.assumptions[change.key];
-        if (bounds && (change.value < bounds.min || change.value > bounds.max)) {
-          throw new OrionError(
-            'outside_key_bounds',
-            `${change.value} is outside the key-wide bounds [${bounds.min}, ${bounds.max}] of ${change.key}; widen assumptions.${change.key} in assets/${p.assetId}.yaml first`,
-          );
-        }
-        const values: AssumptionValues = { bear: { ...latest.values.bear }, base: { ...latest.values.base }, bull: { ...latest.values.bull } };
-        values[change.scenario][change.key] = change.value;
-        const set = saveAssumptions(db, config, values, {
-          author: 'user', rationale: `Approved proposal #${id} from ${p.persona}: ${p.rationale}`, now: opts.now,
-        });
-        insertAssumptionChange(db, {
-          setId: set.id, key: change.key, scenario: change.scenario, fromValue: current, toValue: change.value, rationale: p.rationale, evidence: p.evidence,
-        });
-        result = { kind: 'assumption_value', setVersion: set.version };
-        break;
-      }
-
       case 'acknowledge_anomaly':
       case 'withdraw_acknowledgement': {
         const needed = change.kind === 'acknowledge_anomaly' ? 'open' : 'acknowledged';

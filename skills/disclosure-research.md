@@ -1,9 +1,9 @@
 ---
 name: disclosure-research
 description: Find and record figures that no API publishes (revenue run rate, announced emission or policy changes) from sources you can quote.
-run_types: [weekly, triage, deep, bootstrap, disclosure]
+run_types: [disclosure]
 ---
-Some of the most important inputs are maintained by hand because the project publishes them only in prose: the revenue run rate above all, and announced changes to emissions, burn policy, or token terms. The context pack lists stale and provisional metrics; a manual metric that is stale, or a revenue figure that usage has moved away from, is the usual reason to research.
+Some of Orion's figures are maintained by hand because the project publishes them only in prose: the revenue run rate above all, and announced changes to emissions, burn policy, or token terms. A document that states one of them, or a figure it states that you want to check against a second source, is the usual reason to research.
 
 How to research well here:
 
@@ -15,6 +15,6 @@ How to research well here:
 - One good source beats three that repeat each other. If two sources disagree, record neither until you understand why, and say so in the journal.
 - Announced changes to a fetched schedule (an emission cut on the project's blog) or a dated event (an unlock) go on that metric with the EFFECTIVE date, not the announcement date; the row waits for the user like any other. The fetch owns the present, so do not record an announcement whose effective date has passed: the chain now says what happened. A withdrawn or delayed announcement is a reason to propose rejecting the row you recorded, not to record another.
 
-A large move on a critical metric goes to the user as a proposal instead of into the signal. In a disclosure run every figure goes to the user, whatever it cites: a proposal where the metric takes provisional data, an inert row otherwise. That is the system working: record it anyway, with a note that says where the figure comes from and how confident you are in it.
+Every figure you record goes to the user, whatever it cites: a proposal where the metric takes provisional data, an inert row otherwise. That is the system working: record it anyway, with a note that says where the figure comes from and how confident you are in it.
 
 If you find nothing new, that is a result. Write down what you searched for, so the next run does not repeat it blindly.

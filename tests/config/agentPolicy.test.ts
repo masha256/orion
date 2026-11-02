@@ -43,28 +43,32 @@ describe('agent settings', () => {
     const asset = parseAssetYaml(MINI_ASSET_YAML).config;
     expect(maxStepFraction(asset)).toBe(0.25);
     expect(provisionalMovePct(asset)).toBe(25);
-    expect(budgetsFor(asset, 'deep')).toEqual(DEFAULT_BUDGETS.deep);
-    expect(budgetsFor(asset, 'bootstrap')).toEqual({ requests: 60, inputUnits: 3_000_000, outputTokens: 100_000, webSearches: 30, webFetches: 30, proposals: 2 });
+    expect(budgetsFor(asset, 'disclosure')).toEqual(DEFAULT_BUDGETS.disclosure);
   });
 
   it('applies partial overrides per run type and per field', () => {
     const asset = parseAssetYaml(
-      `${MINI_ASSET_YAML}agent:\n  max_step_fraction: 0.1\n  budgets:\n    weekly: { requests: 5, web_searches: 0 }\nreview_triggers:\n  provisional_move_pct: 40\n`,
+      `${MINI_ASSET_YAML}agent:\n  max_step_fraction: 0.1\n  budgets:\n    disclosure: { requests: 5, web_searches: 0 }\nreview_triggers:\n  provisional_move_pct: 40\n`,
     ).config;
     expect(maxStepFraction(asset)).toBe(0.1);
     expect(provisionalMovePct(asset)).toBe(40);
-    expect(budgetsFor(asset, 'weekly')).toEqual({ ...DEFAULT_BUDGETS.weekly, requests: 5, webSearches: 0 });
-    expect(budgetsFor(asset, 'triage')).toEqual(DEFAULT_BUDGETS.triage);
+    expect(budgetsFor(asset, 'disclosure')).toEqual({ ...DEFAULT_BUDGETS.disclosure, requests: 5, webSearches: 0 });
+  });
+
+  it('still accepts the budgets of the retired run types in a YAML, and they set nothing', () => {
+    // The 13 asset YAMLs carry agent.budgets.{weekly,triage,deep,bootstrap} until the config keys go.
+    const asset = parseAssetYaml(`${MINI_ASSET_YAML}agent:\n  budgets:\n    weekly: { requests: 5 }\n    triage: { requests: 6 }\n    deep: { requests: 7 }\n    bootstrap: { requests: 8 }\n`).config;
+    expect(budgetsFor(asset, 'disclosure')).toEqual(DEFAULT_BUDGETS.disclosure);
   });
 
   it('reads an input_tokens override as input units', () => {
-    const asset = parseAssetYaml(`${MINI_ASSET_YAML}agent:\n  budgets:\n    weekly: { input_tokens: 2000000 }\n`).config;
-    expect(budgetsFor(asset, 'weekly')).toEqual({ ...DEFAULT_BUDGETS.weekly, inputUnits: 2_000_000 });
+    const asset = parseAssetYaml(`${MINI_ASSET_YAML}agent:\n  budgets:\n    disclosure: { input_tokens: 2000000 }\n`).config;
+    expect(budgetsFor(asset, 'disclosure')).toEqual({ ...DEFAULT_BUDGETS.disclosure, inputUnits: 2_000_000 });
   });
 
   it('keeps the default numbers', () => {
-    expect([DEFAULT_BUDGETS.weekly, DEFAULT_BUDGETS.triage, DEFAULT_BUDGETS.deep, DEFAULT_BUDGETS.bootstrap, DEFAULT_BUDGETS.disclosure].map((b) => b.inputUnits))
-      .toEqual([600_000, 500_000, 2_000_000, 3_000_000, 1_200_000]);
+    expect(Object.keys(DEFAULT_BUDGETS)).toEqual(['disclosure']);
+    expect(DEFAULT_BUDGETS.disclosure).toEqual({ requests: 25, inputUnits: 1_200_000, outputTokens: 40_000, webSearches: 3, webFetches: 5, proposals: 5 });
   });
 
   it('weights input in tenths, exactly', () => {

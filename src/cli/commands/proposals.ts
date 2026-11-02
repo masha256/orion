@@ -59,8 +59,6 @@ function proposalLine(p: Proposal, now: Date): string {
 
 function approvedLines(result: ApproveResult): string[] {
   switch (result.kind) {
-    case 'assumption_value':
-      return [`saved as assumption set v${result.setVersion}`];
     case 'anomaly':
       return [`anomaly #${result.anomalyId} is now ${result.status}`];
     case 'observation':

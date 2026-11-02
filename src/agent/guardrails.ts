@@ -1,7 +1,4 @@
-import { agentBand, keyBounds, maxStepFraction, type Range } from '../config/agentPolicy.js';
-import type { AssetConfig } from '../config/schema.js';
 import type { DocKind, StoredCitation } from '../db/documents.js';
-import type { Scenario } from '../types.js';
 
 /**
  * Every rule the agent's writes must pass. Pure: no database, no clock, no model. The tool layer calls these and turns a
@@ -32,18 +29,6 @@ export function cleanText(s: string): string {
     .replace(/[\u000B\u000C\u000D]/g, ' ')
     .replace(/[\u0000-\u0008\u000E-\u001F\u007F\u009B]/g, '')
     .trim();
-}
-
-// ---- Anomaly block -------------------------------------------------------------------------------------------------
-
-export interface AnomalyRef {
-  id: number;
-  severity: 'degrading' | 'advisory';
-}
-
-/** Ids of the open degrading anomalies that block assumption writes. Advisory anomalies never block. */
-export function blockingAnomalies(open: AnomalyRef[], stagedResolvedIds: ReadonlySet<number>): number[] {
-  return open.filter((a) => a.severity === 'degrading' && !stagedResolvedIds.has(a.id)).map((a) => a.id);
 }
 
 // ---- Evidence ------------------------------------------------------------------------------------------------------
@@ -85,56 +70,6 @@ export function checkEvidence(
     };
   }
   return null;
-}
-
-// ---- Bounds, bands, and the max step --------------------------------------------------------------------------------
-
-export type ValuePlacement = 'in_band' | 'out_of_band' | 'out_of_bounds' | 'unknown_key';
-
-/** Where a value sits: inside the agent's band, inside the key-wide bounds only, or outside both. */
-export function placeValue(asset: AssetConfig, key: string, scenario: Scenario, value: number): ValuePlacement {
-  const bounds = keyBounds(asset, key);
-  const band = agentBand(asset, key, scenario);
-  if (!bounds || !band) return 'unknown_key';
-  if (value < bounds.min - EPSILON || value > bounds.max + EPSILON) return 'out_of_bounds';
-  if (value < band.min - EPSILON || value > band.max + EPSILON) return 'out_of_band';
-  return 'in_band';
-}
-
-/** The largest move one run may make: a fraction of the band's width. */
-export function maxStep(asset: AssetConfig, key: string, scenario: Scenario): number {
-  const band = agentBand(asset, key, scenario);
-  return band ? maxStepFraction(asset) * (band.max - band.min) : 0;
-}
-
-/**
- * The values the agent may apply this run: the band intersected with one step either side of `start`, the committed
- * value when the run began. Measuring from `start`, not from a staged value, is what stops repeated calls from
- * ratcheting. Null when the two do not meet (the committed value sits more than a step outside the band): the agent can
- * then only propose.
- */
-export function allowedRange(asset: AssetConfig, key: string, scenario: Scenario, start: number): Range | null {
-  const band = agentBand(asset, key, scenario);
-  if (!band) return null;
-  const step = maxStep(asset, key, scenario);
-  const min = Math.max(band.min, start - step);
-  const max = Math.min(band.max, start + step);
-  return min <= max + EPSILON ? { min, max: Math.max(min, max) } : null;
-}
-
-export function checkStep(asset: AssetConfig, key: string, scenario: Scenario, start: number, value: number): Refusal | null {
-  const step = maxStep(asset, key, scenario);
-  if (Math.abs(value - start) <= step + EPSILON) return null;
-  const allowed = allowedRange(asset, key, scenario, start);
-  return {
-    refused: 'max_step',
-    message:
-      `${key} (${scenario}) may move at most ${step} per run from ${start}. ` +
-      (allowed
-        ? `Allowed this run: [${allowed.min}, ${allowed.max}]. Apply a value in that range, and propose the rest if you still want it.`
-        : 'No value inside the band is reachable this run; use propose_change.'),
-    key, scenario, start, max_step: step, allowed,
-  };
 }
 
 // ---- The move guard ------------------------------------------------------------------------------------------------
