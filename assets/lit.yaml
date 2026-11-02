@@ -37,8 +37,8 @@ metrics:
     cross_checks:
       - { tolerance_pct: 2, source: { type: http_json, url: "https://mainnet.zklighter.elliot.ai/api/v1/orderBookDetails?market_id=2049", path: spot_order_book_details.0.last_trade_price } }
 
-  # 1B less dead: 981.91M on 2026-10-16. The team, investor and ecosystem allocations stay inside (effective_total, the same
-  # basis as every Orion asset): they are already minted and can be sold. CoinGecko's total (1B) has not netted the burns,
+  # 1B less dead: 981.91M on 2026-10-16. The team, investor and ecosystem allocations stay inside (total_supply, the FDV
+  # basis on every Orion asset): they are already minted and can be sold. CoinGecko's total (1B) has not netted the burns,
   # so the cross-check is 2.5 percent (1.8 percent apart on 2026-10-16; it widens by each quarter's burn).
   total_supply:
     type: level
@@ -49,7 +49,7 @@ metrics:
     cross_checks:
       - { tolerance_pct: 2.5, source: { type: coingecko, id: lighter, field: total_supply } }
 
-  # CoinGecko's own definition (250M on 2026-10-16: the airdrop); informational under effective_total, the report's market cap.
+  # CoinGecko's own definition (250M on 2026-10-16: the airdrop); display only, the report's market cap basis.
   circulating_supply:
     type: level
     unit: tokens

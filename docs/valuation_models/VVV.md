@@ -1,6 +1,10 @@
 # VVV valuation model
 
-How Orion values the Venice Token (VVV), component by component, with a worked example.
+> **Removed in Phase 1 (2026-10-28).** Orion's valuation layer is gone: the commands below (`orion model ...`,
+> `orion signal ...`, `orion update`) no longer exist, and no part of this model runs. The page is kept as the record of
+> the VVV model for a possible separate valuation project (`docs/superpowers/notes/2026-10-28-orion-phase1-followups.md`).
+
+How Orion valued the Venice Token (VVV), component by component, with a worked example.
 
 The numbers are a snapshot: signal `vvv-20260920T150211Z-4` (run 4, engine 1.2.0, assumption set version 2), spot $28.91, 12-month expected target $35.05. The structure is stable; the numbers move daily. Live values: `orion signal latest vvv --json`.
 

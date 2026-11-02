@@ -515,7 +515,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   }
 
   // Failure streaks: this run plus the two previous attempts of the same source. A source that feeds only monitor-only
-  // metrics raises none: it is report data, and the alert would wake the agent over something the valuation never reads.
+  // metrics raises none: it feeds report data only, so a streak alert over it would only be noise.
   const metricsOfSource = new Map<string, string[]>();
   for (const b of plan.batches) metricsOfSource.set(b.sourceId, [...(metricsOfSource.get(b.sourceId) ?? []), ...b.requests.map((r) => r.metricKey)]);
   for (const g of plan.flowGroups) metricsOfSource.set(g.sourceId, [...(metricsOfSource.get(g.sourceId) ?? []), ...g.members.map((m) => m.metricKey)]);

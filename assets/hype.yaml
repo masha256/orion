@@ -44,7 +44,8 @@ metrics:
     cross_checks:
       - { tolerance_pct: 2, source: { type: coingecko, id: hyperliquid, field: total_supply } }
 
-  # CoinGecko's own definition (222M against the API's 299M); informational under effective_total, no consistent cross-check.
+  # CoinGecko's own definition (222M against the API's 299M); display only, the report's market cap basis; no consistent
+  # cross-check.
   circulating_supply:
     type: level
     unit: tokens

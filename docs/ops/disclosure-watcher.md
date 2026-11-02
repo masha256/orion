@@ -2,14 +2,14 @@
 
 When an issuer publishes something material (in v1: Lighter's quarterly investor-call recording on X), the watcher finds it, transcribes it, stores it in Orion, and has Orion's analyst read it in a `disclosure` run. What the analyst finds comes back as Orion proposals (the inbox), dev-queue entries (code and data-source work) and dated catalysts in the journal. It makes no direct assumption change: value changes are proposals, and every figure it records waits for the user (a proposal where the metric takes provisional data, an inert row otherwise, whatever it cites). Design: `docs/superpowers/specs/2026-10-23-orion-disclosure-watcher-design.md`, sections 8 to 10.
 
-Status: the Hermes script is not built yet; it is designed in the spec (sections 8 to 10), and this page describes it as designed. The Orion side (`orion doc`, the `disclosure` run type) is built and in this repo. The script will live in the Hermes profile, not in git, and its cron job is created paused and enabled only on the owner's go after the merge.
+Status: built and live (LIT pilot). The Orion side (`orion doc`, the `disclosure` run type) is in this repo; the script lives in the Hermes profile, not in git (versioned only by the profile's hourly backup), so watcher changes are recorded in this page and the followups notes. Since Phase 1 the `disclosure` run is the only analyst run type, and a proposal's effect is always null: the digest prints `no target effect`.
 
 ## How it runs
 
 1. A deterministic script on the Hermes host (no LLM call anywhere in it) runs once a day from cron. On a scan day it makes one keyless DuckDuckGo HTML search per asset, extracts X post ids, skips every id already in its state file, and classifies each new one by its public `tweet-result` JSON: the author must be the configured `user.id_str` (never the handle, which can change), the post at most 120 days old. A post with a video of at least `min_video_minutes` whose text matches `match_text` is a recording (`queued`); a post matching `announce_text` with no video is an `announcement` (logged only); anything else is `irrelevant`.
 2. It processes at most one `queued` post per run, oldest first: download the audio, decode it to 16 kHz mono WAV, transcribe it with faster-whisper, write `[mm:ss] text` per segment, delete the audio.
 3. It stores the transcript in Orion (`orion doc add ... --kind machine_transcript`) and checks that Orion's sha256 equals its own.
-4. It starts the analyst: `orion agent run <asset> --type disclosure --doc <id> --out <ORION_HOME>/signals.jsonl --json`. The tick never starts a `disclosure` run; only the watcher (or you, by hand) does.
+4. It starts the analyst: `orion agent run <asset> --type disclosure --doc <id> --out <ORION_HOME>/signals.jsonl --json`. Since Phase 1 (2026-10-28) Orion accepts and ignores `--out` (no run writes a signal) and a disclosure run needs no assumption set; the watcher still passes `--out` until its cleanup (open item in `docs/superpowers/notes/2026-10-28-orion-phase1-followups.md`). The tick never starts a `disclosure` run; only the watcher (or you, by hand) does.
 5. The post-run step appends each new dev finding to the dev queue (deduped by fingerprint) and prints a digest, which is the Slack message.
 
 Scan days: daily from the day after a quarter ends to quarter end plus `after_quarter_end_days` (35 for LIT); outside that window, Mondays only. On a day that is not a scan day the script exits 0 and prints nothing.
@@ -66,7 +66,7 @@ node dist/cli/index.js doc add <asset> --url <post url> --file <txt> --kind mach
   --meta duration_s=... --meta transcribed_at=... --json
 node dist/cli/index.js agent run <asset> --type disclosure --doc <doc_id> --out <ORION_HOME>/signals.jsonl --json   # a dry run: --dry-run, no --out
 node dist/cli/index.js agent runs show <run_id> --json                                # estimated_cost_usd for the digest
-node dist/cli/index.js inbox <asset> --json                                           # proposal effects (numbers only)
+node dist/cli/index.js inbox <asset> --json                                           # the filed proposals' kinds (effect is null since Phase 1)
 ```
 
 - A `doc add` whose returned sha256 differs from the script's own marks the post `failed`. The script writes the transcript in the form Orion stores (no BOM, LF line ends, one trailing newline), so the two agree.
@@ -79,7 +79,7 @@ orion doc add <asset> --url <source url> --file <path> --kind <kind> [--publishe
                       [--source-id <platform:id>] [--meta <key=value>]... [--json]
 orion doc list [asset] [--json]                 # a re-transcription of the same URL is a new row; the older one shows superseded_by_newer
 orion doc show <id> [--text] [--json]           # metadata and the kind's label; --text adds the stored text
-orion agent run <asset> --type disclosure --doc <id> [--dry-run] [--out <ORION_HOME>/signals.jsonl] [--json]
+orion agent run <asset> --type disclosure --doc <id> [--dry-run] [--out <file>, accepted and ignored] [--json]
 orion agent runs show <id>                      # outcome, dev findings with their citation labels, estimated cost
 ```
 
@@ -92,7 +92,7 @@ The digest is stdout, so it is the Slack message (#orion-ops):
 ```
 ORION DISCLOSURE lit | LIT investor update 2026Q3 | posted 2026-10-22 | doc #<id> machine transcript, 41.5 min | <post url>
 analyst disclosure run #<n> completed | <requests> requests, <input>k input | est $<cost>
-proposals: #<id> config (12m target 0.37 -> 0.37) | decide from the next orion-lit DECISIONS block
+proposals: #<id> config (no target effect) | decide from the next orion-lit DECISIONS block
 dev findings (2, added to dev-queue-revenue.md): [holder_flow] <title> | [revenue] <title>
 catalysts: 2026-11-01..2027-05-29 <event> | by 2026-12-31 <event> | by 2026-12-31 <event>
 ```

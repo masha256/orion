@@ -33,7 +33,7 @@ metrics:
       - { tolerance_pct: 2, source: { type: http_json, url: "https://lite-api.jup.ag/price/v3?ids=pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn", path: pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn.usdPrice } }
 
   # The mint's supply: 827.64B on 2026-10-16 (1T at launch; 172.4B burned). Team and investor tokens stay inside
-  # (effective_total, as for every Orion asset). CoinGecko's total tracks the burns (827.67B), so 2 percent.
+  # (total_supply, the FDV basis on every Orion asset). CoinGecko's total tracks the burns (827.67B), so 2 percent.
   total_supply:
     type: level
     unit: tokens

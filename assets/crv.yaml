@@ -44,7 +44,7 @@ metrics:
     cross_checks:
       - { tolerance_pct: 2, source: { type: coingecko, id: curve-dao-token, field: total_supply } }
 
-  # CoinGecko's own definition; informational under effective_total.
+  # CoinGecko's own definition; display only, the report's market cap basis (FDV uses total_supply).
   circulating_supply:
     type: level
     unit: tokens
@@ -94,8 +94,8 @@ metrics:
 
   # The revenue-funded flow to lockers, read on chain: crvUSD into the FeeDistributor from the FeeAllocator, weekly on
   # Wednesdays (six of seven days are zero). DefiLlama's holders revenue adds third-party bribes and runs about 3x this,
-  # so it is not a cross-check; bribes are valued separately (vote_incentive_run_rate_usd, the vote_incentives module).
-  # Staleness 10 so one missed Wednesday does not grade the signal D.
+  # so it is not a cross-check; bribes are reported separately (vote_incentive_run_rate_usd, reporting.extra_cash).
+  # Staleness 10 allows one missed Wednesday (staleness_days is unread since Phase 1; Phase 2 decides its future).
   flow_usd.fees:
     type: flow
     unit: usd

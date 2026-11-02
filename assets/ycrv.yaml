@@ -11,7 +11,7 @@
 # The holder flow is the last hop: yvcrvUSD-2 shares into the distributor from the Receiver, converted to crvUSD at the
 # vault's pricePerShare at the end of each day and priced as crvUSD. 91 days to 2026-10-09: 329,347 shares, about
 # 381,700 crvUSD, about 1.53M USD a year to 63.3M staked yCRV. About 74 percent of it is vote incentives, which shrink
-# with CRV emissions; that is the main open question for the growth assumptions, not a separate component.
+# with CRV emissions; that is the main open question for this flow's growth, not a separate component.
 id: ycrv
 symbol: yCRV
 name: Yearn CRV (staked in YearnBoostedStaker)
