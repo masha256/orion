@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { openDb, type Db } from '../../src/db/connection.js';
+import type { Db } from '../../src/db/connection.js';
 import { emptySourceOutcome, insertFetchRun, listFetchRuns, recentSourceStatuses, type SourceStatus } from '../../src/db/fetchRuns.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 let db: Db;
 beforeEach(() => {
-  db = openDb(':memory:');
+  db = testDb();
 });
 
 async function run(at: string, sources: [string, SourceStatus][], assetId = 'mini'): Promise<number> {

@@ -7,6 +7,9 @@ import type { TransferLog } from '../../src/ingest/transport/rpc.js';
 import { callKey } from '../helpers/fakeRpc.js';
 import { CG_CHART, harness, hourlyPrices } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML, POOL, STAKING } from '../helpers/ingestAsset.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const E18 = 10n ** 18n;
 const ms = (iso: string) => Date.parse(iso);
@@ -20,13 +23,13 @@ function world(pps: bigint | Error) {
   const yaml = INGEST_ASSET_YAML.replace(PLAIN, SHARES);
   expect(yaml).not.toBe(INGEST_ASSET_YAML);
   const loaded = parseAssetYaml(yaml);
-  const probe = harness({ loaded });
+  const probe = harness(testDb(), { loaded });
   const at = (iso: string) => probe.rpc.blockAtOrAfter(ms(iso) / 1000);
   const logs: Omit<TransferLog, 'timestamp'>[] = [
     { blockNumber: at('2026-09-16T10:00:00Z'), logIndex: 0, txHash: '0xa', from: POOL, value: 2n * E18 },
     { blockNumber: at('2026-09-17T10:00:00Z'), logIndex: 0, txHash: '0xb', from: POOL, value: 4n * E18 },
   ];
-  return harness({
+  return harness(testDb(), {
     loaded,
     logs,
     routes: { [CG_CHART]: hourlyPrices('2026-09-10T00:00:00Z', '2026-09-19T12:00:00Z', () => 10) },

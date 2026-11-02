@@ -7,6 +7,9 @@ import { buildPlan } from '../../src/ingest/plan.js';
 import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.js';
 import { CG_CHART, harness, hourlyPrices, NOW, type Harness } from '../helpers/fetchHarness.js';
 import { POOL, SAFE } from '../helpers/ingestAsset.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const STRANGER = '0x9999999999999999999999999999999999999999';
 const E18 = 10n ** 18n;
@@ -15,8 +18,8 @@ const ms = (iso: string) => Date.parse(iso);
 /** Price 10 until 2026-09-17T00:00Z, 20 from then on. */
 const stepPrices = () => hourlyPrices('2026-09-10T00:00:00Z', '2026-09-19T12:00:00Z', (t) => (t < ms('2026-09-17T00:00:00Z') ? 10 : 20));
 
-function world(over: Parameters<typeof harness>[0] = {}): Harness & { logs: Omit<TransferLog, 'timestamp'>[] } {
-  const probe = harness();
+function world({ db = testDb(), ...over }: Parameters<typeof harness>[1] & { db?: Db } = {}): Harness & { logs: Omit<TransferLog, 'timestamp'>[] } {
+  const probe = harness(testDb());
   const at = (iso: string) => probe.rpc.blockAtOrAfter(ms(iso) / 1000);
   let n = 0;
   const log = (iso: string, from: string, tokens: bigint): Omit<TransferLog, 'timestamp'> => ({
@@ -29,7 +32,7 @@ function world(over: Parameters<typeof harness>[0] = {}): Harness & { logs: Omit
     log('2026-09-17T12:00:00Z', STRANGER, 5n),
     log('2026-09-19T01:00:00Z', POOL, 7n), // the 19th is not complete at NOW
   ];
-  return { ...harness({ routes: { [CG_CHART]: stepPrices() }, logs, ...over }), logs };
+  return { ...harness(db, { routes: { [CG_CHART]: stepPrices() }, logs, ...over }), logs };
 }
 
 function argsFor(h: Harness, over: Partial<FlowScanArgs> = {}): Promise<FlowScanArgs> {

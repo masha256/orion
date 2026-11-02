@@ -7,6 +7,9 @@ import { fetchAsset, type FetchResult } from '../../src/ingest/run.js';
 import type { ReceiptLog, TransferLog } from '../../src/ingest/transport/rpc.js';
 import { GENESIS_TS, harness } from '../helpers/fetchHarness.js';
 import { SINK, INGEST_ASSET_YAML, POOL, SAFE, TOKEN } from '../helpers/ingestAsset.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const E18 = 10n ** 18n;
 const FORWARDER = '0x7777777777777777777777777777777777777777';
@@ -50,7 +53,7 @@ describe('cloneImplementation (EIP-1167)', () => {
 
 describe('transfer_flow ignore rules', () => {
   it('rule 1: a zero-amount transfer from an unlisted sender is not reported', async () => {
-    const h = harness({ loaded: parseAssetYaml(INGEST_ASSET_YAML), logs: [log(STRANGER, 0n, 0), log(POOL, 2n * E18, 1)] });
+    const h = harness(testDb(), { loaded: parseAssetYaml(INGEST_ASSET_YAML), logs: [log(STRANGER, 0n, 0), log(POOL, 2n * E18, 1)] });
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     expect(scan(r).unlistedTransfers).toEqual([]);
     expect(r.anomalies.filter((a) => a.kind === 'unlisted_sender')).toEqual([]);
@@ -59,14 +62,14 @@ describe('transfer_flow ignore rules', () => {
   });
 
   it('rule 1 does not hide a non-zero transfer from the same stranger', async () => {
-    const h = harness({ loaded: parseAssetYaml(INGEST_ASSET_YAML), logs: [log(STRANGER, 0n, 0), log(STRANGER, 1n, 1)] });
+    const h = harness(testDb(), { loaded: parseAssetYaml(INGEST_ASSET_YAML), logs: [log(STRANGER, 0n, 0), log(STRANGER, 1n, 1)] });
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     expect(scan(r).unlistedTransfers.map((t) => t.txHash)).toEqual(['0x1']);
   });
 
   it('rule 2: a from_ignore sender is neither counted nor reported; a stranger still is', async () => {
     const logs = [log(FORWARDER, 5n * E18, 0), log(POOL, 2n * E18, 1), log(STRANGER, 1n * E18, 2)];
-    const h = harness({ loaded: parseAssetYaml(withIgnore({ ignore: ['forwarder'] })), logs });
+    const h = harness(testDb(), { loaded: parseAssetYaml(withIgnore({ ignore: ['forwarder'] })), logs });
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     expect(scan(r).unlistedTransfers.map((t) => t.from)).toEqual([STRANGER]);
     expect(scan(r).notes).toContain('not counted, as configured: 1 from from_ignore senders');
@@ -75,7 +78,7 @@ describe('transfer_flow ignore rules', () => {
 
   it('rule 3: clones of an ignored implementation are neither counted nor reported; other clones are', async () => {
     const logs = [log(SIDECAR, 5n * E18, 0), log(SIDECAR, 1n * E18, 1), log(OTHER_CLONE, 1n * E18, 2), log(POOL, 2n * E18, 3)];
-    const h = harness({
+    const h = harness(testDb(), {
       loaded: parseAssetYaml(withIgnore({ clones: ['sidecar_impl'] })),
       logs,
       code: { [SIDECAR]: clone(IMPL, 'abcd'), [OTHER_CLONE]: clone(OTHER_IMPL) },
@@ -91,13 +94,14 @@ describe('transfer_flow ignore rules', () => {
     // CAKE, 2026-09-09: a lookalike of dead (0x0000c35b…dead) sent 6e-6 CAKE to the burner.
     const POISON = '0x0000c35b2ca02a14a01af31b070e88d8bc10dead';
     const logs = [log(POISON, 6_010_000_000_000n, 0), log(POOL, 2n * E18, 1), log(STRANGER, 3n * E18, 2), log(SAFE, E18 / 2n, 3)];
-    const h = harness({ loaded: parseAssetYaml(withIgnore({ dust: 1 })), logs });
+    const h = harness(testDb(), { loaded: parseAssetYaml(withIgnore({ dust: 1 })), logs });
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     expect(scan(r).unlistedTransfers.map((t) => t.from)).toEqual([STRANGER]);
     expect(scan(r).notes).toContain('not counted, as configured: 1 dust (below 1 tokens)');
     // A listed sender is counted whatever its size: the floor applies to strangers only (the SAFE's half token counts).
     expect(fees(r)).toEqual([0, 25, 0]);
-    const without = harness({ loaded: parseAssetYaml(INGEST_ASSET_YAML), logs });
+    await testDb.reset(); // the run without the lists starts from an empty database, as the first did
+    const without = harness(testDb(), { loaded: parseAssetYaml(INGEST_ASSET_YAML), logs });
     const r0 = await fetchAsset(without.db, without.loaded, without.deps.now(), without.deps);
     expect(scan(r0).unlistedTransfers.map((t) => t.from).sort()).toEqual([POISON, STRANGER].sort());
   });
@@ -105,7 +109,8 @@ describe('transfer_flow ignore rules', () => {
   it('no rule changes a stored value: the same logs give the same rows with and without the lists', async () => {
     const logs = [log(FORWARDER, 5n * E18, 0), log(SIDECAR, 3n * E18, 1), log(POOL, 2n * E18, 2), log(SAFE, 4n * E18, 3), log(STRANGER, 0n, 4)];
     const rows = async (yaml: string) => {
-      const h = harness({ loaded: parseAssetYaml(yaml), logs, code: { [SIDECAR]: clone(IMPL) } });
+      await testDb.reset(); // each run starts from an empty database
+      const h = harness(testDb(), { loaded: parseAssetYaml(yaml), logs, code: { [SIDECAR]: clone(IMPL) } });
       await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
       const out = [];
       for (const k of ['flow_usd.fees', 'flow_tokens.fees', 'flow_usd.fees_programmatic']) out.push((await listActiveObservations(h.db, 'mini', k)).map((o) => [o.observedAt, o.value]));
@@ -158,7 +163,7 @@ describe('mint_sender: erc4626_deposit', () => {
 
   it('a mint whose depositor is on from_ignore is neither counted nor reported', async () => {
     const tx = '0xm1';
-    const h = harness({
+    const h = harness(testDb(), {
       loaded: parseAssetYaml(withMint({ ignore: ['converter'], mint: true })),
       logs: [mint(3n * E18, tx, 1), log(POOL, 2n * E18, 5)],
       receipts: { [tx]: [deposit(TOKEN, CONVERTER, SINK, 3n * E18, 2)] },
@@ -170,20 +175,20 @@ describe('mint_sender: erc4626_deposit', () => {
   });
 
   it('a mint with no matching Deposit stays 0x0 and is reported', async () => {
-    const h = harness({ loaded: parseAssetYaml(withMint({ ignore: ['converter'], mint: true })), logs: [mint(3n * E18, '0xm2', 1)], receipts: {} });
+    const h = harness(testDb(), { loaded: parseAssetYaml(withMint({ ignore: ['converter'], mint: true })), logs: [mint(3n * E18, '0xm2', 1)], receipts: {} });
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     expect(scan(r).unlistedTransfers.map((t) => t.from)).toEqual([ZERO]);
   });
 
   it('a mint attributed to an unlisted depositor is reported under the depositor', async () => {
     const tx = '0xm3';
-    const h = harness({ loaded: parseAssetYaml(withMint({ mint: true })), logs: [mint(3n * E18, tx, 1)], receipts: { [tx]: [deposit(TOKEN, KEEPER, SINK, 3n * E18, 2)] } });
+    const h = harness(testDb(), { loaded: parseAssetYaml(withMint({ mint: true })), logs: [mint(3n * E18, tx, 1)], receipts: { [tx]: [deposit(TOKEN, KEEPER, SINK, 3n * E18, 2)] } });
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     expect(scan(r).unlistedTransfers.map((t) => t.from)).toEqual([KEEPER]);
   });
 
   it('without mint_sender, no receipt is read and a mint stays 0x0', async () => {
-    const h = harness({ loaded: parseAssetYaml(withMint({ ignore: ['converter'] })), logs: [mint(3n * E18, '0xm4', 1)] });
+    const h = harness(testDb(), { loaded: parseAssetYaml(withMint({ ignore: ['converter'] })), logs: [mint(3n * E18, '0xm4', 1)] });
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     expect(h.rpc.stats.receipts).toBe(0);
     expect(scan(r).unlistedTransfers.map((t) => t.from)).toEqual([ZERO]);
@@ -203,7 +208,7 @@ describe('transfer_flow from_any', () => {
   it('counts every sender but the ignored ones, reports none as unlisted, and keeps per-sender totals by address', async () => {
     const logs = [log(FORWARDER, 5n * E18, 0), log(POOL, 2n * E18, 1), log(STRANGER, 1n * E18, 2)];
     const loaded = parseAssetYaml(withAnySender(['forwarder']));
-    const h = harness({ loaded, logs });
+    const h = harness(testDb(), { loaded, logs });
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     expect(scan(r).sourceId).toBe('transfer_flow:token>burn_sink[*]');
     expect(scan(r).unlistedTransfers).toEqual([]);

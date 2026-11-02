@@ -7,6 +7,9 @@ import type { TransferLog } from '../../src/ingest/transport/rpc.js';
 import { fakeRpc } from '../helpers/fakeRpc.js';
 import { CG_CHART, defaultCalls, GENESIS_TS, harness, hourlyPrices, LLAMA } from '../helpers/fetchHarness.js';
 import { POOL } from '../helpers/ingestAsset.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const FLOW_ID = 'transfer_flow:token>burn_sink[pool,safe]';
 const LLAMA_ID = 'defillama:mini:dailyHoldersRevenue';
@@ -20,7 +23,7 @@ const log = (iso: string, from: string, tokens: bigint, i: number): Omit<Transfe
 
 describe('fetchAsset: flows', () => {
   it('scans each flow group once and reports it as its own source', async () => {
-    const h = harness({ logs: [log('2026-09-17T12:00:00Z', POOL, 4n, 0)] });
+    const h = harness(testDb(), { logs: [log('2026-09-17T12:00:00Z', POOL, 4n, 0)] });
     const lines: string[] = [];
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps, { onProgress: (l) => lines.push(l) });
     expect(source(r, FLOW_ID)).toMatchObject({ status: 'ok', metricsWritten: ['flow_usd.fees', 'flow_tokens.fees', 'flow_usd.fees_programmatic'] });
@@ -31,7 +34,7 @@ describe('fetchAsset: flows', () => {
   });
 
   it('raises one degrading unlisted_sender anomaly per sender, on the critical metric only', async () => {
-    const h = harness({ logs: [log('2026-09-17T12:00:00Z', STRANGER, 5n, 0), log('2026-09-18T12:00:00Z', STRANGER, 6n, 1)] });
+    const h = harness(testDb(), { logs: [log('2026-09-17T12:00:00Z', STRANGER, 5n, 0), log('2026-09-18T12:00:00Z', STRANGER, 6n, 1)] });
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     expect(r.anomalies).toHaveLength(1);
     expect(r.anomalies[0]).toMatchObject({ kind: 'unlisted_sender', metricKey: 'flow_usd.fees', dedupeKey: STRANGER, severity: 'degrading' });
@@ -41,7 +44,7 @@ describe('fetchAsset: flows', () => {
   });
 
   it('forces a re-scan when --backfill-days is given, and resumes from the cursor otherwise', async () => {
-    const h = harness();
+    const h = harness(testDb());
     await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     const scanned = h.rpc.stats.logRanges.length;
     await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
@@ -52,7 +55,7 @@ describe('fetchAsset: flows', () => {
   });
 
   it('passes --adopt and --dry-run through to the scan', async () => {
-    const h = harness();
+    const h = harness(testDb());
     await insertObservation(h.db, { assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-18', periodDays: 30, value: 5000, source: 'manual', fetchedAt: '2026-09-18T00:00:00Z' });
     const refused = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     expect(source(refused, FLOW_ID).status).toBe('skipped');
@@ -66,7 +69,7 @@ describe('fetchAsset: flows', () => {
   });
 
   it('a --metric narrowed to one member of a shared scan still advances the cursor for the whole group', async () => {
-    const h = harness({ logs: [log('2026-09-17T12:00:00Z', POOL, 4n, 0)] });
+    const h = harness(testDb(), { logs: [log('2026-09-17T12:00:00Z', POOL, 4n, 0)] });
     const narrowed = ['flow_usd.fees', 'flow_tokens.fees', 'flow_usd.fees_programmatic'];
     const first = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps, { metrics: ['flow_tokens.fees'] });
     expect(new Set(first.written.filter((w) => w.periodDays === 1).map((w) => w.metricKey))).toEqual(new Set(narrowed));
@@ -77,7 +80,7 @@ describe('fetchAsset: flows', () => {
   });
 
   it('fails the flow group when the latest block cannot be read', async () => {
-    const h = harness();
+    const h = harness(testDb());
     h.rpc.latestBlock = async () => {
       throw new Error('connection refused');
     };
@@ -91,7 +94,7 @@ describe('fetchAsset: flows', () => {
 
     /** Sixty more days of chain history than the default harness, with 10 tokens (100 USD) burned at noon on every day of August. */
     const longHarness = (llamaPerDay: number) => {
-      const h = harness({
+      const h = harness(testDb(), {
         routes: {
           [LLAMA]: { totalDataChart: [...august(llamaPerDay), [Date.parse('2026-09-01') / 1000, 1]] },
           [CG_CHART]: hourlyPrices('2026-07-01T00:00:00Z', '2026-09-19T12:00:00Z', () => 10),
@@ -126,7 +129,7 @@ describe('fetchAsset: flows', () => {
   });
 
   it('notes when no month is covered by both series yet', async () => {
-    const h = harness();
+    const h = harness(testDb());
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     expect(source(r, LLAMA_ID)).toMatchObject({ status: 'ok', crossChecks: [] });
     expect(source(r, LLAMA_ID).notes).toEqual(['flow_usd.fees: no calendar month is fully covered by both series yet']);

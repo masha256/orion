@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { openDb, type Db } from '../../src/db/connection.js';
+import type { Db } from '../../src/db/connection.js';
 import { advanceCursor, getCursor } from '../../src/db/fetchCursors.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 let db: Db;
 beforeEach(() => {
-  db = openDb(':memory:');
+  db = testDb();
 });
 
 describe('fetch cursors', () => {

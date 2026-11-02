@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { openDb, type Db } from '../../src/db/connection.js';
+import type { Db } from '../../src/db/connection.js';
 import {
   confirmObservation,
   getObservationsByIds,
@@ -7,11 +7,14 @@ import {
   listActiveObservations,
   rejectObservation,
 } from '../../src/db/observations.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const base = { assetId: 'mini', metricKey: 'price_usd', source: 'manual' as const, fetchedAt: '2026-06-30T00:00:00Z' };
 let db: Db;
 beforeEach(() => {
-  db = openDb(':memory:');
+  db = testDb();
 });
 
 describe('observations', () => {

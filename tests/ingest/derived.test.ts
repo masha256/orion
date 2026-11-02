@@ -11,6 +11,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { harness, NOW } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const days = (first: string, values: number[]) => new Map(values.map((v, i) => [addDays(first, i), v] as const));
 const iso = (day: string) => `${day}T00:00:00.000Z`;
@@ -57,7 +60,7 @@ describe('fetchAsset: a revenue run rate derived from an API-series flow', () =>
   );
 
   it('writes the run rate at each day with a full window, with the api provenance of its input', async () => {
-    const h = harness({ loaded: parseAssetYaml(yaml), routes: { [LLAMA_HYPE]: chart({ '2026-09-14': 100, '2026-09-15': 110, '2026-09-16': 120, '2026-09-17': 130, '2026-09-18': 140 }) } });
+    const h = harness(testDb(), { loaded: parseAssetYaml(yaml), routes: { [LLAMA_HYPE]: chart({ '2026-09-14': 100, '2026-09-15': 110, '2026-09-16': 120, '2026-09-17': 130, '2026-09-18': 140 }) } });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     const rows = await listActiveObservations(h.db, 'hype', 'revenue_run_rate_usd');
     expect(rows.map((o) => [o.observedAt.slice(0, 10), o.value])).toEqual([['2026-09-17', (330 * 365) / 3], ['2026-09-18', (360 * 365) / 3], ['2026-09-19', (390 * 365) / 3]]);
@@ -68,7 +71,7 @@ describe('fetchAsset: a revenue run rate derived from an API-series flow', () =>
   });
 
   it('reads a manual daily row that replaced a fetched day outside the revision window, so the window stays complete and the run rate moves', async () => {
-    const h = harness({ loaded: parseAssetYaml(yaml), routes: { [LLAMA_HYPE]: chart({ '2026-09-11': 100, '2026-09-12': 110, '2026-09-13': 9000, '2026-09-14': 130, '2026-09-15': 140, '2026-09-16': 150, '2026-09-17': 160, '2026-09-18': 170 }) } });
+    const h = harness(testDb(), { loaded: parseAssetYaml(yaml), routes: { [LLAMA_HYPE]: chart({ '2026-09-11': 100, '2026-09-12': 110, '2026-09-13': 9000, '2026-09-14': 130, '2026-09-15': 140, '2026-09-16': 150, '2026-09-17': 160, '2026-09-18': 170 }) } });
     await fetchAsset(h.db, h.loaded, NOW, h.deps);
     const at = (rows: Awaited<ReturnType<typeof listActiveObservations>>, day: string) => rows.find((o) => o.observedAt.startsWith(day))!.value;
     expect(at(await listActiveObservations(h.db, 'hype', 'revenue_run_rate_usd'), '2026-09-14')).toBe((9210 * 365) / 3);
@@ -139,12 +142,12 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
   it('validates derived names and params as configuration', async () => {
     const codeOf = async (fn: () => unknown) => Promise.resolve().then(fn).then(() => undefined, (e: unknown) => (e as OrionError).code);
     expect(await codeOf(() => buildPlan(parseAssetYaml(WITH_INDEX.replace('name: burn_momentum', 'name: nope')).config))).toBe('unknown_derived');
-    const h = harness({ loaded: parseAssetYaml(WITH_INDEX.replace('metric: flow_usd.fees_programmatic', 'metric: price_usd')) });
+    const h = harness(testDb(), { loaded: parseAssetYaml(WITH_INDEX.replace('metric: flow_usd.fees_programmatic', 'metric: price_usd')) });
     expect(await codeOf(() => fetchAsset(h.db, h.loaded, NOW, h.deps))).toBe('invalid_source_config');
   });
 
   it('writes the index for every day with a full window and no index row yet, stamped at the period end', async () => {
-    const h = harness({ loaded: parseAssetYaml(WITH_INDEX) });
+    const h = harness(testDb(), { loaded: parseAssetYaml(WITH_INDEX) });
     await seedDaily(h.db, '2026-09-10', [30, 60, 90, 120, 150, 180]); // days 10..15; the scan then adds zeros for 16, 17, 18
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     const index = await listActiveObservations(h.db, 'mini', 'usage_index');
@@ -161,7 +164,7 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
   });
 
   it('rewrites an index day whose window changed after a rescan, leaving days it does not cover untouched', async () => {
-    const h = harness({ loaded: parseAssetYaml(WITH_INDEX) });
+    const h = harness(testDb(), { loaded: parseAssetYaml(WITH_INDEX) });
     await seedDaily(h.db, '2026-09-10', [30, 60, 90, 120, 150, 180]); // days 10..15; the scan then adds zeros for 16, 17, 18
     await fetchAsset(h.db, h.loaded, NOW, h.deps);
     const before = await listActiveObservations(h.db, 'mini', 'usage_index');
@@ -192,7 +195,7 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
   });
 
   it('raises the advisory alert when usage has moved since the revenue disclosure, once per disclosure', async () => {
-    const h = harness({ loaded: parseAssetYaml(WITH_INDEX) });
+    const h = harness(testDb(), { loaded: parseAssetYaml(WITH_INDEX) });
     await seedDaily(h.db, '2026-09-10', [100, 100, 100, 100, 100, 100]);
     await insertObservation(h.db, {
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-14', value: 1000, source: 'manual', status: 'provisional',
@@ -206,7 +209,7 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
   });
 
   it('evaluates a dry run over the rows it would write, and writes none', async () => {
-    const h = harness({ loaded: parseAssetYaml(WITH_INDEX) });
+    const h = harness(testDb(), { loaded: parseAssetYaml(WITH_INDEX) });
     await seedDaily(h.db, '2026-09-10', [100, 100, 100, 100, 100, 100]);
     await insertObservation(h.db, { assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-14', value: 1000, source: 'manual', fetchedAt: NOW.toISOString() });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps, { dryRun: true });
@@ -228,7 +231,7 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
 
     it('sums the flows day by day, over days every flow has, and names them all in the detail', async () => {
       expect(SUMMED).not.toBe(INGEST_ASSET_YAML);
-      const h = harness({ loaded: parseAssetYaml(SUMMED) });
+      const h = harness(testDb(), { loaded: parseAssetYaml(SUMMED) });
       await seed(h.db, 'flow_usd.fees', '2026-09-10', [10, 20, 30, 40]); // 10..13
       await seed(h.db, 'flow_usd.fees_programmatic', '2026-09-11', [1, 2, 3, 4]); // 11..14: day 10 has only one flow
       await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['revenue_run_rate_usd'] });
@@ -241,7 +244,7 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
     it('subtracts the minus flows day by day (a net rate, which can be negative), over days every flow has', async () => {
       const NET = SUMMED.replace('metrics: [flow_usd.fees, flow_usd.fees_programmatic]', 'metric: flow_usd.fees, minus: [flow_usd.fees_programmatic]');
       expect(NET).not.toBe(SUMMED);
-      const h = harness({ loaded: parseAssetYaml(NET) });
+      const h = harness(testDb(), { loaded: parseAssetYaml(NET) });
       await seed(h.db, 'flow_usd.fees', '2026-09-10', [10, 20, 30, 40]); // 10..13
       await seed(h.db, 'flow_usd.fees_programmatic', '2026-09-11', [1, 2, 300, 4]); // 11..14: day 10 has no minus row
       await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['revenue_run_rate_usd'] });
@@ -253,7 +256,7 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
 
     it('refuses a bad minus list as configuration', async () => {
       const codeOf = async (yaml: string) => {
-        const h = harness({ loaded: parseAssetYaml(yaml) });
+        const h = harness(testDb(), { loaded: parseAssetYaml(yaml) });
         return fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['revenue_run_rate_usd'] }).then(() => undefined, (e: unknown) => (e as OrionError).code);
       };
       const NET = (minus: string) => SUMMED.replace('metrics: [flow_usd.fees, flow_usd.fees_programmatic]', `metric: flow_usd.fees, minus: ${minus}`);
@@ -265,7 +268,7 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
 
     it('refuses a bad list as configuration', async () => {
       const codeOf = async (yaml: string) => {
-        const h = harness({ loaded: parseAssetYaml(yaml) });
+        const h = harness(testDb(), { loaded: parseAssetYaml(yaml) });
         return fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['revenue_run_rate_usd'] }).then(() => undefined, (e: unknown) => (e as OrionError).code);
       };
       expect(await codeOf(SUMMED.replace('metrics: [flow_usd.fees, flow_usd.fees_programmatic]', 'metrics: [flow_usd.fees]'))).toBe('invalid_source_config');
@@ -276,7 +279,7 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
   });
 
   it('does nothing for an asset without a usage_index metric', async () => {
-    const h = harness();
+    const h = harness(testDb());
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     expect(r.sources.some((s) => s.sourceId.startsWith('derived:'))).toBe(false);
     expect(r.anomalies).toEqual([]);

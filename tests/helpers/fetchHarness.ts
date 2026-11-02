@@ -1,5 +1,5 @@
 import type { LoadedAsset } from '../../src/config/load.js';
-import { openDb, type Db } from '../../src/db/connection.js';
+import type { Db } from '../../src/db/connection.js';
 import type { FetchDeps } from '../../src/ingest/run.js';
 import type { ReceiptLog, TransferLog } from '../../src/ingest/transport/rpc.js';
 import { fakeHttp, type FakeHttp, type Route } from './fakeHttp.js';
@@ -54,9 +54,10 @@ export interface Harness {
   rpc: FakeRpc;
 }
 
+/** The fetch world on `db` (the test's database: see tests/helpers/db.ts). */
 export function harness(
+  db: Db,
   over: {
-    db?: Db;
     loaded?: LoadedAsset;
     routes?: Record<string, Route>;
     calls?: Record<string, bigint | Error>;
@@ -88,5 +89,5 @@ export function harness(
     sleep: async () => undefined,
     now: () => new Date(now.getTime() + 5000),
   };
-  return { db: over.db ?? openDb(':memory:'), loaded: over.loaded ?? ingestAsset(), deps, http, rpc };
+  return { db, loaded: over.loaded ?? ingestAsset(), deps, http, rpc };
 }

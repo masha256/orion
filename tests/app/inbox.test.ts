@@ -5,17 +5,19 @@ import { buildInbox, emptyInbox, inboxLines, InboxSchema, readingOf, type Inbox 
 import { parseAssetYaml } from '../../src/config/load.js';
 import { startAgentRun } from '../../src/db/agentRuns.js';
 import { decideAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
-import { openDb } from '../../src/db/connection.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { insertProposal } from '../../src/db/proposals.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const T = '2026-09-20T00:00:00.000Z';
 const MISMATCH = { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey: 'http_json:x', severity: 'degrading' } as const;
 
 /** Two provisional rows (one researched, one typed), two pending proposals, and one anomaly in each status. */
 async function world() {
-  const db = openDb(':memory:');
+  const db = testDb();
   const asset = parseAssetYaml(MINI_ASSET_YAML).config;
   const runId = await startAgentRun(db, { assetId: 'mini', persona: 'analyst', runType: 'weekly', trigger: 'manual', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: T });
   await insertObservation(db, { assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-15', value: 1000, source: 'manual', fetchedAt: T });

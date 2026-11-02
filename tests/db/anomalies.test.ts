@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { decideAnomaly, getAnomaly, listAnomalies, listOpenAnomalies, raiseAnomaly, type RaiseAnomalyInput } from '../../src/db/anomalies.js';
-import { openDb, type Db } from '../../src/db/connection.js';
+import type { Db } from '../../src/db/connection.js';
 import type { OrionError } from '../../src/types.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 let db: Db;
 beforeEach(() => {
-  db = openDb(':memory:');
+  db = testDb();
 });
 
 const mismatch = (over: Partial<RaiseAnomalyInput> = {}): RaiseAnomalyInput => ({

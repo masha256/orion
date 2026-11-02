@@ -9,13 +9,16 @@ import type { OrionError } from '../../src/types.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
 import { CG_MARKETS, GENESIS_TS, harness, LATEST, NOW, STATS } from '../helpers/fetchHarness.js';
 import { ingestAsset as ingestAssetLoaded, INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const source = (r: FetchResult, id: string) => {
   const s = r.sources.find((x) => x.sourceId === id);
   if (!s) throw new Error(`no source outcome for ${id}; have ${r.sources.map((x) => x.sourceId).join(', ')}`);
   return s;
 };
-const count = (db: Db, table: string) => (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+const count = async (db: Db, table: string) => (await db.one<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`))!.n;
 const STATS_ID = `http_json:${STATS}`;
 
 describe('validateReading', () => {
@@ -52,7 +55,7 @@ describe('validateReading', () => {
 
 describe('fetchAsset: levels', () => {
   it('writes every primary with the source own timestamp, and logs the run', async () => {
-    const h = harness();
+    const h = harness(testDb());
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
 
     const obs = Object.fromEntries((await listActiveObservations(h.db, 'mini')).map((o) => [o.metricKey, o]));
@@ -82,13 +85,13 @@ describe('fetchAsset: levels', () => {
   });
 
   it('never stores a cross-check reading as an observation', async () => {
-    const h = harness();
+    const h = harness(testDb());
     await fetchAsset(h.db, h.loaded, NOW, h.deps);
     expect((await listActiveObservations(h.db, 'mini', 'price_usd')).map((o) => o.value)).toEqual([10]);
   });
 
   it('raises a degrading anomaly for a mismatch on a critical metric, and counts repeats', async () => {
-    const h = harness({ routes: { [STATS]: { price: 11, supply: { totalBaseUnit: (100n * 10n ** 18n).toString() } } } });
+    const h = harness(testDb(), { routes: { [STATS]: { price: 11, supply: { totalBaseUnit: (100n * 10n ** 18n).toString() } } } });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     expect(r.anomalies).toHaveLength(1);
     expect(r.anomalies[0]).toMatchObject({ kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey: STATS_ID, severity: 'degrading' });
@@ -102,7 +105,7 @@ describe('fetchAsset: levels', () => {
   });
 
   it('reports an acknowledged condition as still acknowledged, on a real run and on a dry run', async () => {
-    const h = harness({ routes: { [STATS]: { price: 11, supply: { totalBaseUnit: (100n * 10n ** 18n).toString() } } } });
+    const h = harness(testDb(), { routes: { [STATS]: { price: 11, supply: { totalBaseUnit: (100n * 10n ** 18n).toString() } } } });
     const first = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     expect(first.anomalies[0]).toMatchObject({ status: 'open' });
     await decideAnomaly(h.db, first.anomalies[0].id!, 'acknowledged', 'venice lags', NOW.toISOString());
@@ -116,12 +119,12 @@ describe('fetchAsset: levels', () => {
 
   it('raises an advisory anomaly when the metric is not critical', async () => {
     const loaded = parseAssetYaml(INGEST_ASSET_YAML.replace('    staleness_days: 3\n    critical: true\n', '    staleness_days: 3\n'));
-    const h = harness({ loaded, routes: { [STATS]: { price: 11, supply: { totalBaseUnit: (100n * 10n ** 18n).toString() } } } });
+    const h = harness(testDb(), { loaded, routes: { [STATS]: { price: 11, supply: { totalBaseUnit: (100n * 10n ** 18n).toString() } } } });
     expect((await fetchAsset(h.db, h.loaded, NOW, h.deps)).anomalies[0].severity).toBe('advisory');
   });
 
   it('lets one source fail without touching the others', async () => {
-    const h = harness({ routes: { [CG_MARKETS]: new Error('HTTP 429') } });
+    const h = harness(testDb(), { routes: { [CG_MARKETS]: new Error('HTTP 429') } });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     expect(source(r, 'coingecko')).toMatchObject({ status: 'failed', metricsWritten: [] });
     expect(source(r, 'coingecko').error).toMatch(/price_usd: HTTP 429/);
@@ -134,7 +137,7 @@ describe('fetchAsset: levels', () => {
   });
 
   it('treats an implausible reading as a source failure, never as an observation', async () => {
-    const h = harness({ routes: { [CG_MARKETS]: [{ id: 'mini-token', current_price: 0, circulating_supply: 60 }] } });
+    const h = harness(testDb(), { routes: { [CG_MARKETS]: [{ id: 'mini-token', current_price: 0, circulating_supply: 60 }] } });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     expect(source(r, 'coingecko')).toMatchObject({ status: 'failed', metricsWritten: ['circulating_supply'] });
     expect(source(r, 'coingecko').error).toMatch(/price_usd: 0 is not positive/);
@@ -142,7 +145,7 @@ describe('fetchAsset: levels', () => {
   });
 
   it('treats an implausible cross-check reading as a source failure, not as a mismatch', async () => {
-    const h = harness({ routes: { [STATS]: { price: '0', supply: { totalBaseUnit: (100n * 10n ** 18n).toString() } } } });
+    const h = harness(testDb(), { routes: { [STATS]: { price: '0', supply: { totalBaseUnit: (100n * 10n ** 18n).toString() } } } });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     expect(source(r, STATS_ID).status).toBe('failed');
     expect(source(r, STATS_ID).error).toMatch(/price_usd: 0 is not positive/);
@@ -150,7 +153,7 @@ describe('fetchAsset: levels', () => {
   });
 
   it('fails every chain source, and only those, when the latest block cannot be read', async () => {
-    const h = harness();
+    const h = harness(testDb());
     h.rpc.latestBlock = async () => {
       throw new Error('connection refused');
     };
@@ -160,7 +163,7 @@ describe('fetchAsset: levels', () => {
   });
 
   it('raises an advisory streak anomaly on the third consecutive failure of one source', async () => {
-    const h = harness({ routes: { [CG_MARKETS]: new Error('HTTP 429') } });
+    const h = harness(testDb(), { routes: { [CG_MARKETS]: new Error('HTTP 429') } });
     for (const day of [0, 1]) expect((await fetchAsset(h.db, h.loaded, new Date(NOW.getTime() + day * 86_400_000), h.deps)).anomalies).toEqual([]);
     const third = await fetchAsset(h.db, h.loaded, new Date(NOW.getTime() + 2 * 86_400_000), h.deps);
     expect(third.anomalies).toHaveLength(1);
@@ -174,7 +177,7 @@ describe('fetchAsset: levels', () => {
       parseAssetYaml(yaml.replace('  revenue_run_rate_usd:', '  dominance_share: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: defillama_share, parent: "parent#mini", category: Dexs, overview: dexs, window: 30d } }\n  revenue_run_rate_usd:'));
     // The same world twice, once without the share metric: the share must change nothing but its own source's status.
     const runOnce = async (loaded: ReturnType<typeof parseAssetYaml>) => {
-      const h = harness({ loaded, routes: { [OVERVIEW]: new Error('HTTP 503') } });
+      const h = harness(testDb(), { loaded, routes: { [OVERVIEW]: new Error('HTTP 503') } });
       // The last good share read is 20 days old (past its 7-day staleness): the source has been failing since.
       if (loaded.config.metrics.dominance_share) {
         const old = new Date(NOW.getTime() - 20 * 86_400_000).toISOString();
@@ -198,16 +201,16 @@ describe('fetchAsset: levels', () => {
   });
 
   it('narrows to the requested metrics', async () => {
-    const h = harness();
+    const h = harness(testDb());
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['price_usd'] });
     expect(r.sources.map((s) => s.sourceId)).toEqual(['coingecko', STATS_ID]);
     expect(r.written.map((w) => w.metricKey)).toEqual(['price_usd']);
   });
 
   it('writes nothing at all on a dry run, and still reports what it would do', async () => {
-    const h = harness({ routes: { [STATS]: { price: 11, supply: { totalBaseUnit: (100n * 10n ** 18n).toString() } } } });
+    const h = harness(testDb(), { routes: { [STATS]: { price: 11, supply: { totalBaseUnit: (100n * 10n ** 18n).toString() } } } });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps, { dryRun: true });
-    for (const table of ['observations', 'fetch_runs', 'anomalies', 'fetch_cursors']) expect(count(h.db, table)).toBe(0);
+    for (const table of ['observations', 'fetch_runs', 'anomalies', 'fetch_cursors']) expect(await count(h.db, table)).toBe(0);
     expect(r.dryRun).toBe(true);
     expect(r.fetchRunId).toBeNull();
     expect(r.written.find((w) => w.metricKey === 'price_usd')).toMatchObject({ value: 10, observationId: null });
@@ -216,11 +219,11 @@ describe('fetchAsset: levels', () => {
 
   it('throws only for configuration errors', async () => {
     const codeOf = async (p: Promise<unknown>) => p.then(() => undefined, (e: unknown) => (e as OrionError).code);
-    const plain = harness({ loaded: parseAssetYaml(MINI_ASSET_YAML) });
+    const plain = harness(testDb(), { loaded: parseAssetYaml(MINI_ASSET_YAML) });
     expect(await codeOf(fetchAsset(plain.db, plain.loaded, NOW, plain.deps))).toBe('no_sources');
-    const otherChain = harness({ loaded: parseAssetYaml(INGEST_ASSET_YAML.replace('chain_id: 8453', 'chain_id: 1')), env: {} });
+    const otherChain = harness(testDb(), { loaded: parseAssetYaml(INGEST_ASSET_YAML.replace('chain_id: 8453', 'chain_id: 1')), env: {} });
     expect(await codeOf(fetchAsset(otherChain.db, otherChain.loaded, NOW, otherChain.deps))).toBe('missing_rpc_url');
-    const fallback = harness({ env: {} }); // Base has a default public RPC URL
+    const fallback = harness(testDb(), { env: {} }); // Base has a default public RPC URL
     expect((await fetchAsset(fallback.db, fallback.loaded, NOW, fallback.deps)).outcome).toBe('ok');
   });
 });

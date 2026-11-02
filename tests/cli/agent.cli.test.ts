@@ -5,14 +5,17 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { buildProgram } from '../../src/cli/program.js';
 import { finishAgentRun, startAgentRun } from '../../src/db/agentRuns.js';
 import { raiseAnomaly } from '../../src/db/anomalies.js';
-import { openDb } from '../../src/db/connection.js';
+import type { Db } from '../../src/db/connection.js';
 import { insertDocument } from '../../src/db/documents.js';
 import { insertProposal, type ProposalChange } from '../../src/db/proposals.js';
 import { acquireRunLock, getRunLock, releaseRunLock } from '../../src/db/runLocks.js';
 import type { OrionError } from '../../src/types.js';
 import { AGENT_ASSET_YAML, PERSONA_MD } from '../helpers/agentWorld.js';
+import { testCliContext, useTestDb } from '../helpers/db.js';
 import { calls, journalCall, say, scriptedModel, toolUse, type ScriptStep } from '../helpers/fakeModel.js';
 import { AS_OF } from '../helpers/obs.js';
+
+const testDb = useTestDb();
 
 let home: string;
 let exitCode: number | undefined;
@@ -22,9 +25,9 @@ let docId: number;
 async function orion(...args: string[]): Promise<string> {
   const lines: string[] = [];
   exitCode = undefined;
-  const program = buildProgram({
-    home, stdout: (l) => lines.push(l), now: () => new Date(AS_OF), setExitCode: (c) => (exitCode = c), modelClient: () => scriptedModel(script),
-  });
+  const program = buildProgram(testCliContext(home, {
+    stdout: (l) => lines.push(l), now: () => new Date(AS_OF), setExitCode: (c) => (exitCode = c), modelClient: () => scriptedModel(script),
+  }));
   await program.parseAsync(args, { from: 'user' });
   return lines.join('\n');
 }
@@ -44,15 +47,9 @@ async function seed(skip: string[] = []) {
   }
 }
 
-const withDb = async <T>(fn: (db: ReturnType<typeof openDb>) => T | Promise<T>): Promise<T> => {
-  const db = openDb(join(home, 'orion.db'));
-  try {
-    return await fn(db);
-  } finally {
-    await db.close();
-  }
-};
-const revenueId = async () => await withDb((db) => (db.prepare("SELECT id FROM observations WHERE metric_key = 'revenue_run_rate_usd'").get() as { id: number }).id);
+/** The CLI's database, as the test reads and writes it between commands. */
+const withDb = async <T>(fn: (db: Db) => T | Promise<T>): Promise<T> => await fn(testDb());
+const revenueId = async () => await withDb(async (db) => (await db.one<{ id: number }>("SELECT id FROM observations WHERE metric_key = 'revenue_run_rate_usd'"))!.id);
 const fileProposal = async (change: ProposalChange, filedAgainst: unknown, effect: unknown = null) => {
   const evidence = [await revenueId()];
   return await withDb(async (db) =>
@@ -190,7 +187,7 @@ describe('orion agent run', () => {
     expect(out).toContain('the asset config changed during the run');
     expect(out).toContain('discarded provisional staked_supply = 55');
     expect(exitCode).toBe(1);
-    expect((await withDb((db) => db.prepare('SELECT COUNT(*) AS n FROM journal').get() as { n: number })).n).toBe(0);
+    expect((await withDb(async (db) => (await db.one<{ n: number }>('SELECT COUNT(*) AS n FROM journal'))!)).n).toBe(0);
   });
 
   it('passes --anomaly and --note to the run as pack context, and the run can resolve that anomaly', async () => {
@@ -231,7 +228,7 @@ describe('orion agent run', () => {
   });
 
   it('runs a disclosure run on --doc with the document and the asset YAML text in its pack', async () => {
-    const sha = await withDb((db) => (db.prepare('SELECT sha256 FROM documents WHERE id = ?').get(docId) as { sha256: string }).sha256);
+    const sha = await withDb(async (db) => (await db.one<{ sha256: string }>('SELECT sha256 FROM documents WHERE id = $1', [docId]))!.sha256);
     script = [calls(journalCall()), say('Done.')];
     const run = JSON.parse(await orion(...runArgs('--json'))) as { run: { id: number; runType: string; outcome: string; triggerDetail: unknown } };
     expect(run.run).toMatchObject({ runType: 'disclosure', outcome: 'completed', triggerDetail: { docId, docSha256: sha } });

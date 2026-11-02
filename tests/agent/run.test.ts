@@ -12,13 +12,16 @@ import type { OrionError } from '../../src/types.js';
 import { AGENT_ASSET_YAML, agentHome, agentWorld, DOC_TEXT, PAGE_TEXT, PAGE_URL, QUOTE, STAKED_QUOTE, type AgentWorld } from '../helpers/agentWorld.js';
 import { calls, journalCall, say, scriptedModel, toolUse, webFetch, type ScriptedModel, type ScriptStep } from '../helpers/fakeModel.js';
 import { AS_OF } from '../helpers/obs.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 let w: AgentWorld;
 let home: string;
 let model: ScriptedModel;
 
 beforeEach(async () => {
-  w = await agentWorld();
+  w = await agentWorld(testDb());
   home = await agentHome(w.db);
 });
 
@@ -26,7 +29,7 @@ const NINE = [
   'get_observations', 'get_anomalies', 'get_journal', 'get_flow_total', 'resolve_anomaly', 'record_provisional_observation', 'propose_change',
   'write_journal', 'record_dev_finding',
 ];
-const count = (table: string): number => (w.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+const count = async (table: string): Promise<number> => (await w.db.one<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`))!.n;
 const run = (script: ScriptStep[], opts: Partial<RunAgentOptions> = {}, deps: Partial<RunAgentDeps> = {}) => {
   model = scriptedModel(script);
   return runAgent(
@@ -50,11 +53,11 @@ const anomaly = async (dedupeKey = 'x') =>
 
 describe('run', () => {
   it('a disclosure run needs no assumption set', async () => {
-    expect(count('assumption_sets')).toBe(0);
+    expect(await count('assumption_sets')).toBe(0);
     const result = await run([calls(journalCall()), say('Done.')]);
     expect(result.run).toMatchObject({ outcome: 'completed', runType: 'disclosure', error: null });
     expect((await listJournal(w.db, 'mini'))[0]).toMatchObject({ agentRunId: result.run.id });
-    expect(count('assumption_sets')).toBe(0);
+    expect(await count('assumption_sets')).toBe(0);
   });
 
   it('commits what it staged in one transaction, and returns run, staged and committed only', async () => {
@@ -101,8 +104,8 @@ describe('run', () => {
     const result = await run([calls(journalCall({ summary: 'nothing needed changing' })), say('Done.')]);
     expect(result.run.outcome).toBe('completed');
     expect(result.committed).toMatchObject({ observationIds: [], resolvedAnomalyIds: [], proposalIds: [], devFindings: [] });
-    expect(count('journal')).toBe(1);
-    expect(count('proposals') + count('valuation_runs') + count('signals')).toBe(0);
+    expect(await count('journal')).toBe(1);
+    expect((await count('proposals')) + (await count('valuation_runs')) + (await count('signals'))).toBe(0);
   });
 
   it('carries --anomaly and --note as pack context, and resolves that anomaly when the evidence supports it', async () => {
@@ -133,7 +136,7 @@ describe('guardrails inside a run', () => {
     const result = await run([calls(revenueCall(PAGE_URL)), calls(journalCall()), say('Done.')]);
     expect(model.toolResults(1)[0]).toMatchObject({ is_error: true, result: { refused: 'citation_not_fetched' } });
     expect(result.run.outcome).toBe('completed');
-    expect(count('observations') + count('proposals')).toBe(7);
+    expect((await count('observations')) + (await count('proposals'))).toBe(7);
   });
 
   it('refuses a valuation tool call, which no run is offered', async () => {
@@ -150,8 +153,8 @@ describe('runs that do not finish cleanly', () => {
     expect(result.run).toMatchObject({ outcome: 'budget_exhausted', error: 'requests (1)' });
     expect(result.committed).toBeNull();
     expect(result.staged.observations).toHaveLength(1);
-    expect(count('journal') + count('proposals')).toBe(0);
-    expect(count('observations')).toBe(7);
+    expect((await count('journal')) + (await count('proposals'))).toBe(0);
+    expect(await count('observations')).toBe(7);
     expect(await getTranscript(w.db, result.run.id)).not.toBeNull();
     expect((result.run.summary as { staged: { observations: unknown[] } }).staged.observations).toHaveLength(1);
   });
@@ -169,8 +172,8 @@ describe('runs that do not finish cleanly', () => {
     const result = await run([{ ...calls(stakedCall()), usage: { input_tokens: 10_000_000 } }, calls(journalCall())], {}, { reload: () => moved });
     expect(result.run.outcome).toBe('conflict');
     expect(result.committed).toBeNull();
-    expect(count('journal')).toBe(0);
-    expect(count('observations')).toBe(7);
+    expect(await count('journal')).toBe(0);
+    expect(await count('observations')).toBe(7);
   });
 
   it('puts no reserve key in the summary when the reserve did not run', async () => {
@@ -184,14 +187,14 @@ describe('runs that do not finish cleanly', () => {
     expect(result.run).toMatchObject({ outcome: 'budget_exhausted', error: 'input units (1200000)' });
     expect((result.run.summary as { reserve?: unknown }).reserve).toEqual({ reason: 'input units (1200000)' });
     expect(result.committed).toBeNull();
-    expect(count('journal')).toBe(0);
+    expect(await count('journal')).toBe(0);
   });
 
   it('ends as no_journal, refused, or error, each without writing', async () => {
     expect((await run([calls(stakedCall()), say('Done.'), say('Still done.')])).run.outcome).toBe('no_journal');
     expect((await run([{ content: [], stop_reason: 'refusal', stop_details: { type: 'refusal', category: null, explanation: null } }])).run.outcome).toBe('refused');
     expect((await run([new Error('socket hang up')])).run).toMatchObject({ outcome: 'error', error: 'Error: socket hang up' });
-    expect(count('observations')).toBe(7);
+    expect(await count('observations')).toBe(7);
     expect(await listAgentRuns(w.db)).toHaveLength(3);
   });
 
@@ -205,7 +208,7 @@ describe('runs that do not finish cleanly', () => {
     expect(result.run.outcome).toBe('conflict');
     expect(result.run.error).toMatch(/anomaly \d+ is no longer open \(acknowledged\)/);
     expect(await getAnomaly(w.db, a.id)).toMatchObject({ status: 'acknowledged', note: 'known lag' });
-    expect(count('journal')).toBe(0);
+    expect(await count('journal')).toBe(0);
   });
 
   it('ends as conflict when the asset config changed under the run, and writes nothing', async () => {
@@ -220,8 +223,8 @@ describe('runs that do not finish cleanly', () => {
     expect(result.run.outcome).toBe('conflict');
     expect(result.run.error).toBe(`the asset config changed during the run (${w.loaded.hash.slice(0, 12)} -> ${'b'.repeat(12)}); nothing was committed`);
     expect(result.committed).toBeNull();
-    expect(count('journal')).toBe(0);
-    expect(count('observations')).toBe(7);
+    expect(await count('journal')).toBe(0);
+    expect(await count('observations')).toBe(7);
   });
 
   it('ends as conflict, not error, when the config on disk cannot be reloaded: the file moved under the run, half-edited', async () => {
@@ -232,13 +235,13 @@ describe('runs that do not finish cleanly', () => {
     expect(result.run.outcome).toBe('conflict');
     expect(result.run.error).toBe('the asset config could not be reloaded at the end of the run (Error: metrics: "price_usd" has no type); nothing was committed');
     expect(result.committed).toBeNull();
-    expect(count('journal')).toBe(0);
+    expect(await count('journal')).toBe(0);
   });
 
   it('still finishes the run row when the transcript cannot be stored, keeping a minimal one instead', async () => {
     // A run left `running` while its writes are live is the worst outcome: the next lock takeover would call it
     // `error/abandoned`. Stand in for whatever makes the transcript unstorable with a size limit.
-    w.db.exec(
+    await w.db.run(
       "CREATE TRIGGER no_large_transcripts BEFORE INSERT ON agent_transcripts WHEN length(NEW.messages_json) > 400 " +
         "BEGIN SELECT RAISE(ABORT, 'transcript too large'); END",
     );
@@ -257,8 +260,8 @@ describe('runs that do not finish cleanly', () => {
     expect(result.committed).toBeNull();
     expect(result.staged.observations).toHaveLength(1);
     expect(result.staged.journal).not.toBeNull();
-    expect(count('journal')).toBe(0);
-    expect(count('observations')).toBe(7);
+    expect(await count('journal')).toBe(0);
+    expect(await count('observations')).toBe(7);
   });
 
   it('catalysts on a dry run appear in staged.journal and nothing is written', async () => {
@@ -269,7 +272,7 @@ describe('runs that do not finish cleanly', () => {
     expect(result.staged.journal!.catalysts).toEqual([
       { event: 'revenue milestone', kind: 'product', by: '2026-09-30', citations: [{ source: 'doc:1', quotedText: QUOTE, locator: null, docSha256: w.doc.sha256, docKind: 'post' }] },
     ]);
-    expect(count('journal')).toBe(0);
+    expect(await count('journal')).toBe(0);
   });
 });
 
@@ -288,12 +291,12 @@ describe('preflight', () => {
     expect(await codeOf(run([], { assetYaml: undefined }))).toBe('disclosure_needs_asset_yaml');
     expect(await codeOf(run([], { anomalyId: 999 }))).toBe('anomaly_not_found');
     expect(await codeOf(run([], { anomalyId: decided.id }))).toBe('anomaly_not_open');
-    w.db.prepare('UPDATE coverage SET persona = ?').run('ghost');
+    await w.db.run('UPDATE coverage SET persona = $1', ['ghost']);
     expect(await codeOf(run([]))).toBe('persona_not_found');
-    w.db.prepare('DELETE FROM coverage').run();
+    await w.db.run('DELETE FROM coverage');
     expect(await codeOf(run([]))).toBe('no_persona_assigned');
     expect(model.requests).toHaveLength(0);
-    expect(count('agent_runs')).toBe(0);
+    expect(await count('agent_runs')).toBe(0);
   });
 
   it('records a config hash that moves with the persona file', async () => {

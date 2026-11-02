@@ -3,15 +3,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildProgram } from '../../src/cli/program.js';
-import { openDb } from '../../src/db/connection.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
+import { testCliContext, useTestDb } from '../helpers/db.js';
 import { AS_OF } from '../helpers/obs.js';
+
+const testDb = useTestDb();
 
 let home: string;
 
 async function orion(...args: string[]): Promise<string> {
   const lines: string[] = [];
-  const program = buildProgram({ home, stdout: (l) => lines.push(l), now: () => new Date(AS_OF) });
+  const program = buildProgram(testCliContext(home, { stdout: (l) => lines.push(l), now: () => new Date(AS_OF) }));
   await program.parseAsync(args, { from: 'user' });
   return lines.join('\n');
 }
@@ -32,7 +34,7 @@ describe('orion cli', () => {
     // Each with a sub-command and arguments it used to accept, so only a missing top-level command can fail this way.
     for (const args of [['model', 'run', 'mini'], ['model', 'proposals', 'list'], ['signal', 'latest', 'mini'], ['update', 'mini']]) {
       const lines: string[] = [];
-      const program = buildProgram({ home, stdout: (l) => lines.push(l), now: () => new Date(AS_OF) });
+      const program = buildProgram(testCliContext(home, { stdout: (l) => lines.push(l), now: () => new Date(AS_OF) }));
       await expect(program.parseAsync(args, { from: 'user' })).rejects.toMatchObject({ code: 'commander.unknownCommand', exitCode: 1 });
       // Commander may add a "(Did you mean ...?)" line for a near miss, such as update -> data.
       expect(lines.join('\n')).toMatch(new RegExp(`^error: unknown command '${args[0]}'`));
@@ -42,7 +44,7 @@ describe('orion cli', () => {
   it('cli: proposals is a top-level command', async () => {
     const lines: string[] = [];
     const exit: number[] = [];
-    const program = buildProgram({ home, stdout: (l) => lines.push(l), now: () => new Date(AS_OF), setExitCode: (c) => exit.push(c) });
+    const program = buildProgram(testCliContext(home, { stdout: (l) => lines.push(l), now: () => new Date(AS_OF), setExitCode: (c) => exit.push(c) }));
     await program.parseAsync(['proposals', 'list'], { from: 'user' });
     expect(lines.join('\n')).toBe('no proposals');
     expect(exit).toEqual([]);
@@ -88,12 +90,10 @@ describe('orion cli', () => {
 
   it('guards the inbox when a stored proposal has a shape the schema does not expect', async () => {
     await orion('inbox', 'mini'); // creates the database
-    const db = openDb(join(home, 'orion.db'));
-    db.prepare("INSERT INTO proposals (asset_id, persona, agent_run_id, kind, change_json, filed_against_json, rationale, evidence_json, effect_json, status, created_at) VALUES ('mini', 'analyst', NULL, 'config', '{}', '{}', 'r', '[]', '{\"weird\": 1}', 'pending', ?)").run(AS_OF);
-    db.close();
+    await testDb().run("INSERT INTO proposals (asset_id, persona, agent_run_id, kind, change_json, filed_against_json, rationale, evidence_json, effect_json, status, created_at) VALUES ('mini', 'analyst', NULL, 'config', '{}', '{}', 'r', '[]', '{\"weird\": 1}', 'pending', $1)", [AS_OF]);
     const lines: string[] = [];
     const errors: string[] = [];
-    await buildProgram({ home, stdout: (l) => lines.push(l), stderr: (l) => errors.push(l), now: () => new Date(AS_OF) }).parseAsync(['inbox', 'mini'], { from: 'user' });
+    await buildProgram(testCliContext(home, { stdout: (l) => lines.push(l), stderr: (l) => errors.push(l), now: () => new Date(AS_OF) })).parseAsync(['inbox', 'mini'], { from: 'user' });
     expect(lines.join('\n')).toBe('nothing to decide');
     expect(errors.some((l) => /^warning: the inbox could not be built \(.+\); nothing is listed$/s.test(l))).toBe(true);
   });

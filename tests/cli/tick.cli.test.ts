@@ -4,11 +4,13 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { TickReport } from '../../src/app/tickReport.js';
 import { buildProgram } from '../../src/cli/program.js';
-import { openDb } from '../../src/db/connection.js';
 import { acquireRunLock } from '../../src/db/runLocks.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
+import { testCliContext, useTestDb } from '../helpers/db.js';
 import { harness, NOW } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
+
+const testDb = useTestDb();
 
 let home: string;
 let stderr: string[];
@@ -16,13 +18,14 @@ let exitCodes: number[];
 
 async function orion(...args: string[]): Promise<string> {
   const lines: string[] = [];
-  const h = harness();
-  const program = buildProgram({
-    home, stdout: (l) => lines.push(l), now: () => NOW, ingestDeps: () => h.deps, stderr: (l) => stderr.push(l), setExitCode: (c) => exitCodes.push(c),
+  const ctx = testCliContext(home, {
+    stdout: (l) => lines.push(l), now: () => NOW, ingestDeps: () => h.deps, stderr: (l) => stderr.push(l), setExitCode: (c) => exitCodes.push(c),
     modelClient: () => {
       throw new Error('tick must not ask for a model');
     },
   });
+  const h = harness(testDb());
+  const program = buildProgram(ctx);
   await program.parseAsync(args, { from: 'user' });
   return lines.join('\n');
 }
@@ -75,9 +78,7 @@ describe('orion tick', () => {
   });
 
   it('exits 0 with run_in_progress when the asset is locked, and writes only the report', async () => {
-    const db = openDb(join(home, 'orion.db'));
-    await acquireRunLock(db, 'mini', 'agent run pid 7', NOW.toISOString());
-    db.close();
+    await acquireRunLock(testDb(), 'mini', 'agent run pid 7', NOW.toISOString());
     const report = JSON.parse(await orion('tick', 'mini')) as TickReport;
     expect(report).toMatchObject({ outcome: 'run_in_progress', lock: { holder: 'agent run pid 7' }, ingest: null, holder_yield: null });
     expect(exitCodes).toEqual([]);

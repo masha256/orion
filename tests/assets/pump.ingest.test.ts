@@ -3,12 +3,15 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
 import { loadPersona } from '../../src/config/personas.js';
-import { openDb } from '../../src/db/connection.js';
+import type { Db } from '../../src/db/connection.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-10-16T06:00:00.000Z');
@@ -52,11 +55,11 @@ function world(supplyNow: number) {
     },
   });
   const deps: FetchDeps = { http, rpcFactory: () => { throw new Error('PUMP must not open an EVM RPC'); }, env: { ORION_SOL_RPC_URL: SOL }, sleep: async () => undefined, now: () => NOW };
-  return { db: openDb(':memory:'), deps, http };
+  return { db: testDb(), deps, http };
 }
 
 /** Daily on-chain supply readings at 06:00 for the `n` days before NOW, as solana.token_supply writes them. */
-async function seedReadings(db: ReturnType<typeof openDb>, n: number, supplyNow: number) {
+async function seedReadings(db: Db, n: number, supplyNow: number) {
   for (let d = n; d >= 1; d--) {
     const at = new Date(NOW.getTime() - d * DAY).toISOString();
     await insertObservation(db, { assetId: 'pump', metricKey: 'total_supply', observedAt: at, value: supplyNow + d * BURN_PER_DAY, source: 'onchain', sourceDetail: `solana getTokenSupply ${MINT} slot ${d}`, fetchedAt: at });

@@ -3,11 +3,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseAssetYaml } from '../../src/config/load.js';
 import { reportLines } from '../../src/cli/commands/report.js';
-import { openDb } from '../../src/db/connection.js';
+import type { Db } from '../../src/db/connection.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { addDays } from '../../src/ingest/time.js';
 import { holderYieldReport, type ReportLevels } from '../../src/report/holderYield.js';
 import { lastCompleteReportDay, loadHolderYieldReport, periodicDaily } from '../../src/report/load.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 /**
  * Revenue as a list of streams (Mike, 2026-10-12): revenue = the sum of the streams; a stream is daily or periodic (lump
@@ -36,7 +39,7 @@ reporting:
 const levels: ReportLevels = { price: 2, totalSupply: 1000, stakedSupply: 400, lockedSupply: null, emissionRateAnnual: 0, extra: {}, disclosed: [] };
 const flat = (first: string, n: number, v: number) => new Map(Array.from({ length: n }, (_, i) => [addDays(first, i), v] as const));
 
-async function seedDaily(db: ReturnType<typeof openDb>, metricKey: string, lastDay: string, days: number, value: number) {
+async function seedDaily(db: Db, metricKey: string, lastDay: string, days: number, value: number) {
   for (let i = 0; i < days; i++) {
     const day = addDays(lastDay, -i);
     await insertObservation(db, { assetId: 'hype', metricKey, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, source: 'api', fetchedAt: '2026-10-11T00:00:00.000Z' });
@@ -279,7 +282,7 @@ reporting:
 
 describe('revenue streams: periodic settlement', () => {
   it('spreads each payment evenly over the days it covers, and runs the unpaid days at the last period\'s daily rate, provisional', async () => {
-    const db = openDb(':memory:');
+    const db = testDb();
     // 300 paid for 2026-01-01 .. 01-30 (30 days): 10 a day. Report day 02-05: 6 unpaid days.
     await insertObservation(db, { assetId: 'hype', metricKey: 'flow_usd.reserve', observedAt: '2026-01-31T00:00:00.000Z', periodDays: 30, value: 300, source: 'api', fetchedAt: '2026-02-06T00:00:00.000Z' });
     const p = await periodicDaily(db, 'hype', 'flow_usd.reserve', '2026-02-05');
@@ -297,7 +300,7 @@ describe('revenue streams: periodic settlement', () => {
 
   it('sums the streams; a stream younger than the window runs at its own days\' rate; the periodic one never holds back the report day', async () => {
     const asset = parseAssetYaml(streamsYaml(10, '2026-01-25')).config;
-    const db = openDb(':memory:');
+    const db = testDb();
     await seedDaily(db, 'flow_usd.trading', '2026-02-05', 40, 3);
     await seedDaily(db, 'flow_usd.buyback', '2026-02-05', 40, 2);
     // Started 01-25: one payment for 01-25 .. 02-01 (8 days, 80), unpaid since: 4 provisional days to 02-05.

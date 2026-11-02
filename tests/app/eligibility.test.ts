@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { eligibleObservations, narrowToUsable } from '../../src/app/eligibility.js';
 import { parseAssetYaml } from '../../src/config/load.js';
-import { openDb, type Db } from '../../src/db/connection.js';
+import type { Db } from '../../src/db/connection.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { MINI_ASSET_YAML, miniAsset } from '../helpers/assets.js';
 import { AS_OF, miniObservations, obs } from '../helpers/obs.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const DAY = 86_400_000;
 const NOW = new Date(AS_OF);
@@ -63,7 +66,7 @@ describe('narrowToUsable', () => {
 describe('eligibleObservations', () => {
   let db: Db;
   beforeEach(() => {
-    db = openDb(':memory:');
+    db = testDb();
   });
 
   it('reads the stored rows narrowed to what is usable at as_of', async () => {

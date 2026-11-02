@@ -2,11 +2,15 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parseAssetYaml } from '../../src/config/load.js';
+import type { Db } from '../../src/db/connection.js';
 import { getCursor } from '../../src/db/fetchCursors.js';
 import { insertObservation, listActiveObservations, listObservations } from '../../src/db/observations.js';
 import { DEFILLAMA_REVISION_DAYS, REVISION_DAYS } from '../../src/ingest/apiFlow.js';
 import { fetchAsset, type FetchResult } from '../../src/ingest/run.js';
 import { harness, type Harness } from '../helpers/fetchHarness.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const LLAMA_HYPE = 'https://api.llama.fi/summary/fees/hyperliquid';
 const SOURCE = 'defillama:hyperliquid:dailyHoldersRevenue';
@@ -21,10 +25,10 @@ const SERIES = { '2026-09-14': 100, '2026-09-15': 110, '2026-09-17': 130, '2026-
  * mechanics on a short window (revision_days: REVISION_DAYS); a DefiLlama source without it reads 30 days back.
  */
 const FIXTURE = readFileSync(fileURLToPath(new URL('../fixtures/hype.yaml', import.meta.url)), 'utf8');
-function world(points: Record<string, number>, over: Parameters<typeof harness>[0] = {}, revisionDays: number | null = REVISION_DAYS): Harness {
+function world(points: Record<string, number>, { db = testDb(), ...over }: Parameters<typeof harness>[1] & { db?: Db } = {}, revisionDays: number | null = REVISION_DAYS): Harness {
   const yaml = revisionDays === null ? FIXTURE : FIXTURE.replace('data_type: dailyHoldersRevenue }', `data_type: dailyHoldersRevenue, revision_days: ${revisionDays} }`);
   if (revisionDays !== null && yaml === FIXTURE) throw new Error('the fixture no longer has the DefiLlama source this test edits');
-  return harness({ loaded: parseAssetYaml(yaml), routes: { [LLAMA_HYPE]: chart(points) }, ...over });
+  return harness(db, { loaded: parseAssetYaml(yaml), routes: { [LLAMA_HYPE]: chart(points) }, ...over });
 }
 const fetch = (h: Harness, opts: Parameters<typeof fetchAsset>[4] = {}) => fetchAsset(h.db, h.loaded, h.deps.now(), h.deps, opts);
 const source = (r: FetchResult) => r.sources.find((s) => s.sourceId === SOURCE)!;

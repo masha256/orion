@@ -8,12 +8,13 @@ import type { RunAgentResult } from '../../src/agent/run.js';
 import { approveProposal } from '../../src/app/proposals.js';
 import { buildProgram } from '../../src/cli/program.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
-import { openDb, type Db } from '../../src/db/connection.js';
+import type { Db } from '../../src/db/connection.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { insertProposal } from '../../src/db/proposals.js';
 import { getAdapter } from '../../src/ingest/adapters/registry.js';
 import { addDays } from '../../src/ingest/time.js';
 import { sha256 } from '../../src/util/canonical.js';
+import { testCliContext, useTestDb } from '../helpers/db.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { calls, say, scriptedModel, toolUse, type ScriptedModel, type Step } from '../helpers/fakeModel.js';
 import { sourceCtx } from '../helpers/sourceCtx.js';
@@ -67,6 +68,8 @@ const Q = {
 const TRANCHES = { first: '2027-01-29', every_months: 1, count: 36 };
 const DILUTION_NOTE = 'team and investor vesting, 36 monthly tranches from 2027-01-29 (Lighter Q3 2026 call)';
 
+const testDb = useTestDb();
+
 let home: string;
 let home2: string | undefined;
 let model: ScriptedModel;
@@ -77,26 +80,27 @@ let before: Record<string, number>;
 let after: Record<string, number>;
 const flowIds: Record<string, { first_id: number; last_id: number }> = {};
 
+/** The database of CLI home `h`, as the CLI sees it. */
 const withDb = async <T>(h: string, fn: (db: Db) => Promise<T> | T): Promise<T> => {
-  const db = openDb(join(h, 'orion.db'));
-  try {
-    return await fn(db);
-  } finally {
-    await db.close();
-  }
+  testCliContext(h);
+  return await fn(testDb());
 };
 
 async function orion(h: string, ...args: string[]): Promise<string> {
   const lines: string[] = [];
   exitCode = undefined;
-  const program = buildProgram({ home: h, stdout: (l) => lines.push(l), now: () => new Date(NOW), setExitCode: (c) => (exitCode = c), modelClient: () => model });
+  const program = buildProgram(testCliContext(h, { stdout: (l) => lines.push(l), now: () => new Date(NOW), setExitCode: (c) => (exitCode = c), modelClient: () => model }));
   await program.parseAsync(args, { from: 'user' });
   return lines.join('\n');
 }
 
 const TABLES = ['proposals', 'journal', 'observations', 'documents', 'agent_runs'] as const;
 const counts = (h: string): Promise<Record<string, number>> =>
-  withDb(h, (db) => Object.fromEntries(TABLES.map((t) => [t, (db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n])));
+  withDb(h, async (db) => {
+    const n: Record<string, number> = {};
+    for (const t of TABLES) n[t] = (await db.one<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`))!.n;
+    return n;
+  });
 
 /**
  * The rows ingest would have written: one confirmed `api` row per completed UTC day D, stamped at the end of D (D+1 at

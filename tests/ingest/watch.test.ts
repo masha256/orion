@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildProgram } from '../../src/cli/program.js';
-import { openDb, type Db } from '../../src/db/connection.js';
+import type { Db } from '../../src/db/connection.js';
 import { listFetchRuns } from '../../src/db/fetchRuns.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { fetchAsset } from '../../src/ingest/run.js';
@@ -13,6 +13,9 @@ import { evaluateWatches } from '../../src/ingest/watch.js';
 import { defaultRoutes, GENESIS_TS, harness, NOW, STATS, type Harness } from '../helpers/fetchHarness.js';
 import { POOL } from '../helpers/ingestAsset.js';
 import { watchAsset, watchAssetYaml } from '../helpers/watchAsset.js';
+import { testCliContext, useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const E18 = 10n ** 18n;
 const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENESIS_TS) / 2));
@@ -96,10 +99,10 @@ describe('evaluateWatches', () => {
 const LOGS: Omit<TransferLog, 'timestamp'>[] = [{ blockNumber: blockAt('2026-09-17T12:00:00Z'), logIndex: 0, txHash: '0xa', from: POOL, value: 3n * E18 }];
 const statsRoute = (apr: number) => ({ [STATS]: { ...(defaultRoutes()[STATS] as object), apr: String(apr) } });
 function world(opts: { above?: number; apr?: number; db?: Db; now?: Date } = {}): Harness {
-  return harness({ loaded: watchAsset({ above: opts.above ?? 20 }), logs: LOGS, routes: statsRoute(opts.apr ?? 0.07), db: opts.db, now: opts.now });
+  return harness(opts.db ?? testDb(), { loaded: watchAsset({ above: opts.above ?? 20 }), logs: LOGS, routes: statsRoute(opts.apr ?? 0.07), now: opts.now });
 }
 const fetch = (h: Harness, dryRun = false) => fetchAsset(h.db, h.loaded, h.deps.now(), h.deps, { dryRun });
-const count = (db: Db, table: string) => (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+const count = async (db: Db, table: string) => (await db.one<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`))!.n;
 
 describe('fetchAsset: watches', () => {
   it('reports the firings in the result, from the stored rows before the fetch', async () => {
@@ -124,11 +127,11 @@ describe('fetchAsset: watches', () => {
 
   it('no anomaly (triggers are the tick\'s: tests/app/tick.test.ts asserts no trigger firing)', async () => {
     const h = world();
-    const anomalies = count(h.db, 'anomalies');
+    const anomalies = await count(h.db, 'anomalies');
     const r = await fetch(h);
     expect(r.watch.length).toBeGreaterThan(0);
     expect(r.anomalies).toEqual([]);
-    expect(count(h.db, 'anomalies')).toBe(anomalies);
+    expect(await count(h.db, 'anomalies')).toBe(anomalies);
   });
 
   it('dry run computes firings and writes nothing', async () => {
@@ -136,7 +139,7 @@ describe('fetchAsset: watches', () => {
     const r = await fetch(h, true);
     expect(r.watch.map((f) => f.rule)).toEqual(['outside', 'above']);
     expect(r.fetchRunId).toBeNull();
-    expect(count(h.db, 'fetch_runs')).toBe(0);
+    expect(await count(h.db, 'fetch_runs')).toBe(0);
     expect(await listActiveObservations(h.db, 'mini')).toEqual([]);
   });
 
@@ -158,15 +161,13 @@ describe('fetchAsset: watches', () => {
 describe('orion data fetch: watches', () => {
   it('data fetch prints a line `watch: <metric> <rule> <value> (was <previous>) <day>`', async () => {
     const home = mkdtempSync(join(tmpdir(), 'orion-watch-cli-'));
-    const h = world();
     const lines: string[] = [];
-    const orion = (...args: string[]) =>
-      buildProgram({ home, stdout: (l) => lines.push(l), now: () => NOW, ingestDeps: () => h.deps, stderr: () => undefined }).parseAsync(args, { from: 'user' });
+    const ctx = testCliContext(home, { stdout: (l) => lines.push(l), now: () => NOW, ingestDeps: () => h.deps, stderr: () => undefined });
+    const h = world();
+    const orion = (...args: string[]) => buildProgram(ctx).parseAsync(args, { from: 'user' });
     await orion('init');
     writeFileSync(join(home, 'assets', 'mini.yaml'), watchAssetYaml({ above: 20 }));
-    const db = openDb(join(home, 'orion.db'));
-    await insertObservation(db, { assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-18T12:00:00Z', value: 9.5, source: 'api', fetchedAt: '2026-09-18T12:00:00Z' });
-    db.close();
+    await insertObservation(testDb(), { assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-18T12:00:00Z', value: 9.5, source: 'api', fetchedAt: '2026-09-18T12:00:00Z' });
     lines.length = 0;
     await orion('data', 'fetch', 'mini', '--dry-run');
     expect(lines).toContain('  watch: stats_price change_pct 10.1 (was 9.5) 2026-09-19');

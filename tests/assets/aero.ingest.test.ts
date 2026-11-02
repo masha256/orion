@@ -3,13 +3,15 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
 import { listPersonaNames, loadPersona, skillsFor } from '../../src/config/personas.js';
-import { openDb } from '../../src/db/connection.js';
 import { listActiveObservations } from '../../src/db/observations.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { addDays } from '../../src/ingest/time.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-09-23T21:30:00.000Z');
@@ -51,7 +53,7 @@ function world() {
     },
   });
   const deps: FetchDeps = { http, rpcFactory: () => rpc, env: {}, sleep: async () => undefined, now: () => NOW };
-  return { db: openDb(':memory:'), deps, http, rpc };
+  return { db: testDb(), deps, http, rpc };
 }
 
 describe('assets/aero.yaml', () => {

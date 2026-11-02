@@ -7,6 +7,7 @@ import { buildProgram } from '../../src/cli/program.js';
 import { docLabel, normalizeDocText } from '../../src/db/documents.js';
 import { sha256 } from '../../src/util/canonical.js';
 import { AGENT_ASSET_YAML } from '../helpers/agentWorld.js';
+import { testCliContext } from '../helpers/db.js';
 import { AS_OF } from '../helpers/obs.js';
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/disclosure/lit-q3-2026-call-transcript.txt', import.meta.url));
@@ -20,7 +21,7 @@ let exitCode: number | undefined;
 async function orion(...args: string[]): Promise<string> {
   const lines: string[] = [];
   exitCode = undefined;
-  const program = buildProgram({ home, stdout: (l) => lines.push(l), now: () => new Date(AS_OF), setExitCode: (c) => (exitCode = c) });
+  const program = buildProgram(testCliContext(home, { stdout: (l) => lines.push(l), now: () => new Date(AS_OF), setExitCode: (c) => (exitCode = c) }));
   await program.parseAsync(args, { from: 'user' });
   return lines.join('\n');
 }

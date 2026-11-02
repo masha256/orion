@@ -4,17 +4,20 @@ import {
   type StartAgentRunInput,
 } from '../../src/db/agentRuns.js';
 import { decideAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
-import { openDb, type Db } from '../../src/db/connection.js';
+import type { Db } from '../../src/db/connection.js';
 import { assignPersona, getCoverage, listCoverage } from '../../src/db/coverage.js';
 import { insertJournalEntry, listJournal } from '../../src/db/journal.js';
 import {
   decideProposal, findPendingDuplicate, getProposal, insertProposal, listProposals, recentlyDecidedProposals, type NewProposal,
 } from '../../src/db/proposals.js';
 import type { OrionError } from '../../src/types.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 let db: Db;
 beforeEach(() => {
-  db = openDb(':memory:');
+  db = testDb();
 });
 
 const codeOf = async (fn: () => unknown): Promise<string | undefined> => {
@@ -151,15 +154,15 @@ describe('proposals', () => {
     const cited = await insertProposal(db, proposal({ citations }));
     expect(cited.citations).toEqual(citations);
     expect((await getProposal(db, cited.id))!.citations).toEqual(citations);
-    const raw = (id: number) => (db.prepare('SELECT citations_json FROM proposals WHERE id = ?').get(id) as { citations_json: string | null }).citations_json;
-    expect(JSON.parse(raw(cited.id)!)).toEqual(citations);
+    const raw = async (id: number) => (await db.one<{ citations_json: string | null }>('SELECT citations_json FROM proposals WHERE id = $1', [id]))!.citations_json;
+    expect(JSON.parse((await raw(cited.id))!)).toEqual(citations);
     const bare = await insertProposal(db, proposal({ change: { kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'bull', value: 1 }, citations: [] }));
-    expect(raw(bare.id)).toBeNull();
+    expect(await raw(bare.id)).toBeNull();
   });
 
   it('old proposal rows read citations as []', async () => {
     const p = await insertProposal(db, proposal());
-    db.prepare('UPDATE proposals SET citations_json = NULL WHERE id = ?').run(p.id);
+    await db.run('UPDATE proposals SET citations_json = NULL WHERE id = $1', [p.id]);
     expect((await getProposal(db, p.id))!.citations).toEqual([]);
     expect((await listProposals(db))[0].citations).toEqual([]);
   });
@@ -195,8 +198,8 @@ describe('journal', () => {
     expect(cited.catalysts).toEqual(catalysts);
     const old = await entry();
     expect(old.catalysts).toEqual([]);
-    const raw = (id: number) => (db.prepare('SELECT catalysts_json FROM journal WHERE id = ?').get(id) as { catalysts_json: string | null }).catalysts_json;
-    expect(raw(old.id)).toBeNull();
+    const raw = async (id: number) => (await db.one<{ catalysts_json: string | null }>('SELECT catalysts_json FROM journal WHERE id = $1', [id]))!.catalysts_json;
+    expect(await raw(old.id)).toBeNull();
     expect((await listJournal(db, 'mini')).map((e) => e.catalysts)).toEqual([[], catalysts]);
   });
 });

@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { openDb, type Db, type SqlParam } from '../../src/db/connection.js';
+import type { Db, SqlParam } from '../../src/db/connection.js';
 import { getDocument, insertDocument, listDocuments, normalizeDocText } from '../../src/db/documents.js';
 import { sha256 } from '../../src/util/canonical.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 let db: Db;
 beforeEach(() => {
-  db = openDb(':memory:');
+  db = testDb();
 });
 
 const input = (over: Partial<Parameters<typeof insertDocument>[1]> = {}): Parameters<typeof insertDocument>[1] => ({
@@ -39,7 +42,7 @@ describe('documents', () => {
     });
     const second = await insertDocument(db, input({ addedAt: '2026-10-24T09:40:00.000Z' }));
     expect(second).toEqual({ doc: first.doc, existing: true });
-    expect((db.prepare('SELECT COUNT(*) AS n FROM documents').get() as { n: number }).n).toBe(1);
+    expect((await db.one<{ n: number }>('SELECT COUNT(*) AS n FROM documents'))!.n).toBe(1);
     expect(await getDocument(db, 1)).toEqual(first.doc);
     expect(await getDocument(db, 2)).toBeNull();
     // The same text on another asset is another document.

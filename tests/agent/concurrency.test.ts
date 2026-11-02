@@ -1,11 +1,9 @@
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { Ledger } from '../../src/agent/ledger.js';
-import { openDb, type Db, type OrionDb, type SqlParam, type TxOptions } from '../../src/db/connection.js';
+import type { Db, OrionDb, SqlParam, TxOptions } from '../../src/db/connection.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { fetchAsset } from '../../src/ingest/run.js';
+import { testDbPair } from '../helpers/db.js';
 import { harness } from '../helpers/fetchHarness.js';
 
 /**
@@ -15,25 +13,18 @@ import { harness } from '../helpers/fetchHarness.js';
  */
 
 const NOW = new Date('2026-09-20T00:00:00.000Z');
-let dir: string;
+const pair = testDbPair();
 let A: OrionDb;
 let B: OrionDb;
 let ledger: Ledger;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'orion-concurrency-'));
-  A = openDb(join(dir, 'orion.db'));
-  B = openDb(join(dir, 'orion.db'));
+  [A, B] = pair();
   ledger = new Ledger('mini', 'analyst');
   ledger.stageObservation({
     metricKey: 'revenue_run_rate_usd', value: 1100, observedAt: '2026-09-18', periodDays: null, citationUrl: 'doc:1', quotedText: 'annualized revenue of $1,100', live: false,
   });
   ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's', catalysts: [] });
-});
-
-afterEach(async () => {
-  await A.close();
-  await B.close();
 });
 
 type AnyFn = (...args: unknown[]) => unknown;
@@ -141,7 +132,7 @@ describe('the flow ingest against a second connection', () => {
         theOtherWrite = err instanceof Error ? err.message : String(err);
       }
     }, insideDayTransaction);
-    const h = harness({ db: watched });
+    const h = harness(watched);
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     expect(r.sources.find((s) => s.sourceId.startsWith('transfer_flow'))!.status).toBe('ok');
     expect(theOtherWrite).toMatch(/database is locked/);

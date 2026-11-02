@@ -9,6 +9,9 @@ import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { harness, NOW } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML, TOKEN } from '../helpers/ingestAsset.js';
 import { sourceCtx } from '../helpers/sourceCtx.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 // CRV on Ethereum, read live at block 26,146,581 (2026-10-08): see the CRV onboarding spec, section 2.2.
 const CRV = '0xd533a949740bb3306d119cc777fa900ba034cd52';
@@ -80,7 +83,7 @@ describe('a schedule_steps reading in a fetch', () => {
   const calls = { [callKey(TOKEN, 'rate')]: RATE, [callKey(TOKEN, 'start_epoch_time')]: nowSec - 30n * 86_400n };
 
   it('writes every step as its own observation, so the drivers see the future cut', async () => {
-    const h = harness({ loaded: parseAssetYaml(yaml), calls });
+    const h = harness(testDb(), { loaded: parseAssetYaml(yaml), calls });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['emission_rate_annual'] });
     expect(r.sources).toEqual([expect.objectContaining({ sourceId: 'adapter:crv.emission_rate_annual', status: 'ok', metricsWritten: ['emission_rate_annual'] })]);
     const rows = await listActiveObservations(h.db, 'mini', 'emission_rate_annual');
@@ -91,7 +94,7 @@ describe('a schedule_steps reading in a fetch', () => {
   });
 
   it('supersedes the future step on the next run instead of stacking a second one', async () => {
-    const h = harness({ loaded: parseAssetYaml(yaml), calls });
+    const h = harness(testDb(), { loaded: parseAssetYaml(yaml), calls });
     await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['emission_rate_annual'] });
     await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['emission_rate_annual'] });
     const future = (await listActiveObservations(h.db, 'mini', 'emission_rate_annual')).filter((o) => o.observedAt > NOW.toISOString());
@@ -99,7 +102,7 @@ describe('a schedule_steps reading in a fetch', () => {
   });
 
   it('writes nothing on a dry run and reports both steps', async () => {
-    const h = harness({ loaded: parseAssetYaml(yaml), calls });
+    const h = harness(testDb(), { loaded: parseAssetYaml(yaml), calls });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['emission_rate_annual'], dryRun: true });
     expect(r.written.map((w) => [w.metricKey, w.observationId])).toEqual([['emission_rate_annual', null], ['emission_rate_annual', null]]);
     expect(await listActiveObservations(h.db, 'mini', 'emission_rate_annual')).toEqual([]);
@@ -110,7 +113,7 @@ describe('a schedule_steps reading in a fetch', () => {
       'source: { type: contract_read, contract: staking, function: totalSupply, decimals: 18 }',
       'source: { type: adapter, name: crv.emission_rate_annual }',
     );
-    const h = harness({ loaded: parseAssetYaml(onLevel), calls });
+    const h = harness(testDb(), { loaded: parseAssetYaml(onLevel), calls });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps, { metrics: ['staked_supply'] });
     expect(r.sources[0]).toMatchObject({ status: 'failed' });
     expect(r.sources[0].error).toMatch(/schedule steps can only be stored on a schedule metric, not a level one/);

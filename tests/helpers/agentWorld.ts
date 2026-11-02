@@ -7,7 +7,7 @@ import { AGENT_TOOLS, runTool, type ToolContext } from '../../src/agent/tools/in
 import { budgetsFor } from '../../src/config/agentPolicy.js';
 import { parseAssetYaml, type LoadedAsset } from '../../src/config/load.js';
 import { assignPersona } from '../../src/db/coverage.js';
-import { openDb, type Db } from '../../src/db/connection.js';
+import type { Db } from '../../src/db/connection.js';
 import { insertDocument, type StoredDocument } from '../../src/db/documents.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { MINI_ASSET_YAML } from './assets.js';
@@ -53,9 +53,11 @@ export interface AgentWorld {
 
 export const citable = (d: Pick<StoredDocument, 'id' | 'kind' | 'sha256' | 'text'>): CitableDoc => ({ id: d.id, kind: d.kind, sha256: d.sha256, text: d.text });
 
-/** A disclosure run on the mini asset: the seeded observations, the target document, and no assumption set (none is needed). */
-export async function agentWorld(yaml: string = AGENT_ASSET_YAML): Promise<AgentWorld> {
-  const db = openDb(':memory:');
+/**
+ * A disclosure run on the mini asset in `db`, which must be empty (the target document is document 1): the seeded
+ * observations, the target document, and no assumption set (none is needed).
+ */
+export async function agentWorld(db: Db, yaml: string = AGENT_ASSET_YAML): Promise<AgentWorld> {
   const loaded = parseAssetYaml(yaml);
   const ids: Record<string, number> = {};
   for (const o of miniObservations()) {

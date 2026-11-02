@@ -1,16 +1,14 @@
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { REPORT_STALE_DAYS, tickAsset, type TickDeps, type TickResult } from '../../src/app/tick.js';
 import { summarizeHolderYield, TickReportSchema } from '../../src/app/tickReport.js';
 import { parseAssetYaml, type LoadedAsset } from '../../src/config/load.js';
 import { raiseAnomaly } from '../../src/db/anomalies.js';
-import { openDb, type Db, type SqlParam } from '../../src/db/connection.js';
+import type { Db, SqlParam } from '../../src/db/connection.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { acquireRunLock, getRunLock } from '../../src/db/runLocks.js';
 import { addDays } from '../../src/ingest/time.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
+import { testDbPair, useTestDb } from '../helpers/db.js';
 import { GENESIS_TS, harness, NOW, type Harness } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML, POOL } from '../helpers/ingestAsset.js';
 import { watchAssetYaml } from '../helpers/watchAsset.js';
@@ -19,11 +17,14 @@ import { watchAssetYaml } from '../helpers/watchAsset.js';
 const REPORTING = 'reporting:\n  window_days: 7\n  haircuts: { fees: 0 }\n';
 const reportAsset = (yaml = INGEST_ASSET_YAML, extra = ''): LoadedAsset => parseAssetYaml(`${yaml}${REPORTING}${extra}`);
 
+const testDb = useTestDb();
+const pair = testDbPair();
+
 let h: Harness;
 let progress: string[];
 
-function world(over: Parameters<typeof harness>[0] = {}) {
-  h = harness({ loaded: reportAsset(), ...over });
+function world({ db = testDb(), ...over }: Parameters<typeof harness>[1] & { db?: Db } = {}) {
+  h = harness(db, { loaded: reportAsset(), ...over });
   progress = [];
 }
 
@@ -37,7 +38,7 @@ async function seedFees(lastDay: string, days: number, value: number, metricKey 
 
 const deps = (over: Partial<TickDeps> = {}): TickDeps => ({ home: '/nonexistent', now: h.deps.now, fetchDeps: h.deps, onProgress: (l) => progress.push(l), ...over });
 const tick = (over: Partial<TickDeps> = {}, db: Db = h.db): Promise<TickResult> => tickAsset(db, h.loaded, deps(over));
-const agentRuns = (): number => (h.db.prepare('SELECT COUNT(*) AS n FROM agent_runs').get() as { n: number }).n;
+const agentRuns = async (): Promise<number> => (await h.db.one<{ n: number }>('SELECT COUNT(*) AS n FROM agent_runs'))!.n;
 
 beforeEach(() => world());
 
@@ -57,7 +58,7 @@ describe('tickAsset', () => {
     expect(TickReportSchema.parse(report)).toEqual(report);
     for (const gone of ['signal', 'triggers_fired', 'triggers_recorded', 'triggers_standing', 'agent', 'agent_would_run']) expect(Object.keys(report)).not.toContain(gone);
     expect(Object.keys(report.ingest!)).not.toContain('watch'); // no firing, no key
-    expect(agentRuns()).toBe(0);
+    expect(await agentRuns()).toBe(0);
   });
 
   it('tick: ingest throws -> exit 1, error.code set, holder_yield null', async () => {
@@ -127,9 +128,7 @@ describe('tickAsset', () => {
   });
 
   it('tick: lock held -> outcome run_in_progress, exit 0, lock.holder set', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'orion-tick-'));
-    const A = openDb(join(dir, 'orion.db'));
-    const B = openDb(join(dir, 'orion.db'));
+    const [A, B] = pair();
     world({ db: A });
     await acquireRunLock(B, 'mini', 'agent run pid 42', NOW.toISOString());
     const { report, exitCode } = await tick();
@@ -138,15 +137,13 @@ describe('tickAsset', () => {
     expect(progress).toEqual(['asset mini is locked by agent run pid 42 since 2026-09-19T12:00:00.000Z']);
     expect((await getRunLock(A, 'mini'))!.holder).toBe('agent run pid 42'); // not ours to release
     expect(TickReportSchema.parse(report)).toEqual(report);
-    A.close();
-    B.close();
   });
 
   it('tick: an open anomaly starts nothing', async () => {
     const a = await raiseAnomaly(h.db, { assetId: 'mini', kind: 'source_failure_streak', metricKey: '', dedupeKey: 'cg', severity: 'degrading', detail: {}, seenAt: NOW.toISOString() });
     const { report, exitCode } = await tick();
     expect(exitCode).toBe(0);
-    expect(agentRuns()).toBe(0);
+    expect(await agentRuns()).toBe(0);
     expect(report.inbox.anomalies).toMatchObject([{ id: a.id, kind: 'source_failure_streak', severity: 'degrading' }]);
     expect(TickReportSchema.parse(report)).toEqual(report);
   });
@@ -184,7 +181,7 @@ describe('tickAsset', () => {
   });
 
   it('guards the inbox when its schema validation fails, and completes the tick', async () => {
-    h.db.prepare("INSERT INTO proposals (asset_id, persona, agent_run_id, kind, change_json, filed_against_json, rationale, evidence_json, effect_json, status, created_at) VALUES ('mini', 'analyst', NULL, 'config', '{}', '{}', 'r', '[]', '{\"weird\": 1}', 'pending', ?)").run(NOW.toISOString());
+    await h.db.run("INSERT INTO proposals (asset_id, persona, agent_run_id, kind, change_json, filed_against_json, rationale, evidence_json, effect_json, status, created_at) VALUES ('mini', 'analyst', NULL, 'config', '{}', '{}', 'r', '[]', '{\"weird\": 1}', 'pending', $1)", [NOW.toISOString()]);
     const { report, exitCode } = await tick();
     expect(report.outcome).toBe('completed');
     expect(exitCode).toBe(0);

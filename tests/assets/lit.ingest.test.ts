@@ -7,7 +7,6 @@ import { buildProgram } from '../../src/cli/program.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
 import { loadPersona } from '../../src/config/personas.js';
 import { listActiveObservations } from '../../src/db/observations.js';
-import { openDb } from '../../src/db/connection.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { addDays } from '../../src/ingest/time.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
@@ -15,6 +14,9 @@ import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.j
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
+import { testCliContext, useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-10-16T12:30:00.000Z');
@@ -145,7 +147,7 @@ function world() {
     },
   };
   const deps: FetchDeps = { http, rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW };
-  return { db: openDb(':memory:'), deps, http };
+  return { db: testDb(), deps, http };
 }
 
 describe('assets/lit.yaml', () => {
@@ -287,15 +289,14 @@ describe('assets/lit.yaml', () => {
   });
 
   it('orion report yield lit --json carries the same streams, shares and totals (what the coinrevs feed reads)', async () => {
-    const w = world();
     const home = mkdtempSync(join(tmpdir(), 'orion-lit-report-'));
     const lines: string[] = [];
-    const orion = (...args: string[]) => buildProgram({ home, stdout: (l) => lines.push(l), now: () => NOW, stderr: () => undefined }).parseAsync(args, { from: 'user' });
+    const ctx = testCliContext(home, { stdout: (l) => lines.push(l), now: () => NOW, stderr: () => undefined });
+    const w = world(); // on the CLI's database
+    const orion = (...args: string[]) => buildProgram(ctx).parseAsync(args, { from: 'user' });
     await orion('init');
     writeFileSync(join(home, 'assets', 'lit.yaml'), readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8'));
-    const db = openDb(join(home, 'orion.db'));
-    await fetchAsset(db, { config, hash: 'test' }, NOW, w.deps);
-    db.close();
+    await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     lines.length = 0;
     await orion('report', 'yield', 'lit', '--json');
     const out = JSON.parse(lines.join('\n'));

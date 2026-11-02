@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AgentConflict, Ledger } from '../../src/agent/ledger.js';
 import { decideAnomaly, getAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
-import { openDb, type Db } from '../../src/db/connection.js';
+import type { Db } from '../../src/db/connection.js';
 import { listJournal } from '../../src/db/journal.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { listProposals } from '../../src/db/proposals.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const NOW = new Date('2026-09-20T00:00:00.000Z');
 let db: Db;
@@ -12,7 +15,7 @@ let ledger: Ledger;
 let priceId: number;
 
 const CITATION = { source: 'doc:1', quotedText: 'the API lags by design, every day', locator: '12:33', docSha256: 'd'.repeat(64), docKind: 'transcript' as const };
-const count = (table: string): number => (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+const count = async (table: string): Promise<number> => (await db.one<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`))!.n;
 const anomaly = async () =>
   await raiseAnomaly(db, {
     assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey: 'x', severity: 'degrading', detail: {}, seenAt: '2026-09-19T00:00:00Z',
@@ -25,7 +28,7 @@ const research = (over: Partial<Parameters<Ledger['stageObservation']>[0]> = {})
 const commit = () => ledger.commit(db, { agentRunId: null, now: NOW });
 
 beforeEach(async () => {
-  db = openDb(':memory:');
+  db = testDb();
   priceId = (await insertObservation(db, { assetId: 'mini', metricKey: 'price_usd', observedAt: '2026-09-19', value: 10, source: 'onchain', fetchedAt: '2026-09-19' })).id;
   ledger = new Ledger('mini', 'analyst');
 });
@@ -101,17 +104,17 @@ describe('commit', () => {
     expect(await listJournal(db, 'mini')).toHaveLength(1);
     expect((await listJournal(db, 'mini'))[0]).toMatchObject({ id: summary.journalId, thesis: 'steady, still', persona: 'analyst' });
     expect((await listProposals(db))[0]).toMatchObject({ id: summary.proposalIds[0], persona: 'analyst', status: 'pending', citations: [CITATION] });
-    expect(count('assumption_sets') + count('assumption_changes')).toBe(0);
+    expect((await count('assumption_sets')) + (await count('assumption_changes'))).toBe(0);
   });
 
-  it('previews what it would write without writing', () => {
+  it('previews what it would write without writing', async () => {
     research();
     ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's', catalysts: [] });
     const preview = ledger.preview();
     expect(preview.observations).toHaveLength(1);
     expect(preview.journal).toEqual({ thesis: 't', openQuestions: [], summary: 's', catalysts: [] });
-    expect(count('observations')).toBe(1);
-    expect(count('journal')).toBe(0);
+    expect(await count('observations')).toBe(1);
+    expect(await count('journal')).toBe(0);
   });
 });
 
@@ -120,18 +123,21 @@ describe('dev findings', () => {
     category: 'holder_flow' as const, title: 't', metricKeys: ['flow_usd.fees'], claim: 'c', orionReading: 'o', valueDirection: 'up' as const,
     proposedFix: 'f', citations: [CITATION], fingerprint: 'f'.repeat(64),
   };
-  const tableCounts = (): Record<string, number> =>
-    Object.fromEntries(
-      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[]).map((t) => [t.name, count(`"${t.name}"`)]),
-    );
+  const tableCounts = async (): Promise<Record<string, number>> => {
+    const counts: Record<string, number> = {};
+    for (const t of db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[]) {
+      counts[t.name] = await count(`"${t.name}"`);
+    }
+    return counts;
+  };
 
   it('dev findings survive a dry run in staged and appear in committed after a commit; nothing is written to any table', async () => {
     ledger.stageDevFinding({ ...FINDING, evidence: [priceId] });
-    const before = tableCounts();
+    const before = await tableCounts();
     expect(ledger.preview().devFindings).toEqual([{ ...FINDING, evidence: [priceId] }]);
     const summary = await commit();
     expect(summary.devFindings).toEqual([{ ...FINDING, evidence: [priceId] }]);
-    expect(tableCounts()).toEqual(before);
+    expect(await tableCounts()).toEqual(before);
   });
 
   it('replaces a finding with the same category and sorted keys, and gives committed findings the real ids of rows staged with them', async () => {
@@ -153,10 +159,10 @@ describe('the world changes mid-run', () => {
     ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's', catalysts: [] });
     ledger.stageProposal({ change: { kind: 'acknowledge_anomaly', anomalyId: 1, note: 'n' }, filedAgainst: {}, rationale: 'r', evidence: [staged.tempId], effect: null, citations: [] });
   };
-  const nothingWritten = () => {
-    expect(count('observations')).toBe(1);
-    expect(count('journal')).toBe(0);
-    expect(count('proposals')).toBe(0);
+  const nothingWritten = async () => {
+    expect(await count('observations')).toBe(1);
+    expect(await count('journal')).toBe(0);
+    expect(await count('proposals')).toBe(0);
   };
 
   it('conflicts when the anomaly was decided during the run, and never withdraws an acknowledgement', async () => {
@@ -166,7 +172,7 @@ describe('the world changes mid-run', () => {
     await decideAnomaly(db, a.id, 'acknowledged', 'known lag', '2026-09-19T12:00:00Z');
     await expect(commit()).rejects.toThrow(/anomaly \d+ is no longer open \(acknowledged\)/);
     expect(await getAnomaly(db, a.id)).toMatchObject({ status: 'acknowledged', note: 'known lag' });
-    nothingWritten();
+    await nothingWritten();
   });
 
   it('conflicts rather than supersede an observation that already exists at the same metric and time', async () => {
@@ -179,14 +185,14 @@ describe('the world changes mid-run', () => {
     await expect(commit()).rejects.toThrow(/already exists/);
     const active = await listActiveObservations(db, 'mini', 'staked_supply');
     expect(active.map((o) => o.id)).toEqual([users.id]);
-    expect(count('journal')).toBe(0);
+    expect(await count('journal')).toBe(0);
   });
 
   it('conflicts on evidence that cites a staged id this run never staged, and rolls back the rows already inserted', async () => {
     stageEverything();
     ledger.stageResolution({ anomalyId: (await anomaly()).id, note: 'cleared', evidence: [-9] });
     await expect(commit()).rejects.toThrow(AgentConflict);
-    nothingWritten();
+    await nothingWritten();
   });
 
   it('a degrading anomaly opened during the run blocks nothing: there is no assumption change to block', async () => {

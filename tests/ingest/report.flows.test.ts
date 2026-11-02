@@ -5,6 +5,9 @@ import { fetchAsset, type FetchResult } from '../../src/ingest/run.js';
 import type { TransferLog } from '../../src/ingest/transport/rpc.js';
 import { GENESIS_TS, harness, NOW } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML, POOL, SAFE } from '../helpers/ingestAsset.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const E18 = 10n ** 18n;
 const STRANGER = '0x9999999999999999999999999999999999999999';
@@ -33,7 +36,7 @@ describe('fetchAsset: monitor-only (report) flows', () => {
   it('writes the report flow daily, like any transfer scan', async () => {
     const logs: Omit<TransferLog, 'timestamp'>[] = [{ blockNumber: blockAt('2026-09-17T12:00:00Z'), logIndex: 0, txHash: '0xa', from: POOL, value: 3n * E18 }];
     // The fake RPC ignores `to`, so the pool's transfer also lands on the burn sink's scan; only the revenue scan matters here.
-    const h = harness({ loaded: loaded(), logs });
+    const h = harness(testDb(), { loaded: loaded(), logs });
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     expect(source(r, REV_ID)).toMatchObject({ status: 'ok', metricsWritten: ['flow_usd.revenue'] });
     expect((await listActiveObservations(h.db, 'mini', 'flow_usd.revenue')).map((o) => o.value)).toEqual([0, 30, 0]);
@@ -41,14 +44,14 @@ describe('fetchAsset: monitor-only (report) flows', () => {
 
   it('raises no unlisted_sender anomaly for a sender only a report flow sees', async () => {
     const logs: Omit<TransferLog, 'timestamp'>[] = [{ blockNumber: blockAt('2026-09-17T12:00:00Z'), logIndex: 0, txHash: '0xb', from: STRANGER, value: 1n * E18 }];
-    const h = harness({ loaded: loaded(), logs });
+    const h = harness(testDb(), { loaded: loaded(), logs });
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     // The same stranger reaches the valuation's own scan (the fake ignores `to`), which still raises its one anomaly.
     expect(r.anomalies.filter((a) => a.kind === 'unlisted_sender').map((a) => a.metricKey)).toEqual(['flow_usd.fees']);
   });
 
   it('raises no failure streak for a source that feeds only report flows', async () => {
-    const h = harness({ loaded: loaded() });
+    const h = harness(testDb(), { loaded: loaded() });
     const realGetLogs = h.rpc.getTransferLogs.bind(h.rpc);
     // Fail only the treasury scan: its logs query names the treasury as `to`.
     h.rpc.getTransferLogs = async (q) => {
@@ -64,7 +67,7 @@ describe('fetchAsset: monitor-only (report) flows', () => {
   });
 
   it('still raises the streak when the same failure hits a valuation source (control)', async () => {
-    const h = harness({ loaded: loaded() });
+    const h = harness(testDb(), { loaded: loaded() });
     const realGetLogs = h.rpc.getTransferLogs.bind(h.rpc);
     h.rpc.getTransferLogs = async (q) => {
       if (q.to.toLowerCase() !== TREASURY) throw new Error('boom');

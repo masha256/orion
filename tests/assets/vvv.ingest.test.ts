@@ -4,13 +4,15 @@ import { describe, expect, it } from 'vitest';
 import { budgetsFor } from '../../src/config/agentPolicy.js';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
 import { loadSkills } from '../../src/config/personas.js';
-import { openDb } from '../../src/db/connection.js';
 import { listActiveObservations } from '../../src/db/observations.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { fixture } from '../helpers/sourceCtx.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-09-19T20:30:00.000Z');
@@ -68,7 +70,7 @@ function world() {
     ],
   });
   const deps: FetchDeps = { http, rpcFactory: () => rpc, env: {}, sleep: async () => undefined, now: () => NOW };
-  return { db: openDb(':memory:'), deps, http, rpc };
+  return { db: testDb(), deps, http, rpc };
 }
 
 describe('assets/vvv.yaml', () => {

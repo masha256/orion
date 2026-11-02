@@ -10,6 +10,9 @@ import { getProposal, insertProposal, type NewProposal, type ProposalChange } fr
 import type { OrionError } from '../../src/types.js';
 import { AGENT_ASSET_YAML, agentWorld, type AgentWorld } from '../helpers/agentWorld.js';
 import { AS_OF } from '../helpers/obs.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const NOW = new Date('2026-07-01T00:00:00.000Z');
 let w: AgentWorld;
@@ -17,7 +20,7 @@ let home: string;
 let yamlPath: string;
 
 beforeEach(async () => {
-  w = await agentWorld();
+  w = await agentWorld(testDb());
   home = mkdtempSync(join(tmpdir(), 'orion-proposals-'));
   mkdirSync(join(home, 'assets'));
   yamlPath = join(home, 'assets', 'mini.yaml');
@@ -61,7 +64,7 @@ describe('proposals', () => {
     expect(await codeOf(() => approve(p.id, 'agreed'))).toBe('proposal_kind_retired');
     await expect(approve(p.id)).rejects.toThrow(/assumption/);
     expect(await getProposal(w.db, p.id)).toMatchObject({ status: 'pending', effect });
-    expect(w.db.prepare('SELECT COUNT(*) AS n FROM assumption_sets').get()).toEqual({ n: 0 });
+    expect(await w.db.one('SELECT COUNT(*) AS n FROM assumption_sets')).toEqual({ n: 0 });
     expect(await rejectProposal(w.db, p.id, 'assumption values are retired', NOW)).toMatchObject({ status: 'rejected', decisionNote: 'assumption values are retired', effect });
     expect(await codeOf(() => approve(p.id))).toBe('proposal_not_pending');
   });

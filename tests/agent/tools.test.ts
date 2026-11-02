@@ -8,10 +8,18 @@ import { insertProposal } from '../../src/db/proposals.js';
 import { AGENT_ASSET_YAML, agentWorld, DOC_CITE, PAGE_URL, QUOTE, STAKED_QUOTE, type AgentWorld } from '../helpers/agentWorld.js';
 import { sha256 } from '../../src/util/canonical.js';
 import { AS_OF } from '../helpers/obs.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 let w: AgentWorld;
+/** A world other than the beforeEach one, on an emptied database (so its target document is document 1 again). */
+const freshWorld = async (yaml?: string): Promise<AgentWorld> => {
+  await testDb.reset();
+  return await agentWorld(testDb(), yaml);
+};
 beforeEach(async () => {
-  w = await agentWorld();
+  w = await agentWorld(testDb());
 });
 
 const NINE = [
@@ -101,7 +109,7 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
   const NON_CRITICAL = AGENT_ASSET_YAML.replace('critical: true, allow_provisional: true', 'critical: false, allow_provisional: true');
 
   it('a URL citation on a non-critical allow_provisional metric becomes an observation proposal, not a live row', async () => {
-    w = await agentWorld(NON_CRITICAL);
+    w = await freshWorld(NON_CRITICAL);
     const r = await research({ note: 'from the call' });
     expect(r).toMatchObject({ isError: false, result: { recorded: false } });
     expect(r.result.converted_to_proposal).toBeDefined();
@@ -159,7 +167,7 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
       '[00:09] Staked supply now stands at 55 tokens across the network.\n';
     const REVENUE_QUOTE = 'annualized revenue reached $1,100 in September, up from a thousand';
     const withTranscript = async (yaml?: string) => {
-      w = await agentWorld(yaml);
+      w = await freshWorld(yaml);
       const doc = { id: 1, kind: 'machine_transcript' as const, sha256: 'c'.repeat(64), text: TEXT };
       w.ctx.citableDocs = () => [doc];
       w.ctx.targetDoc = doc;
@@ -235,7 +243,7 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
 
   it('takes an announced change on a FETCHED schedule only when it is dated after now, and the confirmed row governs from its date until the chain catches up', async () => {
     // The fetch owns the present: emission_rate_annual is read from the chain here, as VVV's is.
-    const fw = await agentWorld(
+    const fw = await freshWorld(
       AGENT_ASSET_YAML.replace(
         'emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400 }',
         'emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400, source: { type: adapter, name: test.emission } }',
@@ -277,7 +285,7 @@ describe('propose_change', () => {
     expect(p.filedAgainst).toEqual([null]); // the YAML leaves tolerance_pct to its default
     expect(p.effect).toBeNull();
     const { proposalIds } = await w.ledger.commit(w.db, { agentRunId: null, now: new Date(AS_OF) });
-    expect((w.db.prepare('SELECT effect_json FROM proposals WHERE id = ?').get(proposalIds[0]) as { effect_json: string | null }).effect_json).toBeNull();
+    expect((await w.db.one<{ effect_json: string | null }>('SELECT effect_json FROM proposals WHERE id = $1', [proposalIds[0]]))!.effect_json).toBeNull();
   });
 
   it('propose_change: kind assumption_value is invalid input', async () => {
@@ -405,7 +413,7 @@ describe('propose_change', () => {
     };
     const storedCitations = async (): Promise<unknown> => {
       await w.ledger.commit(w.db, { agentRunId: null, now: new Date(AS_OF) });
-      const row = w.db.prepare('SELECT citations_json FROM proposals ORDER BY id DESC LIMIT 1').get() as { citations_json: string | null };
+      const row = (await w.db.one<{ citations_json: string | null }>('SELECT citations_json FROM proposals ORDER BY id DESC LIMIT 1'))!;
       return row.citations_json === null ? null : JSON.parse(row.citations_json);
     };
 
@@ -553,7 +561,7 @@ describe('write_journal', () => {
       ];
       expect(w.ledger.journal()!.catalysts).toEqual(expected);
       const { journalId } = await w.ledger.commit(w.db, { agentRunId: null, now: new Date(AS_OF) });
-      const row = w.db.prepare('SELECT catalysts_json FROM journal WHERE id = ?').get(journalId) as { catalysts_json: string };
+      const row = (await w.db.one<{ catalysts_json: string }>('SELECT catalysts_json FROM journal WHERE id = $1', [journalId]))!;
       expect(JSON.parse(row.catalysts_json)).toEqual(expected);
       expect(((await w.call('get_journal', {})).result.entries as { catalysts: unknown }[])[0].catalysts).toEqual(expected);
     });
@@ -616,7 +624,7 @@ describe('write_journal', () => {
     it('a journal without catalysts stores NULL', async () => {
       await journal([]);
       const { journalId } = await w.ledger.commit(w.db, { agentRunId: null, now: new Date(AS_OF) });
-      expect((w.db.prepare('SELECT catalysts_json FROM journal WHERE id = ?').get(journalId) as { catalysts_json: string | null }).catalysts_json).toBeNull();
+      expect((await w.db.one<{ catalysts_json: string | null }>('SELECT catalysts_json FROM journal WHERE id = $1', [journalId]))!.catalysts_json).toBeNull();
     });
   });
 });
@@ -706,7 +714,7 @@ describe('get_flow_total', () => {
     const rejected = await insertObservation(w.db, {
       assetId: 'mini', metricKey: FEES, observedAt: '2026-07-02T12:00:00Z', periodDays: 1, value: 1000, source: 'manual', fetchedAt: AS_OF,
     });
-    w.db.prepare("UPDATE observations SET status = 'rejected' WHERE id = ?").run(rejected.id);
+    await w.db.run("UPDATE observations SET status = 'rejected' WHERE id = $1", [rejected.id]);
     // Noon to noon: covers 2026-06-30 and 2026-07-01, half outside July, so July leaves it out.
     await insertObservation(w.db, { assetId: 'mini', metricKey: FEES, observedAt: '2026-07-01T12:00:00Z', periodDays: 1, value: 500, source: 'manual', fetchedAt: AS_OF });
     expect((await total({ from: '2026-07-01', to: '2026-07-31' })).result).toMatchObject({ total: (31 * 32) / 2 - 1, days_covered: 30, rows: 30, days_missing: ['2026-07-01'] });

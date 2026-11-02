@@ -3,9 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildProgram } from '../../src/cli/program.js';
+import { testCliContext, useTestDb } from '../helpers/db.js';
 import { harness, NOW, STATS } from '../helpers/fetchHarness.js';
 import type { Route } from '../helpers/fakeHttp.js';
 import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
+
+const testDb = useTestDb();
 
 let home: string;
 let routes: Record<string, Route>;
@@ -13,8 +16,9 @@ let stderr: string[];
 
 async function orion(...args: string[]): Promise<string> {
   const lines: string[] = [];
-  const h = harness({ routes });
-  const program = buildProgram({ home, stdout: (l) => lines.push(l), now: () => NOW, ingestDeps: () => h.deps, stderr: (l) => stderr.push(l) });
+  const ctx = testCliContext(home, { stdout: (l) => lines.push(l), now: () => NOW, ingestDeps: () => h.deps, stderr: (l) => stderr.push(l) });
+  const h = harness(testDb(), { routes });
+  const program = buildProgram(ctx);
   await program.parseAsync(args, { from: 'user' });
   return lines.join('\n');
 }

@@ -2,13 +2,15 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
-import { openDb } from '../../src/db/connection.js';
 import { listActiveObservations } from '../../src/db/observations.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 /**
  * The two multi-stream CRV liquid lockers (cvxCRV, sdCRV): each pays its stakers in three tokens, each a holder flow
@@ -125,7 +127,7 @@ function world(c: Case) {
   const base = fakeRpc({ genesisTs: GENESIS_TS, blockTimeSec: BLOCK_SEC, maxLogRange: 10_000n, latest: LATEST, calls });
   const rpc = multiLogRpc(base, logs);
   const deps: FetchDeps = { http: fakeHttp(routes as Parameters<typeof fakeHttp>[0]), rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW };
-  return { db: openDb(':memory:'), deps };
+  return { db: testDb(), deps };
 }
 
 for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {

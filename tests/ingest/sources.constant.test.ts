@@ -7,6 +7,9 @@ import { constantSource } from '../../src/ingest/sources/constant.js';
 import { harness, NOW } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 import { req, sourceCtx } from '../helpers/sourceCtx.js';
+import { useTestDb } from '../helpers/db.js';
+
+const testDb = useTestDb();
 
 const SHARE = 'staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }';
 const WITH_CONSTANT = INGEST_ASSET_YAML.replace(
@@ -30,7 +33,7 @@ describe('the constant source', () => {
 
   it('is written on every run, and its provenance is not manual', async () => {
     const loaded = parseAssetYaml(WITH_CONSTANT);
-    const h = harness({ loaded });
+    const h = harness(testDb(), { loaded });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     expect(r.sources.find((s) => s.sourceId === 'constant')).toMatchObject({ status: 'ok', metricsWritten: ['staker_emission_share'] });
     const rows = await listActiveObservations(h.db, 'mini', 'staker_emission_share');
