@@ -41,5 +41,5 @@ export function adapterNames(): string[] {
   return [...ADAPTERS.keys()].sort();
 }
 
-// Asset-specific adapters register here, exactly as custom valuation modules do in the engine registry.
+// Asset-specific adapters register here.
 for (const adapter of [...vvvAdapters, ...aeroAdapters, ...hypeAdapters, ...crvAdapters, ...cakeAdapters, ...litAdapters, ...solanaAdapters]) registerAdapter(adapter);

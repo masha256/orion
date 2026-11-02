@@ -185,7 +185,9 @@ export function writeApiFlow(args: ApiFlowArgs): ApiFlowResult {
     // The cursor never moves backwards; lastBlock is meaningless for an API series.
     if (!dryRun && newest !== null) advanceCursor(db, asset.id, args.scanKey, { lastBlock: 0, lastDay: newest }, nowIso);
   };
-  // IMMEDIATE: each insert reads for rows to supersede before it writes; see runValuation for why deferred fails.
+  // IMMEDIATE: each insert reads for rows to supersede before it writes. A deferred transaction takes the write lock
+  // only at its first write, and another connection's commit in between fails it with SQLITE_BUSY_SNAPSHOT, which
+  // busy_timeout cannot retry; taking the lock at BEGIN makes the other connection wait instead.
   if (dryRun) writeDays();
   else db.transaction(writeDays).immediate();
   outcome.retiredObservationIds.push(...retired); // after the commit: a rolled-back transaction retired nothing

@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { RETIRED_EFFECT } from '../../app/inbox.js';
 import { approveProposal, rejectProposal, type ApproveResult } from '../../app/proposals.js';
 import { changesAgentLimits } from '../../config/edit.js';
 import type { Db } from '../../db/connection.js';
@@ -42,11 +43,9 @@ function changeSummary(p: Proposal): string {
   }
 }
 
+// A stored effect is from the valuation era: never shown as a live target (--json keeps the stored object).
 function effectSummary(p: Proposal): string {
-  if (p.effect === null) return '';
-  if ('blocked' in p.effect) return `blocks the engine: ${p.effect.blocked.join('; ')}`;
-  const e = p.effect['12m'];
-  return `12m ${e.from === null ? 'n/a' : e.from.toFixed(2)} -> ${e.to.toFixed(2)}`;
+  return p.effect === null ? '' : RETIRED_EFFECT;
 }
 
 function proposalLine(p: Proposal, now: Date): string {

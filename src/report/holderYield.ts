@@ -6,9 +6,9 @@ import { DAYS_PER_YEAR } from '../types.js';
  * Report-only holder yield and growth (no driver, no grade, no signal). Everything here is computed from stored daily
  * flow totals and the level metrics in force, so any past day can be recomputed and nothing new is stored.
  *
- * Buckets (Mike's like-kind classes): a holder flow's `kind` decides its bucket, so reporting and valuation never
- * disagree. burn -> burn (no haircut), buy_and_hold -> hold (an overhang haircut), fee_share -> cash (a slippage
- * haircut per payout token, sized from pool depth). `extra_cash` adds a cash line the valuation keeps elsewhere
+ * Buckets (Mike's like-kind classes): a holder flow's `kind` decides its bucket, so a flow is always reported in one
+ * bucket. burn -> burn (no haircut), buy_and_hold -> hold (an overhang haircut), fee_share -> cash (a slippage
+ * haircut per payout token, sized from pool depth). `extra_cash` adds a cash line kept outside the holder flows
  * (CRV's vote incentives).
  */
 

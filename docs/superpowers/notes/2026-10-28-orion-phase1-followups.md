@@ -14,7 +14,7 @@ Commits (on main 34a9f9d, which has not moved):
 | 009442b | 3: the agent layer serves the disclosure run only (tool layer 2.0.0) |
 | 078d7fe | 4: the valuation layer removed (engine, drivers, signals, assumption sets, triggers, cadence; `model`, `signal`, `update`; `calibration/`); `proposals` top level |
 | 38f4f92 | 5: valuation keys and valuation-only metrics leave the schema and all 13 assets; hashes re-pinned |
-| (this commit) | 6: README, ops docs, this note; stale valuation comments swept (comments only, no hash moved) |
+| c6fae49, 70943db, (the final-review fix wave commit) | 6: README, ops docs, this note; stale valuation comments swept (comments only, no hash moved); Proof 5. Fix wave (Task 6 review + final whole-branch review, R14): exit-2 texts name `report_stale`; `REPORT_STALE_DAYS` 3 (R15); retired proposal effects in human output (R16); stale comments; watcher ops doc |
 
 ## Decisions (Mike, 2026-10-28, Slack #orion-dev): D1-D5 all (a)
 
@@ -99,12 +99,10 @@ Run by the controller (R13) on dist @ 38f4f92, home = a copy of the 2026-11-02 l
 `ORION_HOME`, live fetch, assets in order aero..ycrv, one process each:
 - `tick <a>`: exit 0 on all 13; `ticks.jsonl` has 13 lines, all `schema_version: 2`, `outcome: completed`,
   `ingest.outcome: ok`, `sources_failed: []`, `report_error: null`.
-- `holder_yield` filled on all 13: day 2026-11-01 (LIT 2026-10-31, its normal one-day API lag).
+- `holder_yield` filled on all 13: day 2026-11-01 (LIT 2026-10-31, one day behind the others (Lighter's API lags a day)).
 - `agent_runs` 63 before, 63 after; no `signals.jsonl` written.
-- CAKE's inbox lists the open live anomaly #13 (`cross_check_mismatch` on `total_supply`: chain 363.55M vs CoinGecko
-  354.04M, 2.61% against a 2.5% tolerance, first seen 2026-10-29). Before Phase 1 it would have started a paid triage run;
-  now it is listed and started nothing. Open item: resolve it by hand (CoinGecko's total likely hasn't netted recent
-  burns; the skill notes CAKE's cross-check at 2.5% for that reason).
+- CAKE's inbox lists the open live anomaly #13 (`cross_check_mismatch` on `total_supply`, see Open items). Before
+  Phase 1 it would have started a paid triage run; now it is listed and started nothing.
 
 ## Final suite (Task 6, on the final commit)
 
@@ -139,7 +137,7 @@ Run by the controller (R13) on dist @ 38f4f92, home = a copy of the 2026-11-02 l
 - **R8** A stopped report flow is handled by a staleness check: `report_stale` when (tick UTC date - `holder_yield.day`) >
   `REPORT_STALE_DAYS` = 4 (measured normal lag 2 days, LIT 3); `holder_yield` kept, exit 2, ALERT, no retry, so "silence
   means broken" holds. Cost if wrong: a false ALERT if a source's normal lag grows past 4 (raise the constant), or a
-  missed alert for 1-2 days of stall (caught by the failed-sources lines anyway).
+  missed alert for 1-2 days of stall (caught by the failed-sources lines anyway). Superseded in part by R15: constant 3.
 - **R9** `run.summary.signal_id` and `valuation_error` leaving the regenerated fixture count as part of the removed
   `signal` key (both describe the valuation's signal); the live watcher reads neither. Cost if wrong: old consumers see a
   missing key instead of null (none known).
@@ -153,6 +151,16 @@ Run by the controller (R13) on dist @ 38f4f92, home = a copy of the 2026-11-02 l
   DB row. Cost if wrong: a meaningless row marked approved.
 - **R13** Task 6's Proof 5 (scratch ticks with a live fetch) is run by the controller (needs `.env` + network), like R11.
   Cost: none.
+- **R14** Task 6's task review runs alongside the final whole-branch review; both reviews' findings go into one final fix
+  wave. Cost if wrong: none (both reviews still happen).
+- **R15** `REPORT_STALE_DAYS` becomes 3. R8's "lag 2, LIT 3" (2026-11-02 ~04:00 UTC) was read from a snapshot BEFORE
+  that day's fetch; a tick fetches first, and Proof 5 (ticks after the fetch) gave report day 2026-11-01 (lag 1) and LIT
+  2026-10-31 (lag 2). The production cron (05:05 PT = 12:05 UTC) sees the same post-fetch lags. With 3, LIT alerts after
+  2 missed days, the others after 3. Cost if wrong: a false ALERT if a source's normal post-fetch lag grows past 3.
+- **R16** Valuation-era proposal effects are not shown as live price targets in human output: in `inbox` lines (the
+  DECISIONS block) and `proposals list/show`, a stored non-null effect prints `effect: valuation-era (retired), not
+  computed` (no numbers). JSON output is unchanged (the live watcher reads inbox JSON). Cost if wrong: Mike loses the old
+  target numbers in the DECISIONS block (still in JSON and the DB).
 
 ## Deferred minors and review findings not fixed
 
@@ -177,9 +185,12 @@ Run by the controller (R13) on dist @ 38f4f92, home = a copy of the 2026-11-02 l
   test files it had to touch (`tests/helpers/ingestAsset.ts`, `tests/helpers/agentWorld.ts`, `tests/helpers/llamaOverview.ts`
   deleted, `tests/report/holderYield.test.ts`, `tests/config/{edit,sources,agentPolicy}.test.ts`, `tests/agent/tools.test.ts`,
   `tests/app/proposals.test.ts`, `tests/cli/agent.cli.test.ts`, `tests/fixtures/{aero,hype}.yaml`).
-- Stale text found in Task 6 and left (code or out of the sweep's list; no behaviour wrong):
-  - `orion tick --help` and the `run-daily.sh` header say exit 2 is "the report could not be built" and omit
-    `report_stale`.
+- Stale text found in Task 6 and left (code or out of the sweep's list; no behaviour wrong). Fixed in the final-review
+  fix wave: the `orion tick --help` and `run-daily.sh` exit-2 texts (now name `report_stale`), the
+  `docs/ops/disclosure-watcher.md` `--doc` / tool-list paragraph, the `src/types.ts` anomaly comment, the two "see
+  runValuation" comments (`src/ingest/flow.ts`, `src/ingest/apiFlow.ts`, reasoning restated in place), and one-line
+  valuation mentions in `src/ingest/adapters/registry.ts`, `src/ingest/adapters/hype.ts`, `src/ingest/run.ts` (x2),
+  `src/db/anomalies.ts`, `src/config/sources.ts`, `src/report/holderYield.ts`. Still left:
   - `orion report yield --help` says "90d-over-90d growth" (every asset's window is 91 days).
   - YAML comments that still name the valuation, signal, grade or a bootstrap run where they annotate kept metrics
     (Task 5 note 1; line numbers after the Task 6 sweep): the "a bootstrap run finds nothing to research" headers
@@ -191,6 +202,19 @@ Run by the controller (R13) on dist @ 38f4f92, home = a copy of the 2026-11-02 l
 
 ## Open items
 
+- **Rollout**: full checklist: plan section Rollout 1-11. Precondition: the live tree is clean (`git status --porcelain`
+  empty) before `git merge --ff-only`. Decide pending proposal #2 (VVV `confirm_observation`; not covered by D5).
+- **CAKE anomaly #13** (open on live): `cross_check_mismatch` on `total_supply`, chain 363.55M vs CoinGecko 354.04M,
+  2.61% against a 2.5% tolerance, first seen 2026-10-29. Resolve by hand. Source of the 2.5%: the `assets/cake.yaml`
+  `total_supply` cross-check comment (CoinGecko's total also nets 5.93M CAKE that PancakeSwap counts as burned without
+  sending it to dead, so the two burn sets differ); the gap has since grown past that tolerance.
+- **`config_versions` has no writer** after Phase 1 (its only writer was the deleted `src/db/runs.ts`), though the spec
+  lists the table as staying: decide in Phase 1.5 (carry or drop).
+- **`agent run --anomaly/--note`** (the triage/lead options) left in place.
+- **Dead exports** left for a later cleanup: `src/types.ts` `HORIZONS`, `HORIZON_YEARS`, `Horizon`, `PROVENANCE_RANK`,
+  `Provenance`; `src/config/schema.ts` `CaptureRule`; `src/db/anomalies.ts` `listOpenAnomalies` (tests only).
+- **`record_dev_finding.value_direction`** wording ("move the asset's targets") left: the field is part of the watcher
+  contract.
 - **Phase 1.5** replaces the 13 per-asset `orion-<asset>` cron jobs with one Orion daemon that posts to Slack itself. The
   rollout's prompt edit is interim only (Mike, 2026-10-28; R4).
 - **Rollout items** (interactive, live-install rules; plan section "Rollout"):

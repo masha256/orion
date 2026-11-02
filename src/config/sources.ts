@@ -111,8 +111,8 @@ export const SourceSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('adapter'), name, params }),
   /**
    * A structural constant of the asset (CRV's staker emission share is 0: every emission goes to LP gauges). Written as
-   * a fetched level every run, so it never goes stale and, not being manual, does not cap the grade. Changing it is an
-   * edit of the asset file, which moves the config hash and which the agent can only propose.
+   * a fetched level every run, so it never goes stale. Changing it is an edit of the asset file, which moves the config
+   * hash and which the agent can only propose.
    */
   z.strictObject({ type: z.literal('constant'), value: z.number().finite(), note: z.string().min(1) }),
   z.strictObject({ type: z.literal('derived'), name, params }),

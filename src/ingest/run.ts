@@ -68,7 +68,7 @@ export interface FetchResult {
  * is not positive, is a source failure, never an observation. One exception: a `constant` source may state a structural
  * zero in tokens (UNI has no staking: staked supply 0), since it is written in the asset file, not read from a source.
  * Another: a monitor-only balance in tokens may read 0 (PUMP's burn wallets hold nothing between burns); it is display
- * data, never a driver, so a zero cannot reach the valuation.
+ * data, so a zero is a true reading, not a source failure.
  */
 export function validateReading(def: MetricDef, value: number): string | null {
   if (!Number.isFinite(value)) return `${value} is not a finite number`;
@@ -90,7 +90,7 @@ function markFailed(outcome: SourceOutcome, text: string): void {
 
 /**
  * An unlisted sender degrades the group's critical metrics; with none critical, its first metric. A group that feeds only
- * monitor-only metrics (report series such as protocol revenue) raises nothing: its senders are not a valuation input.
+ * monitor-only metrics (report series such as protocol revenue) raises nothing: monitor-only data never raises an anomaly.
  */
 function unlistedAnomalyMetrics(loaded: LoadedAsset, group: FlowGroup): string[] {
   const metrics = group.members.map((m) => m.metricKey).filter((k) => loaded.config.metrics[k].monitor_only !== true);

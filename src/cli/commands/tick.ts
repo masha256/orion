@@ -14,7 +14,7 @@ export function registerTick(program: Command, ctx: CliContext): void {
     .description(
       'the scheduled entry point: lock, ingest (anomaly checks, watch rules), the holder-yield report for the latest complete day, unlock; starts no agent run; ' +
         'stdout is the tick report (one JSON line), appended to ticks.jsonl; ' +
-        'exit 0 fetched and reported (or run_in_progress), 1 nothing fetched, 2 fetched but the report could not be built',
+        'exit 0 fetched and reported (or run_in_progress), 1 nothing fetched, 2 fetched but the report could not be built (report_unavailable) or is stale (report_stale)',
     )
     .option('--json', 'accepted for consistency; tick always writes JSON')
     .action(async (assetId: string) => {

@@ -4,7 +4,8 @@
 #   stdout     the tick report, one JSON line (nothing only when orion itself could not start)
 #   stderr     the fetch summary, progress lines, or the error
 #   exit code  orion tick's own: 0 fetched and the holder-yield report built (or run_in_progress), 1 nothing fetched,
-#              2 fetched but the report could not be built for the latest complete day
+#              2 fetched but the report could not be built (report_unavailable) or is for a day more than 3 days
+#              behind the tick (report_stale: a report flow has stopped)
 #
 # orion tick keeps the report in <ORION_HOME>/ticks.jsonl itself (it writes no signals file and starts no agent run);
 # this script keeps stderr in <ORION_HOME>/tick.log. Needs no environment. ORION_HOME defaults to this directory;

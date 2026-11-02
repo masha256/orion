@@ -347,8 +347,10 @@ describe('orion proposals', () => {
   it('lists and shows a stored assumption_value proposal with its effect, refuses to approve it, and rejects it', async () => {
     expect(await orion('proposals', 'list')).toBe('no proposals');
     const p = fileProposal({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 }, { '6m': { from: 10, to: 11 }, '12m': { from: 10, to: 12.5 } });
-    expect(await orion('proposals', 'list', 'mini')).toContain(`#${p.id}  mini  analyst  assumption_value  pending  rev_growth_y1 (base) -> 1.8  [12m 10.00 -> 12.50]  0d old`);
+    expect(await orion('proposals', 'list', 'mini')).toContain(`#${p.id}  mini  analyst  assumption_value  pending  rev_growth_y1 (base) -> 1.8  [effect: valuation-era (retired), not computed]  0d old`);
     const shown = await orion('proposals', 'show', String(p.id));
+    expect(shown).toContain('[effect: valuation-era (retired), not computed]');
+    expect(shown).not.toContain('12.50');
     expect(shown).toContain('rationale: because');
     expect(shown).toContain('revenue_run_rate_usd = 1000');
     await expect(orion('proposals', 'approve', String(p.id))).rejects.toMatchObject({ code: 'proposal_kind_retired' });
@@ -359,6 +361,24 @@ describe('orion proposals', () => {
     expect(await orion('proposals', 'reject', String(p.id), '--note', 'assumptions are retired')).toBe(`proposal #${p.id} rejected: assumptions are retired`);
     expect(await orion('proposals', 'list')).toBe('no proposals');
     expect(await orion('proposals', 'list', '--all')).toContain('rejected');
+  });
+
+  it('a stored valuation-era effect: human lines say retired, the JSON of inbox and proposals list/show still carries the stored effect object', async () => {
+    const effect = { '6m': { from: 10, to: 11 }, '12m': { from: 10, to: 12.5 } };
+    const blocked = { blocked: ['missing_metric:revenue_run_rate_usd'] };
+    const p = fileProposal({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 }, effect);
+    const b = fileProposal({ kind: 'assumption_value', key: 'discount_rate_base', scenario: 'bull', value: 0.09 }, { value: 0.1 }, blocked);
+    const inboxText = (await orion('inbox', 'mini')).split('\n');
+    expect(inboxText).toContain(`prop #${p.id}  assumption_value  filed ${AS_OF.slice(0, 10)} by analyst  effect: valuation-era (retired), not computed`);
+    expect(inboxText).toContain(`prop #${b.id}  assumption_value  filed ${AS_OF.slice(0, 10)} by analyst  effect: valuation-era (retired), not computed`);
+    const inbox = JSON.parse(await orion('inbox', 'mini', '--json')) as { proposals: { id: number; effect: unknown }[] };
+    expect(inbox.proposals.find((x) => x.id === p.id)!.effect).toEqual(effect);
+    expect(inbox.proposals.find((x) => x.id === b.id)!.effect).toEqual(blocked);
+    const list = JSON.parse(await orion('proposals', 'list', 'mini', '--json')) as { id: number; effect: unknown }[];
+    expect(list.find((x) => x.id === p.id)!.effect).toEqual(effect);
+    expect(list.find((x) => x.id === b.id)!.effect).toEqual(blocked);
+    expect((JSON.parse(await orion('proposals', 'show', String(p.id), '--json')) as { effect: unknown }).effect).toEqual(effect);
+    expect(await orion('proposals', 'list', 'mini')).not.toMatch(/blocks the engine|12m /);
   });
 
   it('shows each citation with its locator and the label of its document', async () => {

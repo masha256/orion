@@ -26,11 +26,12 @@ export interface TickResult {
 
 /**
  * A holder-yield report day more than this many whole UTC days behind the tick means a report flow has stopped: the
- * report is still built (for the oldest flow's last day) but it is `report_stale`, exit 2. Normal lags measured on live
- * data (tick at 2026-11-02 ~04:00 UTC): 2 days for 12 assets, 3 for LIT (the Lighter API runs a day behind). Four leaves a
- * day of slack over LIT; raise it if a source's normal lag grows.
+ * report is still built (for the oldest flow's last day) but it is `report_stale`, exit 2. Lags measured on live data:
+ * read at 2026-11-02 ~04:00 UTC from a snapshot taken BEFORE that day's fetch, 2 days (LIT 3); but a tick fetches first,
+ * and ticks run after the fetch (Proof 5; the 12:05 UTC cron is the same) saw 1 day for 12 assets and 2 for LIT (the
+ * Lighter API runs a day behind). Three alerts after 2 missed days on LIT, 3 elsewhere; raise it if a normal lag grows.
  */
-export const REPORT_STALE_DAYS = 4;
+export const REPORT_STALE_DAYS = 3;
 
 /** Whole UTC days from `day` to the UTC date of `at`. */
 function daysBehind(day: string, at: Date): number {

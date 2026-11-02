@@ -24,8 +24,8 @@ export type WatchRule = (typeof WATCH_RULES)[number];
 
 /**
  * A watched monitor-only metric that moved this fetch. Reported in the fetch run's detail and the tick report, never as an
- * anomaly: every open anomaly fires the `open_anomaly` trigger, which starts a paid analyst run, and display data must
- * never wake the analyst. `day` is the last covered day for a flow (the day before its period end, where it is stored;
+ * anomaly: every open anomaly is listed in the inbox and the daily report for a human to decide, and display data must
+ * never ask for a decision. `day` is the last covered day for a flow (the day before its period end, where it is stored;
  * for a one-day flow, the covered day), the reading's UTC date for a level. Here, not in src/ingest, because the db layer
  * stores it (fetch_runs.detail_json.watch).
  */

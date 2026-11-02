@@ -120,7 +120,7 @@ export function listAnomalies(db: Db, filter: { assetId?: string; includeDecided
   return (db.prepare(sql).all(...params) as Row[]).map(fromRow);
 }
 
-/** Oldest first: the order a signal lists them in. */
+/** Oldest first. */
 export function listOpenAnomalies(db: Db, assetId: string): Anomaly[] {
   const rows = db.prepare("SELECT * FROM anomalies WHERE asset_id = ? AND status = 'open' ORDER BY id").all(assetId) as Row[];
   return rows.map(fromRow);

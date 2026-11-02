@@ -110,7 +110,13 @@ describe('inbox', () => {
     });
     const inbox = InboxSchema.parse(JSON.parse(JSON.stringify(buildInbox(w.db, w.asset, T)))) as Inbox;
     expect(inbox.proposals.map((p) => p.effect)).toEqual([{ blocked: ['missing_metric:revenue_run_rate_usd'] }, null, { '6m': { from: 10, to: 11 }, '12m': { from: 12, to: 14.5 } }]);
-    expect(inboxLines(inbox)).toContain(`prop #${w.withEffect.id}  assumption_value  filed 2026-09-20 by analyst run #${w.runId}  effect: 12m target 12 -> 14.5`);
+    // Human lines never show a valuation-era effect as a live target (R16); the JSON above still carries it unchanged.
+    const props = inboxLines(inbox).filter((l) => l.startsWith('prop #'));
+    expect(props).toEqual([
+      expect.stringMatching(/  effect: valuation-era \(retired\), not computed$/),
+      `prop #${w.noEffect.id}  reject_observation  filed 2026-09-20 by analyst  no target effect`,
+      `prop #${w.withEffect.id}  assumption_value  filed 2026-09-20 by analyst run #${w.runId}  effect: valuation-era (retired), not computed`,
+    ]);
   });
 });
 
@@ -133,7 +139,7 @@ describe('inboxLines', () => {
       `obs #${w.typed.id}  flow_usd.fees  90 31d to 2026-09-01  no confirmed value  entered by hand  https://example.com/aug`,
       `obs #${w.researched.id}  revenue_run_rate_usd  1200 at 2026-09-15  +20.0% vs confirmed  by analyst run #${w.runId}  https://example.com/q3`,
       `prop #${w.noEffect.id}  reject_observation  filed 2026-09-20 by analyst  no target effect`,
-      `prop #${w.withEffect.id}  assumption_value  filed 2026-09-20 by analyst run #${w.runId}  effect: 12m target 12 -> 14.5`,
+      `prop #${w.withEffect.id}  assumption_value  filed 2026-09-20 by analyst run #${w.runId}  effect: valuation-era (retired), not computed`,
       `anom #${w.open.id}  cross_check_mismatch  price_usd  degrading  seen 2x since 2026-09-18  reading {"primary":10,"check":10.6,"diff_pct":6,"tolerance_pct":2,"primary_source":"coingecko","check_source":"http_json:x"}`,
     ]);
     expect(inboxLines(emptyInbox())).toEqual(['nothing to decide']);

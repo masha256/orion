@@ -141,7 +141,7 @@ const emissionRateAnnual: AdapterDef = {
  * The fund's buys, read from its own fills: USDC spent per completed UTC day on the HYPE spot pair (`pair`, e.g. "@107"),
  * summed px x sz over buy fills. A daily series, written like an API flow (cursor, revision days, never a zero for a day
  * the API did not return). The info API keeps about two weeks of fills, so history starts when this goes live: it is
- * collected forward, next to the DefiLlama series the valuation reads, until it has a window of its own.
+ * collected forward, next to the DefiLlama series, until it has a window of its own.
  */
 const FILLS_PAGE = 2000;
 const fundBuysDaily: AdapterDef = {

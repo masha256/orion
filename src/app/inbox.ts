@@ -123,6 +123,9 @@ export function buildInbox(db: Db, asset: AssetConfig, nowIso: string): Inbox {
   return InboxSchema.parse({ observations, proposals, anomalies });
 }
 
+/** The human line for a stored non-null proposal effect: the valuation that computed it is retired, so no numbers. */
+export const RETIRED_EFFECT = 'effect: valuation-era (retired), not computed';
+
 const num = (n: number): string => String(Number(n.toPrecision(10)));
 const day = (iso: string): string => iso.slice(0, 10);
 
@@ -136,12 +139,8 @@ export function inboxLines(inbox: Inbox): string[] {
     lines.push(`obs #${o.id}  ${o.metric}  ${num(o.value)} ${when}  ${move}  ${by}  ${o.citation_url ?? 'no citation'}`);
   }
   for (const p of inbox.proposals) {
-    const effect =
-      p.effect === null
-        ? 'no target effect'
-        : 'blocked' in p.effect
-          ? `effect: blocked (${p.effect.blocked.join('; ')})`
-          : `effect: 12m target ${p.effect['12m'].from === null ? 'none' : num(p.effect['12m'].from)} -> ${num(p.effect['12m'].to)}`;
+    // A stored effect is from the valuation era (VVV #1, CAKE #4): never shown as a live target. The JSON keeps it.
+    const effect = p.effect === null ? 'no target effect' : RETIRED_EFFECT;
     lines.push(`prop #${p.id}  ${p.kind}  filed ${day(p.filed_at)} by ${p.persona}${p.agent_run_id === null ? '' : ` run #${p.agent_run_id}`}  ${effect}`);
   }
   for (const a of inbox.anomalies) {
