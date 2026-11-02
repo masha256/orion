@@ -1,7 +1,7 @@
 import type { AssetConfig } from '../config/schema.js';
 import type { Db } from '../db/connection.js';
 import { listActiveObservations } from '../db/observations.js';
-import { latestLevel } from '../drivers/select.js';
+import { latestLevel } from '../observations/select.js';
 import { addDays, utcDay } from '../ingest/time.js';
 import { MS_PER_DAY, STD_METRICS } from '../types.js';
 import { holderYieldReport, type HolderYieldReport, type ReportLevels } from './holderYield.js';

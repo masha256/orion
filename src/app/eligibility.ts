@@ -1,7 +1,7 @@
 import type { AssetConfig } from '../config/schema.js';
 import type { Db } from '../db/connection.js';
 import { listActiveObservations, type Observation } from '../db/observations.js';
-import { buildSchedule, latestLevel } from '../drivers/select.js';
+import { buildSchedule, latestLevel } from '../observations/select.js';
 import { MS_PER_DAY } from '../types.js';
 
 const ms = (iso: string): number => new Date(iso).getTime();

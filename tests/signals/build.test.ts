@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { computeDrivers } from '../../src/drivers/compute.js';
-import { latestLevel } from '../../src/drivers/select.js';
+import { latestLevel } from '../../src/observations/select.js';
 import { runEngine } from '../../src/engine/run.js';
 import { buildSignal, type BuildSignalInput } from '../../src/signals/build.js';
 import { emitSignal } from '../../src/signals/emit.js';

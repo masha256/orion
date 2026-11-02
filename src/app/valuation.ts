@@ -9,7 +9,7 @@ import {
   saveConfigVersion, updateRunStatus,
 } from '../db/runs.js';
 import { computeDrivers, type Drivers } from '../drivers/compute.js';
-import { latestLevel } from '../drivers/select.js';
+import { latestLevel } from '../observations/select.js';
 import { EngineError } from '../engine/errors.js';
 import { requiredExtraMetrics, validateAssetModules, validateAssumptions } from '../engine/requirements.js';
 import { runEngine, type EngineOutput } from '../engine/run.js';

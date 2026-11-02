@@ -1,9 +1,8 @@
 import type { AssetConfig, CaptureRule, FlowKind, RecipientBase } from '../config/schema.js';
 import type { Observation } from '../db/observations.js';
 import { MS_PER_DAY, STD_METRICS, type Provenance } from '../types.js';
-import {
-  buildSchedule, isStale, latestLevel, obsProvenance, trailingFlowAnnualized, worstProvenance, type ScheduleStep,
-} from './select.js';
+import { buildSchedule, latestLevel, type ScheduleStep } from '../observations/select.js';
+import { isStale, obsProvenance, trailingFlowAnnualized, worstProvenance } from './select.js';
 
 export interface DriverValue {
   value: number;

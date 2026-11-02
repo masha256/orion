@@ -6,7 +6,7 @@ import type { Db } from '../db/connection.js';
 import { getCursor } from '../db/fetchCursors.js';
 import { emptySourceOutcome, insertFetchRun, recentSourceStatuses, type FetchOutcome, type SourceOutcome } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations } from '../db/observations.js';
-import { latestLevel } from '../drivers/select.js';
+import { latestLevel } from '../observations/select.js';
 import { MS_PER_DAY, OrionError, STD_METRICS } from '../types.js';
 import { getAdapter } from './adapters/registry.js';
 import { checkRevenueStale, type IndexPoint } from './alerts.js';

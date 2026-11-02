@@ -1,6 +1,6 @@
 import type { AssetConfig } from '../config/schema.js';
 import type { Drivers } from '../drivers/compute.js';
-import type { ScheduleStep } from '../drivers/select.js';
+import type { ScheduleStep } from '../observations/select.js';
 import { DAYS_PER_YEAR, MS_PER_DAY, type ScenarioAssumptions } from '../types.js';
 import { EngineError } from './errors.js';
 import { flowUsdAt } from './paths.js';

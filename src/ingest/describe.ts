@@ -2,7 +2,7 @@ import type { AssetConfig } from '../config/schema.js';
 import type { Db } from '../db/connection.js';
 import { listFetchRuns, type SourceStatus } from '../db/fetchRuns.js';
 import { listActiveObservations } from '../db/observations.js';
-import { latestLevel } from '../drivers/select.js';
+import { latestLevel } from '../observations/select.js';
 import { MS_PER_DAY } from '../types.js';
 import { sourceId } from './sourceId.js';
 

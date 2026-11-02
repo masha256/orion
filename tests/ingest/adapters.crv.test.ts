@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseAssetYaml } from '../../src/config/load.js';
 import { listActiveObservations } from '../../src/db/observations.js';
-import { buildSchedule } from '../../src/drivers/select.js';
+import { buildSchedule } from '../../src/observations/select.js';
 import { epochAt, reducedRate } from '../../src/ingest/adapters/crv.js';
 import { adapterNames, getAdapter } from '../../src/ingest/adapters/registry.js';
 import { fetchAsset } from '../../src/ingest/run.js';
