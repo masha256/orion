@@ -95,8 +95,16 @@ keys and `sourceId:status`:
 
 ### Proof 5 (controller)
 
-_Placeholder: run by the controller (R13; needs a `.env` copy and network). Per asset: exit, `ingest.outcome`, failed
-sources, `holder_yield` non-null, `agent_runs` count unchanged, no `signals.jsonl` change._
+Run by the controller (R13) on dist @ 38f4f92, home = a copy of the 2026-11-02 live snapshot plus a `.env` copy without
+`ORION_HOME`, live fetch, assets in order aero..ycrv, one process each:
+- `tick <a>`: exit 0 on all 13; `ticks.jsonl` has 13 lines, all `schema_version: 2`, `outcome: completed`,
+  `ingest.outcome: ok`, `sources_failed: []`, `report_error: null`.
+- `holder_yield` filled on all 13: day 2026-11-01 (LIT 2026-10-31, its normal one-day API lag).
+- `agent_runs` 63 before, 63 after; no `signals.jsonl` written.
+- CAKE's inbox lists the open live anomaly #13 (`cross_check_mismatch` on `total_supply`: chain 363.55M vs CoinGecko
+  354.04M, 2.61% against a 2.5% tolerance, first seen 2026-10-29). Before Phase 1 it would have started a paid triage run;
+  now it is listed and started nothing. Open item: resolve it by hand (CoinGecko's total likely hasn't netted recent
+  burns; the skill notes CAKE's cross-check at 2.5% for that reason).
 
 ## Final suite (Task 6, on the final commit)
 
