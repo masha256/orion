@@ -2,7 +2,6 @@ id: link
 symbol: LINK
 name: Chainlink
 chain: ethereum
-supply_basis: effective_total
 
 # Read live on 2026-10-16; see docs/superpowers/notes/2026-10-16-link-onboarding.md.
 # The fee route: service fees paid on chain (many tokens) are converted to LINK by Payment Abstraction and sent every
@@ -96,14 +95,6 @@ metrics:
     monitor_only: true
     source: { type: transfer_flow, token: token, to: reserve, from_allowlist: [ fee_converter ], ignore_below_tokens: 10, unit: tokens }
 
-  # The last 91 days of Reserve buys, scaled to a year.
-  revenue_run_rate_usd:
-    type: level
-    unit: usd
-    staleness_days: 10
-    critical: true
-    source: { type: derived, name: flow_annualized, params: { metric: flow_usd.reserve, days: 91 } }
-
   # Report-only: the Reserve's balance (it should only grow; a fall is a withdrawal to look at).
   reserve_link: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: token, function: balanceOf, args: [ reserve ], decimals: 18 } }
 
@@ -127,50 +118,10 @@ metrics:
     source: { type: transfer_flow, token: token, to: release_rewards, from_any: true, ignore_below_tokens: 1000, unit: tokens }
   released_rate: { type: level, unit: tokens_per_year, staleness_days: 120, monitor_only: true, source: { type: derived, name: flow_annualized, params: { metrics: [ flow_tokens.released_hub, flow_tokens.released_rewards ], days: 365 } } }
 
-  # Category share (Mike, 2026-10-17): monitor_only, never a driver, never in the grade. No source, so it is a manual metric.
-  # share of oracle total value secured, DefiLlama-derived, recorded quarterly by research with a citation; DefiLlama's oracle API is paywalled
-  dominance_share: { type: level, unit: ratio, staleness_days: 7, monitor_only: true }
-
 # buy_and_hold, discretionary (Mike, 2026-10-16): Chainlink chooses which revenue is routed on chain and controls the
 # Reserve's timelock. Held, not burned: on total supply the flow does not shrink the supply path.
 holder_flows:
   - { id: reserve, kind: buy_and_hold, capture_rule: discretionary, recipient_base: all, metric: flow_usd.reserve, window_days: 91 }
-
-# UNI's, CAKE's and LIT's shape: the discounted flow carries most of the weight, the market's multiple on it the rest.
-# Structural: the agent may only propose.
-modules:
-  - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.6 }
-  - { id: fm_holder_flow, type: forward_multiple, kind: estimate, weight: 0.4, params: { basis: holder_flow } }
-
-scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }
-
-# Agent bands (2026-10-16), by the mirror rule (LIT's central values, so LIT's bands): each scenario's band is symmetric
-# around its value in
-# calibration/link-assumptions.yaml, the inner edge halfway to the neighbouring scenario's value and the outer edge as far
-# again, clipped to min/max. Exceptions: the bull rev_growth_y1 band is half width (as for UNI and CAKE); the bull
-# capture_rate_terminal.reserve band is clipped at the 1.0 ceiling. Keys with no bands (fade, ramp, staked ratio) barely move
-# the value (staked ratio: not at all) and the agent uses min/max. Recalibrate the bands whenever the calibrated values move.
-assumptions:
-  rev_growth_y1: { min: -0.6, max: 3.0, bear: { min: -0.5, max: -0.1 }, base: { min: -0.1, max: 0.35 }, bull: { min: 0.475, max: 0.725 } }
-  growth_fade_years: { min: 1, max: 10 }
-  terminal_growth: { min: 0, max: 0.05, bear: { min: 0, max: 0.01 }, base: { min: 0.01, max: 0.025 }, bull: { min: 0.025, max: 0.035 } }
-  capture_rate_terminal.reserve: { min: 0.3, max: 1.0, bear: { min: 0.625, max: 0.775 }, base: { min: 0.775, max: 0.925 }, bull: { min: 0.925, max: 1.0 } }
-  capture_ramp_years.reserve: { min: 0, max: 4 }
-  discount_rate_base: { min: 0.08, max: 0.35, bear: { min: 0.24, max: 0.32 }, base: { min: 0.175, max: 0.24 }, bull: { min: 0.125, max: 0.175 } }
-  discount_premium_discretionary: { min: 0, max: 0.15, bear: { min: 0.07, max: 0.09 }, base: { min: 0.05, max: 0.07 }, bull: { min: 0.03, max: 0.05 } }
-  multiple.fm_holder_flow: { min: 3, max: 200, bear: { min: 4, max: 8 }, base: { min: 8, max: 14 }, bull: { min: 14, max: 22 } }
-  regime_multiplier: { min: 0.4, max: 1.6, bear: { min: 0.55, max: 0.85 }, base: { min: 0.85, max: 1.15 }, bull: { min: 1.15, max: 1.45 } }
-  staked_ratio_horizon: { min: 0.01, max: 1 }
-
-agent:
-  budgets:
-    weekly: { input_tokens: 2000000 }
-
-review_triggers:
-  driver_deviation_pct: 25
-  provisional_move_pct: 25
-
-peer_set: []
 
 # Report-only holder yield and growth. A hold: 5 percent overhang haircut (Mike, 2026-10-16: Chainlink controls the
 # timelock and can release the Reserve). Revenue = the fees Chainlink routes on chain (the Reserve's buys); its enterprise

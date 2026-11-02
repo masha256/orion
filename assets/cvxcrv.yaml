@@ -14,7 +14,6 @@ id: cvxcrv
 symbol: cvxCRV
 name: Convex CRV (staked in CvxCrvStakingWrapper)
 chain: ethereum
-supply_basis: effective_total
 
 contracts:
   token: "0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7" # cvxCRV
@@ -62,7 +61,7 @@ metrics:
       - { tolerance_pct: 2, source: { type: coingecko, id: convex-crv, field: total_supply } }
 
   # CoinGecko has no circulating supply for this wrapper (Mike, 2026-10-12): every token is in circulation, so it is
-  # the on-chain total. Display basis for market cap; never a valuation input (supply_basis stays effective_total).
+  # the on-chain total. Display basis for market cap only.
   circulating_supply:
     type: level
     unit: tokens
@@ -113,14 +112,6 @@ metrics:
     critical: true
     source: { type: transfer_flow, token: cvx, to: wrapper, from_allowlist: [ cvx_distribution, cvx_mint ], unit: usd, price_coingecko_id: convex-finance }
 
-  # The three streams' last 91 days, summed day by day and scaled to a year: the cash cvxCRV stakers receive.
-  revenue_run_rate_usd:
-    type: level
-    unit: usd
-    staleness_days: 10
-    critical: true
-    source: { type: derived, name: flow_annualized, params: { metrics: [ flow_usd.fees, flow_usd.crv, flow_usd.cvx ], days: 91 } }
-
   # Report-only (monitor_only, never a driver). Convex's revenue is the cut its Booster keeps of the CRV it earns (getters
   # read 2026-10-10, out of 10000: lockIncentive 1000 to cvxCRV stakers, stakerIncentive 450 to CVX stakers, platformFee
   # 200 to the treasury; earmarkIncentive 50 goes to callers and is not revenue). Measured outflows match the getters to
@@ -161,47 +152,6 @@ holder_flows:
   - { id: fees, kind: fee_share, capture_rule: programmatic, recipient_base: staked, valued_per: recipients, metric: flow_usd.fees, window_days: 91 }
   - { id: crv, kind: fee_share, capture_rule: programmatic, recipient_base: staked, valued_per: recipients, metric: flow_usd.crv, window_days: 91 }
   - { id: cvx, kind: fee_share, capture_rule: discretionary, recipient_base: staked, valued_per: recipients, metric: flow_usd.cvx, window_days: 91 }
-
-modules:
-  - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.6 }
-  - { id: fm_holder_flow, type: forward_multiple, kind: estimate, weight: 0.4, params: { basis: holder_flow } }
-
-scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }
-
-# Agent bands (2026-10-09), yCRV's (calibration/ycrv-assumptions.yaml carries the same growth, discount, multiple and regime
-# values; the mirror rule as for CRV). Capture is each flow's share of the summed run rate, so each capture key is held to
-# a band around its calibrated share (wide enough for the mix to drift, narrow enough that the shares cannot sum to much
-# over 1 and count the run rate twice). Ramps 0 to 4 years. Staked ratio: min/max (valued_per recipients uses today's
-# staked share, so it does not move the value). Recalibrate the bands whenever the calibrated values move.
-assumptions:
-  rev_growth_y1: { min: -0.6, max: 2, bear: { min: -0.32, max: -0.18 }, base: { min: -0.18, max: -0.03 }, bull: { min: 0.01, max: 0.09 } }
-  growth_fade_years: { min: 1, max: 8 }
-  terminal_growth: { min: -0.2, max: 0.05, bear: { min: -0.095, max: -0.065 }, base: { min: -0.065, max: -0.035 }, bull: { min: -0.035, max: -0.005 } }
-  capture_rate_terminal.fees: { min: 0.4, max: 0.62 }
-  capture_ramp_years.fees: { min: 0, max: 4 }
-  capture_rate_terminal.crv: { min: 0.26, max: 0.46 }
-  capture_ramp_years.crv: { min: 0, max: 4 }
-  # CVX stopped in September 2026: 0 unless Convex restarts the program (then up to about its old share, 0.13).
-  capture_rate_terminal.cvx: { min: 0, max: 0.15 }
-  capture_ramp_years.cvx: { min: 0, max: 4 }
-  discount_rate_base: { min: 0.08, max: 0.35, bear: { min: 0.225, max: 0.275 }, base: { min: 0.18, max: 0.225 }, bull: { min: 0.14, max: 0.18 } }
-  discount_premium_programmatic: { min: 0, max: 0.15, bear: { min: 0.025, max: 0.035 }, base: { min: 0.015, max: 0.025 }, bull: { min: 0.005, max: 0.015 } }
-  discount_premium_discretionary: { min: 0, max: 0.3, bear: { min: 0.11, max: 0.13 }, base: { min: 0.09, max: 0.11 }, bull: { min: 0.07, max: 0.09 } }
-  multiple.fm_holder_flow: { min: 3, max: 60, bear: { min: 3.5, max: 6.5 }, base: { min: 6.5, max: 9.5 }, bull: { min: 9.5, max: 12.5 } }
-  regime_multiplier: { min: 0.4, max: 1.6, bear: { min: 0.7, max: 0.9 }, base: { min: 0.9, max: 1.1 }, bull: { min: 1.1, max: 1.3 } }
-  staked_ratio_horizon: { min: 0.5, max: 1 }
-
-agent:
-  budgets:
-    weekly: { input_tokens: 2000000 }
-
-review_triggers:
-  driver_deviation_pct: 25
-  provisional_move_pct: 25
-  calendar:
-    - { date: "2027-08-12", note: "CRV emission rate cut (97.2M to 81.7M CRV a year): the CRV stream tracks emissions" }
-
-peer_set: []
 
 # Report-only holder yield and growth (orion report yield). Haircuts from pool depth (2026-10-10): crvUSD none; CRV 1
 # percent (a day's CRV, about $5K, moves the TriCRV pool 0.6 percent; a week's 4.4); CVX 0.5 (the CVX/ETH pool is deep).

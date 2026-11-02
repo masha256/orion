@@ -10,7 +10,6 @@ import { addDays } from '../../src/ingest/time.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
-import { llamaOverview } from '../helpers/llamaOverview.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -60,7 +59,6 @@ function burnLogs() {
 
 function world() {
   const http = fakeHttp({
-    'https://api.llama.fi/overview/dexs': llamaOverview('parent#uniswap', 'Dexs'),
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'uniswap', symbol: 'uni', current_price: PRICE, market_cap: 4.7e9, circulating_supply: 624_978_422, total_supply: 887_216_418 }],
     'https://api.coingecko.com/api/v3/coins/uniswap/market_chart': uniChart,
     'https://api.llama.fi/summary/fees/uniswap': feesChart(),
@@ -88,20 +86,17 @@ function world() {
 
 describe('assets/uni.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
-    expect(config).toMatchObject({ id: 'uni', symbol: 'UNI', chain: 'ethereum', supply_basis: 'effective_total', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
+    expect(config).toMatchObject({ id: 'uni', symbol: 'UNI', chain: 'ethereum', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
     expect(config.holder_flows).toEqual([{ id: 'burn', kind: 'burn', capture_rule: 'programmatic', recipient_base: 'all', metric: 'flow_usd.burn', window_days: 91 }]);
-    expect(config.modules.map((m) => [m.id, m.kind, m.weight ?? null])).toEqual([['hc', 'estimate', 0.6], ['fm_holder_flow', 'estimate', 0.4]]);
     // Every metric has a source, and none is manual: a bootstrap run has nothing to research and the grade can be A.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // DefiLlama only for the gross swap fees (Mike, 2026-10-11): the one series with no on-chain source.
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama' || d.cross_checks?.some((c) => c.source.type === 'defillama')).map(([k]) => k)).toEqual(['flow_usd.swap_fees']);
-    // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
-    for (const key of ['dominance_share', 'dominance_share_1y']) expect(config.metrics[key]).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true, staleness_days: 7 });
-    expect(config.metrics.dominance_share.source).toEqual({ type: 'defillama_share', parent: 'parent#uniswap', category: 'Dexs', overview: 'dexs', window: '30d' });
-    expect(config.metrics.dominance_share_1y.source).toEqual({ type: 'defillama_share', parent: 'parent#uniswap', category: 'Dexs', overview: 'dexs', window: '1y' });
+    for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check; then the revenue label (protocol fees, v2 + selected v3). A deliberate edit of assets/uni.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('de53c5930057c340b192b67311dcb41c0bd0b4b296402fc6b5193385c4bda04d');
+    // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('a45e8359744e7780b6ba195840d7daf3bdcd528dae01b16d058e5c7444cc7117');
   });
 
   it('plans one any-sender scan of burns, the chain levels with the Chainlink cross-check, the constants and the fees feed', () => {
@@ -111,21 +106,17 @@ describe('assets/uni.yaml', () => {
       ['chain_levels', ['cross_check:price_usd', 'primary:total_supply', 'primary:labs_vest_rate', 'primary:labs_vest_approved', 'primary:treasury_uni']],
       ['constant', ['primary:staked_supply', 'primary:staker_emission_share', 'primary:emission_rate_annual']],
       ['defillama:uniswap:dailyFees', ['primary:flow_usd.swap_fees']],
-      ['defillama_share:dexs:Dexs:parent#uniswap:30d', ['primary:dominance_share']],
-      ['defillama_share:dexs:Dexs:parent#uniswap:1y', ['primary:dominance_share_1y']],
     ]);
     expect(plan.flowGroups).toHaveLength(1);
     expect(plan.flowGroups[0]).toMatchObject({ sourceId: 'transfer_flow:token>dead[*]', anySender: true, allowlist: [], ignore: [C.timelock.toLowerCase()] });
     expect(plan.flowGroups[0].members.map((m) => [m.metricKey, m.unit, m.countFrom])).toEqual([['flow_usd.burn', 'usd', null], ['flow_tokens.burn', 'tokens', null]]);
-    expect(plan.derived.map((r) => r.metricKey)).toEqual(['revenue_run_rate_usd']);
+    expect(plan.derived).toEqual([]);
   });
 
   it('fetches every metric from canned sources and counts every burner but the Timelock', async () => {
     const w = world();
     const r = await fetchAsset(w.db, loadAsset(ROOT, 'uni'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
-    // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
-    expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'uni', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
     const scan = r.sources.find((s) => s.sourceId === 'transfer_flow:token>dead[*]')!;
@@ -148,9 +139,7 @@ describe('assets/uni.yaml', () => {
     expect(burns).toHaveLength(100);
     expect(burns.every((o) => o.value === 64_000)).toBe(true);
     expect(JSON.parse(rows('flow_usd.burn').at(-1)!.sourceDetail!).senders).toEqual({ [BRIDGE]: { count: 1, tokens: 48_000 }, [SEARCHER]: { count: 1, tokens: 16_000 } });
-    const revenue = rows('revenue_run_rate_usd').at(-1)!;
-    expect(revenue.value).toBeCloseTo((91 * 64_000 * PRICE * 365) / 91, 0);
-    expect(revenue).toMatchObject({ source: 'onchain', sourceDetail: 'derived flow_annualized(flow_usd.burn, 91d)' });
+    expect(rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
   });
 
   it('reports the burn against the Labs vest as dilution, and the gross swap fees as volume', async () => {

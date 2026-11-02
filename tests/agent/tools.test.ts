@@ -270,11 +270,11 @@ describe('propose_change', () => {
   const propose = (input: Record<string, unknown>) => w.call('propose_change', { rationale: 'because', citations: [DOC_CITE], ...input });
 
   it('propose_change: a config proposal stores effect null', () => {
-    const r = propose({ kind: 'config', edits: [{ path: ['scenario_probabilities'], value: { bear: 0.2, base: 0.5, bull: 0.3 } }] });
+    const r = propose({ kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'tolerance_pct'], value: 2 }] });
     expect(r.isError).toBe(false);
     expect(r.result).not.toHaveProperty('effect');
     const p = w.ledger.proposals()[0];
-    expect(p.filedAgainst).toEqual([null]); // the YAML leaves scenario_probabilities to its default
+    expect(p.filedAgainst).toEqual([null]); // the YAML leaves tolerance_pct to its default
     expect(p.effect).toBeNull();
     const { proposalIds } = w.ledger.commit(w.db, { agentRunId: null, now: new Date(AS_OF) });
     expect((w.db.prepare('SELECT effect_json FROM proposals WHERE id = ?').get(proposalIds[0]) as { effect_json: string | null }).effect_json).toBeNull();
@@ -289,10 +289,31 @@ describe('propose_change', () => {
   });
 
   it('validates a config proposal as a whole config, and refuses one that changes nothing or points nowhere', () => {
-    expect(propose({ kind: 'config', edits: [{ path: ['scenario_probabilities'], value: { bear: 0.5, base: 0.5, bull: 0.5 } }] }).result.refused).toBe('invalid_asset_config');
+    expect(propose({ kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'tolerance_pct'], value: -1 }] }).result.refused).toBe('invalid_asset_config');
     expect(propose({ kind: 'config', edits: [{ path: ['symbol'], value: 'MINI' }] }).result.refused).toBe('no_change');
-    expect(propose({ kind: 'config', edits: [{ path: ['modules', 'nope', 'weight'], value: 1 }] }).result.refused).toBe('invalid_path');
+    expect(propose({ kind: 'config', edits: [{ path: ['holder_flows', 'nope', 'window_days'], value: 1 }] }).result.refused).toBe('invalid_path');
     expect(propose({ kind: 'config' }).result.refused).toBe('invalid_input');
+    expect(w.ledger.proposals()).toEqual([]);
+  });
+
+  it('propose_change: a config edit that puts back a removed valuation key is refused at filing', () => {
+    // Review Focus 4: the edited config must still parse, and the schema refuses every removed key by name.
+    const removed: [string, unknown][] = [
+      ['assumptions', { rev_growth_y1: { min: -0.5, max: 5 } }],
+      ['modules', [{ id: 'hc', type: 'holder_cashflow', kind: 'estimate', weight: 1 }]],
+      ['scenario_probabilities', { bear: 0.25, base: 0.5, bull: 0.25 }],
+      ['review_triggers', { provisional_move_pct: 25 }],
+      ['peer_set', []],
+      ['total_return_variants', []],
+      ['supply_basis', 'effective_total'],
+    ];
+    for (const [key, value] of removed) {
+      const r = propose({ kind: 'config', edits: [{ path: [key], value }] });
+      expect(r, key).toMatchObject({ isError: true, result: { refused: 'invalid_asset_config' } });
+      expect(JSON.stringify(r.result), key).toContain(`Unrecognized key: \\"${key}\\"`);
+    }
+    // A path below a removed key has no parent: refused as a bad path.
+    expect(propose({ kind: 'config', edits: [{ path: ['assumptions', 'rev_growth_y1', 'base'], value: { min: 0, max: 1 } }] }).result.refused).toBe('invalid_path');
     expect(w.ledger.proposals()).toEqual([]);
   });
 
@@ -375,8 +396,8 @@ describe('propose_change', () => {
     const DOC_QUOTE = 'moving the base scenario weight to one half, because the fee switch is now live';
     const DOC = { id: 1, kind: 'transcript' as const, sha256: 'd'.repeat(64), text: DOC_TEXT };
     const ON_DOC = { source: 'doc:1', quoted_text: DOC_QUOTE };
-    const probabilities = (base: number) => ({
-      kind: 'config', edits: [{ path: ['scenario_probabilities'], value: { bear: (1 - base) / 2, base, bull: (1 - base) / 2 } }],
+    const toleranceEdit = (pct: number) => ({
+      kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'tolerance_pct'], value: pct }],
     });
     const withDoc = () => {
       w.ctx.citableDocs = () => [DOC];
@@ -390,7 +411,7 @@ describe('propose_change', () => {
 
     it('propose_change verifies each citation and stores it', () => {
       withDoc();
-      const r = propose({ ...probabilities(0.5), citations: [ON_DOC, { source: PAGE_URL, quoted_text: QUOTE }] });
+      const r = propose({ ...toleranceEdit(2), citations: [ON_DOC, { source: PAGE_URL, quoted_text: QUOTE }] });
       expect(r.isError).toBe(false);
       const expected = [
         { source: 'doc:1', quotedText: DOC_QUOTE, locator: '12:33', docSha256: 'd'.repeat(64), docKind: 'transcript' },
@@ -403,7 +424,7 @@ describe('propose_change', () => {
     it('a citation given twice (the same source and quote, after cleaning) is stored once, in first-given order', () => {
       withDoc();
       const r = propose({
-        ...probabilities(0.5),
+        ...toleranceEdit(2),
         citations: [
           { source: PAGE_URL, quoted_text: QUOTE },
           ON_DOC,
@@ -417,33 +438,33 @@ describe('propose_change', () => {
 
     it('a bad citation refuses the whole proposal', () => {
       withDoc();
-      const bad = propose({ ...probabilities(0.5), citations: [ON_DOC, { source: 'doc:1', quoted_text: 'the fee switch was never discussed at all' }] });
+      const bad = propose({ ...toleranceEdit(2), citations: [ON_DOC, { source: 'doc:1', quoted_text: 'the fee switch was never discussed at all' }] });
       expect(bad).toMatchObject({ isError: true, result: { refused: 'quote_not_found' } });
-      expect(propose({ ...probabilities(0.5), citations: [{ source: 'doc:2', quoted_text: DOC_QUOTE }] }).result.refused).toBe('doc_not_in_run');
+      expect(propose({ ...toleranceEdit(2), citations: [{ source: 'doc:2', quoted_text: DOC_QUOTE }] }).result.refused).toBe('doc_not_in_run');
       expect(w.ledger.proposals()).toEqual([]);
       // At most five.
       const six = Array.from({ length: 6 }, () => ON_DOC);
-      expect(propose({ ...probabilities(0.5), citations: six }).result.refused).toBe('invalid_input');
+      expect(propose({ ...toleranceEdit(2), citations: six }).result.refused).toBe('invalid_input');
       expect(w.ledger.proposals()).toEqual([]);
     });
 
     it('refuses a proposal without a citation of the target doc', () => {
       withDoc();
-      expect(w.call('propose_change', { rationale: 'because', ...probabilities(0.5) })).toMatchObject({ isError: true, result: { refused: 'citation_required' } });
-      expect(propose({ ...probabilities(0.5), citations: [] }).result.refused).toBe('citation_required');
-      expect(propose({ ...probabilities(0.5), citations: [{ source: PAGE_URL, quoted_text: QUOTE }] }).result.refused).toBe('citation_required');
+      expect(w.call('propose_change', { rationale: 'because', ...toleranceEdit(2) })).toMatchObject({ isError: true, result: { refused: 'citation_required' } });
+      expect(propose({ ...toleranceEdit(2), citations: [] }).result.refused).toBe('citation_required');
+      expect(propose({ ...toleranceEdit(2), citations: [{ source: PAGE_URL, quoted_text: QUOTE }] }).result.refused).toBe('citation_required');
       expect(w.ledger.proposals()).toEqual([]);
-      expect(propose({ ...probabilities(0.5), citations: [{ source: PAGE_URL, quoted_text: QUOTE }, ON_DOC] }).isError).toBe(false);
+      expect(propose({ ...toleranceEdit(2), citations: [{ source: PAGE_URL, quoted_text: QUOTE }, ON_DOC] }).isError).toBe(false);
       expect(w.ledger.proposals()[0].citations.map((c) => c.source)).toEqual([PAGE_URL, 'doc:1']);
     });
 
     it('citations do not change duplicate detection', () => {
       withDoc();
-      expect(propose({ ...probabilities(0.5), citations: [ON_DOC] }).isError).toBe(false);
-      expect(propose({ ...probabilities(0.5), citations: [{ source: PAGE_URL, quoted_text: QUOTE }, ON_DOC] }))
+      expect(propose({ ...toleranceEdit(2), citations: [ON_DOC] }).isError).toBe(false);
+      expect(propose({ ...toleranceEdit(2), citations: [{ source: PAGE_URL, quoted_text: QUOTE }, ON_DOC] }))
         .toMatchObject({ isError: true, result: { refused: 'duplicate_proposal', staged_in_this_run: true } });
       w.ledger.commit(w.db, { agentRunId: null, now: new Date(AS_OF) });
-      expect(propose({ ...probabilities(0.5), citations: [ON_DOC] })).toMatchObject({ isError: true, result: { refused: 'duplicate_proposal', proposal_id: expect.any(Number) } });
+      expect(propose({ ...toleranceEdit(2), citations: [ON_DOC] })).toMatchObject({ isError: true, result: { refused: 'duplicate_proposal', proposal_id: expect.any(Number) } });
     });
 
     it('a machine-transcript observation proposal carries the verified citation it came from', () => {

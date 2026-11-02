@@ -69,14 +69,15 @@ function world() {
 
 describe('assets/ycrv.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
-    expect(config).toMatchObject({ id: 'ycrv', symbol: 'yCRV', chain: 'ethereum', supply_basis: 'effective_total', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
+    expect(config).toMatchObject({ id: 'ycrv', symbol: 'yCRV', chain: 'ethereum', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
     expect(config.holder_flows).toEqual([
       { id: 'fees', kind: 'fee_share', capture_rule: 'programmatic', recipient_base: 'staked', valued_per: 'recipients', metric: 'flow_usd.fees', window_days: 91 },
     ]);
-    expect(config.modules.map((m) => [m.id, m.kind, m.weight ?? null])).toEqual([['hc', 'estimate', 0.6], ['fm_holder_flow', 'estimate', 0.4]]);
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
+    expect(config.metrics.revenue_run_rate_usd).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/ycrv.yaml moves it; update the pin on purpose.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('5dd6000670d3a75fc0c6fdc2731a1eb02ee3a92fbe0b4fef23b7633bd268b9d9');
+    // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('6e51d315fcf0148ccdfe1ff76f6ed57fa42337c5abf4de734c86c95020ba149b');
   });
 
   it('plans one transfer scan of vault shares, converted at the share price', () => {
@@ -94,7 +95,7 @@ describe('assets/ycrv.yaml', () => {
       [{ metricKey: 'flow_usd.yearn_styc_fee', unit: 'usd', countFrom: [C.st_ycrv.toLowerCase()], priceCoingeckoId: 'yearn-crv', sharePrice: { address: C.st_ycrv.toLowerCase(), functionName: 'pricePerShare', decimals: 18 } }],
       [{ metricKey: 'flow_usd.yearn_gross', unit: 'usd', countFrom: [C.voter.toLowerCase(), C.fee_burner.toLowerCase()], priceCoingeckoId: 'crvusd', sharePrice: null }],
     ]);
-    expect(plan.derived.map((r) => r.metricKey)).toEqual(['revenue_run_rate_usd']);
+    expect(plan.derived).toEqual([]);
   });
 
   it('fetches every metric from canned sources', async () => {
@@ -115,8 +116,7 @@ describe('assets/ycrv.yaml', () => {
     expect(fees.filter((o) => o.value > 0)).toHaveLength(14); // the Saturdays 2026-07-04 to 2026-10-03
     // Each payout: 25,000 shares x 1.159 crvUSD per share x 0.9991 USD.
     expect(fees.find((o) => o.value > 0)!.value).toBeCloseTo(25_000 * 1.159 * 0.9991, 6);
-    // 13 payouts in the 91 days to 2026-10-08, scaled to a year.
-    expect(rows('revenue_run_rate_usd').at(-1)!.value).toBeCloseTo((13 * 25_000 * 1.159 * 0.9991 * 365) / 91, 0);
+    expect(rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
   });
 

@@ -1,5 +1,5 @@
 import type { LoadedAsset } from '../config/load.js';
-import { revenueStaleMovePct, type MetricDef } from '../config/schema.js';
+import type { MetricDef } from '../config/schema.js';
 import { isChainSource } from '../config/sources.js';
 import { findStandingAnomaly, raiseAnomaly } from '../db/anomalies.js';
 import type { Db } from '../db/connection.js';
@@ -9,7 +9,7 @@ import { insertObservation, listActiveObservations } from '../db/observations.js
 import { latestLevel } from '../observations/select.js';
 import { MS_PER_DAY, OrionError, STD_METRICS } from '../types.js';
 import { getAdapter } from './adapters/registry.js';
-import { checkRevenueStale, type IndexPoint } from './alerts.js';
+import { checkRevenueStale, REVENUE_STALE_MOVE_PCT, type IndexPoint } from './alerts.js';
 import { DEFAULT_API_FLOW_BACKFILL_DAYS, DEFILLAMA_REVISION_DAYS, writeApiFlow } from './apiFlow.js';
 import { writePeriodicPayments } from './periodic.js';
 import { compareLevel, compareMonthly } from './crosscheck.js';
@@ -507,7 +507,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     if (revenue) {
       const stored = listActiveObservations(db, asset.id, STD_METRICS.usageIndex).map((o) => ({ observedAt: o.observedAt, value: o.value }));
       const index = dryRun ? [...stored, ...derivedIndex] : stored; // a real run has already stored them
-      const finding = checkRevenueStale(revenue.observedAt, index, revenueStaleMovePct(asset));
+      const finding = checkRevenueStale(revenue.observedAt, index, REVENUE_STALE_MOVE_PCT);
       if (finding) {
         raise({ kind: 'revenue_disclosure_stale', metricKey: STD_METRICS.revenue, dedupeKey: revenue.observedAt, severity: 'advisory', detail: finding.detail });
       }

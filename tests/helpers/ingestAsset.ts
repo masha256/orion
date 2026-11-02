@@ -73,16 +73,6 @@ metrics:
     source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], count_from: [pool], unit: usd, price_coingecko_id: mini-token }
 holder_flows:
   - { id: fees, kind: fee_share, capture_rule: contractual, recipient_base: all, metric: flow_usd.fees }
-modules:
-  - { id: hc, type: holder_cashflow, kind: estimate, weight: 1 }
-assumptions:
-  rev_growth_y1: { min: -0.5, max: 5 }
-  growth_fade_years: { min: 0, max: 10 }
-  terminal_growth: { min: 0, max: 0.05 }
-  capture_rate_terminal.fees: { min: 0, max: 1 }
-  capture_ramp_years.fees: { min: 0, max: 10 }
-  discount_rate_base: { min: 0.05, max: 0.5 }
-  staked_ratio_horizon: { min: 0.05, max: 0.95 }
 `;
 
 export function ingestAsset(): LoadedAsset {

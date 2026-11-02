@@ -4,7 +4,7 @@ import { OrionError, type ConfigEdit, type PathSegment } from '../types.js';
 /**
  * Structured edits to an asset config, addressed by segment path. A string segment selects a map key or, in a list whose
  * items have an `id`, the item with that id; a number selects a list item by index. Paths are arrays, not dotted
- * strings, because assumption keys contain dots (`capture_rate_terminal.burn`).
+ * strings, because metric keys contain dots (`flow_usd.burn`).
  *
  * The same edits apply to a plain object (to validate a proposal and compute its effect) and to the YAML text (when the
  * user approves it), so both must resolve a path the same way: `concretePath` is that one place.
@@ -31,15 +31,13 @@ const AGENT_LIMIT_METRIC_KEYS = new Set(['source', 'allow_provisional', 'critica
 /**
  * True when any of these edits would widen (or narrow) what the agent may do without asking. A proposal may legitimately
  * do this, so it is not refused; the user is told, because approving it changes the rules the NEXT run plays by.
- * Bands and bounds decide what it may apply; provisional_move_pct decides when research goes live rather than to the
- * user; a metric's source, allow_provisional, and critical decide whether it may write there at all.
+ * A metric's source, allow_provisional, and critical decide whether research may write there at all, and whether what
+ * it writes goes live or to the user.
  */
 export function changesAgentLimits(edits: ConfigEdit[]): boolean {
   return edits.some((e) => {
     const path = e.path.map(String);
-    if (path[0] === 'assumptions') return true;
     // A path that stops ABOVE a limit replaces the whole node, limit included, without naming it.
-    if (path[0] === 'review_triggers') return path.length === 1 || path[1] === 'provisional_move_pct';
     if (path[0] === 'metrics') return path.length <= 2 || (path.length === 3 && AGENT_LIMIT_METRIC_KEYS.has(path[2]!));
     return false;
   });

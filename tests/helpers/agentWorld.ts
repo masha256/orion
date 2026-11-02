@@ -15,8 +15,7 @@ import { AS_OF, miniObservations } from './obs.js';
 
 /**
  * The mini asset as an agent sees it: revenue is critical, manual, and allows provisional data (like VVV's); the price is
- * fetched; staked supply is manual and does not allow provisional data. The base band on rev_growth_y1 is only YAML a
- * config proposal can edit: nothing reads bands any more.
+ * fetched; staked supply is manual and does not allow provisional data.
  */
 export const AGENT_ASSET_YAML = MINI_ASSET_YAML
   .replace(
@@ -26,8 +25,7 @@ export const AGENT_ASSET_YAML = MINI_ASSET_YAML
   .replace(
     'revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 60, critical: true }',
     'revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 60, critical: true, allow_provisional: true }',
-  )
-  .replace('rev_growth_y1: { min: -0.5, max: 5 }', 'rev_growth_y1: { min: -0.5, max: 5, base: { min: 0, max: 1 } }');
+  );
 
 export const PAGE_URL = 'https://news.example.com/mini-revenue';
 export const PAGE_TEXT = '<p>Mini said its annualized revenue reached <b>$1,100</b> in September, up from $1,000.</p>';

@@ -62,9 +62,6 @@ export interface ConfigEdit {
   value: unknown;
 }
 
-export type ScenarioAssumptions = Record<string, number>;
-export type AssumptionValues = Record<Scenario, ScenarioAssumptions>;
-
 export class OrionError extends Error {
   constructor(public readonly code: string, message: string) {
     super(message);

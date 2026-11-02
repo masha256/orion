@@ -2,7 +2,6 @@ id: aero
 symbol: AERO
 name: Aerodrome Finance
 chain: base
-supply_basis: effective_total
 
 # Read live on 2026-09-23 (block 51,704,207); see docs/superpowers/specs/2026-09-23-orion-aero-onboarding-design.md section 2.
 contracts:
@@ -28,7 +27,7 @@ metrics:
     cross_checks:
       - { tolerance_pct: 2, source: { type: http_json, url: "https://coins.llama.fi/prices/current/base:0x940181a94a35a4569e4529a3cdfb74e38fd98631", path: "coins.base:0x940181a94a35a4569e4529a3cdfb74e38fd98631.price" } }
 
-  # No burn sink: the ERC-20 total is the total supply. Locked AERO stays inside it (supply_basis effective_total).
+  # No burn sink: the ERC-20 total is the total supply. Locked AERO stays inside it.
   total_supply:
     type: level
     unit: tokens
@@ -84,61 +83,8 @@ metrics:
     critical: true
     source: { type: defillama, slug: aerodrome, data_type: dailyHoldersRevenue, backfill_days: 100 }
 
-  # The last 91 days (13 weekly epochs) of fees to lockers, scaled to a year (Mike, 2026-10-26: 91 days on every asset; was 90): AERO's revenue IS its holder flow, so the window matches the holder flow's (window_days 91) and the measured capture is 1 by construction. A 30-day window let one 7.9M USD day (2026-09-09) double the run rate.
-  revenue_run_rate_usd:
-    type: level
-    unit: usd
-    staleness_days: 5
-    critical: true
-    source: { type: derived, name: flow_annualized, params: { metric: flow_usd.fees, days: 91 } }
-
-  # Category share from DefiLlama's free overview, grouped by parentProtocol (Mike, 2026-10-17): monitor_only, never a
-  # driver, never in the grade; the analyst reads it as a durability input.
-  # share of DEX volume on Base, 30 days
-  dominance_share: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: defillama_share, parent: "parent#aerodrome", category: Dexs, overview: dexs, chain: Base, window: 30d } }
-  # share of DEX volume on Base, 1 year
-  dominance_share_1y: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: defillama_share, parent: "parent#aerodrome", category: Dexs, overview: dexs, chain: Base, window: 1y } }
-
 holder_flows:
   - { id: fees, kind: fee_share, capture_rule: contractual, recipient_base: locked, metric: flow_usd.fees, window_days: 91 }
-
-# Chosen by the user on 2026-09-23: the discounted fee flow to lockers carries most of the weight, the market's multiple
-# on that flow the rest. Structural: the agent may only propose changes here.
-modules:
-  - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.6 }
-  - { id: fm_holder_flow, type: forward_multiple, kind: estimate, weight: 0.4, params: { basis: holder_flow } }
-
-scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }
-
-# Key-wide bounds only, wide enough for the calibration sweep. Agent bands (the bear/base/bull sub-ranges) are added
-# after the user calibrates, by the mirror rule; until then the agent uses these bounds.
-# Agent bands (2026-09-24), by the mirror rule the user chose for VVV: each scenario's band is symmetric around its value in
-# calibration/aero-assumptions.yaml, the inner edge halfway to the neighbouring scenario's value and the outer edge as far
-# again, clipped to min/max. Two exceptions: the bull rev_growth_y1 band is half that width (one full step moved the 12m
-# expected value by about 20 percent, the largest single step); capture_rate_terminal.fees is tied at the 1.0 ceiling in
-# base and bull, so those bands are the bear band's mirror edge up to the ceiling. Keys with no bands (fade, ramp) barely
-# move the value and the agent uses min/max. All keys at the edge moved the 12m expected value about -17 / +49 percent
-# ($0.383 calibrated, spike day replaced). Recalibrate the bands whenever the calibrated values move.
-assumptions:
-  rev_growth_y1: { min: -0.6, max: 2.0, bear: { min: -0.575, max: -0.025 }, base: { min: -0.025, max: 0.525 }, bull: { min: 0.6625, max: 0.9375 } }
-  growth_fade_years: { min: 1, max: 8 }
-  terminal_growth: { min: 0, max: 0.05, bear: { min: 0, max: 0.01 }, base: { min: 0.01, max: 0.025 }, bull: { min: 0.025, max: 0.035 } }
-  capture_rate_terminal.fees: { min: 0.5, max: 1.0, bear: { min: 0.85, max: 0.95 }, base: { min: 0.95, max: 1.0 }, bull: { min: 0.95, max: 1.0 } }
-  capture_ramp_years.fees: { min: 0, max: 4 }
-  discount_rate_base: { min: 0.08, max: 0.35, bear: { min: 0.24, max: 0.32 }, base: { min: 0.175, max: 0.24 }, bull: { min: 0.125, max: 0.175 } }
-  multiple.fm_holder_flow: { min: 3, max: 40, bear: { min: 4, max: 8 }, base: { min: 8, max: 14 }, bull: { min: 14, max: 22 } }
-  regime_multiplier: { min: 0.4, max: 1.6, bear: { min: 0.55, max: 0.85 }, base: { min: 0.85, max: 1.15 }, bull: { min: 1.15, max: 1.45 } }
-  staked_ratio_horizon: { min: 0.2, max: 0.8, bear: { min: 0.41, max: 0.49 }, base: { min: 0.49, max: 0.565 }, bull: { min: 0.565, max: 0.635 } }
-
-agent:
-  budgets:
-    weekly: { input_tokens: 2000000 }
-
-review_triggers:
-  driver_deviation_pct: 25
-  provisional_move_pct: 25
-
-peer_set: []
 
 # Report-only holder yield and growth (orion report yield). AERO's fees arrive as the pools' own tokens, many long-tail:
 # 2 percent. Protocol revenue waits for the post-migration rebuild (reminder 2026-11-05).

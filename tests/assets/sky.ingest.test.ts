@@ -11,7 +11,6 @@ import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import type { TransferLog } from '../../src/ingest/transport/rpc.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
-import { llamaOverview } from '../helpers/llamaOverview.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -67,7 +66,6 @@ const logsTo: Record<string, Log[]> = {
 
 function world() {
   const http = fakeHttp({
-    'https://api.llama.fi/overview/fees': llamaOverview('parent#maker', 'CDP'),
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'sky', symbol: 'sky', current_price: PRICE, market_cap: 1.64e9, circulating_supply: 23_428_082_223, total_supply: SUPPLY }],
     'https://api.coingecko.com/api/v3/coins/sky/market_chart': chart(PRICE),
     'https://api.coingecko.com/api/v3/coins/usds/market_chart': chart(1),
@@ -103,24 +101,21 @@ const RUN_RATE = ((STAKERS_USD + BUYBACK_USD) * 365) / 91;
 
 describe('assets/sky.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
-    expect(config).toMatchObject({ id: 'sky', symbol: 'SKY', chain: 'ethereum', supply_basis: 'effective_total', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
+    expect(config).toMatchObject({ id: 'sky', symbol: 'SKY', chain: 'ethereum', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
     // Both halves of the surplus reach staked SKY, as cash (Mike, 2026-10-16).
     expect(config.holder_flows).toEqual([
       { id: 'stakers', kind: 'fee_share', capture_rule: 'programmatic', recipient_base: 'staked', metric: 'flow_usd.stakers', window_days: 91 },
       { id: 'buyback', kind: 'fee_share', capture_rule: 'programmatic', recipient_base: 'staked', metric: 'flow_usd.buyback', window_days: 91 },
     ]);
-    expect(config.modules.map((m) => [m.id, m.kind, m.weight ?? null])).toEqual([['hc', 'estimate', 0.6], ['fm_holder_flow', 'estimate', 0.4]]);
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // No DefiLlama (Mike, 2026-10-11): every flow is read on chain.
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama' || d.cross_checks?.some((c) => c.source.type === 'defillama')).map(([k]) => k)).toEqual([]);
     expect(config.reporting!.dilution).toEqual([expect.objectContaining({ id: 'treasury_net', metric: 'treasury_net_payout' })]);
-    // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
-    for (const key of ['dominance_share', 'dominance_share_1y']) expect(config.metrics[key]).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true, staleness_days: 7 });
-    expect(config.metrics.dominance_share.source).toEqual({ type: 'defillama_share', parent: 'parent#maker', category: 'CDP', overview: 'fees', window: '30d' });
-    expect(config.metrics.dominance_share_1y.source).toEqual({ type: 'defillama_share', parent: 'parent#maker', category: 'CDP', overview: 'fees', window: '1y' });
+    for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // A deliberate edit of assets/sky.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/sky.yaml`, 'utf8')).hash).toBe('f4360530332bc06d985414db71c09c9b3d5c97647d5a82f36fb372fd1501d227');
+    // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/sky.yaml`, 'utf8')).hash).toBe('110d0519ff8db97f4ed3aa7694d8e3b373ca1e1d0419a31cbf712db762805cee');
   });
 
   it('plans the two holder-flow scans, the treasury scans, the chain levels and the DefiLlama price cross-check', () => {
@@ -130,8 +125,6 @@ describe('assets/sky.yaml', () => {
       ['http_json:https://coins.llama.fi/prices/current/ethereum:0x56072C95FAA701256059aa122697B133aDEd9279', ['cross_check:price_usd']],
       ['chain_levels', ['primary:total_supply', 'primary:staked_supply', 'primary:splitter_burn_share']],
       ['constant', ['primary:staker_emission_share', 'primary:emission_rate_annual']],
-      ['defillama_share:fees:CDP:parent#maker:30d', ['primary:dominance_share']],
-      ['defillama_share:fees:CDP:parent#maker:1y', ['primary:dominance_share_1y']],
     ]);
     expect(plan.flowGroups.map((g) => [g.sourceId, g.members.map((m) => m.metricKey)])).toEqual([
       [expect.stringMatching(/^transfer_flow:usds>usds_farm/), ['flow_usd.stakers']],
@@ -139,7 +132,7 @@ describe('assets/sky.yaml', () => {
       [expect.stringMatching(/^transfer_flow:token>sky_farm/), ['flow_tokens.rewards_staker']],
       [expect.stringMatching(/^transfer_flow:token>usds_sky_farm/), ['flow_tokens.rewards_usds']],
     ]);
-    expect(plan.derived.map((r) => r.metricKey).sort()).toEqual(['revenue_run_rate_usd', 'treasury_net_payout']);
+    expect(plan.derived.map((r) => r.metricKey).sort()).toEqual(['treasury_net_payout']);
   });
 
   it('fetches every metric, counts the mints and the pair, ignores the top-up, and flags the stranger', async () => {
@@ -148,8 +141,6 @@ describe('assets/sky.yaml', () => {
     await fetchAsset(w.db, { config, hash: 'backfill' }, NOW, w.deps, { backfillDays: 362, metrics: ['flow_tokens.rewards_staker', 'flow_tokens.rewards_usds', 'flow_tokens.buyback', 'treasury_net_payout'] });
     const r = await fetchAsset(w.db, loadAsset(ROOT, 'sky'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error])).toEqual([]);
-    // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
-    expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'sky', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]);
 
     const rows = (metric: string) => listActiveObservations(w.db, 'sky', metric);
@@ -164,7 +155,7 @@ describe('assets/sky.yaml', () => {
     expect(rows('flow_usd.stakers').filter((o) => o.value > 0).every((o) => o.value === 50_000)).toBe(true);
     // The Safe's 500M top-up is a treasury transfer, never a buy.
     expect(Math.max(...rows('flow_tokens.buyback').map((o) => o.value))).toBe(1_000_000);
-    expect(value('revenue_run_rate_usd')).toBeCloseTo(RUN_RATE, 0);
+    expect(rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
 
     // Treasury net payout over 357 days, scaled to a year: 357 x 1.2M + 100M paid, less 91 x 1M bought.
     expect(value('treasury_net_payout')).toBeCloseTo(((357 * 1_200_000 + 100_000_000 - 91_000_000) * 365) / 357, 0);

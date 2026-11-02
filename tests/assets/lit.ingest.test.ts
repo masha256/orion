@@ -14,7 +14,6 @@ import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
-import { llamaOverview } from '../helpers/llamaOverview.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -78,7 +77,6 @@ function world() {
   const t0 = Date.parse('2026-12-29T00:00:00Z') / 1000;
   const linear = (perWeek: number) => Array.from({ length: 1200 }, (_, i) => ({ timestamp: t0 + (i - 80) * 86_400, unlocked: Math.max(0, ((i - 80) * perWeek) / 7) }));
   const http = fakeHttp({
-    'https://api.llama.fi/overview/fees': llamaOverview('parent#lighter', 'Derivatives'),
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'lighter', symbol: 'lit', current_price: PRICE, market_cap: 7.6e8, circulating_supply: 250_000_000, total_supply: 1_000_000_000 }],
     'https://mainnet.zklighter.elliot.ai/api/v1/orderBookDetails?market_id=2049': { code: 200, order_book_details: [], spot_order_book_details: [{ market_id: 2049, last_trade_price: 3.05 }] },
     'https://mainnet.zklighter.elliot.ai/api/v1/trades': (url: string) => {
@@ -152,7 +150,7 @@ function world() {
 
 describe('assets/lit.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
-    expect(config).toMatchObject({ id: 'lit', symbol: 'LIT', chain: 'ethereum', supply_basis: 'effective_total', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
+    expect(config).toMatchObject({ id: 'lit', symbol: 'LIT', chain: 'ethereum', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
     // Mike, 2026-10-16: discretionary.
     expect(config.holder_flows).toEqual([{ id: 'buyback', kind: 'burn', capture_rule: 'discretionary', recipient_base: 'all', metric: 'flow_usd.buyback', window_days: 91 }]);
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
@@ -184,31 +182,27 @@ describe('assets/lit.yaml', () => {
       staking_apr: { outside: [0.057, 0.063] },
     });
     expect(config.metrics.staked_supply.source).toMatchObject({ type: 'constant', value: 0 });
-    // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
-    for (const key of ['dominance_share', 'dominance_share_1y']) expect(config.metrics[key]).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true, staleness_days: 7 });
-    expect(config.metrics.dominance_share.source).toEqual({ type: 'defillama_share', parent: 'parent#lighter', category: 'Derivatives', overview: 'fees', window: '30d' });
-    expect(config.metrics.dominance_share_1y.source).toEqual({ type: 'defillama_share', parent: 'parent#lighter', category: 'Derivatives', overview: 'fees', window: '1y' });
+    for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // A deliberate edit of assets/lit.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-10-23: revenue and volume from Lighter's API, the Robinhood watch, staked LIT (all monitor-only).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('0bf60b7da45c103c1849d0a5dc77b9f7bfb2ac5aac3508af85a5de1f0c3b791e');
+    // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('f462c23680a3cc076fcff22864cd4086c04084bfd4b29280e1561c3bd835c517');
   });
 
-  it('plans one allowlisted scan into dead (the quarterly burns) and the buyback run rate', () => {
+  it('plans one allowlisted scan into dead (the quarterly burns) and the routing rate', () => {
     const plan = buildPlan(config);
     expect(plan.flowGroups.map((g) => [g.sourceId, g.members.map((m) => m.metricKey)])).toEqual([
       [expect.stringMatching(/^transfer_flow:token>dead/), ['flow_tokens.burn']],
       [expect.stringMatching(/^transfer_flow:token>prime_passthrough/), ['flow_tokens.routed_to_prime']],
     ]);
-    expect(plan.derived.map((r) => r.metricKey).sort()).toEqual(['revenue_run_rate_usd', 'routed_to_prime_rate']);
+    expect(plan.derived.map((r) => r.metricKey).sort()).toEqual(['routed_to_prime_rate']);
   });
 
   it('fetches every metric and reads the buys from Lighter', async () => {
     const w = world();
     const r = await fetchAsset(w.db, loadAsset(ROOT, 'lit'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
-    // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
-    expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'lit', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
 
@@ -229,9 +223,7 @@ describe('assets/lit.yaml', () => {
     const buys = rows('flow_tokens.buyback');
     expect(buys.length).toBeGreaterThanOrEqual(91);
     expect(buys.at(-1)!.value).toBeCloseTo(25_000, 0);
-    const revenue = rows('revenue_run_rate_usd').at(-1)!;
-    expect(revenue.value).toBeCloseTo(25_000 * PRICE * 365, -3);
-    expect(revenue.sourceDetail).toBe('derived flow_annualized(flow_usd.buyback, 91d)');
+    expect(rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
     expect(rows('flow_tokens.burn').filter((o) => o.value > 0).map((o) => o.value)).toEqual([15_640_000, 2_450_000]);
     // Routing to Coinbase Prime: only the buyback wallet's sends count; the unrelated sender raises nothing (monitor-only).
     expect(rows('flow_tokens.routed_to_prime').filter((o) => o.value > 0).map((o) => o.value)).toEqual([1_400_000, 1_500_000]);

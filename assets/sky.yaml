@@ -2,7 +2,6 @@ id: sky
 symbol: SKY
 name: Sky (formerly Maker)
 chain: ethereum
-supply_basis: effective_total
 
 # Read live on 2026-10-16; see docs/superpowers/notes/2026-10-16-sky-onboarding.md.
 # The surplus route: the Vow kicks surplus to the Splitter every hop (2,693 s). The Splitter sends `burn()` of each kick to
@@ -110,14 +109,6 @@ metrics:
     monitor_only: true
     source: { type: transfer_flow, token: token, to: pause_proxy, from_allowlist: [ sky_usds_pair ], from_ignore: [ treasury_safe ], unit: tokens }
 
-  # Both halves, the last 91 days (13 weeks), scaled to a year.
-  revenue_run_rate_usd:
-    type: level
-    unit: usd
-    staleness_days: 10
-    critical: true
-    source: { type: derived, name: flow_annualized, params: { metrics: [ flow_usd.stakers, flow_usd.buyback ], days: 91 } }
-
   # Report-only dilution: SKY the reward farms paid out (to lsSKY stakers and to USDS depositors), less the SKY the treasury
   # bought, over the last 357 days (51 weeks: the buyback scan is priced, and keyless CoinGecko refuses history past 365
   # days, so the backfill is 362 days) (Mike, 2026-10-16). 1,322M paid against 799M bought in the year to 2026-10-16, the gap
@@ -142,54 +133,12 @@ metrics:
   # Report-only: the Splitter's share to the buyback (a governance parameter; 0.55 since 2026-08-17).
   splitter_burn_share: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: splitter, function: burn, decimals: 18 } }
 
-  # Category share from DefiLlama's free overview, grouped by parentProtocol (Mike, 2026-10-17): monitor_only, never a
-  # driver, never in the grade; the analyst reads it as a durability input.
-  # share of CDP fees, all chains, 30 days
-  dominance_share: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: defillama_share, parent: "parent#maker", category: CDP, overview: fees, window: 30d } }
-  # share of CDP fees, all chains, 1 year
-  dominance_share_1y: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: defillama_share, parent: "parent#maker", category: CDP, overview: fees, window: 1y } }
-
 # Both programmatic (the Splitter's share, kick size and hop are executive-vote parameters), paid to staked SKY, valued per
 # token on total supply (Mike, 2026-10-16). The buyback is a fee_share: the bought SKY is paid on to stakers as liquid SKY,
 # which Mike counts as cash; on total supply it does not shrink the supply path (it is not burned).
 holder_flows:
   - { id: stakers, kind: fee_share, capture_rule: programmatic, recipient_base: staked, metric: flow_usd.stakers, window_days: 91 }
   - { id: buyback, kind: fee_share, capture_rule: programmatic, recipient_base: staked, metric: flow_usd.buyback, window_days: 91 }
-
-modules:
-  - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.6 }
-  - { id: fm_holder_flow, type: forward_multiple, kind: estimate, weight: 0.4, params: { basis: holder_flow } }
-
-scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }
-
-# Agent bands (2026-10-16): UNI's, because the calibrated values are UNI's central (mirror rule: each scenario's band is
-# symmetric around its value, inner edge halfway to the neighbouring scenario, outer edge as far again, clipped). The two
-# capture keys are banded around each flow's share (stakers 0.40, buyback 0.60 of UNI's capture), wide enough for the split
-# to move 5 points either way (it was 45/55 after the 2026-08-17 reset); their bull maxima sum to at most 1.1. Keys with no
-# bands (fade, ramp, staked ratio) barely move the value. Recalibrate the bands whenever the calibrated values move.
-assumptions:
-  rev_growth_y1: { min: -0.6, max: 3.0, bear: { min: -0.425, max: 0.025 }, base: { min: 0.025, max: 0.525 }, bull: { min: 0.6625, max: 0.9375 } }
-  growth_fade_years: { min: 1, max: 10 }
-  terminal_growth: { min: 0, max: 0.05, bear: { min: 0.0, max: 0.01 }, base: { min: 0.01, max: 0.0275 }, bull: { min: 0.0275, max: 0.0425 } }
-  capture_rate_terminal.stakers: { min: 0, max: 0.7, bear: { min: 0.31, max: 0.41 }, base: { min: 0.33, max: 0.43 }, bull: { min: 0.35, max: 0.45 } }
-  capture_ramp_years.stakers: { min: 0, max: 4 }
-  capture_rate_terminal.buyback: { min: 0, max: 1.0, bear: { min: 0.49, max: 0.59 }, base: { min: 0.52, max: 0.62 }, bull: { min: 0.55, max: 0.65 } }
-  capture_ramp_years.buyback: { min: 0, max: 4 }
-  discount_rate_base: { min: 0.08, max: 0.35, bear: { min: 0.195, max: 0.245 }, base: { min: 0.15, max: 0.195 }, bull: { min: 0.11, max: 0.15 } }
-  discount_premium_programmatic: { min: 0, max: 0.15, bear: { min: 0.025, max: 0.035 }, base: { min: 0.015, max: 0.025 }, bull: { min: 0.005, max: 0.015 } }
-  multiple.fm_holder_flow: { min: 3, max: 200, bear: { min: 7.5, max: 22.5 }, base: { min: 22.5, max: 42.5 }, bull: { min: 42.5, max: 67.5 } }
-  regime_multiplier: { min: 0.4, max: 1.6, bear: { min: 0.7, max: 0.9 }, base: { min: 0.9, max: 1.1 }, bull: { min: 1.1, max: 1.3 } }
-  staked_ratio_horizon: { min: 0.01, max: 1 }
-
-agent:
-  budgets:
-    weekly: { input_tokens: 2000000 }
-
-review_triggers:
-  driver_deviation_pct: 25
-  provisional_move_pct: 25
-
-peer_set: []
 
 # Report-only. Revenue = the surplus that reaches holders (both halves); Sky's gross revenue (stability fees less the
 # savings rate) is not read on chain here. The treasury's net SKY payout is the dilution.

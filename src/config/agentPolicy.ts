@@ -27,10 +27,7 @@ export function inputUnitsTenths(u: Pick<AgentUsage, 'inputTokens' | 'cacheReadT
  */
 export const PROVISIONAL_MOVE_PCT = 25;
 
-/**
- * Per runnable run type. An asset YAML may still carry `agent.budgets` for the retired types (the schema accepts them
- * until the config keys go); nothing reads them.
- */
+/** Per runnable run type; an asset YAML may override any field under `agent.budgets.<type>`. */
 export const DEFAULT_BUDGETS: Record<RunnableRunType, RunBudgets> = {
   /** Reviews one stored document (an issuer's call or post) against Orion's numbers. Expected $1 to $3, about $7 worst case with no cache hits. */
   disclosure: { requests: 25, inputUnits: 1_200_000, outputTokens: 40_000, webSearches: 3, webFetches: 5, proposals: 5 },

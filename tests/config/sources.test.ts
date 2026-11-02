@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { parseAssetYaml } from '../../src/config/load.js';
-import { revenueStaleMovePct } from '../../src/config/schema.js';
 import { contractNames, isChainSource } from '../../src/config/sources.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
+import { REVENUE_STALE_MOVE_PCT } from '../../src/ingest/alerts.js';
 import { INGEST_ASSET_YAML, ingestAsset } from '../helpers/ingestAsset.js';
 
 const bad = (yaml: string): string => {
@@ -142,9 +142,8 @@ describe('declarative sources in the asset config', () => {
     expect(bad(INGEST_ASSET_YAML.replace('ingest: { chain_id: 8453, rpc_url_env: TEST_RPC_URL, backfill_days: 3 }\n', ''))).toMatch(/ingest.*required/);
   });
 
-  it('reads the stale-revenue threshold, defaulting to 30, and rejects a bad one', () => {
-    expect(revenueStaleMovePct(ingestAsset().config)).toBe(30);
-    expect(revenueStaleMovePct(parseAssetYaml(`${INGEST_ASSET_YAML}review_triggers: { revenue_stale_move_pct: 45 }\n`).config)).toBe(45);
-    expect(bad(`${INGEST_ASSET_YAML}review_triggers: { revenue_stale_move_pct: -1 }\n`)).toMatch(/revenue_stale_move_pct must be a positive number/);
+  it('fixes the stale-revenue threshold at 30 percent, and refuses the old per-asset key', () => {
+    expect(REVENUE_STALE_MOVE_PCT).toBe(30);
+    expect(bad(`${INGEST_ASSET_YAML}review_triggers: { revenue_stale_move_pct: 45 }\n`)).toMatch(/Unrecognized key: "review_triggers"/);
   });
 });

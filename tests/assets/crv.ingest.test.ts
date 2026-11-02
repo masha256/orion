@@ -8,7 +8,6 @@ import { listActiveObservations } from '../../src/db/observations.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
-import { llamaOverview } from '../helpers/llamaOverview.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -44,7 +43,6 @@ const PAYOUT = 98_566n;
 
 function world() {
   const http = fakeHttp({
-    'https://api.llama.fi/overview/dexs': llamaOverview('parent#curve-finance', 'Dexs'),
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'curve-dao-token', symbol: 'crv', current_price: 0.3933, market_cap: 619e6, circulating_supply: 1_574_000_000, total_supply: 2_424_321_556 }],
     'https://api.coingecko.com/api/v3/coins/crvusd/market_chart': crvusdChart,
     [LLAMA]: { coins: { 'ethereum:0xD533a949740bb3306d119CC777fa900bA034cd52': { decimals: 18, symbol: 'CRV', price: 0.3897, timestamp: 1791440000, confidence: 0.99 } } },
@@ -81,18 +79,15 @@ function world() {
 
 describe('assets/crv.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
-    expect(config).toMatchObject({ id: 'crv', symbol: 'CRV', chain: 'ethereum', supply_basis: 'effective_total', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
+    expect(config).toMatchObject({ id: 'crv', symbol: 'CRV', chain: 'ethereum', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
     expect(config.holder_flows).toEqual([{ id: 'fees', kind: 'fee_share', capture_rule: 'programmatic', recipient_base: 'locked', metric: 'flow_usd.fees', window_days: 91 }]);
-    expect(config.modules.map((m) => [m.id, m.kind, m.weight ?? null])).toEqual([['hc', 'estimate', 0.6], ['fm_holder_flow', 'estimate', 0.4], ['vote_incentives', 'component', null]]);
     // Every metric has a source, and none is manual: a bootstrap run has nothing to research and the grade can be A.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
-    // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
-    for (const key of ['dominance_share', 'dominance_share_1y']) expect(config.metrics[key]).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true, staleness_days: 7 });
-    expect(config.metrics.dominance_share.source).toEqual({ type: 'defillama_share', parent: 'parent#curve-finance', category: 'Dexs', overview: 'dexs', window: '30d' });
-    expect(config.metrics.dominance_share_1y.source).toEqual({ type: 'defillama_share', parent: 'parent#curve-finance', category: 'Dexs', overview: 'dexs', window: '1y' });
+    for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/crv.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('40b3b34594a1bb5df19c3d377034614b91511251179a218b2b669a0d369d2dde');
+    // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('909af85346b12598b706347ac4d3cd97c415b5aae27fac141a0664d94d8f606a');
   });
 
   it('plans the source map of the spec: one transfer scan, a constant, an adapter, the bribes feed', () => {
@@ -111,12 +106,10 @@ describe('assets/crv.yaml', () => {
       ['constant', ['primary:staker_emission_share']],
       ['adapter:crv.emission_rate_annual', ['primary:emission_rate_annual']],
       [`http_json:${BRIBES}`, ['primary:vote_incentive_run_rate_usd', 'cross_check:vote_incentive_run_rate_usd']],
-      ['defillama_share:dexs:Dexs:parent#curve-finance:30d', ['primary:dominance_share']],
-      ['defillama_share:dexs:Dexs:parent#curve-finance:1y', ['primary:dominance_share_1y']],
     ]);
     // The holder flow, then the report-only income lines: Curve's 10 percent (Treasury) and every fee into the FeeAllocator.
     expect(plan.flowGroups.map((g) => g.members.map((m) => [m.metricKey, m.unit]))).toEqual([[['flow_usd.fees', 'usd']], [['flow_usd.curve_treasury', 'usd']], [['flow_usd.protocol_revenue', 'usd']]]);
-    expect(plan.derived.map((r) => r.metricKey)).toEqual(['revenue_run_rate_usd']);
+    expect(plan.derived).toEqual([]);
     expect(plan.needsRpc).toBe(true);
   });
 
@@ -124,8 +117,6 @@ describe('assets/crv.yaml', () => {
     const w = world();
     const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
-    // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
-    expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'crv', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
     const rows = (metric: string) => listActiveObservations(w.db, 'crv', metric);
@@ -148,10 +139,7 @@ describe('assets/crv.yaml', () => {
     expect(fees).toHaveLength(100);
     expect(fees.filter((o) => o.value > 0).length).toBe(15); // the Wednesdays 2026-07-01 to 2026-10-07, all inside the 100 days
     expect(fees.filter((o) => o.value > 0).every((o) => new Date(o.observedAt).getUTCDay() === 4)).toBe(true); // a day's row is stamped at its end
-    // The run rate: 13 payouts of 98,566 crvUSD at 0.9993 in the 91 days to 2026-10-07, scaled to a year.
-    const revenue = rows('revenue_run_rate_usd').at(-1)!;
-    expect(revenue.value).toBeCloseTo((13 * 98_566 * 0.9993 * 365) / 91, 0);
-    expect(revenue).toMatchObject({ source: 'onchain', sourceDetail: 'derived flow_annualized(flow_usd.fees, 91d)' }); // from an on-chain flow
+    expect(rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
 
     const checked = r.sources.flatMap((s) => s.crossChecks);
     expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true], ['vote_incentive_run_rate_usd', true]]);

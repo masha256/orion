@@ -197,13 +197,13 @@ describe('holderYieldReport', () => {
     expect(() => parseAssetYaml(`${burn}\nreporting: { window_days: 10, haircuts: { ${id}: 0.1 } }\n`)).toThrow(/is a burn, whose haircut is 0/);
   });
 
-  it('accepts a monitor-only flow metric, and still refuses monitor_only on anything the valuation reads', () => {
+  it('accepts a monitor-only flow metric, and still refuses monitor_only on a holder-flow metric', () => {
     const extra = hypeYaml.replace('metrics:\n', 'metrics:\n  flow_usd.revenue_proxy: { type: flow, unit: usd, staleness_days: 4, monitor_only: true }\n');
     expect(() => parseAssetYaml(extra)).not.toThrow();
     const flowMetric = parseAssetYaml(hypeYaml).config.holder_flows[0].metric;
     const bad = hypeYaml.replace(new RegExp(`(  ${flowMetric.replace('.', '\\.')}: \\{)`), '$1 monitor_only: true,');
     expect(bad).not.toBe(hypeYaml);
-    expect(() => parseAssetYaml(bad)).toThrow(/used by the valuation/);
+    expect(() => parseAssetYaml(bad)).toThrow(/is a standard or holder-flow metric and cannot be monitor_only/);
   });
 
   function recipientsOf(base: string): number {

@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { loadAsset } from '../../src/config/load.js';
+import { budgetsFor } from '../../src/config/agentPolicy.js';
+import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
+import { loadSkills } from '../../src/config/personas.js';
 import { openDb } from '../../src/db/connection.js';
 import { listActiveObservations } from '../../src/db/observations.js';
 import { buildPlan } from '../../src/ingest/plan.js';
@@ -67,6 +70,38 @@ function world() {
   const deps: FetchDeps = { http, rpcFactory: () => rpc, env: {}, sleep: async () => undefined, now: () => NOW };
   return { db: openDb(':memory:'), deps, http, rpc };
 }
+
+describe('assets/vvv.yaml', () => {
+  it('loads, validates, and keeps its config hash', () => {
+    // VVV keeps its own revenue_run_rate_usd (Venice's disclosures, the disclosed revenue stream) and its four DIEM levels (D2(a)).
+    expect(config.reporting!.revenue_disclosed).toBe('revenue_run_rate_usd');
+    for (const key of ['diem_supply', 'diem_target_supply', 'diem_price_usd', 'diem_locked_yield_share']) expect(config.metrics[key], key).toBeDefined();
+    // Re-pinned 2026-11-01 (first pin here; it was in tests/assets/vvv.golden.test.ts, deleted with the valuation layer): the
+    // valuation keys (supply_basis, modules, scenario_probabilities, total_return_variants, assumptions, agent budgets,
+    // review_triggers, peer_set) left (Phase 1).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/vvv.yaml`, 'utf8')).hash).toBe('d455b4d958554bfe96eedcc44bd247a8b618e7a77dfdf8fe14b7cd332b659383');
+  });
+
+  it('keeps the revenue run rate for the user alone: critical, no provisional data, no source', () => {
+    // The user's rule (2026-09-22): no researched figure goes live unconfirmed, so allow_provisional stays off.
+    expect(config.metrics.revenue_run_rate_usd).toMatchObject({ critical: true, allow_provisional: false });
+    // Research may write here (as a proposal); it may not write onto a fetched metric.
+    expect(config.metrics.revenue_run_rate_usd.source).toBeUndefined();
+  });
+
+  it('runs disclosure reviews on the default budget', () => {
+    expect(budgetsFor(config, 'disclosure')).toEqual({ requests: 25, inputUnits: 1_200_000, outputTokens: 40_000, webSearches: 3, webFetches: 5, proposals: 5 });
+  });
+});
+
+describe('the disclosure-research skill', () => {
+  it('tells the agent the research rules the tool layer enforces', () => {
+    const research = loadSkills(ROOT).find((s) => s.name === 'disclosure-research')!.body;
+    expect(research).toContain('one paragraph, table cell, or list item');
+    expect(research).toContain('already exists at the same metric and time');
+    expect(research).toContain('EFFECTIVE date');
+  });
+});
 
 describe('assets/vvv.yaml ingestion', () => {
   it('plans the VVV source map of the spec', () => {

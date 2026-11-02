@@ -9,7 +9,6 @@ import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { addDays } from '../../src/ingest/time.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
-import { llamaOverview } from '../helpers/llamaOverview.js';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-09-24T12:00:00.000Z');
@@ -46,7 +45,6 @@ function world(now: Date = NOW) {
   const fixtures: Record<string, unknown> = { spotMetaAndAssetCtxs: recorded('spotMetaAndAssetCtxs'), validatorSummaries: recorded('validatorSummaries') };
   for (const name of ['assistance_fund', 'zero', 'dead']) fixtures[`spotClearinghouseState:${config.contracts[name]}`] = recorded(`spotClearinghouseState-${config.contracts[name]}`);
   const http = fakeHttp({
-    'https://api.llama.fi/overview/fees': llamaOverview('parent#hyperliquid', 'Derivatives'),
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'hyperliquid', symbol: 'hype', current_price: 92.36, market_cap: 20545976252, circulating_supply: 222445714.07414138, total_supply: 955307079.4341414 }],
     [LLAMA_PRICE]: { coins: { 'hyperliquid:0x0d01dc56dcaaca66ad901c959b4011ec': { decimals: 8, symbol: 'HYPE', price: 92.35934496087437, timestamp: 1790215180, confidence: 0.99 } } },
     'https://api.llama.fi/summary/fees/hyperliquid': chart(),
@@ -78,24 +76,21 @@ function world(now: Date = NOW) {
 
 describe('assets/hype.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
-    expect(config).toMatchObject({ id: 'hype', symbol: 'HYPE', supply_basis: 'effective_total' });
+    expect(config).toMatchObject({ id: 'hype', symbol: 'HYPE' });
     expect(config.chain).toBeUndefined();
     expect(config.ingest).toBeUndefined();
     expect(config.holder_flows).toEqual([{ id: 'af_buyback', kind: 'burn', capture_rule: 'programmatic', recipient_base: 'all', metric: 'flow_usd.af_buyback', window_days: 91 }]);
-    expect(config.modules.map((m) => [m.id, m.weight])).toEqual([['hc', 0.6], ['fm_holder_flow', 0.4]]);
     // One manual metric: the staker share, 1.0 by construction, which the bootstrap researches and the user confirms.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual(['staker_emission_share']);
-    // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
-    for (const key of ['dominance_share', 'dominance_share_1y']) expect(config.metrics[key]).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true, staleness_days: 7 });
-    expect(config.metrics.dominance_share.source).toEqual({ type: 'defillama_share', parent: 'parent#hyperliquid', category: 'Derivatives', overview: 'fees', window: '30d' });
-    expect(config.metrics.dominance_share_1y.source).toEqual({ type: 'defillama_share', parent: 'parent#hyperliquid', category: 'Derivatives', overview: 'fees', window: '1y' });
+    for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply); then revenue streams (trading + the USDC reserve yield). A deliberate edit of assets/hype.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-10-26: window 90 -> 91 days on every asset (Mike).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('531b976f594f609e01d52f10690845f2bf1e8030590d23f414183fd83c6cb1be');
+    // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('91a3d4fe5abf7c01b81d562b3096e6d18e86fc910dde7459e126decdb2940133');
   });
 
-  it('plans the source map of the spec: no chain, three adapters, one API-series flow, one derived level', () => {
+  it('plans the source map of the spec: no chain, three adapters, one API-series flow, no derived level', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
       ['coingecko', ['primary:price_usd', 'cross_check:total_supply', 'primary:circulating_supply']],
@@ -107,11 +102,9 @@ describe('assets/hype.yaml', () => {
       ['adapter:hype.fund_buys_daily', ['primary:flow_usd.af_buys_direct']],
       ['defillama:hyperliquid:dailyRevenue', ['primary:flow_usd.revenue_proxy']],
       ['adapter:hype.reserve_yield_payments', ['primary:flow_usd.reserve_yield']],
-      ['defillama_share:fees:Derivatives:parent#hyperliquid:30d', ['primary:dominance_share']],
-      ['defillama_share:fees:Derivatives:parent#hyperliquid:1y', ['primary:dominance_share_1y']],
     ]);
     expect(plan.flowGroups).toEqual([]);
-    expect(plan.derived.map((r) => r.metricKey)).toEqual(['revenue_run_rate_usd']);
+    expect(plan.derived).toEqual([]);
     expect(plan.needsRpc).toBe(false);
   });
 
@@ -119,8 +112,6 @@ describe('assets/hype.yaml', () => {
     const w = world();
     const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
-    // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
-    expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'hype', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
     const value = (metric: string) => listActiveObservations(w.db, 'hype', metric).at(-1)!.value;
@@ -135,12 +126,8 @@ describe('assets/hype.yaml', () => {
     expect(listActiveObservations(w.db, 'hype', 'staker_emission_share')).toEqual([]);
     // The writer keeps only the backfill window (backfill_days 100 on a first run, no cursor): all 100 of the 100 days.
     expect(listActiveObservations(w.db, 'hype', 'flow_usd.af_buyback')).toHaveLength(100);
-    // The run rate: the last 91 complete days summed and scaled to a year, written for every day with a full window: days 91 to 100 in the backfill.
-    const revenue = listActiveObservations(w.db, 'hype', 'revenue_run_rate_usd');
-    expect(revenue).toHaveLength(10);
-    expect(revenue.at(-1)!.value).toBeGreaterThan(560e6);
-    expect(revenue.at(-1)!.value).toBeLessThan(580e6);
-    expect(revenue.at(-1)).toMatchObject({ source: 'api', sourceDetail: 'derived flow_annualized(flow_usd.af_buyback, 91d)' });
+    // No derived run rate any more (it fed only the valuation).
+    expect(listActiveObservations(w.db, 'hype', 'revenue_run_rate_usd')).toEqual([]);
     const checked = r.sources.flatMap((s) => s.crossChecks);
     expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]); // total: CoinGecko's, 2 percent
     // Five posts: the spot meta, one clearinghouse state per subtracted address, and the validators once (the stake and emission

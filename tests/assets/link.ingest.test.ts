@@ -94,22 +94,19 @@ function world() {
 
 describe('assets/link.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
-    expect(config).toMatchObject({ id: 'link', symbol: 'LINK', chain: 'ethereum', supply_basis: 'effective_total', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
+    expect(config).toMatchObject({ id: 'link', symbol: 'LINK', chain: 'ethereum', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
     expect(config.holder_flows).toEqual([{ id: 'reserve', kind: 'buy_and_hold', capture_rule: 'discretionary', recipient_base: 'all', metric: 'flow_usd.reserve', window_days: 91 }]);
-    expect(config.modules.map((m) => [m.id, m.kind, m.weight ?? null])).toEqual([['hc', 'estimate', 0.6], ['fm_holder_flow', 'estimate', 0.4]]);
-    // One manual metric, monitor-only so it never touches the grade: the category share, recorded by research (2026-10-17).
-    expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual(['dominance_share']);
+    // Every metric has a source (the one manual metric, the category share, left with the valuation layer).
+    expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // No DefiLlama at all (Mike, 2026-10-11): the Reserve flow and the releases are read on chain.
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama' || d.cross_checks?.some((c) => c.source.type === 'defillama')).map(([k]) => k)).toEqual([]);
     // The hold bucket's overhang haircut (Mike, 2026-10-16: 5 percent).
     expect(config.reporting!.haircuts).toEqual({ reserve: 0.05 });
-    // Category share (Mike, 2026-10-17): manual, recorded quarterly by research; DefiLlama's oracle API is paywalled. No 1y twin.
-    expect(config.metrics.dominance_share).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true });
-    expect(config.metrics.dominance_share.source).toBeUndefined();
-    expect(config.metrics.dominance_share_1y).toBeUndefined();
+    for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // A deliberate edit of assets/link.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share (monitor-only category share).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/link.yaml`, 'utf8')).hash).toBe('73f51cadca195a60c4e6ce3df33ea7d38b20cd33e9ad62e483da58568a7a91fe');
+    // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/link.yaml`, 'utf8')).hash).toBe('b04cd1017f89ee1b5338976b5ad71af7d1ee506f0ce16f32a1b5c64c64d43c62');
   });
 
   it('plans the Reserve scan, the two release scans and the chain levels with the Chainlink cross-check', () => {
@@ -124,7 +121,7 @@ describe('assets/link.yaml', () => {
       [expect.stringMatching(/^transfer_flow:token>release_hub/), ['flow_tokens.released_hub']],
       [expect.stringMatching(/^transfer_flow:token>release_rewards/), ['flow_tokens.released_rewards']],
     ]);
-    expect(plan.derived.map((r) => r.metricKey).sort()).toEqual(['released_rate', 'revenue_run_rate_usd']);
+    expect(plan.derived.map((r) => r.metricKey).sort()).toEqual(['released_rate']);
   });
 
   it('fetches every metric, counts only the fee converter, and flags the stranger', async () => {
@@ -149,8 +146,7 @@ describe('assets/link.yaml', () => {
     const paid = rows('flow_tokens.reserve').filter((o) => o.value > 0);
     expect(paid.map((o) => o.value).every((v) => v === 100_000)).toBe(true);
     expect(paid.length).toBe(15);
-    // 13 Thursdays fall in the 91 days to 2026-10-15: 1.3M LINK at 12.5 USD, scaled to a year.
-    expect(value('revenue_run_rate_usd')).toBeCloseTo((13 * 100_000 * PRICE * 365) / 91, 0);
+    expect(rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
 
     // Releases: the four quarters inside the last 365 days, the dust and the year-old release left out.
     expect(value('released_rate')).toBeCloseTo(4 * (15_000_000 + 2_500_000), 0);

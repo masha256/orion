@@ -13,6 +13,12 @@ export interface StaleRevenueFinding {
 const NEAR_DAYS = 7;
 
 /**
+ * Percent move in usage_index since the revenue disclosure that raises the stale-revenue alert. Fixed; it was
+ * `review_triggers.revenue_stale_move_pct`, 30 on the only asset with a usage index (VVV).
+ */
+export const REVENUE_STALE_MOVE_PCT = 30;
+
+/**
  * Has usage moved enough since the revenue disclosure that the disclosed figure looks stale?
  * Compares the latest usage index with the one nearest the disclosure (within seven days), or,
  * when there is none, with the earliest available one, and says which. Pure.

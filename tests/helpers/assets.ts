@@ -15,16 +15,6 @@ metrics:
   flow_usd.fees: { type: flow, unit: usd, staleness_days: 45, critical: true }
 holder_flows:
   - { id: fees, kind: fee_share, capture_rule: contractual, recipient_base: all, metric: flow_usd.fees }
-modules:
-  - { id: hc, type: holder_cashflow, kind: estimate, weight: 1 }
-assumptions:
-  rev_growth_y1: { min: -0.5, max: 5 }
-  growth_fade_years: { min: 0, max: 10 }
-  terminal_growth: { min: 0, max: 0.05 }
-  capture_rate_terminal.fees: { min: 0, max: 1 }
-  capture_ramp_years.fees: { min: 0, max: 10 }
-  discount_rate_base: { min: 0.05, max: 0.5 }
-  staked_ratio_horizon: { min: 0.05, max: 0.95 }
 `;
 
 export function miniAsset(): AssetConfig {

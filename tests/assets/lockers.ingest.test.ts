@@ -72,7 +72,7 @@ const sd = loadAsset(ROOT, 'sdcrv').config.contracts;
 const CASES: Case[] = [
   {
     id: 'cvxcrv',
-    hash: '27662c18da85ea74d23c4f7a6fa8624857e9b983aaf95e09bfdd38e2d5a9764c',
+    hash: 'c22393aed76d70ea7c030d4bc6dad5080f864170b23fef14a1cfeb17ffda1571',
     coingecko: 'convex-crv',
     price: 0.1392,
     llamaPrice: 0.1391,
@@ -88,7 +88,7 @@ const CASES: Case[] = [
   },
   {
     id: 'sdcrv',
-    hash: '8ae8d16c41dc77659d499a32578eec9c66122bb31cfda8a55c211d169d6078b0',
+    hash: '340919e9f6b2cb23605ea8e28fdcc30d7a77071062cb19651cc375ed0aae18c2',
     coingecko: 'stake-dao-crv',
     price: 0.1884,
     llamaPrice: 0.1832,
@@ -133,9 +133,11 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
   const flowIds = Object.keys(c.streams);
 
   it('loads, validates, and keeps its config hash', () => {
-    expect(config).toMatchObject({ id: c.id, chain: 'ethereum', supply_basis: 'effective_total', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
+    expect(config).toMatchObject({ id: c.id, chain: 'ethereum', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
     expect(config.holder_flows.map((f) => [f.id, f.kind, f.recipient_base, f.valued_per, f.window_days])).toEqual(flowIds.map((id) => [id, 'fee_share', 'staked', 'recipients', 91]));
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
+    expect(config.metrics.revenue_run_rate_usd).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
+    // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     expect(parseAssetYaml(readFileSync(`${ROOT}/assets/${c.id}.yaml`, 'utf8')).hash).toBe(c.hash);
     // Supply definitions (Mike, 2026-10-12): CoinGecko has no circulating supply for the wrappers, so it is the on-chain total;
     // CoinGecko's total_supply checks cvxCRV only (sdCRV's figure there is a stale 2022 snapshot).
@@ -145,7 +147,7 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     );
   });
 
-  it('plans one transfer scan per stream and a summed run rate', () => {
+  it('plans one transfer scan per stream and no derived level', () => {
     const plan = buildPlan(config);
     // One scan per holder-flow stream, then the report-only revenue and gross scans (never a holder flow).
     const reportFlows = Object.entries(config.metrics).filter(([, d]) => d.type === 'flow' && d.monitor_only === true).map(([k]) => k);
@@ -155,12 +157,10 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     const incomeMetrics = (r.income?.lines ?? []).flatMap((l) => (l.metric ? [l.metric] : []));
     expect(reportFlows).toEqual(expect.arrayContaining([...incomeMetrics.filter((m) => config.metrics[m]?.monitor_only), ...(r.volume ?? [])]));
     expect(plan.flowGroups.map((g) => g.members.map((m) => m.metricKey))).toEqual([...flowIds.map((id) => [`flow_usd.${id}`]), ...reportFlows.map((m) => [m])]);
-    expect(plan.derived.map((r) => [r.metricKey, r.source.type === 'derived' ? r.source.params : null])).toEqual([
-      ['revenue_run_rate_usd', { metrics: flowIds.map((id) => `flow_usd.${id}`), days: 91 }],
-    ]);
+    expect(plan.derived).toEqual([]);
   });
 
-  it('fetches every stream and sums them into the run rate', async () => {
+  it('fetches every stream', async () => {
     const w = world(c);
     const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
@@ -170,16 +170,12 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     expect(rows('total_supply').at(-1)!.value).toBe(Number(c.supply));
     expect(rows('staked_supply').at(-1)!.value).toBe(Number(c.staked));
 
-    // The run rate is the three streams' 91 days to 2026-10-08, summed and scaled to a year.
-    let expected = 0;
-    for (const [id, [, , , every, amount, , price]] of Object.entries(c.streams)) {
-      const inWindow = payoutDays(every).filter((d) => d >= '2026-07-10' && d < '2026-10-09').length;
+    // Every stream is stored daily at the payout's value; no derived run rate any more (it fed only the valuation).
+    for (const [id, [, , , , amount, , price]] of Object.entries(c.streams)) {
       const stream = rows(`flow_usd.${id}`);
       expect(stream.length).toBeGreaterThanOrEqual(91);
       expect(stream.find((o) => o.value > 0)!.value).toBeCloseTo(Number(amount) * price, 6);
-      expected += inWindow * Number(amount) * price;
     }
-    expect(rows('revenue_run_rate_usd').at(-1)!.value).toBeCloseTo((expected * 365) / 91, 0);
-    expect(rows('revenue_run_rate_usd').at(-1)!.sourceDetail).toBe(`derived flow_annualized(${flowIds.map((id) => `flow_usd.${id}`).join('+')}, 91d)`);
+    expect(rows('revenue_run_rate_usd')).toEqual([]);
   });
 });

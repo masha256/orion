@@ -1,7 +1,6 @@
 id: hype
 symbol: HYPE
 name: Hyperliquid
-supply_basis: effective_total
 
 # HyperCore addresses, read from the info API on 2026-09-24; see docs/superpowers/specs/2026-09-24-orion-hype-onboarding-design.md
 # section 2. Nothing here is read over an RPC (no chain, no ingest block): the fund lives on HyperCore, which no EVM RPC exposes.
@@ -77,7 +76,7 @@ metrics:
 
   # DefiLlama's holders revenue for the hyperliquid parent (perps, spot orderbook, HLP): 99 percent of protocol trading fees,
   # excluding builder fees and deployer shares, converted to HYPE by the fund, plus HIP-1 auction burns. Revenue and holders
-  # revenue are the same series for HYPE. Backfilled nine days beyond the 91-day window so the first fetch writes the run rate
+  # revenue are the same series for HYPE. Backfilled nine days beyond the 91-day window so the first fetch fills the window
   # even when DefiLlama has not posted the newest day yet.
   flow_usd.af_buyback:
     type: flow
@@ -86,16 +85,6 @@ metrics:
     staleness_days: 4
     critical: true
     source: { type: defillama, slug: hyperliquid, data_type: dailyHoldersRevenue, backfill_days: 100 }
-
-  # The last 91 days (13 weeks) of the buyback flow scaled to a year: HYPE's revenue IS its holder flow, so the window matches
-  # the holder flow's (window_days 91) and the measured capture is 1 by construction. 91 days on every asset (Mike,
-  # 2026-10-26: one interval for all; was 90 until then).
-  revenue_run_rate_usd:
-    type: level
-    unit: usd
-    staleness_days: 5
-    critical: true
-    source: { type: derived, name: flow_annualized, params: { metric: flow_usd.af_buyback, days: 91 } }
 
 # burn, chosen by the user on 2026-09-24: the fund's HYPE is burned per the docs and behaves so as long as nobody can spend it;
 # the engine shrinks the supply forecast by the fund's purchases. programmatic: the split is protocol code, changed only by
@@ -137,52 +126,8 @@ metrics:
       name: hype.reserve_yield_payments
       params: { interest: system_interest, fund: assistance_fund, treasury: [ aqa_treasury ], token: USDC, started: "2026-08-26", interval_days: 30, lag_days: 8 }
 
-  # Category share from DefiLlama's free overview, grouped by parentProtocol (Mike, 2026-10-17): monitor_only, never a
-  # driver, never in the grade; the analyst reads it as a durability input.
-  # share of Derivatives fees, all chains, 30 days
-  dominance_share: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: defillama_share, parent: "parent#hyperliquid", category: Derivatives, overview: fees, window: 30d } }
-  # share of Derivatives fees, all chains, 1 year
-  dominance_share_1y: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: defillama_share, parent: "parent#hyperliquid", category: Derivatives, overview: fees, window: 1y } }
-
 holder_flows:
   - { id: af_buyback, kind: burn, capture_rule: programmatic, recipient_base: all, metric: flow_usd.af_buyback, window_days: 91 }
-
-# Chosen by the user on 2026-09-24: the discounted buyback flow carries most of the weight, the market's multiple on that flow
-# the rest. No revenue multiple: it would price the same dollars twice. Structural: the agent may only propose changes here.
-modules:
-  - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.6 }
-  - { id: fm_holder_flow, type: forward_multiple, kind: estimate, weight: 0.4, params: { basis: holder_flow } }
-
-scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }
-
-# Agent bands (2026-10-03), by the mirror rule the user chose for VVV and AERO: each scenario's band is symmetric around its
-# value in calibration/hype-assumptions.yaml, the inner edge halfway to the neighbouring scenario's value and the outer edge as
-# far again, clipped to min/max. Exceptions: the bull rev_growth_y1 band is half that width (one full step moved the 12m
-# expected value by -26 / +40 percent, the largest single step; the next largest, the bull discount rate, by -6 / +9); keys
-# with no bands (fade, ramp, staked ratio) barely move the value and the agent uses min/max. All keys at the edge moved the
-# 12m expected value about -14 (base down) / +37 (base up) / +91 (bull up) percent before the halving (97.54 USD calibrated).
-# Recalibrate the bands whenever the calibrated values move.
-assumptions:
-  rev_growth_y1: { min: -0.6, max: 3.0, bear: { min: -0.3, max: 0.3 }, base: { min: 0.3, max: 1.05 }, bull: { min: 1.275, max: 1.725 } }
-  growth_fade_years: { min: 1, max: 10 }
-  terminal_growth: { min: 0, max: 0.05, bear: { min: 0, max: 0.015 }, base: { min: 0.015, max: 0.035 }, bull: { min: 0.035, max: 0.045 } }
-  capture_rate_terminal.af_buyback: { min: 0.5, max: 1.0, bear: { min: 0.875, max: 0.925 }, base: { min: 0.925, max: 0.975 }, bull: { min: 0.975, max: 1.0 } }
-  capture_ramp_years.af_buyback: { min: 0, max: 4 }
-  discount_rate_base: { min: 0.08, max: 0.35, bear: { min: 0.20, max: 0.24 }, base: { min: 0.155, max: 0.20 }, bull: { min: 0.105, max: 0.155 } }
-  discount_premium_programmatic: { min: 0, max: 0.15, bear: { min: 0.025, max: 0.035 }, base: { min: 0.015, max: 0.025 }, bull: { min: 0.005, max: 0.015 } } # the flow's rule is programmatic, so the engine requires this key
-  multiple.fm_holder_flow: { min: 3, max: 200, bear: { min: 5, max: 55 }, base: { min: 55, max: 115 }, bull: { min: 115, max: 185 } }
-  regime_multiplier: { min: 0.4, max: 1.6, bear: { min: 0.65, max: 0.95 }, base: { min: 0.95, max: 1.25 }, bull: { min: 1.25, max: 1.55 } }
-  staked_ratio_horizon: { min: 0.2, max: 0.8 }
-
-agent:
-  budgets:
-    weekly: { input_tokens: 2000000 }
-
-review_triggers:
-  driver_deviation_pct: 25
-  provisional_move_pct: 25
-
-peer_set: []
 
 # Report-only holder yield and growth (orion report yield). The fund buys and holds, but stays a burn here as in the
 # valuation (Mike, 2026-10-10: keep the two layers in sync), so no haircut.

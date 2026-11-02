@@ -9,7 +9,6 @@ import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
-import { llamaOverview } from '../helpers/llamaOverview.js';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-10-16T06:00:00.000Z');
@@ -34,7 +33,6 @@ function world(supplyNow: number) {
     return { totalDataChart };
   };
   const http = fakeHttp({
-    'https://api.llama.fi/overview/fees': llamaOverview('parent#pump', 'Launchpad'),
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'pump-fun', symbol: 'pump', current_price: PRICE, market_cap: 2.3e9, circulating_supply: 462.8e9, total_supply: supplyNow }],
     'https://api.coingecko.com/api/v3/coins/pump-fun/market_chart': (url: string) => ({ prices: prices(Number(new URL(url).searchParams.get('days'))) }),
     'https://lite-api.jup.ag/price/v3': { [MINT]: { usdPrice: PRICE * 1.001 } },
@@ -67,7 +65,7 @@ function seedReadings(db: ReturnType<typeof openDb>, n: number, supplyNow: numbe
 
 describe('assets/pump.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
-    expect(config).toMatchObject({ id: 'pump', symbol: 'PUMP', chain: 'solana', supply_basis: 'effective_total' });
+    expect(config).toMatchObject({ id: 'pump', symbol: 'PUMP', chain: 'solana' });
     expect(config.ingest).toBeUndefined(); // no EVM RPC: Solana is read by the solana.* adapters
     expect(config.holder_flows).toEqual([{ id: 'buyback', kind: 'burn', capture_rule: 'discretionary', recipient_base: 'all', metric: 'flow_usd.buyback', window_days: 91 }]);
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
@@ -75,13 +73,11 @@ describe('assets/pump.yaml', () => {
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.llama_revenue']);
     expect(config.metrics['flow_usd.llama_revenue'].monitor_only).toBe(true);
     expect(config.reporting!.dilution).toEqual([expect.objectContaining({ id: 'unlocks', metric: 'unlocks_next_year' })]);
-    // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
-    for (const key of ['dominance_share', 'dominance_share_1y']) expect(config.metrics[key]).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true, staleness_days: 7 });
-    expect(config.metrics.dominance_share.source).toEqual({ type: 'defillama_share', parent: 'parent#pump', category: 'Launchpad', overview: 'fees', window: '30d' });
-    expect(config.metrics.dominance_share_1y.source).toEqual({ type: 'defillama_share', parent: 'parent#pump', category: 'Launchpad', overview: 'fees', window: '1y' });
+    for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // A deliberate edit of assets/pump.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/pump.yaml`, 'utf8')).hash).toBe('f98a4954af424e8a750f8731954bf2d7db2448d697ddec0381503d6779a38ddc');
+    // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/pump.yaml`, 'utf8')).hash).toBe('0c8cd815b68a1eed8686e6ddc54293fe665c1fd4bb947a566b61ee54a0f30b18');
   });
 
   it('plans the Solana readers, CoinGecko, the Jupiter price check, the unlocks and the revenue line, and no EVM scan', () => {
@@ -91,7 +87,7 @@ describe('assets/pump.yaml', () => {
     expect(plan.batches.map((b) => b.sourceId)).toEqual(expect.arrayContaining([
       'coingecko', 'adapter:solana.token_supply', 'adapter:solana.supply_burn_daily', 'adapter:solana.owner_balance', 'adapter:lit.unlocks_next_year', 'defillama:pump:dailyRevenue',
     ]));
-    expect(plan.derived.map((r) => r.metricKey)).toEqual(['revenue_run_rate_usd']);
+    expect(plan.derived).toEqual([]);
   });
 
   it('first fetch: a year of DefiLlama history converted at the day price; then on-chain days replace it as readings accrue', async () => {
@@ -102,7 +98,7 @@ describe('assets/pump.yaml', () => {
     expect(rows('flow_usd.buyback').filter((o) => o.periodDays === 1)).toHaveLength(362);
     expect(rows('flow_usd.buyback').every((o) => o.value === HISTORY_USD)).toBe(true);
     expect(rows('flow_tokens.buyback').at(-1)!.value).toBeCloseTo(HISTORY_USD / PRICE, 0);
-    expect(rows('revenue_run_rate_usd').at(-1)!.value).toBeCloseTo(HISTORY_USD * 365, 0);
+    expect(rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
     expect(rows('total_supply').at(-1)!.value).toBeCloseTo(supplyNow, 3);
     // The keyed Solana URL never lands in a stored detail.
     expect(rows('flow_usd.buyback').some((o) => (o.sourceDetail ?? '').includes('SECRET'))).toBe(false);
@@ -113,12 +109,10 @@ describe('assets/pump.yaml', () => {
     const w = world(supplyNow);
     // The onboarding backfill eleven days ago (only the flows: its supply reading would be out of line with the seeded ones),
     // then a daily supply reading each morning since.
-    await fetchAsset(w.db, { config, hash: 'backfill' }, new Date(NOW.getTime() - 11 * DAY), w.deps, { backfillDays: 362, metrics: ['flow_usd.buyback', 'flow_tokens.buyback', 'revenue_run_rate_usd'] });
+    await fetchAsset(w.db, { config, hash: 'backfill' }, new Date(NOW.getTime() - 11 * DAY), w.deps, { backfillDays: 362, metrics: ['flow_usd.buyback', 'flow_tokens.buyback'] });
     seedReadings(w.db, 10, supplyNow);
     const r = await fetchAsset(w.db, loadAsset(ROOT, 'pump'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error])).toEqual([]);
-    // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
-    expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'pump', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
     expect(r.anomalies).toEqual([]);
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual(expect.arrayContaining([['total_supply', true], ['price_usd', true]]));
     const rows = (m: string) => listActiveObservations(w.db, 'pump', m);

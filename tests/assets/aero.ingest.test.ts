@@ -9,7 +9,6 @@ import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { addDays } from '../../src/ingest/time.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
-import { llamaOverview } from '../helpers/llamaOverview.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -32,7 +31,6 @@ function chart(): { totalDataChart: [number, number][] } {
 
 function world() {
   const http = fakeHttp({
-    'https://api.llama.fi/overview/dexs/Base': llamaOverview('parent#aerodrome', 'Dexs'),
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'aerodrome-finance', symbol: 'aero', current_price: 0.671936, market_cap: 668227328, circulating_supply: 992591965.5968602, total_supply: 1983240735.576791 }],
     [LLAMA]: { coins: { 'base:0x940181a94a35a4569e4529a3cdfb74e38fd98631': { decimals: 18, symbol: 'AERO', price: 0.673898492508311, timestamp: 1790197250, confidence: 0.99 } } },
     'https://api.llama.fi/summary/fees/aerodrome': chart(),
@@ -58,22 +56,19 @@ function world() {
 
 describe('assets/aero.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
-    expect(config).toMatchObject({ id: 'aero', symbol: 'AERO', supply_basis: 'effective_total' });
+    expect(config).toMatchObject({ id: 'aero', symbol: 'AERO' });
     expect(config.holder_flows).toEqual([{ id: 'fees', kind: 'fee_share', capture_rule: 'contractual', recipient_base: 'locked', metric: 'flow_usd.fees', window_days: 91 }]);
-    expect(config.modules.map((m) => [m.id, m.weight])).toEqual([['hc', 0.6], ['fm_holder_flow', 0.4]]);
     // Every metric has a source: a bootstrap run has nothing to research on this asset.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
-    // Category share from DefiLlama (Mike, 2026-10-17): monitor-only, never a driver or in the grade.
-    for (const key of ['dominance_share', 'dominance_share_1y']) expect(config.metrics[key]).toMatchObject({ type: 'level', unit: 'ratio', monitor_only: true, staleness_days: 7 });
-    expect(config.metrics.dominance_share.source).toEqual({ type: 'defillama_share', parent: 'parent#aerodrome', category: 'Dexs', overview: 'dexs', chain: 'Base', window: '30d' });
-    expect(config.metrics.dominance_share_1y.source).toEqual({ type: 'defillama_share', parent: 'parent#aerodrome', category: 'Dexs', overview: 'dexs', chain: 'Base', window: '1y' });
+    for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/aero.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-10-26: window 90 -> 91 days on every asset (Mike), backfill_days 90 -> 100.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/aero.yaml`, 'utf8')).hash).toBe('3109d0d74849fcc9c26818a35bd14ce3ae11365a9fd5529058548cd7b522f79b');
+    // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/aero.yaml`, 'utf8')).hash).toBe('562eb17d0443e5b06a99e50581d73aff8596900d42c4417325dc16b0de53f3a3');
   });
 
-  it('plans the source map of the spec: no transfer scan, one API-series flow, one derived level, two adapters', () => {
+  it('plans the source map of the spec: no transfer scan, one API-series flow, no derived level, two adapters', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
       ['coingecko', ['primary:price_usd', 'cross_check:total_supply', 'primary:circulating_supply']],
@@ -82,11 +77,9 @@ describe('assets/aero.yaml', () => {
       ['adapter:aero.staker_emission_share', ['primary:staker_emission_share']],
       ['adapter:aero.emission_rate_annual', ['primary:emission_rate_annual']],
       ['defillama:aerodrome:dailyHoldersRevenue', ['primary:flow_usd.fees']],
-      ['defillama_share:dexs/Base:Dexs:parent#aerodrome:30d', ['primary:dominance_share']],
-      ['defillama_share:dexs/Base:Dexs:parent#aerodrome:1y', ['primary:dominance_share_1y']],
     ]);
     expect(plan.flowGroups).toEqual([]);
-    expect(plan.derived.map((r) => r.metricKey)).toEqual(['revenue_run_rate_usd']);
+    expect(plan.derived).toEqual([]);
     expect(plan.needsRpc).toBe(true);
   });
 
@@ -94,8 +87,6 @@ describe('assets/aero.yaml', () => {
     const w = world();
     const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
-    // The category share (monitor-only): 30 of 100 over 30 days, 250 of 1,000 over a year, from the overview.
-    expect(['dominance_share', 'dominance_share_1y'].map((k) => listActiveObservations(w.db, 'aero', k).map((o) => o.value))).toEqual([[0.3], [0.25]]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
     const value = (metric: string) => listActiveObservations(w.db, 'aero', metric).at(-1)!.value;
@@ -110,12 +101,8 @@ describe('assets/aero.yaml', () => {
     expect(value('emission_rate_annual')).toBeLessThan(262e6);
     // The writer keeps only the backfill window (backfill_days 100 on a first run, no cursor): all 100 of the 100 days.
     expect(listActiveObservations(w.db, 'aero', 'flow_usd.fees')).toHaveLength(100);
-    // The run rate: the last 91 complete days summed and scaled to a year, written for every day with a full window: days 91 to 100.
-    const revenue = listActiveObservations(w.db, 'aero', 'revenue_run_rate_usd');
-    expect(revenue).toHaveLength(10);
-    expect(revenue.at(-1)!.value).toBeGreaterThan(160e6);
-    expect(revenue.at(-1)!.value).toBeLessThan(180e6);
-    expect(revenue.at(-1)).toMatchObject({ source: 'api', sourceDetail: 'derived flow_annualized(flow_usd.fees, 91d)' });
+    // No derived run rate any more (it fed only the valuation).
+    expect(listActiveObservations(w.db, 'aero', 'revenue_run_rate_usd')).toEqual([]);
     const checked = r.sources.flatMap((s) => s.crossChecks);
     expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]); // total: CoinGecko's, 2 percent
     expect(w.rpc.stats.multicall).toBeLessThanOrEqual(5); // levels, and two per adapter (the epoch, then the voting power at its start)

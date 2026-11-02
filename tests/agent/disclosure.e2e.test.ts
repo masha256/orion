@@ -31,7 +31,7 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = '2026-10-23T12:00:00.000Z';
 const TRANSCRIPT = join(ROOT, 'tests/fixtures/disclosure/lit-q3-2026-call-transcript.txt');
 const RUN_FIXTURE = join(ROOT, 'tests/fixtures/disclosure/lit-q3-run.json');
-const LIT_HASH = '0bf60b7da45c103c1849d0a5dc77b9f7bfb2ac5aac3508af85a5de1f0c3b791e';
+const LIT_HASH = 'f462c23680a3cc076fcff22864cd4086c04084bfd4b29280e1561c3bd835c517';
 const SOURCE_URL = 'https://x.com/Lighter_xyz/status/2113065839352336774';
 
 // Q3 2026 as the live DB has it (spec section 2): the treasury's buys and DefiLlama's revenue, summed over 92 days.
@@ -41,14 +41,13 @@ const Q3_DAYS = 92;
 const BUYBACK_Q3 = 7_410_898;
 const LLAMA_Q3 = 9_846_397;
 const UNLOCKS_NOW = 135_982_827;
-/** The levels in force on 2026-10-23 beyond the flows; the run rate is the Q3 buys annualized. */
-const VALUATION_LEVELS: [string, number][] = [
+/** The levels in force on 2026-10-23 beyond the flows (the derived run rate left with the valuation layer, Phase 1). */
+const LEVELS_IN_FORCE: [string, number][] = [
   ['price_usd', 3.04],
   ['total_supply', 981_909_280],
   ['staked_supply', 0],
   ['staker_emission_share', 0],
   ['emission_rate_annual', 0],
-  ['revenue_run_rate_usd', Math.round((BUYBACK_Q3 * 365) / Q3_DAYS)],
 ];
 
 // Quotes verified against the fixture under the 3-segment rule (spec 11.3), with the locator each must resolve to.
@@ -217,9 +216,9 @@ beforeAll(async () => {
     const level = (metricKey: string, value: number, source: 'api' | 'onchain' = 'api') =>
       insertObservation(db, { assetId: 'lit', metricKey, observedAt: '2026-10-23T00:00:00.000Z', value, source, fetchedAt: NOW });
     level('unlocks_next_year', UNLOCKS_NOW);
-    // The levels the 2026-10-23 fetch stamped (the pack shows them as observations in force): constants and the derived
-    // run rate are `api`, the supply read `onchain`.
-    for (const [key, value] of VALUATION_LEVELS) level(key, value, key === 'total_supply' ? 'onchain' : 'api');
+    // The levels the 2026-10-23 fetch stamped (the pack shows them as observations in force): the constants are `api`,
+    // the supply read `onchain`.
+    for (const [key, value] of LEVELS_IN_FORCE) level(key, value, key === 'total_supply' ? 'onchain' : 'api');
   });
 
   const added = JSON.parse(await orion(home, 'doc', 'add', 'lit', '--url', SOURCE_URL, '--file', TRANSCRIPT, '--kind', 'machine_transcript',
@@ -310,7 +309,7 @@ describe('disclosure dry run on the Q3 2026 Lighter call (scripted model)', () =
   });
 
   it('leaves the database as it was, except the one run row', () => {
-    expect(before).toMatchObject({ documents: 1, agent_runs: 0, proposals: 0, journal: 0, observations: 2 * Q3_DAYS + 1 + VALUATION_LEVELS.length });
+    expect(before).toMatchObject({ documents: 1, agent_runs: 0, proposals: 0, journal: 0, observations: 2 * Q3_DAYS + 1 + LEVELS_IN_FORCE.length });
     expect(after).toEqual({ ...before, agent_runs: 1 });
   });
 

@@ -388,17 +388,17 @@ describe('orion proposals', () => {
   });
 
   it('approving a config proposal edits the YAML and says to review and commit it', async () => {
-    const p = fileProposal({ kind: 'config', edits: [{ path: ['assumptions', 'rev_growth_y1', 'base'], value: { min: 0, max: 2 } }] }, [{ min: 0, max: 1 }]);
+    const p = fileProposal({ kind: 'config', edits: [{ path: ['metrics', 'flow_usd.fees', 'staleness_days'], value: 60 }] }, [45]);
     const out = await orion('proposals', 'approve', String(p.id));
-    // " > ", not ".": assumption keys contain dots, so a dotted path is ambiguous.
-    expect(out).toContain('assumptions > rev_growth_y1 > base: {"max":1,"min":0} -> {"max":2,"min":0}');
+    // " > ", not ".": metric keys contain dots, so a dotted path is ambiguous.
+    expect(out).toContain('metrics > flow_usd.fees > staleness_days: 45 -> 60');
     expect(out).toContain('review it with "git diff", then commit it');
-    expect(readFileSync(join(home, 'assets', 'mini.yaml'), 'utf8')).toContain('rev_growth_y1: { min: -0.5, max: 5, base: { min: 0, max: 2 } }');
+    expect(readFileSync(join(home, 'assets', 'mini.yaml'), 'utf8')).toContain('flow_usd.fees: { type: flow, unit: usd, staleness_days: 60, critical: true }');
   });
 
   it('marks a config proposal that would change what the agent may do by itself, in the list and in show', async () => {
-    const band = fileProposal({ kind: 'config', edits: [{ path: ['assumptions', 'rev_growth_y1', 'base'], value: { min: 0, max: 2 } }] }, [{ min: 0, max: 1 }]);
-    const weight = fileProposal({ kind: 'config', edits: [{ path: ['modules', 'hc', 'weight'], value: 1 }] }, [1]);
+    const band = fileProposal({ kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'critical'], value: true }] }, [null]);
+    const weight = fileProposal({ kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'staleness_days'], value: 14 }] }, [7]);
     const listed = await orion('proposals', 'list', 'mini');
     expect(listed).toContain(`#${band.id}`);
     expect(listed.split('\n').find((l) => l.includes(`#${band.id}`))).toContain("[changes the agent's limits]");

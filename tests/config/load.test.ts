@@ -16,20 +16,19 @@ describe('canonicalJson', () => {
 describe('parseAssetYaml', () => {
   it('parses a valid asset and applies defaults', () => {
     const { config, hash } = parseAssetYaml(MINI_ASSET_YAML);
-    expect(config.supply_basis).toBe('effective_total');
-    expect(config.scenario_probabilities).toEqual({ bear: 0.25, base: 0.5, bull: 0.25 });
+    expect(config.contracts).toEqual({});
     expect(config.holder_flows[0].window_days).toBe(90);
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('pins the mini fixture\'s parsed-config hash, so no schema default is added silently', () => {
+    // A new default changes every parsed config, and so every asset's config hash. Moving this pin must be on purpose.
+    expect(parseAssetYaml(MINI_ASSET_YAML).hash).toBe('c8cc46425acb05d4fd7e211aa648d8c284b29d3ccd9dfdfde6d5cdad4030f830');
   });
 
   it('gives the same hash regardless of YAML key order', () => {
     const reordered = MINI_ASSET_YAML.replace('id: mini\nsymbol: MINI', 'symbol: MINI\nid: mini');
     expect(parseAssetYaml(reordered).hash).toBe(parseAssetYaml(MINI_ASSET_YAML).hash);
-  });
-
-  it('rejects estimate weights that do not sum to 1', () => {
-    const bad = MINI_ASSET_YAML.replace('weight: 1 }', 'weight: 0.7 }');
-    expect(() => parseAssetYaml(bad)).toThrow(/weights/);
   });
 
   it('rejects a holder flow whose metric is not a flow metric', () => {
@@ -40,9 +39,63 @@ describe('parseAssetYaml', () => {
   it('rejects unknown top-level keys', () => {
     expect(() => parseAssetYaml(MINI_ASSET_YAML + '\nsurprise: true\n')).toThrow();
   });
+});
 
-  it('requires circulating_supply when supply_basis is circulating', () => {
-    expect(() => parseAssetYaml(MINI_ASSET_YAML + '\nsupply_basis: circulating\n')).toThrow(/circulating_supply/);
+describe('the valuation config keys are gone', () => {
+  const messageOf = (yaml: string): string => {
+    try {
+      parseAssetYaml(yaml);
+    } catch (err) {
+      return (err as Error).message;
+    }
+    return '';
+  };
+
+  it('schema: each removed key is refused by name', () => {
+    // A stale YAML (an old branch, a hand edit) must fail loudly and say which key, not load with the key ignored.
+    const stale: [string, string][] = [
+      ['modules', 'modules:\n  - { id: hc, type: holder_cashflow, kind: estimate, weight: 1 }\n'],
+      ['assumptions', 'assumptions:\n  rev_growth_y1: { min: -0.5, max: 5 }\n'],
+      ['scenario_probabilities', 'scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }\n'],
+      ['review_triggers', 'review_triggers:\n  provisional_move_pct: 25\n'],
+      ['peer_set', 'peer_set: []\n'],
+      ['total_return_variants', 'total_return_variants: []\n'],
+      ['supply_basis', 'supply_basis: effective_total\n'],
+      ['cadence', 'agent:\n  cadence: { weekly_days: 7 }\n'],
+      ['max_step_fraction', 'agent:\n  max_step_fraction: 0.25\n'],
+      ['weekly', 'agent:\n  budgets:\n    weekly: { input_tokens: 2000000 }\n'],
+    ];
+    for (const [key, snippet] of stale) {
+      const message = messageOf(`${MINI_ASSET_YAML}${snippet}`);
+      expect(message, key).toContain(`Unrecognized key: "${key}"`);
+    }
+    expect(messageOf(`${MINI_ASSET_YAML}agent:\n  cadence: { weekly_days: 7 }\n`)).toMatch(/^agent: /);
+    expect(messageOf(`${MINI_ASSET_YAML}agent:\n  budgets:\n    weekly: { input_tokens: 2000000 }\n`)).toMatch(/^agent\.budgets: /);
+    // The one budget kept: the disclosure run's.
+    expect(messageOf(`${MINI_ASSET_YAML}agent:\n  budgets:\n    disclosure: { input_tokens: 2000000 }\n`)).toBe('');
+  });
+
+  it('schema: an asset without revenue_run_rate_usd loads', () => {
+    const yaml = MINI_ASSET_YAML.replace(/^ {2}revenue_run_rate_usd:.*\n/m, '');
+    expect(yaml).not.toContain('revenue_run_rate_usd');
+    expect(parseAssetYaml(yaml).config.metrics.revenue_run_rate_usd).toBeUndefined();
+    // Nor is staker_emission_share required any more (D1(a): kept on the 13 assets, dropped from the required list).
+    expect(() => parseAssetYaml(yaml.replace(/^ {2}staker_emission_share:.*\n/m, ''))).not.toThrow();
+  });
+
+  it('schema: an asset without price_usd is refused', () => {
+    // The four the report reads stay required.
+    for (const key of ['price_usd', 'total_supply', 'staked_supply', 'emission_rate_annual']) {
+      const yaml = MINI_ASSET_YAML.replace(new RegExp(`^ {2}${key}:.*\\n`, 'm'), '');
+      expect(messageOf(yaml), key).toContain(`required standard metric "${key}" is not defined`);
+    }
+  });
+
+  it('schema: a standard or holder-flow metric cannot be monitor_only', () => {
+    expect(messageOf(MINI_ASSET_YAML.replace('flow_usd.fees: { type: flow, unit: usd, staleness_days: 45, critical: true }', 'flow_usd.fees: { type: flow, unit: usd, staleness_days: 45, monitor_only: true }')))
+      .toContain('"flow_usd.fees" is a standard or holder-flow metric and cannot be monitor_only');
+    expect(messageOf(MINI_ASSET_YAML.replace('staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }', 'staker_emission_share: { type: level, unit: ratio, staleness_days: 30, monitor_only: true }')))
+      .toContain('"staker_emission_share" is a standard or holder-flow metric and cannot be monitor_only');
   });
 });
 
@@ -58,12 +111,12 @@ describe('adapter params validation', () => {
   registerAdapter({ name: 'test_checked', needsRpc: false, validateParams: (p) => (p.ok === true ? [] : ['ok: must be true']), run: () => Promise.reject(new Error('not run')) });
 
   it('parseAssetObject surfaces the refusal with the metric path; assets/lit.yaml still loads and keeps its hash', () => {
-    expect(parseAssetYaml(litYaml).hash).toBe('0bf60b7da45c103c1849d0a5dc77b9f7bfb2ac5aac3508af85a5de1f0c3b791e');
-    expect(parseAssetObject(parseYaml(litYaml)).hash).toBe('0bf60b7da45c103c1849d0a5dc77b9f7bfb2ac5aac3508af85a5de1f0c3b791e');
+    expect(parseAssetYaml(litYaml).hash).toBe('f462c23680a3cc076fcff22864cd4086c04084bfd4b29280e1561c3bd835c517');
+    expect(parseAssetObject(parseYaml(litYaml)).hash).toBe('f462c23680a3cc076fcff22864cd4086c04084bfd4b29280e1561c3bd835c517');
     // Another valid schedule loads (and is a different config from the file's 36 monthly tranches).
     const good = parseAssetObject(withTranches({ first: '2027-01-29', every_months: 3, count: 12 }));
     expect(good.config.metrics.unlocks_next_year.source).toMatchObject({ params: { tranches: { first: '2027-01-29', every_months: 3, count: 12 } } });
-    expect(good.hash).not.toBe('0bf60b7da45c103c1849d0a5dc77b9f7bfb2ac5aac3508af85a5de1f0c3b791e');
+    expect(good.hash).not.toBe('f462c23680a3cc076fcff22864cd4086c04084bfd4b29280e1561c3bd835c517');
     // A malformed one is refused with the metric path, through the object path (filing) and the YAML path (approve).
     const bad = withTranches({ first: '2027-01-29', every_months: 13, count: 36 });
     expect(() => parseAssetObject(bad)).toThrow(expect.objectContaining({ code: 'invalid_asset_config', message: expect.stringContaining('metrics.unlocks_next_year.source.params: tranches.every_months') }));
@@ -124,8 +177,9 @@ describe('metric watch', () => {
   it('an asset without watch/share keeps its hash', () => {
     const asset = (id: string) => parseAssetYaml(readFileSync(fileURLToPath(new URL(`../../assets/${id}.yaml`, import.meta.url)), 'utf8')).hash;
     // Re-pinned 2026-10-26: window 90 -> 91 days on every asset (Mike); no watch/share key involved.
-    expect(asset('vvv')).toBe('125526e9ab5b41f57386f85ca45102f3ec0f372eec4a690a12c65a05be9cff3b');
-    expect(asset('hype')).toBe('531b976f594f609e01d52f10690845f2bf1e8030590d23f414183fd83c6cb1be');
-    expect(asset('aero')).toBe('3109d0d74849fcc9c26818a35bd14ce3ae11365a9fd5529058548cd7b522f79b');
+    // Re-pinned 2026-11-01: the valuation keys and valuation-only metrics left (Phase 1); no watch/share key involved.
+    expect(asset('vvv')).toBe('d455b4d958554bfe96eedcc44bd247a8b618e7a77dfdf8fe14b7cd332b659383');
+    expect(asset('hype')).toBe('91a3d4fe5abf7c01b81d562b3096e6d18e86fc910dde7459e126decdb2940133');
+    expect(asset('aero')).toBe('562eb17d0443e5b06a99e50581d73aff8596900d42c4417325dc16b0de53f3a3');
   });
 });

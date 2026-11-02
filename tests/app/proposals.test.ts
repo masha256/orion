@@ -149,23 +149,23 @@ describe('approving observation proposals', () => {
 });
 
 describe('approving a config proposal', () => {
-  const bandEdit: ProposalChange = { kind: 'config', edits: [{ path: ['assumptions', 'rev_growth_y1', 'base'], value: { min: 0, max: 2 } }] };
+  const stalenessEdit: ProposalChange = { kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'staleness_days'], value: 14 }] };
 
   it('edits the YAML in place, changing only the edited line, and reports old and new values', () => {
     const before = readFileSync(yamlPath, 'utf8');
-    const p = file(bandEdit, [{ min: 0, max: 1 }]);
+    const p = file(stalenessEdit, [7]);
     const { proposal, result } = approve(p.id);
     expect(proposal.status).toBe('approved');
-    expect(result).toEqual({ kind: 'config', file: yamlPath, changes: [{ path: ['assumptions', 'rev_growth_y1', 'base'], from: { min: 0, max: 1 }, to: { min: 0, max: 2 } }] });
+    expect(result).toEqual({ kind: 'config', file: yamlPath, changes: [{ path: ['metrics', 'staked_supply', 'staleness_days'], from: 7, to: 14 }] });
     const after = readFileSync(yamlPath, 'utf8');
     const changed = before.split('\n').filter((line, i) => line !== after.split('\n')[i]);
-    expect(changed).toEqual(['  rev_growth_y1: { min: -0.5, max: 5, base: { min: 0, max: 1 } }']);
-    expect(after).toContain('  rev_growth_y1: { min: -0.5, max: 5, base: { min: 0, max: 2 } }'); // key order as the proposal wrote it
-    expect(loadAsset(home, 'mini').config.assumptions.rev_growth_y1.base).toEqual({ min: 0, max: 2 });
+    expect(changed).toEqual(['  staked_supply: { type: level, unit: tokens, staleness_days: 7 }']);
+    expect(after).toContain('  staked_supply: { type: level, unit: tokens, staleness_days: 14 }');
+    expect(loadAsset(home, 'mini').config.metrics.staked_supply.staleness_days).toBe(14);
   });
 
   it('is stale when the file no longer holds what the proposal was filed against', () => {
-    const p = file(bandEdit, [{ min: 0, max: 0.5 }]);
+    const p = file(stalenessEdit, [10]);
     const before = readFileSync(yamlPath, 'utf8');
     expect(codeOf(() => approve(p.id))).toBe('stale_proposal');
     expect(readFileSync(yamlPath, 'utf8')).toBe(before);
@@ -174,17 +174,41 @@ describe('approving a config proposal', () => {
   it('refuses an edit that would break the config, and leaves the file untouched', () => {
     // The real loader is the check: the asset must still parse after the edit.
     const before = readFileSync(yamlPath, 'utf8');
-    const weights = file({ kind: 'config', edits: [{ path: ['modules', 'hc', 'weight'], value: 0.5 }] }, [1]);
+    const weights = file({ kind: 'config', edits: [{ path: ['holder_flows', 'fees', 'metric'], value: 'price_usd' }] }, ['flow_usd.fees']);
     expect(codeOf(() => approve(weights.id))).toBe('invalid_asset_config');
-    const inverted = file({ kind: 'config', edits: [{ path: ['assumptions', 'rev_growth_y1', 'base'], value: { min: 2, max: 1 } }] }, [{ min: 0, max: 1 }]);
+    const inverted = file({ kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'staleness_days'], value: -1 }] }, [7]);
     expect(codeOf(() => approve(inverted.id))).toBe('invalid_asset_config');
     expect(readFileSync(yamlPath, 'utf8')).toBe(before);
     expect(getProposal(w.db, weights.id)!.status).toBe('pending');
   });
 
+  it('proposals: approving a config proposal that edits assumptions is refused (invalid_asset_config)', () => {
+    // A stored row from the valuation era, or one edited in the database: its edit would put a removed key back, and the
+    // schema refuses the edited file before it touches the disk. Review Focus 4.
+    const before = readFileSync(yamlPath, 'utf8');
+    const removed: [string, unknown][] = [
+      ['assumptions', { rev_growth_y1: { min: -0.5, max: 5 } }],
+      ['modules', [{ id: 'hc', type: 'holder_cashflow', kind: 'estimate', weight: 1 }]],
+      ['scenario_probabilities', { bear: 0.25, base: 0.5, bull: 0.25 }],
+      ['review_triggers', { provisional_move_pct: 25 }],
+      ['peer_set', []],
+      ['total_return_variants', []],
+      ['supply_basis', 'effective_total'],
+    ];
+    for (const [key, value] of removed) {
+      const p = file({ kind: 'config', edits: [{ path: [key], value }] }, [null]);
+      expect(() => approve(p.id), key).toThrow(expect.objectContaining({ code: 'invalid_asset_config', message: expect.stringContaining(`Unrecognized key: "${key}"`) }));
+      expect(getProposal(w.db, p.id)!.status).toBe('pending');
+    }
+    // A path below a removed key has no parent in today's file: refused before any edit.
+    const band = file({ kind: 'config', edits: [{ path: ['assumptions', 'rev_growth_y1', 'base'], value: { min: 0, max: 2 } }] }, [{ min: 0, max: 1 }]);
+    expect(codeOf(() => approve(band.id))).toBe('invalid_path');
+    expect(readFileSync(yamlPath, 'utf8')).toBe(before);
+  });
+
   it('restores the file when marking the proposal approved fails', () => {
     const before = readFileSync(yamlPath, 'utf8');
-    const p = file(bandEdit, [{ min: 0, max: 1 }]);
+    const p = file(stalenessEdit, [7]);
     w.db.exec("CREATE TRIGGER fail_decide BEFORE UPDATE ON proposals BEGIN SELECT RAISE(ABORT, 'disk full'); END;");
     expect(() => approve(p.id)).toThrow(/disk full/);
     expect(readFileSync(yamlPath, 'utf8')).toBe(before);
@@ -203,24 +227,23 @@ describe('approving a config proposal', () => {
   });
 
   it('refuses a proposal whose filed-against record does not line up with its edits', () => {
-    const edit: ProposalChange = { kind: 'config', edits: [{ path: ['assumptions', 'rev_growth_y1', 'base'], value: { min: 0, max: 2 } }] };
-    expect(codeOf(() => approve(file(edit, []).id))).toBe('invalid_proposal');
-    expect(codeOf(() => approve(file(edit, { value: 0 }).id))).toBe('invalid_proposal');
+    expect(codeOf(() => approve(file(stalenessEdit, []).id))).toBe('invalid_proposal');
+    expect(codeOf(() => approve(file(stalenessEdit, { value: 0 }).id))).toBe('invalid_proposal');
   });
 
   it('marks a proposal approved without rewriting when the file already holds every proposed value', () => {
     // A crash after the rename and before the status write leaves exactly this state.
-    const p = file(bandEdit, [{ min: 0, max: 1 }]);
-    writeFileSync(yamlPath, readFileSync(yamlPath, 'utf8').replace('base: { min: 0, max: 1 }', 'base: { min: 0, max: 2 }'));
+    const p = file(stalenessEdit, [7]);
+    writeFileSync(yamlPath, readFileSync(yamlPath, 'utf8').replace('staked_supply: { type: level, unit: tokens, staleness_days: 7 }', 'staked_supply: { type: level, unit: tokens, staleness_days: 14 }'));
     const applied = readFileSync(yamlPath, 'utf8');
     expect(approve(p.id).proposal.status).toBe('approved');
     expect(readFileSync(yamlPath, 'utf8')).toBe(applied);
   });
 
   it('leaves no temp file behind, and reports a missing asset file as such', () => {
-    approve(file(bandEdit, [{ min: 0, max: 1 }]).id);
+    approve(file(stalenessEdit, [7]).id);
     expect(existsSync(`${yamlPath}.tmp`)).toBe(false);
-    const orphan = file(bandEdit, [{ min: 0, max: 1 }], { assetId: 'ghost' });
+    const orphan = file(stalenessEdit, [7], { assetId: 'ghost' });
     expect(codeOf(() => approve(orphan.id))).toBe('asset_not_found');
   });
 });

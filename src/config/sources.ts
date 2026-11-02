@@ -165,7 +165,7 @@ export interface SourceBearingAsset {
   >;
 }
 
-/** Cross-field validation of every source in an asset. `requiredMetrics` are the standard metrics the engine cannot run without. */
+/** Cross-field validation of every source in an asset. `requiredMetrics` are the standard metrics the report cannot be built without. */
 export function sourceIssues(asset: SourceBearingAsset, requiredMetrics: string[]): string[] {
   const issues: string[] = [];
   let usesChain = false;

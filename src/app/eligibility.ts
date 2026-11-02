@@ -9,19 +9,16 @@ const byTimeThenId = (a: Observation, b: Observation): number =>
   a.observedAt === b.observedAt ? a.id - b.id : a.observedAt < b.observedAt ? -1 : 1;
 
 /**
- * Narrows eligible observations to what drivers can use at `asOf`, so a snapshot stays small under
- * daily fetching. Engine output must not change: among the metrics the asset DECLARES, everything
- * dropped here is something computeDrivers would ignore anyway. Observations of a metric the asset
- * does not declare are dropped too. That is the eligibility rule itself, unchanged since
- * sub-project 1 (eligibleObservations has always excluded them before computeDrivers runs), not an
- * optimization: computeDrivers would read scheduled_unlock_tokens without checking the declaration,
- * so never hand it rows that skipped this filter. Pure.
+ * Narrows eligible observations to what is in force at `asOf`, so the analyst's context pack stays small under daily
+ * fetching: the newest reading of each level, the schedule steps in use, the events still ahead, and each holder flow's
+ * trailing window. Observations of a metric the asset does not declare are dropped too: that is the eligibility rule
+ * itself, not an optimization, so never hand a caller rows that skipped this filter. Pure.
  */
 export function narrowToUsable(asset: AssetConfig, observations: Observation[], asOf: string): Observation[] {
   const byMetric = new Map<string, Observation[]>();
   for (const o of observations) byMetric.set(o.metricKey, [...(byMetric.get(o.metricKey) ?? []), o]);
 
-  // Only flow metrics that a holder flow references ever reach a driver. The larger window wins when two share a metric.
+  // Only flow metrics that a holder flow references are kept, over its window. The larger window wins when two share a metric.
   const windowDays = new Map<string, number>();
   for (const f of asset.holder_flows) windowDays.set(f.metric, Math.max(windowDays.get(f.metric) ?? 0, f.window_days));
 
@@ -51,8 +48,8 @@ export function narrowToUsable(asset: AssetConfig, observations: Observation[], 
 }
 
 /**
- * The value in force for a level or schedule metric: the newest observation at or before `asOf`. By default, what the
- * signal uses (eligible rows, so provisional ones count on a metric that allows them). With `confirmedOnly`, the newest
+ * The value in force for a level or schedule metric: the newest observation at or before `asOf`. By default, from the
+ * eligible rows (so provisional ones count on a metric that allows them). With `confirmedOnly`, the newest
  * CONFIRMED row: the baseline the agent's move guard measures from, so that provisional rows, the agent's own above all,
  * can never walk the baseline. Null when there is none, and always for flow and event metrics.
  */

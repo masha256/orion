@@ -16,7 +16,6 @@ id: ycrv
 symbol: yCRV
 name: Yearn CRV (staked in YearnBoostedStaker)
 chain: ethereum
-supply_basis: effective_total
 
 contracts:
   token: "0xFCc5c47bE19d06BF83eB04298b026F81069ff65b" # yCRV
@@ -61,7 +60,7 @@ metrics:
     source: { type: erc20_supply, token: token }
 
   # CoinGecko has no circulating supply for this wrapper (Mike, 2026-10-12): every token is in circulation, so it is
-  # the on-chain total. Display basis for market cap; never a valuation input (supply_basis stays effective_total).
+  # the on-chain total. Display basis for market cap only.
   circulating_supply:
     type: level
     unit: tokens
@@ -102,13 +101,6 @@ metrics:
       unit: usd
       price_coingecko_id: crvusd
       share_price: { contract: yv_crvusd, function: pricePerShare, decimals: 18 }
-
-  revenue_run_rate_usd:
-    type: level
-    unit: usd
-    staleness_days: 10
-    critical: true
-    source: { type: derived, name: flow_annualized, params: { metric: flow_usd.fees, days: 91 } }
 
   # Report-only (monitor_only, never a driver). Yearn's revenue on yCRV: the vault shares its treasury vault takes, 20
   # percent from the splitter and the Receiver's 10 percent performance fee, about 28 percent of what the splitter mints
@@ -160,44 +152,6 @@ metrics:
 holder_flows:
   # Paid only to staked yCRV (the unstaked share goes to Yearn's treasury), so valued per staked token.
   - { id: fees, kind: fee_share, capture_rule: programmatic, recipient_base: staked, valued_per: recipients, metric: flow_usd.fees, window_days: 91 }
-
-modules:
-  - { id: hc, type: holder_cashflow, kind: estimate, weight: 0.6 }
-  - { id: fm_holder_flow, type: forward_multiple, kind: estimate, weight: 0.4, params: { basis: holder_flow } }
-
-scenario_probabilities: { bear: 0.25, base: 0.5, bull: 0.25 }
-
-# Agent bands (2026-10-09), by the mirror rule as for CRV: each scenario's band is symmetric around its value in
-# calibration/ycrv-assumptions.yaml, the inner edge halfway to the neighbouring scenario's value and the outer edge as far
-# again, clipped to min/max. The bull rev_growth_y1 band is half that width (the largest single driver with the multiple).
-# Keys with no bands (fade, ramp, capture at its 1.0 ceiling, staked ratio, which does not move the value: valued_per
-# recipients uses today's staked share) use min/max. Swing of the 12m expected value (0.122) with each key at its band
-# edges: growth y1 -10 / +12 percent, multiple -10 / +10, regime -6 / +6, discount -3 / +4, terminal growth -2 / +3,
-# premium -1 / +1; all keys at the edge together -29 / +40 percent (0.087 / 0.170). Recalibrate the bands whenever the
-# calibrated values move.
-assumptions:
-  rev_growth_y1: { min: -0.6, max: 2, bear: { min: -0.32, max: -0.18 }, base: { min: -0.18, max: -0.03 }, bull: { min: 0.01, max: 0.09 } }
-  growth_fade_years: { min: 1, max: 8 }
-  terminal_growth: { min: -0.2, max: 0.05, bear: { min: -0.095, max: -0.065 }, base: { min: -0.065, max: -0.035 }, bull: { min: -0.035, max: -0.005 } }
-  capture_rate_terminal.fees: { min: 0.5, max: 1 }
-  capture_ramp_years.fees: { min: 0, max: 4 }
-  discount_rate_base: { min: 0.08, max: 0.35, bear: { min: 0.225, max: 0.275 }, base: { min: 0.18, max: 0.225 }, bull: { min: 0.14, max: 0.18 } }
-  discount_premium_programmatic: { min: 0, max: 0.15, bear: { min: 0.025, max: 0.035 }, base: { min: 0.015, max: 0.025 }, bull: { min: 0.005, max: 0.015 } }
-  multiple.fm_holder_flow: { min: 3, max: 60, bear: { min: 3.5, max: 6.5 }, base: { min: 6.5, max: 9.5 }, bull: { min: 9.5, max: 12.5 } }
-  regime_multiplier: { min: 0.4, max: 1.6, bear: { min: 0.7, max: 0.9 }, base: { min: 0.9, max: 1.1 }, bull: { min: 1.1, max: 1.3 } }
-  staked_ratio_horizon: { min: 0.5, max: 1 }
-
-agent:
-  budgets:
-    weekly: { input_tokens: 2000000 }
-
-review_triggers:
-  driver_deviation_pct: 25
-  provisional_move_pct: 25
-  calendar:
-    - { date: "2027-08-12", note: "CRV emission rate cut (97.2M to 81.7M CRV a year): vote incentives, most of yCRV's cash, track emissions" }
-
-peer_set: []
 
 # Report-only holder yield and growth (orion report yield). Paid in crvUSD vault shares, redeemable 1:1: no haircut.
 reporting:

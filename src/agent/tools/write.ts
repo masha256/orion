@@ -204,7 +204,6 @@ const recordProvisionalObservation = defineTool({
 
     // The last CONFIRMED value: measuring from a provisional row would let the guard compound from run to run.
     const inForce = valueInForce(ctx.db, asset, input.metric, now.toISOString(), { confirmedOnly: true });
-    const movePct = PROVISIONAL_MOVE_PCT;
     // A figure from a machine transcript may be misheard: it is never read as the value in force unconfirmed (spec
     // invariant 3). A figure from a disclosure run, whatever it cites, waits for the user too (spec section 15, Ruling 18):
     // the run reads the issuer's own claims. A provisional row is eligible on a metric that allows provisional data, so
@@ -214,7 +213,7 @@ const recordProvisionalObservation = defineTool({
     const fromDisclosureRun = ctx.runType === 'disclosure';
     const route = fromMachineTranscript || fromDisclosureRun
       ? def.allow_provisional ? 'proposal' : 'inert'
-      : routeObservation({ allowProvisional: def.allow_provisional, critical: def.critical, inForce, value: input.value, movePct });
+      : routeObservation({ allowProvisional: def.allow_provisional, critical: def.critical, inForce, value: input.value, movePct: PROVISIONAL_MOVE_PCT });
     const periodDays = input.period_days ?? null;
 
     if (route === 'proposal') {
@@ -227,7 +226,7 @@ const recordProvisionalObservation = defineTool({
           ? 'this is a disclosure run: a figure from a disclosure run always goes to the user'
           : inForce === null
           ? `${input.metric} is critical and there is no confirmed value to compare ${input.value} against`
-          : `${input.metric} is critical and ${input.value} is more than ${movePct}% from the last confirmed value (${inForce})`;
+          : `${input.metric} is critical and ${input.value} is more than ${PROVISIONAL_MOVE_PCT}% from the last confirmed value (${inForce})`;
       const staged = fileProposal(ctx, {
         change, filedAgainst: { inForce }, rationale: note ? `${note} (${why})` : why, evidence: [], citations: [verified.citation],
       });
