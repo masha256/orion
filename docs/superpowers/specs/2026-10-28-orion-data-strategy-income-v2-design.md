@@ -1,6 +1,13 @@
 # Orion Phase 2: data-collection strategy and income statement v2
 
-Status: draft for review (2026-10-28, kanban t_1697d7dc). Umbrella: `2026-10-28-orion-coinrevs-core-roadmap.md`
+Status: APPROVED by Mike 2026-11-04 (#orion-dev), all §11 recommendations: D1 HYPE = burn, with the vote footnote;
+D2 reserve yield on user deposits = revenue (labelled); D3 hourly token buckets x hourly prices; D4 CRV vote incentives
+replaced by on-chain scans in Phase 3, internal-only and labelled third_party until then; D5 LP pass-through CRV is
+volume, not revenue; D6 listing bar = revenue + holders + supply (cost lines may be not_measured); D7 new gross/cost
+series built as Phase 3 tracks; D8 payout ratio = holders / gross profit; D9 legacy report keys kept one release behind
+`--legacy`. Base: Phase 1.5 is built on `feat/daemon` (1.5b `feat/platform-pg` + 1.5c, not yet merged to main); this
+branch is rebased onto it, and the plan must target that code (Postgres schema and migrations as they exist there).
+Drafted 2026-10-28 (kanban t_1697d7dc). Umbrella: `2026-10-28-orion-coinrevs-core-roadmap.md`
 (branch `feat/coinrevs-core` @ e666b87): standing rules 1-5, decisions 1 and 5-7, Phase 2 section. Nothing here is
 built. Decisions Mike owes are collected in §11. Amended 2026-10-28 (Mike): §7 adds per-token figures for the site's
 live-price layer.
