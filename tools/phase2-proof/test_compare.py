@@ -1,0 +1,384 @@
+"""Tests for the Phase 2 cross-release proof harness (stdlib unittest, synthetic temp dirs only).
+
+Run: python3 -m unittest tools/phase2-proof/test_compare.py
+"""
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+import cleanup  # noqa: E402
+import compare  # noqa: E402
+import expected  # noqa: E402
+
+ASSETS = ["aero", "cake", "crv", "cvxcrv", "hype", "link", "lit", "pump", "sdcrv", "sky", "uni", "vvv", "ycrv"]
+
+
+def js_json(obj):
+    """What the CLI prints: JSON.stringify(x, null, 2) and a newline."""
+    return json.dumps(obj, indent=2) + "\n"
+
+
+def report(asset, revenue=100.0):
+    return {
+        "asset": asset,
+        "day": "2026-10-27",
+        "windowDays": 90,
+        "price": 1.25,
+        "yields": {"cash": 0.031, "buyback": None},
+        "income": {"revenue": {"annualized": revenue}, "lines": [{"id": "x", "to": "holders", "annualized": 3.5}]},
+        "notes": [],
+    }
+
+
+class OutDir:
+    """A synthetic <out> as reports.sh writes it."""
+
+    def __init__(self, root, assets=ASSETS):
+        self.root = Path(root)
+        for side in ("old", "new"):
+            (self.root / side).mkdir(parents=True)
+        status = []
+        for a in assets:
+            for side in ("old", "new"):
+                self.write(side, f"{a}.json", js_json(report(a)))
+                status.append(f"{side}\t{a}.json\t0")
+        for name, body in (("anomalies.json", [{"id": 1}]), ("proposals.json", [])):
+            for side in ("old", "new"):
+                self.write(side, name, js_json(body))
+                status.append(f"{side}\t{name}\t0")
+        (self.root / "status.tsv").write_text("\n".join(status) + "\n")
+
+    def write(self, side, name, text):
+        (self.root / side / name).write_text(text)
+
+    def new_obj(self, asset):
+        return json.loads((self.root / "new" / f"{asset}.json").read_text())
+
+
+class CompareTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out = OutDir(Path(self.tmp.name) / "out")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_compare(self, **kw):
+        return compare.compare_out(self.out.root, **kw)
+
+    def test_identical_json_passes(self):
+        ok, lines = self.run_compare()
+        self.assertTrue(ok, lines)
+        self.assertEqual(sum(1 for l in lines if l.startswith("PASS ")), 15)  # 13 assets + anomalies + proposals
+
+    def test_a_different_number_fails_and_names_the_path(self):
+        self.out.write("new", "crv.json", js_json(report("crv", revenue=100.00000000000001)))
+        ok, lines = self.run_compare()
+        self.assertFalse(ok)
+        crv = [l for l in lines if " crv" in l and l.startswith("FAIL")]
+        self.assertEqual(len(crv), 1, lines)
+        self.assertIn("$.income.revenue.annualized", crv[0])
+
+    def test_int_vs_float_is_a_difference(self):
+        obj = report("uni")
+        obj["windowDays"] = 90.0
+        self.out.write("new", "uni.json", js_json(obj))
+        ok, _ = self.run_compare()
+        self.assertFalse(ok)
+
+    def test_key_order_is_a_difference(self):
+        obj = report("uni")
+        self.out.write("new", "uni.json", js_json(dict(reversed(list(obj.items())))))
+        ok, _ = self.run_compare()
+        self.assertFalse(ok)
+
+    def test_deleting_income_statement_makes_a_new_side_file_comparable(self):
+        obj = report("aero")
+        obj["incomeStatement"] = {"revenue": {"annualized": 99.0}}
+        self.out.write("new", "aero.json", js_json(obj))
+        ok, lines = self.run_compare()
+        self.assertTrue(ok, lines)
+        # but anything else extra on the new side still fails
+        obj["somethingNew"] = 1
+        self.out.write("new", "aero.json", js_json(obj))
+        ok, _ = self.run_compare()
+        self.assertFalse(ok)
+
+    def test_an_empty_file_fails(self):
+        for side in ("old", "new"):
+            with self.subTest(side=side):
+                self.tearDown()
+                self.setUp()
+                self.out.write(side, "hype.json", "")
+                ok, lines = self.run_compare()
+                self.assertFalse(ok)
+                self.assertTrue(any(l.startswith("FAIL hype") and "empty" in l for l in lines), lines)
+
+    def test_an_unparseable_file_fails(self):
+        self.out.write("old", "hype.json", "{not json")
+        ok, _ = self.run_compare()
+        self.assertFalse(ok)
+
+    def test_an_empty_anomalies_file_fails(self):
+        self.out.write("new", "anomalies.json", "")
+        ok, _ = self.run_compare()
+        self.assertFalse(ok)
+
+    def test_fewer_than_13_assets_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = OutDir(Path(d) / "out", assets=ASSETS[:12])
+            ok, lines = compare.compare_out(out.root)
+            self.assertFalse(ok)
+            self.assertTrue(any("12" in l and "13" in l for l in lines), lines)
+
+    def test_an_asset_missing_on_one_side_fails(self):
+        (self.out.root / "new" / "sky.json").unlink()
+        ok, _ = self.run_compare()
+        self.assertFalse(ok)
+
+    def test_a_non_zero_exit_in_the_status_file_fails(self):
+        status = self.out.root / "status.tsv"
+        status.write_text(status.read_text().replace("new\tlink.json\t0", "new\tlink.json\t1"))
+        ok, lines = self.run_compare()
+        self.assertFalse(ok)
+        self.assertTrue(any(l.startswith("FAIL link") for l in lines), lines)
+
+    def test_a_missing_status_file_fails(self):
+        (self.out.root / "status.tsv").unlink()
+        ok, _ = self.run_compare()
+        self.assertFalse(ok)
+
+    def write_parity(self, pairs):
+        p = self.out.root / "parity.json"
+        p.write_text(json.dumps(pairs))
+        return p
+
+    def with_income_statement(self):
+        for a in ASSETS:
+            obj = report(a)
+            obj["incomeStatement"] = {"revenue": {"annualized": 100.0}}
+            self.out.write("new", f"{a}.json", js_json(obj))
+
+    def test_a_parity_miss_over_1e12_rel_fails(self):
+        self.with_income_statement()
+        base = {a: [["revenue", 100.0, 100.0]] for a in compare.PARITY_ASSETS}
+        ok, lines = self.run_compare(parity=self.write_parity(base))
+        self.assertTrue(ok, lines)
+        within = dict(base, cake=[["revenue", 100.0, 100.0 * (1 + 5e-13)]])
+        ok, lines = self.run_compare(parity=self.write_parity(within))
+        self.assertTrue(ok, lines)
+        miss = dict(base, cake=[["revenue", 100.0, 100.0 * (1 + 3e-12)]])
+        ok, lines = self.run_compare(parity=self.write_parity(miss))
+        self.assertFalse(ok)
+        self.assertTrue(any(l.startswith("FAIL cake") and "parity" in l for l in lines), lines)
+
+    def test_a_parity_asset_missing_from_the_map_fails(self):
+        self.with_income_statement()
+        base = {a: [["revenue", 1.0, 1.0]] for a in compare.PARITY_ASSETS if a != "vvv"}
+        ok, lines = self.run_compare(parity=self.write_parity(base))
+        self.assertFalse(ok)
+        self.assertTrue(any(l.startswith("FAIL vvv") for l in lines), lines)
+
+    def write_reclass(self, values):
+        p = self.out.root / "expected.json"
+        p.write_text(json.dumps(values))
+        return p
+
+    def test_a_reclass_value_off_by_more_than_1e12_rel_fails(self):
+        self.with_income_statement()
+        exp = {a: {"incomeStatement.revenue.annualized": 100.0} for a in compare.RECLASS_ASSETS}
+        ok, lines = self.run_compare(reclass=self.write_reclass(exp))
+        self.assertTrue(ok, lines)
+        exp["lit"] = {"incomeStatement.revenue.annualized": 100.0 * (1 + 2e-12)}
+        ok, lines = self.run_compare(reclass=self.write_reclass(exp))
+        self.assertFalse(ok)
+        self.assertTrue(any(l.startswith("FAIL lit") and "incomeStatement.revenue.annualized" in l for l in lines), lines)
+
+    def test_a_reclass_path_missing_on_the_new_side_fails(self):
+        self.with_income_statement()
+        exp = {a: {"incomeStatement.revenue.annualized": 100.0} for a in compare.RECLASS_ASSETS}
+        exp["sdcrv"]["incomeStatement.belowLine.toHolders"] = 1.7
+        ok, _ = self.run_compare(reclass=self.write_reclass(exp))
+        self.assertFalse(ok)
+
+    def test_cli_exit_codes(self):
+        script = str(HERE / "compare.py")
+        r = subprocess.run([sys.executable, script, str(self.out.root)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.out.write("new", "vvv.json", "")
+        r = subprocess.run([sys.executable, script, str(self.out.root)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("FAIL vvv", r.stdout)
+
+
+def line(id_, annualized, to="holders"):
+    return {"id": id_, "to": to, "annualized": annualized, "basis": "measured"}
+
+
+def old_side(root):
+    old = Path(root) / "out" / "old"
+    old.mkdir(parents=True)
+    sdcrv = {
+        "asset": "sdcrv",
+        "income": {
+            "revenue": {"annualized": 3.6},
+            "holders": {"annualized": 3.48},
+            "protocol": {"annualized": 0.0},
+            "lines": [line("vecrv_fees", 0.6), line("crv_fee_share", 0.3), line("vote_incentives", 1.7), line("boost_delegators", 0.12, "cost")],
+        },
+        "revenue": None,
+        "volume": None,
+    }
+    ycrv = {
+        "asset": "ycrv",
+        "income": {
+            "revenue": {"annualized": 2.31},
+            "holders": {"annualized": 1.5},
+            "protocol": {"annualized": 0.7},
+            "lines": [line("ybs_payout", 1.5), line("styc_fee", 0.1, "protocol")],
+        },
+        "revenue": None,
+        "volume": {"annualized": 2.2},
+    }
+    lit = {
+        "asset": "lit",
+        "income": {"revenue": {"annualized": 41.19}, "holders": {"annualized": 30.0}, "protocol": {"annualized": 11.19}, "lines": [line("buyback", 30.0)]},
+        "revenue": {
+            "basis": "streams",
+            "annualized": 41.19,
+            "streams": [
+                {"id": "core", "annualized": 33.11},
+                {"id": "robinhood", "annualized": 8.08, "share": 0.5, "grossAnnualized": 16.16},
+            ],
+        },
+        "volume": {"annualized": 49.27},
+    }
+    for obj in (sdcrv, ycrv, lit):
+        (old / f"{obj['asset']}.json").write_text(js_json(obj))
+    return old
+
+
+class ExpectedTest(unittest.TestCase):
+    def test_reclassification_table_formulas(self):
+        with tempfile.TemporaryDirectory() as d:
+            old = old_side(d)
+            exp = expected.expected_values(old)
+            self.assertAlmostEqual(exp["sdcrv"]["incomeStatement.revenue.annualized"], 3.6 - 1.7, places=15)
+            self.assertEqual(exp["sdcrv"]["incomeStatement.belowLine.toHolders"], 1.7)
+            self.assertEqual(exp["sdcrv"]["incomeStatement.operatingCosts.annualized"], 0.12)
+            self.assertAlmostEqual(exp["sdcrv"]["incomeStatement.ratios.payoutRatio"], (0.6 + 0.3) / (3.6 - 1.7), places=15)
+            self.assertEqual(exp["ycrv"]["incomeStatement.revenue.annualized"], 2.2)
+            self.assertAlmostEqual(exp["ycrv"]["incomeStatement.unreconciled.annualized"], 2.2 - 1.5 - 0.7, places=15)
+            self.assertAlmostEqual(exp["lit"]["incomeStatement.revenue.annualized"], 41.19 + (16.16 - 8.08), places=12)
+            self.assertEqual(exp["lit"]["incomeStatement.costOfRevenue.annualized"], 16.16 * 0.5)
+            self.assertEqual(exp["lit"]["incomeStatement.grossProfit.annualized"], 41.19)
+
+    def test_ycrv_styc_separate_adds_the_styc_fee_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            exp = expected.expected_values(old_side(d), ycrv_styc_separate=True)
+            self.assertAlmostEqual(exp["ycrv"]["incomeStatement.revenue.annualized"], 2.3, places=15)
+            self.assertAlmostEqual(exp["ycrv"]["incomeStatement.unreconciled.annualized"], 2.3 - 1.5 - 0.7, places=15)
+
+    def test_cli_writes_expected_json_beside_old(self):
+        with tempfile.TemporaryDirectory() as d:
+            old = old_side(d)
+            r = subprocess.run([sys.executable, str(HERE / "expected.py"), str(old)], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            written = json.loads((old.parent / "expected.json").read_text())
+            self.assertEqual(sorted(k for k in written if not k.startswith("_")), ["lit", "sdcrv", "ycrv"])
+
+    def test_a_missing_line_or_null_input_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            old = old_side(d)
+            obj = json.loads((old / "sdcrv.json").read_text())
+            obj["income"]["lines"] = [l for l in obj["income"]["lines"] if l["id"] != "vote_incentives"]
+            (old / "sdcrv.json").write_text(js_json(obj))
+            with self.assertRaises(expected.ExpectedError):
+                expected.expected_values(old)
+        with tempfile.TemporaryDirectory() as d:
+            old = old_side(d)
+            obj = json.loads((old / "ycrv.json").read_text())
+            obj["volume"]["annualized"] = None
+            (old / "ycrv.json").write_text(js_json(obj))
+            with self.assertRaises(expected.ExpectedError):
+                expected.expected_values(old)
+
+    def test_expected_json_round_trips_through_compare(self):
+        """expected.py's output is what compare.py --reclass reads: paths resolve on a matching new side."""
+        with tempfile.TemporaryDirectory() as d:
+            exp = expected.expected_values(old_side(d))
+            for asset, values in exp.items():
+                if asset.startswith("_"):
+                    continue
+                obj = {}
+                for path, v in values.items():
+                    node = obj
+                    *parents, leaf = path.split(".")
+                    for p in parents:
+                        node = node.setdefault(p, {})
+                    node[leaf] = v
+                for path, v in values.items():
+                    self.assertEqual(compare.get_path(obj, path), v)
+
+
+class CleanupTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.tmpdir = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def proof_dir(self, schema):
+        p = self.tmpdir / "p2"
+        p.mkdir()
+        (p / "schema").write_text(schema + "\n")
+        return p
+
+    def test_refuses_a_schema_name_not_p2proof(self):
+        for bad in ("orion", "proof_20261104t000000z", "p2proof_X", "p2proof_1; drop schema orion", "p2proof_", "p2proof_a-b"):
+            with self.subTest(bad=bad):
+                p = self.proof_dir(bad)
+                with self.assertRaises(cleanup.CleanupError):
+                    cleanup.check(p, tmpdir=self.tmpdir)
+                self.assertTrue(p.exists())
+                (p / "schema").unlink()
+                p.rmdir()
+
+    def test_accepts_a_p2proof_schema_under_tmpdir(self):
+        p = self.proof_dir("p2proof_20261104t120000z")
+        self.assertEqual(cleanup.check(p, tmpdir=self.tmpdir), "p2proof_20261104t120000z")
+
+    def test_refuses_a_dir_outside_tmpdir(self):
+        with tempfile.TemporaryDirectory() as other:
+            p = Path(other) / "p2"
+            p.mkdir()
+            (p / "schema").write_text("p2proof_20261104t120000z\n")
+            with self.assertRaises(cleanup.CleanupError):
+                cleanup.check(p, tmpdir=self.tmpdir)
+            # tmpdir itself is not a proof dir
+            with self.assertRaises(cleanup.CleanupError):
+                cleanup.check(self.tmpdir, tmpdir=self.tmpdir)
+            # nor a path that escapes it with ..
+            with self.assertRaises(cleanup.CleanupError):
+                cleanup.check(self.tmpdir / ".." / Path(other).name / "p2", tmpdir=self.tmpdir)
+            self.assertTrue(p.exists())
+
+    def test_cli_refuses_before_touching_postgres(self):
+        p = self.proof_dir("orion")
+        env = dict(os.environ, TMPDIR=str(self.tmpdir), PATH="/nonexistent")  # no psql reachable either way
+        r = subprocess.run([sys.executable, str(HERE / "cleanup.py"), str(p)], capture_output=True, text=True, env=env)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("refus", r.stderr)
+        self.assertTrue(p.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
