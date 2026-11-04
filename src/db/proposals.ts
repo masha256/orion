@@ -1,10 +1,9 @@
 import type { StoredCitation } from './documents.js';
-import { OrionError, type ConfigEdit, type Scenario } from '../types.js';
+import { OrionError, type ConfigEdit } from '../types.js';
 import { canonicalJson } from '../util/canonical.js';
 import type { Db } from './connection.js';
 
 export type ProposalChange =
-  | { kind: 'assumption_value'; key: string; scenario: Scenario; value: number }
   | { kind: 'config'; edits: ConfigEdit[] }
   | { kind: 'acknowledge_anomaly' | 'withdraw_acknowledgement'; anomalyId: number; note: string }
   | { kind: 'confirm_observation' | 'reject_observation'; observationId: number; note: string }

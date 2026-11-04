@@ -27,8 +27,6 @@ async function citationLines(db: Db, p: Proposal): Promise<string[]> {
 function changeSummary(p: Proposal): string {
   const c = p.change;
   switch (c.kind) {
-    case 'assumption_value':
-      return `${c.key} (${c.scenario}) -> ${c.value}`;
     case 'config':
       // " > ", as src/config/edit.ts prints a path: assumption keys contain dots, so a dotted path is ambiguous.
       return c.edits.map((e) => `${e.path.join(' > ')} = ${e.value === null ? '(delete)' : JSON.stringify(e.value)}`).join('; ');

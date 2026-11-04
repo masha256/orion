@@ -383,14 +383,14 @@ ALTER TABLE journal ADD COLUMN catalysts_json TEXT;
   },
 ];
 
-/** Applies every migration the SQLite database lacks, as `openDb` did before Postgres. */
-export function migrate(db: Database.Database): void {
+/** Applies every migration the SQLite database lacks, as `openDb` did before Postgres (up to `upTo`, for an older schema in a test). */
+export function migrate(db: Database.Database, upTo = MIGRATIONS.length): void {
   db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)');
   const applied = new Set(
     db.prepare('SELECT id FROM schema_migrations').all().map((r) => (r as { id: number }).id),
   );
   for (const m of MIGRATIONS) {
-    if (applied.has(m.id)) continue;
+    if (applied.has(m.id) || m.id > upTo) continue;
     // A table rebuild drops a table that other tables reference. Foreign keys go off around it (the pragma is a no-op
     // inside a transaction, so it is set outside), and the rebuilt schema is checked before they come back on.
     if (m.rebuildsTables) db.pragma('foreign_keys = OFF');

@@ -59,7 +59,7 @@ describe('a proposal row that is not what the agent files', () => {
 describe('proposals', () => {
   it('proposals: the database refuses kind assumption_value', async () => {
     // The valuation era's kind: no build files one, the importer does not carry the stored ones, and the CHECK refuses one.
-    await expect(file({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 })).rejects.toThrow(/proposals_kind_check/);
+    await expect(file({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 } as unknown as ProposalChange, { value: 0 })).rejects.toThrow(/proposals_kind_check/);
     await expect(
       w.db.run(
         `INSERT INTO proposals (asset_id, persona, kind, change_json, filed_against_json, rationale, evidence_json, status, created_at)

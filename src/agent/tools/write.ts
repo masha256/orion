@@ -263,7 +263,7 @@ const recordProvisionalObservation = defineTool({
 
 // ---- propose_change ------------------------------------------------------------------------------------------------
 
-/** assumption_value is retired: stored ones still list and reject, but none can be filed or approved. */
+/** The kinds the model may file (the valuation era's assumption_value is gone: the database refuses it, and the importer does not carry it). */
 const PROPOSABLE_KINDS = ['config', 'acknowledge_anomaly', 'withdraw_acknowledgement', 'confirm_observation', 'reject_observation'] as const;
 
 const proposeChange = defineTool({

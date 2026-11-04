@@ -40,8 +40,7 @@ export async function rejectProposal(db: Db, id: number, note: string, now: Date
 /**
  * Applies a proposal through the same functions the CLI uses, after checking that what it was filed against still holds.
  * Database kinds are one transaction. A config proposal edits assets/<id>.yaml in place and restores the file if marking
- * the proposal approved fails. An `assumption_value` proposal (the valuation era's kind) is refused: a stored one can
- * still be listed and rejected, never applied: nothing reads an assumption set any more.
+ * the proposal approved fails.
  */
 export async function approveProposal(db: Db, home: string, id: number, opts: { note?: string; now: Date }): Promise<{ proposal: Proposal; result: ApproveResult }> {
   const p = await pending(db, id);
@@ -54,12 +53,6 @@ export async function approveProposal(db: Db, home: string, id: number, opts: { 
   const note = opts.note?.trim() || null;
   const change = p.change;
 
-  if (change.kind === 'assumption_value') {
-    throw new OrionError(
-      'proposal_kind_retired',
-      `proposal ${id} changes an assumption (${change.key}, ${change.scenario}), and assumption values are retired with the valuation; reject it with a note`,
-    );
-  }
   if (change.kind === 'config') return approveConfig(db, home, p, note, nowIso);
 
   // Under the asset's transaction lock: every kind below checks what the proposal was filed against before it writes.

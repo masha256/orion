@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DatabaseConfig } from '../../../src/db/connection.js';
 import { openPgDb, type PgDb } from '../../../src/db/pg/pool.js';
 import { migrate } from '../../../tools/import-sqlite/sqliteMigrations.js';
-import { createTestSchema, dropTestSchema, MISSING_URL_MESSAGE, requireTestDatabaseUrl } from '../../setup/pgGlobal.js';
+import setup, { createTestSchema, dropTestSchema, MISSING_URL_MESSAGE, requireTestDatabaseName, requireTestDatabaseUrl } from '../../setup/pgGlobal.js';
 
 const CARRIED = [
   'agent_runs',
@@ -114,6 +114,30 @@ describe('setup', () => {
     expect(() => requireTestDatabaseUrl({})).toThrow(MISSING_URL_MESSAGE);
     expect(() => requireTestDatabaseUrl({ ORION_TEST_DATABASE_URL: '' })).toThrow(MISSING_URL_MESSAGE);
     expect(requireTestDatabaseUrl({ ORION_TEST_DATABASE_URL: 'postgresql://u@/d' })).toBe('postgresql://u@/d');
+  });
+
+  it('setup: refuses a database whose name does not end in _test, before it sets anything on it', async () => {
+    for (const name of ['orion', 'orion_dev', 'orion_test_copy', 'test', '_testx']) {
+      expect(() => requireTestDatabaseName(name), name).toThrow(/refusing to run the suite on database .* must name a database whose name ends in _test/);
+    }
+    expect(requireTestDatabaseName('orion_test')).toBe('orion_test');
+    // The global setup itself, pointed at a database not named *_test (postgres, which always exists): it refuses, and
+    // that database's synchronous_commit is left as it was.
+    const before = await db.one<{ c: string[] | null }>(
+      "SELECT setconfig AS c FROM pg_db_role_setting WHERE setrole = 0 AND setdatabase = (SELECT oid FROM pg_database WHERE datname = 'postgres')",
+    );
+    const url = process.env.ORION_TEST_DATABASE_URL!;
+    try {
+      process.env.ORION_TEST_DATABASE_URL = url.replace(/\/orion_test(?=\?|$)/, '/postgres');
+      expect(process.env.ORION_TEST_DATABASE_URL).not.toBe(url);
+      await expect(setup()).rejects.toThrow(/refusing to run the suite on database "postgres"/);
+    } finally {
+      process.env.ORION_TEST_DATABASE_URL = url;
+    }
+    const after = await db.one<{ c: string[] | null }>(
+      "SELECT setconfig AS c FROM pg_db_role_setting WHERE setrole = 0 AND setdatabase = (SELECT oid FROM pg_database WHERE datname = 'postgres')",
+    );
+    expect(after).toEqual(before);
   });
 
   it('setup: sessions on the test database skip the WAL flush wait (synchronous_commit off, set by the global setup)', async () => {

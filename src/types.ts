@@ -1,6 +1,3 @@
-export const SCENARIOS = ['bear', 'base', 'bull'] as const;
-export type Scenario = (typeof SCENARIOS)[number];
-
 export const HORIZONS = ['6m', '12m'] as const;
 export type Horizon = (typeof HORIZONS)[number];
 export const HORIZON_YEARS: Record<Horizon, number> = { '6m': 0.5, '12m': 1 };

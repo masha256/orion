@@ -17,6 +17,17 @@ export const MISSING_URL_MESSAGE =
 const STALE_MS = 6 * 60 * 60 * 1000;
 const TEST_SCHEMA = /^t_[0-9a-f]{16}$/;
 
+/**
+ * The suite runs only on a database whose name ends in `_test`: it creates and drops schemas there and turns off
+ * `synchronous_commit` for the whole database, which must never happen to a database holding data that matters.
+ */
+export function requireTestDatabaseName(name: string): string {
+  if (!name.endsWith('_test')) {
+    throw new Error(`refusing to run the suite on database ${JSON.stringify(name)}: ORION_TEST_DATABASE_URL must name a database whose name ends in _test`);
+  }
+  return name;
+}
+
 /** The test database URL; refuses (no skip) when it is unset. */
 export function requireTestDatabaseUrl(env: Record<string, string | undefined> = process.env): string {
   const url = env.ORION_TEST_DATABASE_URL;
@@ -35,17 +46,17 @@ async function withClient<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
   }
 }
 
-/** vitest globalSetup: the URL is set, the server is Postgres 18+, and schemas older than 6 h are dropped. */
+/** vitest globalSetup: the URL is set and names a `_test` database, the server is Postgres 18+, and schemas older than 6 h are dropped. */
 export default async function setup(): Promise<void> {
   requireTestDatabaseUrl();
   await withClient(async (c) => {
+    const db = requireTestDatabaseName((await c.query<{ d: string }>('SELECT current_database() AS d')).rows[0]!.d);
     const version = Number((await c.query<{ v: string }>("SELECT current_setting('server_version_num') AS v")).rows[0]!.v);
     if (version < 180000) throw new Error(`the test Postgres is version ${version}; the suite needs 18 or later`);
     // The suite commits tens of thousands of small transactions, and each one waiting for its WAL flush made the ingest
     // tests fsync-bound (4 s for one LINK fetch on this host's disk, past vitest's 5 s timeout under load). A test
     // database needs no durability: new sessions on it skip the flush wait. (The database's owner may set this; the
     // provisioning script makes orion_dev the owner of orion_test.) Production pools never see this setting.
-    const db = (await c.query<{ d: string }>('SELECT current_database() AS d')).rows[0]!.d;
     await c.query(`ALTER DATABASE "${db.replace(/"/g, '""')}" SET synchronous_commit = off`);
     const schemas = await c.query<{ name: string; comment: string | null }>(
       "SELECT nspname AS name, obj_description(oid, 'pg_namespace') AS comment FROM pg_namespace WHERE nspname LIKE 't\\_%'",
