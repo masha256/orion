@@ -58,6 +58,14 @@ export function readRelease(root: string): ReleaseInfo | null {
 }
 
 /**
+ * `readRelease(root)`, except at a git checkout root (`.git`, a directory or a worktree's file): the build's `pack.sh`
+ * writes `RELEASE` into the tree it packs, and a checkout is never a release (R-c3; `/RELEASE` is git-ignored).
+ */
+function shippedRelease(root: string): ReleaseInfo | null {
+  return existsSync(join(root, '.git')) ? null : readRelease(root);
+}
+
+/**
  * The paths for this process. `cliDir` is the directory of the running entry point (`<release>/dist/cli` when built,
  * `<checkout>/src/cli` from source): its release root is two levels up, and is the config root when it holds a
  * `RELEASE` file. `ORION_CONFIG_ROOT` and `ORION_ENV_FILE` override; `ORION_HOME` defaults to the working directory.
@@ -70,10 +78,10 @@ export function readRelease(root: string): ReleaseInfo | null {
 export function resolvePaths(env: Record<string, string | undefined>, cliDir: string): OrionPaths {
   const home = env.ORION_HOME ?? process.cwd();
   const releaseRoot = resolve(cliDir, '..', '..');
-  const shipped = readRelease(releaseRoot);
+  const shipped = shippedRelease(releaseRoot);
   const server = env.ORION_ENV === 'stage' || env.ORION_ENV === 'prod';
   const configRoot = env.ORION_CONFIG_ROOT ?? (shipped ? releaseRoot : home);
-  const release = readRelease(configRoot);
+  const release = shippedRelease(configRoot);
   if (shipped || release || server) {
     const unset = (['ORION_HOME', 'ORION_ENV_FILE'] as const).filter((k) => (env[k] ?? '').trim() === '');
     if (unset.length > 0) {

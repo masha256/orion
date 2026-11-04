@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -93,6 +93,20 @@ describe('paths', () => {
     // stage/prod count as a release even when the config root is overridden.
     expect(() => resolvePaths({ ORION_ENV: 'stage', ORION_CONFIG_ROOT: root }, '/nowhere/src/cli')).toThrow(expect.objectContaining({ code: 'release_env_required' }));
     expect(resolvePaths({ ORION_HOME: '/h', ORION_ENV_FILE: '/s/.env' }, cli)).toMatchObject({ home: '/h', envFile: '/s/.env', configRoot: root });
+  });
+
+  it('paths: a RELEASE at a git checkout root (has .git) is ignored: a packed tree is a release, a checkout never is (R-c3)', () => {
+    const root = releaseRoot();
+    mkdirSync(join(root, '.git'));
+    const p = resolvePaths({ ORION_HOME: root }, join(root, 'dist', 'cli'));
+    expect(p.release).toBeNull();
+    expect(p.configRoot).toBe(root); // ORION_HOME, as in any dev checkout
+    // A worktree's .git is a file: also a checkout.
+    const wt = releaseRoot();
+    writeFileSync(join(wt, '.git'), 'gitdir: /somewhere/.git/worktrees/x\n');
+    expect(resolvePaths({ ORION_CONFIG_ROOT: wt }, join(wt, 'dist', 'cli')).release).toBeNull();
+    // The repo ignores the file, so a stray one is never committed.
+    expect(readFileSync(join(ROOT, '.gitignore'), 'utf8').split('\n')).toContain('/RELEASE');
   });
 
   it('paths: ORION_ENV is dev, stage or prod, default dev', () => {

@@ -3,6 +3,7 @@
 
 node_modules/
 dist/
+/RELEASE
 *.db
 orion.db.*
 *.db-wal
