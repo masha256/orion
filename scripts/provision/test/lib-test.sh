@@ -68,6 +68,31 @@ lib_case "check_free_space: warns (exit 0) under 2 GiB on the root fs" '
 lib_case "check_free_space: warns (exit 0) under 20 GiB for the data directory" '
   out=$(PATH=$T/fakedf:$PATH ROOT_KIB=4089446 DATA_KIB=10485760 check_free_space /home/x 2>&1)
   [[ $out == "warn: free space: / 3.9 GiB, /home/x (on /home) 10.0 GiB"* ]]'
+# 1.5c per-user files on an already-provisioned 1.5a layout: the first run creates them, a second prints only ok:
+lib_case "orion_user_files: first run creates the unit, known_hosts and deploy dirs" '
+  u=$T/orion-user; mkdir -p "$u/.ssh" "$u/.config/systemd/user" "$u/home" "$u/shared"
+  orion_user_files "$u" "$ME" stage "'"$prov"'/files" >"$T/ouf-1.out"
+  grep -q "^do: create $u/.config/systemd/user/orion-daemon.service" "$T/ouf-1.out"
+  grep -q "^do: create $u/.ssh/known_hosts" "$T/ouf-1.out"
+  [[ $ORION_UNIT_CHANGED == 1 ]]
+  grep -Fxq "Environment=ORION_ENV=stage" "$u/.config/systemd/user/orion-daemon.service"
+  ! grep -q @ORION_ENV@ "$u/.config/systemd/user/orion-daemon.service" || exit 1
+  cmp -s "$u/.ssh/known_hosts" "'"$prov"'/files/github-known-hosts"
+  for d in incoming home/disclosure shared/predeploy; do [[ $(stat -c %a "$u/$d") == 700 ]]; done
+  [[ $(stat -c %a "$u/.config/systemd/user/orion-daemon.service") == 644 ]]'
+lib_case "orion_user_files: a second run prints only ok: lines and leaves the unit unchanged" '
+  u=$T/orion-user
+  orion_user_files "$u" "$ME" stage "'"$prov"'/files" >"$T/ouf-2.out"
+  [[ $ORION_UNIT_CHANGED == 0 ]]
+  [[ -s $T/ouf-2.out ]] && ! grep -qv "^ok: " "$T/ouf-2.out"'
+lib_case "orion_user_files: a changed unit alone sets ORION_UNIT_CHANGED (not lost in a pipeline subshell)" '
+  u=$T/orion-user; printf "# stale\n" >"$u/.config/systemd/user/orion-daemon.service"
+  orion_user_files "$u" "$ME" stage "'"$prov"'/files" >"$T/ouf-3.out"
+  [[ $ORION_UNIT_CHANGED == 1 ]] && grep -q "^do: update $u/.config/systemd/user/orion-daemon.service" "$T/ouf-3.out"
+  ! grep -q "^do: .*known_hosts" "$T/ouf-3.out" || exit 1
+  orion_user_files "$u" "$ME" stage "'"$prov"'/files" >/dev/null; [[ $ORION_UNIT_CHANGED == 0 ]]'
+lib_case "orion-host.sh sets lastpipe (CHANGED after cmd | write_file is the write_file one)" '
+  grep -qx "shopt -s lastpipe" "'"$prov"'/orion-host.sh"'
 lib_case "selfcheck counts and summary fails on FAIL" '
   selfcheck yes true >/dev/null; selfcheck no false >/dev/null; selfcheck refused expect_fail false >/dev/null
   [[ $SELFCHECK_PASSES == 2 && $SELFCHECK_FAILS == 1 ]]; ! selfcheck_summary >/dev/null'

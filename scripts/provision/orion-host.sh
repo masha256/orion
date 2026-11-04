@@ -2,7 +2,8 @@
 # orion-host.sh: set up the Orion server (Ubuntu 26.04 resolute) for the prod and staging environments.
 # Spec §2.4 item 2, plan 1.5a Task 2 (rulings R1-R7). Mike runs it from a copy of scripts/provision:
 #   sudo ./orion-host.sh --hostname <h> [--pg-datadir <dir>] --ssh-from <ip|cidr> [--ssh-from ...] \
-#        [--deploy-key-stage <pubkey file>] [--deploy-key-prod <pubkey file>] [--backup-disk <dir>] [--nut]
+#        [--deploy-key-stage <pubkey file>] [--deploy-key-prod <pubkey file>] [--backup-disk <dir>] [--nut] \
+#        [--with-watcher]
 # then, once /etc/pgbackrest/pgbackrest.conf has no REPLACE_ME left:
 #   sudo ./orion-host.sh --hostname <h> --ssh-from ... --enable-backups --dump-recipient <age public key>
 #
@@ -17,13 +18,23 @@
 #   --backup-disk <dir>     second disk: a local pgBackRest repo 2 under <dir>/pgbackrest (only when the conf is created;
 #                           off by default; on a one-disk box it gives no protection against disk failure)
 #   --nut                   install nut-client (UPS signalling)
+#   --with-watcher          also build each user's ~/watcher-venv (python3 -m venv + pip install of the pinned
+#                           files/watcher-requirements.txt: faster-whisper, yt-dlp, PyYAML; needs the network).
+#                           Off by default until the disclosure watcher ships (plan 1.5c Task 11)
 #   --enable-backups        step 2: stanza-create, WAL archiving on, pgbackrest check, root backup/dump timers
 #   --dump-recipient <age1...>  age public key the nightly pg_dump is encrypted to (kept in /etc/orion/dump-recipient)
 #   --dry-run               print every command and file it would write; changes nothing; needs no root
 #   --force-os              run on another Ubuntu codename than resolute
 #
+# Phase 1.5c (Task 15) adds, on every run: the full /usr/local/bin/orion-remote (Python), group orion-refresh (both
+# Orion users) owning /home/orion-refresh, and per user ~/incoming, ~/home/disclosure, ~/shared/predeploy,
+# ~/.ssh/known_hosts with github.com's pinned host keys, and the orion-daemon systemd user unit (installed and enabled
+# through the user's own manager, never started here: the first `orion-remote switch` starts it).
+#
 # Idempotent: a second run prints only ok: lines (plus public keys and the self-check) and exits 0.
 set -euo pipefail
+# `cmd | write_file ...; ((CHANGED))`: the last stage of a pipeline runs in this shell, so CHANGED is write_file's
+shopt -s lastpipe
 # shellcheck source-path=SCRIPTDIR
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=SCRIPTDIR/lib.sh
@@ -41,6 +52,9 @@ ORION_REMOTE=/usr/local/bin/orion-remote
 PGBR_CONF=${ORION_PROVISION_PGBACKREST_CONF:-/etc/pgbackrest/pgbackrest.conf}
 RECIPIENT_FILE=/etc/orion/dump-recipient
 SYSTEMD_DIR=/etc/systemd/system
+REFRESH_DIR=/home/orion-refresh
+REFRESH_GROUP=orion-refresh
+DAEMON_UNIT=orion-daemon.service
 
 usage() { sed -n '2,/^set -euo/{/^#/s/^# \{0,1\}//p}' "${BASH_SOURCE[0]}"; }
 
@@ -50,6 +64,7 @@ declare -A DEPLOY_KEY_FILE=() DEPLOY_KEY=()
 BACKUP_DISK=''
 PG_DATADIR=''
 NUT=0
+WITH_WATCHER=0
 ENABLE_BACKUPS=0
 DUMP_RECIPIENT=''
 need_arg() { [[ $# -ge 2 && -n $2 ]] || die "$1 needs a value"; }
@@ -62,6 +77,7 @@ while (($#)); do
     --backup-disk) need_arg "$@"; BACKUP_DISK=$2; shift ;;
     --pg-datadir) need_arg "$@"; PG_DATADIR=$2; shift ;;
     --nut) NUT=1 ;;
+    --with-watcher) WITH_WATCHER=1 ;;
     --enable-backups) ENABLE_BACKUPS=1 ;;
     --dump-recipient) need_arg "$@"; DUMP_RECIPIENT=$2; shift ;;
     --dry-run) DRY_RUN=1 ;;
@@ -212,6 +228,31 @@ else
 fi
 ensure_symlink "$NODE_LINK" "node-$NODE_VERSION"
 
+# ================================================================== the staging-refresh dump directory (1.5c)
+# The nightly prod dump (orion-pg-dump, as postgres) lands in /home/orion-refresh/latest.dump 640; the directory is
+# setgid orion-refresh, so the file's group is orion-refresh and both Orion users (members) can read it.
+echo "== group $REFRESH_GROUP"
+if getent group "$REFRESH_GROUP" >/dev/null; then
+  log_ok "group $REFRESH_GROUP"
+else
+  run groupadd --system "$REFRESH_GROUP"
+fi
+ensure_dir "$REFRESH_DIR" 2750 "postgres:$REFRESH_GROUP"
+
+# R-c12: GitHub's host keys are pinned (files/github-known-hosts); ssh-keyscan is only a cross-check, never trusted
+if ((DRY_RUN)); then
+  log_note "ssh-keyscan check skipped (dry-run): the real run compares files/github-known-hosts with ssh-keyscan github.com (a warning only)"
+else
+  scanned=$(timeout 30 ssh-keyscan -T 10 -t ed25519,ecdsa,rsa github.com 2>/dev/null | grep -v '^#' | sort) || scanned=''
+  if [[ -z $scanned ]]; then
+    log_warn "ssh-keyscan github.com gave nothing (no network?); the pinned keys are installed anyway"
+  elif [[ $scanned == "$(grep -v '^#' "$here/files/github-known-hosts" | sort)" ]]; then
+    log_ok "ssh-keyscan github.com matches the pinned host keys"
+  else
+    log_warn "ssh-keyscan github.com differs from files/github-known-hosts; the pinned keys are installed. Check docs.github.com (GitHub's SSH key fingerprints) before trusting either"
+  fi
+fi
+
 # ================================================================== users, layout, .env, keys
 # key_state <path>: like path_state, but an empty file (an interrupted earlier run) counts as missing
 key_state() {
@@ -290,9 +331,66 @@ for env in "${ENVS[@]}"; do
   else
     log_note "no --deploy-key-$env: $h/.ssh/authorized_keys not touched"
   fi
+
+  # 1.5c: group orion-refresh (reads latest.dump for the staging refresh)
+  if getent passwd "$u" >/dev/null && [[ " $(id -nG "$u") " == *" $REFRESH_GROUP "* ]]; then
+    log_ok "$u in group $REFRESH_GROUP"
+  else
+    run usermod -aG "$REFRESH_GROUP" "$u"
+  fi
+
+  # 1.5c: deploy directories, known_hosts, the daemon user unit (lib.sh orion_user_files)
+  orion_user_files "$h" "$own" "$env" "$here/files"
+  # The unit is loaded and enabled through the user's own systemd manager (running because of linger):
+  #   runuser -u <user> -- env XDG_RUNTIME_DIR=/run/user/<uid> systemctl --user ...
+  # systemctl --user reaches it on $XDG_RUNTIME_DIR/systemd/private; no D-Bus session or login is needed, and unlike
+  # `machinectl shell` it needs no systemd-container package. Enabled = starts at boot; never started here.
+  uid=$(id -u "$u" 2>/dev/null) || uid='<uid>'
+  user_systemctl() { run runuser -u "$u" -- env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user "$@"; }
+  user_manager_ready() {
+    ((DRY_RUN)) && return 0
+    local _
+    [[ -S /run/user/$uid/systemd/private ]] || run systemctl start "user@$uid.service"
+    for _ in $(seq 1 30); do
+      [[ -S /run/user/$uid/systemd/private ]] && return 0
+      sleep 1
+    done
+    die "the systemd user manager of $u is not running (/run/user/$uid/systemd/private missing; is linger on?)"
+  }
+  if ((ORION_UNIT_CHANGED)); then
+    user_manager_ready
+    user_systemctl daemon-reload
+  fi
+  if [[ -L $h/.config/systemd/user/default.target.wants/$DAEMON_UNIT ]]; then
+    log_ok "$DAEMON_UNIT enabled for $u"
+  else
+    user_manager_ready
+    user_systemctl enable "$DAEMON_UNIT"
+  fi
+
+  # 1.5c: the disclosure watcher's venv, only with --with-watcher
+  venv=$h/watcher-venv
+  if ((WITH_WATCHER)); then
+    if [[ -x $venv/bin/python ]]; then
+      log_ok "venv $venv"
+    else
+      run runuser -u "$u" -- python3 -m venv "$venv"
+    fi
+    write_file "$venv/requirements.txt" 644 "$own" <"$here/files/watcher-requirements.txt"
+    # installed = the copy pip last finished with; a failed pip run is retried by the next run
+    if [[ -r $venv/.installed-requirements.txt ]] && cmp -s "$venv/requirements.txt" "$venv/.installed-requirements.txt"; then
+      log_ok "$venv has the pinned requirements"
+    else
+      run runuser -u "$u" -- env HOME="$h" "$venv/bin/pip" install --require-virtualenv --no-input -r "$venv/requirements.txt"
+      run runuser -u "$u" -- cp "$venv/requirements.txt" "$venv/.installed-requirements.txt"
+    fi
+  else
+    log_note "watcher venv skipped for $u (pass --with-watcher once the disclosure watcher ships, plan 1.5c Task 11)"
+  fi
 done
 
-# R1: the forced-command entry point (minimal Phase 1.5a version; 1.5c replaces it by re-running this script)
+# R1: the forced-command entry point; since 1.5c the full Python version (verbs in its header), a release-independent
+# copy from this checkout, so neither a release nor the Orion user can change what a deploy key runs
 echo "== orion-remote"
 write_file "$ORION_REMOTE" 755 root:root quiet <"$here/files/orion-remote"
 
@@ -391,7 +489,6 @@ EOF
   # on /home, not the root filesystem (venus: / is 10G, /home 870G)
   ensure_dir /home/orion-backups 700 postgres:postgres
   ensure_dir /home/orion-backups/dumps 700 postgres:postgres
-  ensure_dir /home/orion-refresh 750 postgres:postgres
 
   units_changed=0
   # unit <name> <description> <OnCalendar> <paths it needs mounted> <ExecStart> [ExecStartPost]
@@ -460,6 +557,12 @@ check_mode() { [[ $(stat -c '%a %U:%G' "$1") == "$2" ]]; }
 check_not_sudo() { local g; g=" $(id -nG "$1") "; [[ $g != *" sudo "* && $g != *" admin "* ]]; }
 check_remote_status() { local out; out=$(as "$1" env SSH_ORIGINAL_COMMAND=status "$ORION_REMOTE") && [[ $out == "env: $2"$'\n'* ]]; }
 check_remote_refuses() { ! as "$1" env SSH_ORIGINAL_COMMAND='status; id' "$ORION_REMOTE" >/dev/null 2>&1; }
+check_remote_full() { local out rc=0; out=$(as "$1" env SSH_ORIGINAL_COMMAND=bogus "$ORION_REMOTE" 2>&1) || rc=$?; [[ $rc == 64 && $out == *"'bogus' is not an allowed verb"* ]]; }
+user_ctl() { local u=$1; shift; as "$u" env XDG_RUNTIME_DIR="/run/user/$(id -u "$u")" "$@"; }
+check_unit_verify() { user_ctl "$1" systemd-analyze --user verify "/home/$1/.config/systemd/user/$DAEMON_UNIT"; }
+check_unit_enabled() { [[ $(user_ctl "$1" systemctl --user is-enabled "$DAEMON_UNIT") == enabled ]]; }
+check_in_group() { [[ " $(id -nG "$1") " == *" $2 "* ]]; }
+check_known_hosts() { cmp -s "/home/$1/.ssh/known_hosts" "$here/files/github-known-hosts"; }
 check_ro_reads() { [[ $(q orion-prod orion_prod_ro orion_prod 'show default_transaction_read_only') == on ]]; }
 selfcheck "postgresql-$PG_MAJOR is the PGDG build" check_pgdg
 selfcheck "listen_addresses is empty (socket only)" check_eq '' psql_as_postgres 'show listen_addresses'
@@ -468,6 +571,7 @@ selfcheck "shared_buffers is 2GB" check_eq 2GB psql_as_postgres 'show shared_buf
 selfcheck "data_directory is $DATADIR" check_eq "$DATADIR" psql_as_postgres 'show data_directory'
 selfcheck "node $NODE_VERSION at $NODE_LINK" check_node
 selfcheck "$ORION_REMOTE is root:root 755" check_mode "$ORION_REMOTE" "755 root:root"
+selfcheck "$REFRESH_DIR is 2750 postgres:$REFRESH_GROUP" check_mode "$REFRESH_DIR" "2750 postgres:$REFRESH_GROUP"
 for env in "${ENVS[@]}"; do
   u=orion-$env
   selfcheck "$u has no sudo" check_not_sudo "$u"
@@ -478,6 +582,15 @@ for env in "${ENVS[@]}"; do
   selfcheck "$u connects to orion_$env as orion_$env" check_eq "orion_$env" q "$u" "orion_$env" "orion_$env" 'select current_user'
   selfcheck "orion-remote status works for $u" check_remote_status "$u" "$env"
   selfcheck "orion-remote refuses 'status; id' for $u" check_remote_refuses "$u"
+  selfcheck "orion-remote is the full version for $u (bogus -> exit 64, not an allowed verb)" check_remote_full "$u"
+  selfcheck "$u is in group $REFRESH_GROUP" check_in_group "$u" "$REFRESH_GROUP"
+  selfcheck "$u ~/.ssh/known_hosts pins github.com" check_known_hosts "$u"
+  selfcheck "$DAEMON_UNIT passes systemd-analyze --user verify for $u" check_unit_verify "$u"
+  selfcheck "$DAEMON_UNIT is enabled for $u" check_unit_enabled "$u"
+  if ((WITH_WATCHER)); then
+    selfcheck "$u watcher venv imports yaml, faster_whisper" as "$u" "/home/$u/watcher-venv/bin/python" -c 'import yaml, faster_whisper'
+    selfcheck "$u watcher venv runs yt-dlp --version" as "$u" "/home/$u/watcher-venv/bin/yt-dlp" --version
+  fi
 done
 selfcheck "orion-stage -> orion_prod as orion_stage is refused" expect_fail q orion-stage orion_stage orion_prod 'select 1'
 selfcheck "orion-stage -> orion_prod as orion_prod is refused (peer map)" expect_fail q orion-stage orion_prod orion_prod 'select 1'

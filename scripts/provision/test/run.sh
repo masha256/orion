@@ -226,6 +226,64 @@ for re in \
 done
 expect_not host '^do: '
 expect_not host 'pg_dropcluster|pg_createcluster -d'
+# 1.5c (Task 15): the full orion-remote, the daemon user unit (installed and enabled, never started), the deploy
+# directories, GitHub's pinned host keys, the orion-refresh group; the watcher venv only with --with-watcher
+gh_ed25519='AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl'
+for re in \
+  '^would: groupadd --system orion-refresh$' \
+  '^would: usermod -aG orion-refresh orion-prod$' \
+  '^would: usermod -aG orion-refresh orion-stage$' \
+  '^would: install -d -m 2750 -o postgres -g orion-refresh /home/orion-refresh$' \
+  '^would: install -d -m 700 -o orion-prod -g orion-prod /home/orion-prod/incoming$' \
+  '^would: install -d -m 700 -o orion-stage -g orion-stage /home/orion-stage/home/disclosure$' \
+  '^would: install -d -m 700 -o orion-prod -g orion-prod /home/orion-prod/shared/predeploy$' \
+  'create /home/orion-prod/\.ssh/known_hosts .*644 orion-prod:orion-prod' \
+  'create /home/orion-stage/\.ssh/known_hosts .*644 orion-stage:orion-stage' \
+  "^ *\\+ github\\.com ssh-ed25519 $gh_ed25519\$" \
+  '^ *\+ github\.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY' \
+  '^ *\+ github\.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt' \
+  'ssh-keyscan check skipped \(dry-run\)' \
+  'create /home/orion-prod/\.config/systemd/user/orion-daemon\.service .*644 orion-prod:orion-prod' \
+  'create /home/orion-stage/\.config/systemd/user/orion-daemon\.service .*644 orion-stage:orion-stage' \
+  '^ *\+ Environment=ORION_ENV=prod$' \
+  '^ *\+ Environment=ORION_ENV=stage$' \
+  '^ *\+ Type=notify$' \
+  '^ *\+ ExecStart=/opt/node-v26/bin/node %h/current/dist/cli/index\.js daemon$' \
+  '^would: runuser -u orion-prod -- env XDG_RUNTIME_DIR=/run/user/[^ ]+ systemctl --user daemon-reload$' \
+  '^would: runuser -u orion-stage -- env XDG_RUNTIME_DIR=/run/user/[^ ]+ systemctl --user enable orion-daemon\.service$' \
+  'watcher venv skipped' \
+  'SKIP: orion-remote is the full version for orion-prod' \
+  'SKIP: orion-daemon\.service passes systemd-analyze --user verify for orion-stage' \
+  'SKIP: orion-daemon\.service is enabled for orion-prod' \
+  'SKIP: orion-stage is in group orion-refresh'; do
+  expect host "$re"
+done
+expect_not host 'systemctl --user (start|restart)|enable --now orion-daemon'
+expect_not host '@ORION_ENV@'
+expect_not host 'watcher-venv/bin/pip|python3 -m venv'
+expect_not host 'StrictHostKeyChecking=accept-new'
+expect_before host 'groupadd --system orion-refresh' 'usermod -aG orion-refresh'
+expect_before host 'orion-daemon\.service .*644' 'systemctl --user daemon-reload'
+expect_before host 'systemctl --user daemon-reload' 'systemctl --user enable orion-daemon'
+if grep -Fq 'orion-remote' "$prov/files/orion-remote" && head -n1 "$prov/files/orion-remote" | grep -Fxq '#!/usr/bin/python3 -I'; then
+  ok "files/orion-remote is the Python one orion-host.sh installs"
+else
+  bad "files/orion-remote is the Python one orion-host.sh installs"
+fi
+
+run_case host-watcher 0 env -u SSH_CLIENT "${F[@]}" "$host" --dry-run --force-os --hostname "$hn" --with-watcher
+for re in \
+  '^would: runuser -u orion-prod -- python3 -m venv /home/orion-prod/watcher-venv$' \
+  '^would: runuser -u orion-stage -- python3 -m venv /home/orion-stage/watcher-venv$' \
+  'write /home/orion-prod/watcher-venv/requirements\.txt .*644 orion-prod:orion-prod|create /home/orion-prod/watcher-venv/requirements\.txt' \
+  '^ *\+ faster-whisper==[0-9.]+$' \
+  '^ *\+ yt-dlp==[0-9.]+$' \
+  '^would: runuser -u orion-prod -- env HOME=/home/orion-prod /home/orion-prod/watcher-venv/bin/pip install --require-virtualenv --no-input -r /home/orion-prod/watcher-venv/requirements\.txt$' \
+  'SKIP: orion-prod watcher venv imports yaml, faster_whisper' \
+  'SKIP: orion-stage watcher venv runs yt-dlp --version'; do
+  expect host-watcher "$re"
+done
+expect_before host-watcher 'python3 -m venv /home/orion-prod/watcher-venv' 'watcher-venv/bin/pip install'
 expect host '^(ok|warn): free space: / [0-9]+\.[0-9] GiB, /var/lib/postgresql/18/main \(on [^)]+\) [0-9]+\.[0-9] GiB'
 expect host 'cluster 18/main \(created by the postgresql-18 package'
 expect_not host 'BEGIN OPENSSH PRIVATE KEY|PRIVATE KEY'
@@ -287,7 +345,6 @@ for re in \
   'systemctl daemon-reload' \
   'install -d -m 700 -o postgres -g postgres /home/orion-backups$' \
   'install -d -m 700 -o postgres -g postgres /home/orion-backups/dumps$' \
-  'install -d -m 750 -o postgres -g postgres /home/orion-refresh$' \
   '^ *\+ RequiresMountsFor=/home/orion-backups /home/orion-refresh$' \
   '^ *\+ RequiresMountsFor=/var/lib/postgresql/18/main$' \
   'SKIP: pgbackrest check'; do

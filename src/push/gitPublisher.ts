@@ -33,9 +33,9 @@ export const runGit: GitRun = (args, opts) =>
 
 const shellQuote = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
 
-/** The ssh command git pushes and fetches with: only the deploy key, and a host key learnt once then pinned. */
+/** The ssh command git pushes and fetches with: only the deploy key, and only the github.com host keys orion-host.sh pins in ~/.ssh/known_hosts (R-c12). */
 export function gitSshCommand(keyFile: string): string {
-  return `ssh -i ${shellQuote(keyFile)} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new`;
+  return `ssh -i ${shellQuote(keyFile)} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes`;
 }
 
 export interface GitPublisherOptions {

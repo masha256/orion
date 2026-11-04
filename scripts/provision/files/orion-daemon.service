@@ -1,0 +1,28 @@
+# orion-daemon: the Orion daemon of one environment (spec §3, plan 1.5c Task 15). A systemd USER unit, installed by
+# scripts/provision/orion-host.sh as ~/.config/systemd/user/orion-daemon.service of orion-prod / orion-stage (@ORION_ENV@
+# is substituted there) and enabled; orion-remote `switch` restarts it after repointing ~/current. The user has linger,
+# so it runs without a login and starts at boot. Secrets stay in ~/shared/.env, which the daemon re-reads at every job.
+[Unit]
+Description=Orion daemon (@ORION_ENV@)
+# no release yet (before the first deploy): skipped, not a restart loop
+ConditionPathExists=%h/current/RELEASE
+
+[Service]
+Type=notify
+NotifyAccess=all
+ExecStart=/opt/node-v26/bin/node %h/current/dist/cli/index.js daemon
+WorkingDirectory=%h
+Restart=always
+RestartSec=30
+WatchdogSec=120
+TimeoutStopSec=15min
+Environment=ORION_ENV=@ORION_ENV@
+Environment=ORION_HOME=%h/home
+Environment=ORION_ENV_FILE=%h/shared/.env
+Environment=ORION_SIGN_KEY_FILE=%h/shared/snapshot-sign.key
+Environment=ORION_PUBLISH_SSH_KEY=%h/shared/publish_ed25519
+Environment=ORION_PUBLISH_DIR=%h/home/publish
+Environment=ORION_WATCHER_VENV=%h/watcher-venv
+
+[Install]
+WantedBy=default.target

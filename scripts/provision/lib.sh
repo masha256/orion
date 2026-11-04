@@ -532,3 +532,24 @@ selfcheck_summary() {
   printf 'SELF-CHECK: %d passed, %d failed\n' "$SELFCHECK_PASSES" "$SELFCHECK_FAILS"
   ((SELFCHECK_FAILS == 0))
 }
+
+# orion_user_files <home> <user:group> <env> <files dir>: the Phase 1.5c files of one Orion user (plan 1.5c Task 15) on
+# top of the 1.5a layout: the deploy directories (~/incoming for install, ~/home/disclosure, ~/shared/predeploy for
+# the --breaking pg_dump), ~/.ssh/known_hosts with GitHub's pinned host keys (R-c12; the file is managed: written
+# whole), and the daemon user unit from the template with @ORION_ENV@ substituted. Sets ORION_UNIT_CHANGED=1 when the
+# unit file changed (the caller then runs systemctl --user daemon-reload as the user). Never enables or starts anything.
+# shellcheck disable=SC2034  # read by orion-host.sh (and test/lib-test.sh)
+ORION_UNIT_CHANGED=0
+# shellcheck disable=SC2034  # ORION_UNIT_CHANGED is read by the caller
+orion_user_files() {
+  local h=$1 own=$2 env=$3 files=$4
+  ORION_UNIT_CHANGED=0
+  ensure_dir "$h/incoming" 700 "$own"
+  ensure_dir "$h/home/disclosure" 700 "$own"
+  ensure_dir "$h/shared/predeploy" 700 "$own"
+  write_file "$h/.ssh/known_hosts" 644 "$own" <"$files/github-known-hosts"
+  # not `sed | write_file`: a pipeline runs write_file in a subshell, and the CHANGED it sets would be lost
+  write_file "$h/.config/systemd/user/orion-daemon.service" 644 "$own" < <(sed "s/@ORION_ENV@/$env/g" "$files/orion-daemon.service")
+  ORION_UNIT_CHANGED=$CHANGED
+  return 0
+}

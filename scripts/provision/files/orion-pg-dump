@@ -5,7 +5,8 @@
 # For each of orion_prod and orion_stage: pg_dump -Fc, encrypted with age to the public key in /etc/orion/dump-recipient
 # (its private half is kept off the server by Mike), written to /home/orion-backups/dumps/<env>/YYYY/MM/DD.dump.age and
 # uploaded to the Spaces bucket of /etc/pgbackrest/pgbackrest.conf under dumps/<env>/YYYY/MM/DD.dump.age.
-# The prod dump is also kept unencrypted at /home/orion-refresh/latest.dump for the staging refresh (spec §8.5).
+# The prod dump is also kept unencrypted at /home/orion-refresh/latest.dump for the staging refresh (spec §8.5); that
+# directory is postgres:orion-refresh 2750 (orion-host.sh), so the 640 file's group is orion-refresh (both Orion users).
 # Both live on /home, not the root filesystem (venus: / is 10G).
 # Local encrypted copies older than 35 days are deleted; retention in Spaces is the bucket's lifecycle rule.
 # No secret is ever put on a command line: the Spaces keys reach curl through its config on stdin.

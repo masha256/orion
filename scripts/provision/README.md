@@ -9,6 +9,9 @@ them with sudo**. Each one is idempotent: running it again changes nothing and s
 | `orion-host.sh` | Orion server (Ubuntu 26.04 resolute): packages, Node 26, users `orion-prod` / `orion-stage`, home layout, `.env` templates, keys, Postgres roles/databases, pgBackRest scaffold, `orion-remote`, ufw; `--enable-backups` for step 2 |
 | `sql/dev-roles.sql`, `sql/host-roles.sql` | the roles/databases/grants, guarded (a re-run is a no-op); usable alone: `sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d postgres -f <file>` |
 | `files/orion-remote` | forced-command entry point (Python 3, stdlib only; verbs in its header), installed as `/usr/local/bin/orion-remote`; unit tests `test/test_orion_remote.py` |
+| `files/orion-daemon.service` | the daemon's systemd user unit template (`@ORION_ENV@`), installed per Orion user |
+| `files/github-known-hosts` | github.com's pinned SSH host keys, installed as each Orion user's `~/.ssh/known_hosts` |
+| `files/watcher-requirements.txt` | the disclosure watcher's pinned Python requirements (`--with-watcher`) |
 | `files/orion-pg-dump` | nightly encrypted `pg_dump`, installed by `--enable-backups` as `/usr/local/sbin/orion-pg-dump` |
 | `files/env.template`, `files/pgbackrest.conf.tmpl` | templates for `~/shared/.env` and `/etc/pgbackrest/pgbackrest.conf` (created once, never overwritten) |
 | `lib.sh` | shared helpers |
@@ -153,7 +156,7 @@ data directory); ufw.
 - `SKIP: pgbackrest check` is expected on this first run.
 
 Then fill in the secrets in `/home/orion-prod/shared/.env` and `/home/orion-stage/shared/.env` (spec §4) as root,
-keeping mode 600. Nothing needs restarting (there is no daemon yet; Phase 1.5c).
+keeping mode 600. Nothing needs restarting (the daemon arrives with Phase 1.5c, section 4).
 
 ## 3. Orion server, backups (step 2)
 
@@ -197,10 +200,47 @@ Each unit has `RequiresMountsFor=` on the paths it writes (the data directory; `
 Then set the Spaces lifecycle rule for `dumps/` (30 days) yourself; the 12 monthlies of spec §10.1 are not automated
 yet.
 
-## 4. Later
+## 4. Phase 1.5c: the daemon (re-run, same flags)
 
-- Phase 1.5c replaces `/usr/local/bin/orion-remote` with the full verb set and adds the `orion-daemon` user unit and the
-  watcher venv, by re-running `orion-host.sh` from the newer branch (same flags).
+Re-run `orion-host.sh` from a 1.5c checkout (or the `scripts/provision/` of a 1.5c release tarball) with the same flags
+as before. On venus (Mike, with sudo; the stage/prod deploy public keys copied to `/tmp` first):
+
+```
+sudo ./orion-host.sh --hostname venus --pg-datadir /home/postgres/18/main \
+     --ssh-from 192.168.0.201 --ssh-from 100.109.70.114 --ssh-from 192.168.0.112 \
+     --deploy-key-stage /tmp/deploy-stage.pub --deploy-key-prod /tmp/deploy-prod.pub
+```
+
+(add `--enable-backups` if backups are already on; it is idempotent.) What the re-run adds:
+
+- `/usr/local/bin/orion-remote` becomes the full Python version (`files/orion-remote`, root:root 755; a copy from this
+  checkout, independent of any release).
+- Group `orion-refresh` (both Orion users are members); `/home/orion-refresh` becomes postgres:orion-refresh 2750
+  (setgid: the nightly `latest.dump`, 640, gets group orion-refresh, so staging can read it). Always ensured now, not
+  only with `--enable-backups`.
+- Per user: `~/incoming/` (install's upload), `~/home/disclosure/`, `~/shared/predeploy/` (the `switch --breaking`
+  pg_dump), all 700; `~/.ssh/known_hosts` = `files/github-known-hosts`, GitHub's published host keys (ed25519, ecdsa,
+  rsa; the file is managed and rewritten whole). The snapshot publisher pushes with `StrictHostKeyChecking=yes`, so it
+  trusts only these. A real run also compares them with `ssh-keyscan github.com` and only warns on a difference.
+- Per user: `~/.config/systemd/user/orion-daemon.service` from `files/orion-daemon.service` (`@ORION_ENV@` substituted;
+  `Type=notify`, `WatchdogSec=120`, `Restart=always`, `ExecStart=/opt/node-v26/bin/node %h/current/dist/cli/index.js
+  daemon`, `ORION_HOME`, `ORION_ENV`, `ORION_ENV_FILE` and the key paths), loaded and **enabled, not started**, through
+  the user's own systemd manager (running because of linger):
+  `runuser -u <user> -- env XDG_RUNTIME_DIR=/run/user/<uid> systemctl --user daemon-reload` / `enable orion-daemon.service`.
+  `systemctl --user` reaches the manager on `$XDG_RUNTIME_DIR/systemd/private`, so no login, D-Bus session or
+  `machinectl` (systemd-container) is needed. The unit has `ConditionPathExists=%h/current/RELEASE`: before the first
+  deploy it is skipped rather than restarting every 30 s. The first `orion-remote switch` starts it.
+- `--with-watcher` (off by default until the disclosure watcher ships, plan 1.5c Task 11): `~/watcher-venv`
+  (`python3 -m venv`, then `pip install -r` of the pinned `files/watcher-requirements.txt`; needs the network).
+- New self-check lines: orion-remote is the full version (`SSH_ORIGINAL_COMMAND=bogus` exits 64 with "not an allowed
+  verb"), group membership, the known_hosts pin, `systemd-analyze --user verify` of each unit, each unit enabled;
+  with `--with-watcher`, each venv imports `yaml, faster_whisper` and runs `yt-dlp --version`.
+
+Deploys then go from the dev host with `scripts/release/deploy.sh <stage|prod> <tag>` (staging before cutover:
+`--branch <name>`; prod needs a staging soak or `--no-soak`; `--rollback`).
+
+## 5. Later
+
 - Re-running either script at any time is safe; on a configured box it prints only `ok:` lines (plus `pubkey:`, notes
   and the self-check).
 

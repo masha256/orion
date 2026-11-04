@@ -126,10 +126,10 @@ describe('git publisher', () => {
       .rejects.toMatchObject({ code: 'publish_dir_mismatch' });
   });
 
-  it('git publisher: the deploy key goes into GIT_SSH_COMMAND; never --force', async () => {
+  it('git publisher: the deploy key goes into GIT_SSH_COMMAND with the pinned host keys (StrictHostKeyChecking=yes, R-c12); never --force', async () => {
     expect(gitSshCommand('/home/orion-stage/shared/publish_ed25519'))
-      .toBe("ssh -i '/home/orion-stage/shared/publish_ed25519' -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new");
-    expect(gitSshCommand("/tmp/it's")).toBe("ssh -i '/tmp/it'\\''s' -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new");
+      .toBe("ssh -i '/home/orion-stage/shared/publish_ed25519' -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes");
+    expect(gitSshCommand("/tmp/it's")).toBe("ssh -i '/tmp/it'\\''s' -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes");
     const repo = bareRepo();
     const calls: { args: string[]; ssh: string | undefined }[] = [];
     const run: GitRun = async (args, o) => {

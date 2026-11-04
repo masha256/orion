@@ -1,0 +1,5 @@
+# The disclosure watcher's Python dependencies, pinned (installed into ~/watcher-venv by orion-host.sh --with-watcher).
+# Must equal tools/disclosure-watcher/requirements.txt once Task 11 adds it (tests/release/provisionFiles.test.ts).
+PyYAML==6.0.2
+faster-whisper==1.1.1
+yt-dlp==2025.10.22
