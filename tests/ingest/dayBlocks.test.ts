@@ -8,6 +8,7 @@ import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset } from '../../src/ingest/run.js';
 import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.js';
 import { createViemRpc } from '../../src/ingest/transport/viemRpc.js';
+import { chainInfo, supportedChainIds } from '../../src/ingest/transport/chains.js';
 import { CG_CHART, harness, hourlyPrices, NOW, type Harness } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML, POOL, SAFE } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
@@ -148,6 +149,29 @@ describe('finalized upper bound', () => {
     // The 18th is not complete at the finalized block, so the scan ends with the 17th.
     expect(r.written.map((w) => w.observedAt.slice(0, 10))).not.toContain('2026-09-19');
     expect(await getCursor(h.db, 'mini', scanKey(h))).toMatchObject({ lastDay: '2026-09-17' });
+  });
+
+  it('finalized (M-7): an RPC that rejects the finalized tag falls back to latest minus the chain\'s confirmations, with a note', async () => {
+    const h = world({ now: new Date('2026-09-19T00:00:10.000Z') });
+    const latest = await h.rpc.latestBlock();
+    let calls = 0;
+    const rpc: RpcTransport = {
+      ...h.rpc,
+      confirmations: 10n,
+      finalizedBlock: async () => {
+        calls++;
+        throw new Error('invalid block tag finalized');
+      },
+    };
+    const r = await scanFlowGroup(await argsFor(h, { rpc }));
+    expect(calls).toBe(1);
+    expect(r.outcome.status).toBe('ok');
+    expect(r.outcome.notes).toContain(`no finalized block (invalid block tag finalized): scanned up to latest - 10 (block ${latest.number - 10n})`);
+    expect(h.rpc.stats.logRanges.at(-1)![1]).toBeLessThanOrEqual(latest.number - 10n - 1n);
+    expect(await getCursor(h.db, 'mini', scanKey(h))).toMatchObject({ lastDay: '2026-09-17' });
+    // Every chain has a depth to fall back to.
+    for (const id of supportedChainIds()) expect(chainInfo(id)!.confirmations > 0n).toBe(true);
+    expect(createViemRpc('http://127.0.0.1:9/', 8453).confirmations).toBe(chainInfo(8453)!.confirmations);
   });
 
   it('finalized: without a finalized tag the scan reads up to the latest block, as before', async () => {

@@ -43,6 +43,16 @@ export function parseMarketChart(body: unknown, what: string): PricePoint[] {
   return points.sort((a, b) => a.ts - b.ts);
 }
 
+/** A market_chart reply `parseMarketChart` accepts (the shared cache keeps only these, M-8). */
+export function isMarketChartBody(body: unknown): boolean {
+  try {
+    parseMarketChart(body, 'market_chart');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function newestAtOrBefore(points: PricePoint[], tsMs: number): number | null {
   let lo = 0;
   let hi = points.length - 1;
@@ -156,6 +166,23 @@ export function mintDepositor(logs: ReceiptLog[], vault: string, sink: string, v
   return hits.length > 0 ? topicAddress(hits[0].topics[1]) : null;
 }
 
+/**
+ * The block a transfer scan reads up to: the finalized block when the transport has the tag; when the RPC rejects it
+ * (M-7: not every provider serves `finalized`), `latest` minus the chain's confirmations, with a note saying so.
+ */
+async function scanUpperBound(rpc: RpcTransport, latest: BlockRef, notes: string[]): Promise<BlockRef> {
+  if (!rpc.finalizedBlock) return latest;
+  try {
+    return await rpc.finalizedBlock();
+  } catch (err) {
+    if (rpc.confirmations === undefined) throw err;
+    const n = latest.number > rpc.confirmations ? latest.number - rpc.confirmations : 0n;
+    const why = (err instanceof Error ? err.message : String(err)).split('\n', 1)[0]!.slice(0, 200);
+    notes.push(`no finalized block (${why}): scanned up to latest - ${rpc.confirmations} (block ${n})`);
+    return await rpc.getBlock(n);
+  }
+}
+
 export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult> {
   const { db, asset, group, rpc, dryRun } = args;
   const outcome = emptySourceOutcome(group.sourceId);
@@ -164,7 +191,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
 
   try {
     // 1. Range: completed UTC days only, up to the finalized block when the chain reports one.
-    const latest = rpc.finalizedBlock ? await rpc.finalizedBlock() : args.latest;
+    const latest = await scanUpperBound(rpc, args.latest, outcome.notes);
     const lastMidnightSec = Math.floor(latest.timestamp / SECONDS_PER_DAY) * SECONDS_PER_DAY;
     const lastCompleteDay = utcDay(lastMidnightSec * 1000 - MS_PER_DAY);
     const cursor = await getCursor(db, asset.id, group.scanKey);

@@ -445,10 +445,47 @@ def scan_asset(asset, asset_cfg, base_dir, http, today, now, sleep=time.sleep, o
         return [lock_busy_line(asset, e)]
 
 
+class DrySeen:
+    """--dry-state: the post ids staging's dry scans have processed, {asset: {post_id: {status, at}}}, apart from the
+    real state (which a dry scan never writes). Without it every scan day finds the same posts new again and reports
+    them again (the 'analyst run was skipped' line, daily, for one post). Written tmp + os.replace."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+        try:
+            self.data = json.loads(self.path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            self.data = {}
+        if not isinstance(self.data, dict):
+            self.data = {}
+
+    def ids(self, asset):
+        return list((self.data.get(asset) or {}).keys())
+
+    def add(self, asset, post_id, status, at):
+        self.data.setdefault(asset, {})[str(post_id)] = {"status": status, "at": at}
+
+    def save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(json.dumps(self.data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(tmp, self.path)
+
+
+DRY_SEEN = "dry_seen"  # a dry-state post in a dry scan's memory state: neither new nor waiting
+
+
 def _scan_asset_locked(asset, asset_cfg, base_dir, http, today, now, sleep, opts):
     state = State.load(base_dir / "state" / f"{asset}.json")
+    dry_seen = None
     if opts.get("dry_run"):  # a dry scan reads the state (known ids stay skipped) and never writes it
         state = MemoryState(None, state.data)
+        if opts.get("dry_state"):
+            dry_seen = DrySeen(opts["dry_state"])
+            for pid in dry_seen.ids(asset):
+                rec = state.get(pid)
+                if rec is None or rec.get("status") in RETRY_STATUSES:
+                    state.data["posts"][str(pid)] = {**(rec or {}), "status": DRY_SEEN}
     alerts, info = [], []
     entry = {"at": now.isoformat(timespec="seconds"), "today": today.isoformat(), "asset": asset,
              "search_ok": False, "ids": [], "new": [], "decisions": {}, "errors": []}
@@ -498,7 +535,16 @@ def _scan_asset_locked(asset, asset_cfg, base_dir, http, today, now, sleep, opts
             state.data["search"]["consecutive_failures"] = 0
             state.data["search"].pop("last_failed_day", None)
         state.save()
+    waiting = [pid for pid, rec in state.data["posts"].items() if rec.get("status") in RETRY_STATUSES]
     out = process_queued(asset, asset_cfg, state, base_dir, opts)
+    if dry_seen is not None:
+        done = set(i for i in entry["new"] if (state.get(i) or {}).get("status") not in RETRY_STATUSES)
+        if waiting and opts.get("orion") is not None:
+            done.add(min(waiting, key=int))  # the one post process_queued took, whatever it ended at
+        for pid in sorted(done, key=int):
+            dry_seen.add(asset, pid, (state.get(pid) or {}).get("status"), now.isoformat(timespec="seconds"))
+        if done:
+            dry_seen.save()
     for line in out:
         (alerts if line.startswith("ORION DISCLOSURE ALERT") else info).append(line)
     # Every window that has closed since the watcher started, oldest first: on its last day, or the first scan after
@@ -1282,6 +1328,8 @@ def main(argv=None):
                                                                    "and --orion-home)")
             sp.add_argument("--queue-file", help="the dev queue (default: $ORION_DW_QUEUE, else "
                                                  "<base-dir>/dev-queue.md)")
+            sp.add_argument("--dry-state", help="with --dry-run: remember the posts a dry scan processed in this file, "
+                                                "so each is reported once (the daemon passes it on staging)")
     ing = sub.add_parser("ingest")
     ing.add_argument("--asset", required=True)
     ing.add_argument("--url", required=True)
@@ -1324,9 +1372,12 @@ def main(argv=None):
         if args.no_orion:
             print(f"wall time {time.monotonic() - started:.1f} s")
         return code
-    opts = {"dry_run": args.dry_run, "queue_file": args.queue_file, "orion_home": args.orion_home}
+    opts = {"dry_run": args.dry_run, "queue_file": args.queue_file, "orion_home": args.orion_home,
+            "dry_state": args.dry_state}
     try:
         usage = dry_run_usage_error("scan", opts)
+        if not usage and args.dry_state and not args.dry_run:
+            usage = "disclosure_watch.py scan: --dry-state is for --dry-run scans only"
         if usage:
             raise UsageError(usage)
         orion = orion_for(args.orion_home)

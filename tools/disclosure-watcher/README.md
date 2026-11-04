@@ -2,7 +2,8 @@
 
 The Orion disclosure watcher: it finds an issuer's material posts (in v1, Lighter's quarterly investor-call recording on
 X), transcribes them, stores them in Orion and starts the analyst's `disclosure` run. On the server it runs as the
-daemon's `disclosure_watch` job (`src/daemon/jobs/disclosureWatch.ts`); on staging that job runs it with `--dry-run`.
+daemon's `disclosure_watch` job (`src/daemon/jobs/disclosureWatch.ts`); on staging that job runs it with `--dry-run`, `--dry-state <home>/disclosure/state/dry-seen.json` (each post reported once
+across dry scans) and no Anthropic credential in its environment.
 
 How it works, its commands, state and alert lines: [`docs/ops/disclosure-watcher.md`](../../docs/ops/disclosure-watcher.md).
 

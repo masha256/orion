@@ -104,10 +104,16 @@ describe('disclosureWatch', () => {
     expect(out).toMatchObject({ status: 'done', result: { dryRun: true, exitCode: 0, delivered: true } });
     expect(stage.posts).toEqual(['ORION DISCLOSURE ALERT lit: download failed for post 1: boom\nORION DISCLOSURE lit | LIT investor update 2026Q3 | posted 2026-10-22']);
     const dryQueue = join(w.home, 'disclosure', 'dev-queue.dry.md');
-    expect(w.calls().filter((l) => l.startsWith('python: '))).toEqual([`python: ${script} scan --orion-home ${w.home} --dry-run --queue-file ${dryQueue}`]);
+    const dryState = join(w.home, 'disclosure', 'state', 'dry-seen.json');
+    expect(w.calls().filter((l) => l.startsWith('python: '))).toEqual([
+      `python: ${script} scan --orion-home ${w.home} --dry-run --queue-file ${dryQueue} --dry-state ${dryState}`,
+    ]);
     expect(w.calls()).toContain(`paths: base=${join(w.home, 'disclosure')} repo=${w.configRoot} home=${w.home} node=${process.execPath}`);
     const names = w.calls().find((l) => l.startsWith('env: '))!.split(' ');
-    for (const n of ['ORION_DW_BASE_DIR', 'ORION_DW_REPO', 'ORION_NODE', 'ORION_HOME', 'ORION_DATABASE_URL', 'ANTHROPIC_API_KEY']) expect(names).toContain(n);
+    for (const n of ['ORION_DW_BASE_DIR', 'ORION_DW_REPO', 'ORION_NODE', 'ORION_HOME', 'ORION_DATABASE_URL']) expect(names).toContain(n);
+    // Staging watcher: never an Anthropic credential in its env, even when the .env has one.
+    expect(names).not.toContain('ANTHROPIC_API_KEY');
+    expect(names).not.toContain('ANTHROPIC_AUTH_TOKEN');
     // Secrets reach the child's environment only: never the result, a post or a log line.
     const said = JSON.stringify([out, stage.posts, stage.logs]);
     expect(said).not.toContain('hunter2');
@@ -120,6 +126,7 @@ describe('disclosureWatch', () => {
     expect(await disclosureWatchHandler(job(2), prod.ctx)).toMatchObject({ status: 'done', result: { dryRun: false, exitCode: 0 } });
     expect(prod.posts).toEqual([]);
     expect(w.calls().filter((l) => l.startsWith('python: '))).toEqual([`python: ${script} scan --orion-home ${w.home}`]);
+    expect(w.calls().find((l) => l.startsWith('env: '))!.split(' ')).toContain('ANTHROPIC_API_KEY');
 
     // A crash: failed, and one ALERT with the last stderr line, capped at 300.
     w.set('exit', '3');

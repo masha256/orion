@@ -43,12 +43,21 @@ interface Exit {
   spawnError?: string;
 }
 
-/** The env the watcher and pip run with: the job's env (the process env over `.env`), without unset values. */
+/** Anthropic credentials: never in a staging watcher's environment (it never starts a paid run). */
+const ANTHROPIC_VARS = new Set(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN']);
+
+/**
+ * The env the watcher and pip run with: the job's env (the process env over `.env`), without unset values; on stage
+ * without the Anthropic credentials, whatever the .env holds.
+ */
 function childEnv(ctx: JobContext, extra: Record<string, string> = {}): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(ctx.envVars)) if (v !== undefined) out[k] = v;
+  for (const [k, v] of Object.entries(ctx.envVars)) if (v !== undefined && !(ctx.env === 'stage' && ANTHROPIC_VARS.has(k))) out[k] = v;
   return { ...out, ...extra };
 }
+
+/** Stage's dry scans remember the posts they processed here, so each is reported once, not every scan day. */
+export const DRY_STATE_FILE = join('state', 'dry-seen.json');
 
 /**
  * Runs `cmd args` in its own process group (the watcher starts yt-dlp, ffmpeg and node): on the timeout or an abort
@@ -137,7 +146,8 @@ function alertFirst(stdout: string): string[] {
  * The daily `disclosure_watch` job: runs the watcher's `scan` (`tools/disclosure-watcher` of the running release) with
  * the venv's Python (`$ORION_WATCHER_VENV`, default `~/watcher-venv`; `python3` from PATH when it has none). State,
  * log and transcripts go to `<ORION_HOME>/disclosure`. Stage always runs dry (`--dry-run`, findings to
- * `<home>/disclosure/dev-queue.dry.md`); so does an env with no Anthropic credential (the analyst cannot run; on prod
+ * `<home>/disclosure/dev-queue.dry.md`, seen posts in `<home>/disclosure/state/dry-seen.json`) and never gets an
+ * Anthropic credential; so does an env with no Anthropic credential (the analyst cannot run; on prod
  * a post says so). Its stdout is the Slack message; a non-zero exit fails the job with an ORION ALERT.
  */
 export function makeDisclosureWatchHandler(opts: DisclosureWatchOptions = {}): JobHandler {
@@ -159,6 +169,7 @@ export function makeDisclosureWatchHandler(opts: DisclosureWatchOptions = {}): J
 
     const args = [script, 'scan', '--orion-home', home];
     if (dryRun) args.push('--dry-run', '--queue-file', join(base, 'dev-queue.dry.md'));
+    if (ctx.env === 'stage') args.push('--dry-state', join(base, DRY_STATE_FILE));
     ctx.log(`disclosure_watch: ${dryRun ? 'dry ' : ''}scan with ${python}`);
     const r = await runProcess(python, args, childEnv(ctx, {
       ORION_DW_BASE_DIR: base, ORION_DW_REPO: ctx.paths.configRoot, ORION_NODE: process.execPath, ORION_HOME: home,

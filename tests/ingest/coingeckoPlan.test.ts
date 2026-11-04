@@ -3,7 +3,8 @@ import { parseAssetYaml } from '../../src/config/load.js';
 import { fetchAsset } from '../../src/ingest/run.js';
 import { COINGECKO_API, coingeckoBase, coingeckoHeaders } from '../../src/ingest/sources/coingecko.js';
 import { getSourceHandler } from '../../src/ingest/sources/registry.js';
-import { withSharedCache } from '../../src/ingest/transport/http.js';
+import { isMarketChartUrl, withSharedCache } from '../../src/ingest/transport/http.js';
+import { isMarketChartBody } from '../../src/ingest/flow.js';
 import { CG_CHART, harness, NOW } from '../helpers/fetchHarness.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
@@ -105,5 +106,18 @@ describe('shared market_chart cache (N8)', () => {
     await http.getJson('https://x.test/other');
     await http.getJson('https://x.test/other');
     expect(inner.calls.map((c) => c.url)).toEqual(['https://x.test/chart', 'https://x.test/chart', 'https://x.test/other', 'https://x.test/other']);
+  });
+
+  it('shared cache (M-8): a 200 reply that fails validation (a rate-limit body) is not kept; the next asset asks again', async () => {
+    let n = 0;
+    const inner = fakeHttp({ 'https://x.test/market_chart': () => (++n === 1 ? { status: { error_code: 429, error_message: 'rate limited' } } : { prices: [[1, 2]] }) });
+    const cache = new Map<string, Promise<unknown>>();
+    const http = withSharedCache(inner, cache, isMarketChartUrl, isMarketChartBody);
+    expect(await http.getJson('https://x.test/market_chart')).toEqual({ status: { error_code: 429, error_message: 'rate limited' } });
+    expect(await http.getJson('https://x.test/market_chart')).toEqual({ prices: [[1, 2]] });
+    expect(await http.getJson('https://x.test/market_chart')).toEqual({ prices: [[1, 2]] }); // a good one is kept
+    expect(n).toBe(2);
+    expect(isMarketChartBody({ prices: [] })).toBe(false);
+    expect(isMarketChartBody({ prices: [[1, 0]] })).toBe(false);
   });
 });

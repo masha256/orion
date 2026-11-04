@@ -167,20 +167,27 @@ export function withRunCache(inner: HttpTransport): HttpTransport {
 /**
  * GETs whose URL `match`es are answered from `cache`, a map the caller keeps across runs (the nightly keeps one per
  * slot, so assets that price the same token fetch its market_chart once a night). Every other request passes through.
- * Unlike the run cache, a failure is not kept: the next asset asks again.
+ * Unlike the run cache, a failure is not kept, nor a reply `valid` refuses: the next asset asks again.
  */
-export function withSharedCache(inner: HttpTransport, cache: Map<string, Promise<unknown>>, match: (url: string) => boolean): HttpTransport {
+export function withSharedCache(
+  inner: HttpTransport, cache: Map<string, Promise<unknown>>, match: (url: string) => boolean, valid?: (body: unknown) => boolean,
+): HttpTransport {
   return {
     getJson: (url, headers) => {
       if (!match(url)) return inner.getJson(url, headers);
       const key = `GET ${url}`;
       let pending = cache.get(key);
       if (!pending) {
-        pending = inner.getJson(url, headers);
-        cache.set(key, pending);
-        void pending.catch(() => {
-          if (cache.get(key) === pending) cache.delete(key);
-        });
+        const p = inner.getJson(url, headers);
+        pending = p;
+        cache.set(key, p);
+        const evict = (): void => {
+          if (cache.get(key) === p) cache.delete(key);
+        };
+        // M-8: a 200 whose body fails `valid` (CoinGecko answers some rate limits that way) is not kept either.
+        void p.then((body) => {
+          if (valid && !valid(body)) evict();
+        }, evict);
       }
       return pending;
     },

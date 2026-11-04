@@ -15,7 +15,7 @@ import { DEFAULT_API_FLOW_BACKFILL_DAYS, DEFILLAMA_REVISION_DAYS, writeApiFlow }
 import { writePeriodicPayments } from './periodic.js';
 import { compareLevel, compareMonthly } from './crosscheck.js';
 import { derivedFunction, type DerivedName } from './derived.js';
-import { scanFlowGroup } from './flow.js';
+import { isMarketChartBody, scanFlowGroup } from './flow.js';
 import { buildPlan, hasSources, type FlowGroup, type SourceBatch } from './plan.js';
 import { sourceId } from './sourceId.js';
 import { getSourceHandler } from './sources/registry.js';
@@ -190,7 +190,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   }
   const historyDays = opts.backfillDays ?? (firstAdapterFlow ? (asset.ingest?.backfill_days ?? DEFAULT_API_FLOW_BACKFILL_DAYS) : undefined);
   const ctx: SourceContext = {
-    asset, nowIso: startedAt, http: withRunCache(deps.sharedHttpCache ? withSharedCache(deps.http, deps.sharedHttpCache, isMarketChartUrl) : deps.http), rpc, block, env: deps.env, contract: contractResolver(asset),
+    asset, nowIso: startedAt, http: withRunCache(deps.sharedHttpCache ? withSharedCache(deps.http, deps.sharedHttpCache, isMarketChartUrl, isMarketChartBody) : deps.http), rpc, block, env: deps.env, contract: contractResolver(asset),
     observations: async (metricKey) => await listActiveObservations(db, asset.id, metricKey),
     ...(historyDays !== undefined ? { backfillDays: historyDays } : {}),
   };

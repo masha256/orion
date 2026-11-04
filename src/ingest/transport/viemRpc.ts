@@ -59,6 +59,7 @@ export const createViemRpc: RpcFactory = (url, chainId) => {
   return {
     maxLogRange: info.maxLogRange,
     blockTimeSec: info.blockTimeSec,
+    confirmations: info.confirmations,
     latestBlock: () =>
       clean(async () => {
         const b = await client.getBlock();

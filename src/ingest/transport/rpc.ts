@@ -46,6 +46,8 @@ export interface RpcTransport {
   /** The newest block under the chain's `finalized` tag. Optional: when present, transfer scans stop there (no reorg can
    * change what they read); level reads keep `latestBlock`. */
   finalizedBlock?(): Promise<BlockRef>;
+  /** M-7: the depth below the head a scan stops at when `finalizedBlock` fails (the chain's `confirmations`). */
+  confirmations?: bigint;
   getBlock(number: bigint): Promise<BlockRef>;
   /** One eth_call at one block. A failed call is reported in its slot; the batch itself only throws on transport failure. */
   multicall(calls: ContractCall[], blockNumber: bigint): Promise<CallResult[]>;
