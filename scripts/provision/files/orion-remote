@@ -1,0 +1,78 @@
+#!/bin/bash
+# orion-remote: forced-command entry point for the deploy keys (spec §3.4, plan 1.5a ruling R1).
+# Installed by scripts/provision/orion-host.sh as /usr/local/bin/orion-remote (root:root 755), so neither a release nor
+# the Orion user can replace what a deploy key runs. Each key's authorized_keys line is
+#   restrict,command="/usr/local/bin/orion-remote" ssh-ed25519 AAAA...
+# sshd puts what the caller asked for in $SSH_ORIGINAL_COMMAND. It is split on whitespace into words and NEVER given to
+# a shell: no eval, no command substitution, no globbing ("set -f"), and control characters (newlines included) are
+# refused outright. Phase 1.5a knows one verb, "status"; every other verb is refused with exit 64 (EX_USAGE).
+# Phase 1.5c replaces this file (by re-running orion-host.sh) with the full verb set.
+# Every call is logged, one line, to ~/remote.log. Its own tools are called by absolute path; only pg_isready is looked
+# up in PATH (the one sshd sets), which lets the test harness substitute a fake.
+set -euo pipefail
+set -f
+umask 077
+
+user=$(/usr/bin/id -un)
+case $user in
+  orion-prod) env_name=prod ;;
+  orion-stage) env_name=stage ;;
+  *) env_name="unknown (user $user)" ;;
+esac
+raw=${SSH_ORIGINAL_COMMAND-}
+caller=${SSH_CLIENT-}
+caller=${caller%% *}
+caller=${caller:-local}
+log_file="${HOME:-/nonexistent}/remote.log"
+
+log() { # log <result>: one line; the request is %q-quoted so it can never forge a log line
+  local quoted
+  quoted=$(printf '%q' "$raw")
+  printf '%s env=%s from=%s cmd=%s result=%s\n' "$(/usr/bin/date -u +%Y-%m-%dT%H:%M:%SZ)" "${env_name%% *}" "$caller" \
+    "$quoted" "$1" >>"$log_file" 2>/dev/null || true
+}
+refuse() { # refuse <message> <log result>
+  printf 'orion-remote: %s\n' "$1" >&2
+  log "$2"
+  exit 64
+}
+
+if [[ -z $raw ]]; then
+  refuse "no command given (this key runs orion-remote verbs only, never a shell)" refused:empty
+fi
+if [[ $raw == *[[:cntrl:]]* ]]; then
+  refuse "control characters are not allowed in a command" refused:control-chars
+fi
+if ((${#raw} > 4096)); then
+  refuse "command too long" refused:too-long
+fi
+
+# Split on blanks only; read -a does no expansion of any kind (no globbing, no $(), no quotes processing with -r).
+read -r -a argv <<<"$raw"
+verb=${argv[0]-}
+
+case $verb in
+  status)
+    if ((${#argv[@]} != 1)); then
+      refuse "'status' takes no arguments in Phase 1.5a" refused:status-args
+    fi
+    current=none
+    if [[ -L $HOME/current ]]; then current=$(/usr/bin/readlink "$HOME/current"); fi
+    rc=0
+    pg_isready -q >/dev/null 2>&1 || rc=$?
+    case $rc in
+      0) pg="accepting connections" ;;
+      1) pg="rejecting connections" ;;
+      2) pg="no response" ;;
+      *) pg="not checked (pg_isready exit $rc)" ;;
+    esac
+    printf 'env: %s\n' "$env_name"
+    printf 'host: %s\n' "$(/usr/bin/uname -n)"
+    printf 'current: %s\n' "$current"
+    printf 'postgres: %s\n' "$pg"
+    log ok
+    ;;
+  *)
+    refuse "'$verb' not available yet (Phase 1.5c)" "refused:verb"
+    ;;
+esac

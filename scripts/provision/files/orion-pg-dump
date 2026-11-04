@@ -1,0 +1,59 @@
+#!/bin/bash
+# orion-pg-dump: nightly logical dumps (spec §10.1), run as postgres by orion-pg-dump.service at 08:30 UTC.
+# Installed by scripts/provision/orion-host.sh --enable-backups as /usr/local/sbin/orion-pg-dump (root:root 755).
+#
+# For each of orion_prod and orion_stage: pg_dump -Fc, encrypted with age to the public key in /etc/orion/dump-recipient
+# (its private half is kept off the server by Mike), written to /home/orion-backups/dumps/<env>/YYYY/MM/DD.dump.age and
+# uploaded to the Spaces bucket of /etc/pgbackrest/pgbackrest.conf under dumps/<env>/YYYY/MM/DD.dump.age.
+# The prod dump is also kept unencrypted at /home/orion-refresh/latest.dump for the staging refresh (spec §8.5).
+# Both live on /home, not the root filesystem (venus: / is 10G).
+# Local encrypted copies older than 35 days are deleted; retention in Spaces is the bucket's lifecycle rule.
+# No secret is ever put on a command line: the Spaces keys reach curl through its config on stdin.
+set -euo pipefail
+umask 077
+
+recipient_file=/etc/orion/dump-recipient
+conf=${PGBACKREST_CONF:-/etc/pgbackrest/pgbackrest.conf}
+out=/home/orion-backups/dumps
+refresh=/home/orion-refresh
+day=$(date -u +%Y/%m/%d)
+
+recipient=$(tr -d '[:space:]' <"$recipient_file")
+[[ $recipient =~ ^age1[0-9a-z]{58}$ ]] || { echo "orion-pg-dump: bad recipient in $recipient_file" >&2; exit 1; }
+
+ini() { sed -n "s/^$1=//p" "$conf" | head -n 1; }
+endpoint=$(ini repo1-s3-endpoint)
+bucket=$(ini repo1-s3-bucket)
+region=$(ini repo1-s3-region)
+
+upload() { # upload <file> <key>
+  local key_id secret
+  key_id=$(ini repo1-s3-key)
+  secret=$(ini repo1-s3-key-secret)
+  printf 'user = "%s:%s"\n' "$key_id" "$secret" |
+    curl --config - --fail --silent --show-error --proto '=https' --aws-sigv4 "aws:amz:$region:s3" \
+      --upload-file "$1" "https://$bucket.$endpoint/$2"
+}
+
+status=0
+for env in prod stage; do
+  db=orion_$env
+  file=$out/$env/$day.dump.age
+  mkdir -p "$(dirname "$file")"
+  if [[ $env == prod ]]; then
+    mkdir -p "$refresh"
+    pg_dump -Fc -d "$db" -f "$refresh/latest.dump.partial"
+    chmod 640 "$refresh/latest.dump.partial"
+    mv -f "$refresh/latest.dump.partial" "$refresh/latest.dump"
+    age -r "$recipient" -o "$file.partial" "$refresh/latest.dump"
+  else
+    pg_dump -Fc -d "$db" | age -r "$recipient" -o "$file.partial"
+  fi
+  mv -f "$file.partial" "$file"
+  if ! upload "$file" "dumps/$env/$day.dump.age"; then
+    echo "orion-pg-dump: upload of $env dump failed (kept locally at $file)" >&2
+    status=1
+  fi
+done
+find "$out" -type f -name '*.dump.age' -mtime +35 -delete
+exit "$status"
