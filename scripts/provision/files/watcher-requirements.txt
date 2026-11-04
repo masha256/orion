@@ -1,5 +1,8 @@
 # The disclosure watcher's Python dependencies, pinned (installed into ~/watcher-venv by orion-host.sh --with-watcher).
-# Must equal tools/disclosure-watcher/requirements.txt once Task 11 adds it (tests/release/provisionFiles.test.ts).
-PyYAML==6.0.2
-faster-whisper==1.1.1
-yt-dlp==2025.10.22
+# Versions: `pip freeze` of the Hermes tools Python the live watcher runs on (2026-11-03). yt-dlp is upgraded weekly in
+# the venv by the daemon's disclosure_watch job; this pin is the install-time floor.
+# scripts/provision/files/watcher-requirements.txt is a byte-identical copy (tests/release/provisionFiles.test.ts).
+PyYAML==6.0.3
+faster-whisper==1.2.1
+numpy==2.5.4
+yt-dlp==2026.10.21

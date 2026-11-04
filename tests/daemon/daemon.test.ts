@@ -294,21 +294,16 @@ describe('daemon worker', () => {
     expect(await job(2)).toMatchObject({ status: 'failed', attempts: 1, last_error: 'boom' });
   });
 
-  it('daemon: a job kind not built yet (disclosure_watch, staging_refresh) is skipped quietly: one log line, no retry, no post (R-c16)', async () => {
+  it('daemon: a job kind not built yet (staging_refresh) is skipped quietly: one log line, no retry, no post (R-c16)', async () => {
     const clock = new FakeClock('2026-11-03T17:00:00.000Z');
     const h = defaultHandlers();
-    const w = daemon({ clock, handlers: { disclosure_watch: h.disclosure_watch, staging_refresh: h.staging_refresh } });
-    await enqueueJob(db(), { kind: 'disclosure_watch', assetId: null, slot: '2026-11-03T16:40:00.000Z' });
+    const w = daemon({ clock, handlers: { staging_refresh: h.staging_refresh } });
     await enqueueJob(db(), { kind: 'staging_refresh', assetId: null, slot: '2026-11-01T10:30:00.000Z' });
     expect(await w.daemon.workerTick()).toBe(true);
-    expect(await w.daemon.workerTick()).toBe(true);
     expect(await w.daemon.workerTick()).toBe(false);
-    for (const id of [1, 2]) expect(await job(id)).toMatchObject({ status: 'skipped', attempts: 1, last_error: null });
+    expect(await job(1)).toMatchObject({ status: 'skipped', attempts: 1, last_error: null });
     expect(w.posts).toEqual([]);
-    expect(w.logs.filter((l) => /not installed/.test(l))).toEqual([
-      'job 2 staging_refresh: not installed in this release (Task 12): skipped', // the older slot is claimed first
-      'job 1 disclosure_watch: not installed in this release (Task 11): skipped',
-    ]);
+    expect(w.logs.filter((l) => /not installed/.test(l))).toEqual(['job 1 staging_refresh: not installed in this release (Task 12): skipped']);
     expect(w.logs.filter((l) => /failed|retry/.test(l))).toEqual([]);
   });
 

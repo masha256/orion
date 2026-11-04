@@ -33,9 +33,10 @@ describe('provision files', () => {
     const pkgs = reqs.split('\n').map((l) => l.replace(/#.*$/, '').trim()).filter(Boolean);
     expect(pkgs.length).toBeGreaterThan(0);
     for (const p of pkgs) expect(p).toMatch(/^[A-Za-z0-9._-]+==[0-9][A-Za-z0-9.]*$/);
-    expect(pkgs.map((p) => p.split('==')[0]!.toLowerCase()).sort()).toEqual(['faster-whisper', 'pyyaml', 'yt-dlp']);
-    // Task 11 brings the watcher's own requirements.txt; until then this copy is the only one (R-c16 order change)
-    if (existsSync(WATCHER_REQS)) expect(reqs).toBe(readFileSync(WATCHER_REQS, 'utf8'));
+    expect(pkgs.map((p) => p.split('==')[0]!.toLowerCase()).sort()).toEqual(['faster-whisper', 'numpy', 'pyyaml', 'yt-dlp']);
+    // The watcher's real pins (R-c18): this copy is byte-identical to the one beside the watcher
+    expect(existsSync(WATCHER_REQS)).toBe(true);
+    expect(reqs).toBe(readFileSync(WATCHER_REQS, 'utf8'));
   });
 
   it('provisionFiles: github-known-hosts pins the three published github.com host keys (R-c12)', () => {

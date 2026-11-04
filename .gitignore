@@ -15,3 +15,10 @@ update.log
 tick.log
 probe-web-fetch-*.txt
 import-*.json
+# the disclosure watcher's run data, should it ever run from a checkout
+/tools/disclosure-watcher/state/
+/tools/disclosure-watcher/log/
+/tools/disclosure-watcher/transcripts/
+/tools/disclosure-watcher/cache/
+/tools/disclosure-watcher/dev-queue*.md
+__pycache__/

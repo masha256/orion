@@ -1,0 +1,17 @@
+assets:
+  lit:
+    orion_asset: lit
+    author: { platform: x, handle: Lighter_xyz, user_id: "1604942990417580032" }
+    window: { after_quarter_end_days: 35, outside: weekly_monday }
+    feeds:
+      - id: investor_call
+        source: x_video                      # v1 implements x_video only; unknown types are refused at load
+        search: 'Lighter_xyz "Investor Update" recording'
+        match_text: '(?i)recording of our Q[1-4] Investor Update'
+        announce_text: '(?i)investor call'
+        min_video_minutes: 10
+        doc_kind: machine_transcript
+        title: 'LIT investor update {year}Q{quarter}'
+        post_title: 'LIT post {date}'          # a text-only post (no video); {date} = its UTC date
+    transcribe: { asr_model: small.en, initial_prompt: "Lighter, LIT, zkLighter, perps, buyback, Robinhood, staking, TVL, open interest" }
+    run: { type: disclosure, auto: true }

@@ -19,8 +19,8 @@
 #                           off by default; on a one-disk box it gives no protection against disk failure)
 #   --nut                   install nut-client (UPS signalling)
 #   --with-watcher          also build each user's ~/watcher-venv (python3 -m venv + pip install of the pinned
-#                           files/watcher-requirements.txt: faster-whisper, yt-dlp, PyYAML; needs the network).
-#                           Off by default until the disclosure watcher ships (plan 1.5c Task 11)
+#                           files/watcher-requirements.txt: faster-whisper, numpy, yt-dlp, PyYAML; needs the network).
+#                           Off by default; the pins are the watcher's real ones since plan 1.5c Task 11 (R-c18)
 #   --enable-backups        step 2: stanza-create, WAL archiving on, pgbackrest check, root backup/dump timers
 #   --dump-recipient <age1...>  age public key the nightly pg_dump is encrypted to (kept in /etc/orion/dump-recipient)
 #   --dry-run               print every command and file it would write; changes nothing; needs no root
