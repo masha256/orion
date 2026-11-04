@@ -12,6 +12,7 @@ import { listRegistry } from '../db/registry.js';
 import type { Notifier } from '../notify/slack.js';
 import { loadAssetYamls, reconcileFromDisk } from '../registry/reconcile.js';
 import { OrionError } from '../types.js';
+import { levelsHandler } from './jobs/levels.js';
 import { retentionHandler } from './jobs/retention.js';
 import { loadSchedule, newestSlot, type ScheduleEntry } from './schedule.js';
 import type { SystemdNotifier } from './systemd.js';
@@ -114,7 +115,7 @@ export function defaultHandlers(): Partial<Record<JobKind, JobHandler>> {
   return {
     refresh: notBuiltYet('Task 10'),
     nightly_report: notBuiltYet('Task 10'),
-    levels: notBuiltYet('Task 8'),
+    levels: levelsHandler,
     snapshot_push: notBuiltYet('Task 9'),
     disclosure_watch: notBuiltYet('Task 11'),
     staging_refresh: notBuiltYet('Task 12'),
