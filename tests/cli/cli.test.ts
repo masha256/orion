@@ -79,6 +79,15 @@ describe('orion cli', () => {
     expect(await orion('asset', 'validate', 'mini')).toBe('mini: ok');
   });
 
+  it('cli: asset validate prints the listing bar (D6) for an asset with income_statement, without failing on it', async () => {
+    for (const a of ['hype', 'crv']) copyFileSync(join(import.meta.dirname, '..', '..', 'assets', `${a}.yaml`), join(home, 'assets', `${a}.yaml`));
+    expect(await orion('asset', 'validate', 'hype')).toBe('hype: ok\n  listing bar (D6): fails: revenue.trading (third_party), holders.af_buyback (third_party)');
+    expect(await orion('asset', 'validate', 'crv')).toBe('crv: ok\n  listing bar (D6): ok');
+    expect(JSON.parse(await orion('asset', 'validate', 'hype', '--json'))).toEqual([
+      { id: 'hype', errors: [], listingBar: { ok: false, failing: [{ line: 'revenue.trading', sourceType: 'third_party' }, { line: 'holders.af_buyback', sourceType: 'third_party' }] } },
+    ]);
+  });
+
   it('rejects data for a metric the asset does not define', async () => {
     await expect(orion('data', 'set', 'mini', 'nonsense', '1')).rejects.toThrow(/not defined/);
   });

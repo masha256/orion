@@ -2,11 +2,13 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { listAssetIds, loadAsset } from '../../config/load.js';
+import type { AssetConfig } from '../../config/schema.js';
 import { loadSchedule, nextSlot } from '../../daemon/schedule.js';
 import { migrationStatus } from '../../db/pg/migrate.js';
 import { listRegistry, type RegistryRow } from '../../db/registry.js';
 import { activateAsset, pauseAsset, resumeAsset, seedRegistry } from '../../registry/actions.js';
 import { loadAssetYamls, planReconcile, reconcileFromDisk, type RegistryDiff } from '../../registry/reconcile.js';
+import { listingBar } from '../../report/incomeStatement.js';
 import { OrionError } from '../../types.js';
 import { loadEnv } from '../env.js';
 import { orionEnv } from '../paths.js';
@@ -72,21 +74,29 @@ export function registerAsset(program: Command, ctx: CliContext): void {
     .description('check asset YAMLs (and, without an id, schedule.yaml)')
     .option('--json', 'JSON output')
     .action((id: string | undefined, opts: { json?: boolean }) => {
-      const check = (name: string, fn: () => unknown): { id: string; errors: string[] } => {
+      type Result = { id: string; errors: string[]; listingBar?: ReturnType<typeof listingBar> };
+      /** `fn` returns the loaded asset config (schedule.yaml: null). */
+      const check = (name: string, fn: () => AssetConfig | null): Result => {
         try {
-          fn();
-          return { id: name, errors: [] };
+          const config = fn();
+          // The listing bar (D6) is reported, never an error: it gates new listings (AERO, HYPE and PUMP fail it today).
+          return config?.income_statement ? { id: name, errors: [], listingBar: listingBar(config) } : { id: name, errors: [] };
         } catch (err) {
           if (err instanceof OrionError) return { id: name, errors: err.message.split('\n') };
           throw err;
         }
       };
-      const results = (id ? [id] : listAssetIds(ctx.configRoot)).map((assetId) => check(assetId, () => loadAsset(ctx.configRoot, assetId)));
+      const results: Result[] = (id ? [id] : listAssetIds(ctx.configRoot)).map((assetId) => check(assetId, () => loadAsset(ctx.configRoot, assetId).config));
       // Without an id, the release's schedule.yaml too, when there is one (the daemon refuses to start on a bad one).
       // parseSchedule checks every entry and override whatever the env.
-      if (!id && existsSync(join(ctx.configRoot, 'schedule.yaml'))) results.push(check('schedule.yaml', () => loadSchedule(ctx.configRoot, 'prod')));
+      if (!id && existsSync(join(ctx.configRoot, 'schedule.yaml'))) results.push(check('schedule.yaml', () => (loadSchedule(ctx.configRoot, 'prod'), null)));
       output(ctx, opts.json, results, () =>
-        results.flatMap((r) => (r.errors.length === 0 ? [`${r.id}: ok`] : [`${r.id}:`, ...r.errors.map((e) => `  ${e}`)])),
+        results.flatMap((r) => {
+          if (r.errors.length > 0) return [`${r.id}:`, ...r.errors.map((e) => `  ${e}`)];
+          const bar = r.listingBar;
+          if (!bar) return [`${r.id}: ok`];
+          return [`${r.id}: ok`, `  listing bar (D6): ${bar.ok ? 'ok' : `fails: ${bar.failing.map((f) => `${f.line} (${f.sourceType ?? 'no source'})`).join(', ')}`}`];
+        }),
       );
       const failed = results.filter((r) => r.errors.length > 0).map((r) => r.id);
       if (failed.length > 0) throw new OrionError('validation_failed', `validation failed for: ${failed.join(', ')}`);

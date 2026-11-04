@@ -6,7 +6,10 @@ import { addDays, utcDay } from '../ingest/time.js';
 import { MS_PER_DAY, STD_METRICS } from '../types.js';
 import { holderYieldReport, type HolderYieldReport, type ReportLevels } from './holderYield.js';
 
-/** Every flow metric the report reads: the holder flows, plus revenue and volume. */
+/**
+ * Every flow metric the report reads: the holder flows, plus revenue and volume, then the income statement v2's (which
+ * reads the same series for all 13 assets today, so the default report day does not move).
+ */
 export function reportFlowMetrics(asset: AssetConfig): string[] {
   const r = asset.reporting;
   const inc = r?.income;
@@ -19,12 +22,30 @@ export function reportFlowMetrics(asset: AssetConfig): string[] {
       ]
     : [];
   const streams = (r?.revenue ?? []).flatMap((s) => [s.metric, s.cross_check].filter((m): m is string => m !== undefined));
-  return [...new Set([...asset.holder_flows.map((f) => f.metric), ...income, ...streams, ...(r?.volume ?? []), ...(r?.burned_tokens ?? [])])];
+  return [...new Set([...asset.holder_flows.map((f) => f.metric), ...income, ...streams, ...(r?.volume ?? []), ...(r?.burned_tokens ?? []), ...statementFlowMetrics(asset)])];
+}
+
+/** The flow metrics `income_statement` reads (revenue, uses, paid_metric, below-line flows, check totals, volume, burned_tokens). */
+function statementFlowMetrics(asset: AssetConfig): string[] {
+  const is = asset.income_statement;
+  if (!is) return [];
+  const uses = [...(is.cost_of_revenue ?? []), ...(is.holders ?? []), ...(is.protocol ?? []), ...(is.operating_costs ?? [])];
+  return [
+    ...is.revenue.flatMap((l) => [l.metric, l.derived?.from, l.cross_check]),
+    ...uses.flatMap((l) => [l.metric, 'paid_metric' in l ? l.paid_metric : undefined]),
+    ...(is.below_line ?? []).map((b) => b.metric),
+    ...(is.checks ?? []).flatMap((c) => c.total),
+    ...(is.volume ?? []),
+    ...(is.burned_tokens ?? []),
+  ].filter((m): m is string => m !== undefined);
 }
 
 /** The metrics of periodic revenue streams: paid weeks after the days they cover, so they never hold back the report day. */
 function periodicMetrics(asset: AssetConfig): Set<string> {
-  return new Set((asset.reporting?.revenue ?? []).filter((s) => s.settlement === 'periodic').map((s) => s.metric!));
+  return new Set([
+    ...(asset.reporting?.revenue ?? []).filter((s) => s.settlement === 'periodic').map((s) => s.metric!),
+    ...(asset.income_statement?.revenue ?? []).filter((l) => l.settlement === 'periodic').map((l) => (l.metric ?? l.derived?.from)!),
+  ]);
 }
 
 /**
@@ -94,8 +115,13 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
   };
   const extra: Record<string, number | null> = {};
   for (const x of r.extra_cash ?? []) extra[x.metric] = await level(x.metric);
-  const disclosed = r.revenue_disclosed
-    ? (await listActiveObservations(db, asset.id, r.revenue_disclosed))
+  // Income statement v2's run-rate lines (CRV's vote incentives: the same level extra_cash reads).
+  for (const b of asset.income_statement?.below_line ?? []) if (b.run_rate !== undefined && !(b.run_rate in extra)) extra[b.run_rate] = await level(b.run_rate);
+  // v1 reads `revenue_disclosed`; v2's disclosed line is read only when v1 has no disclosed stream (v1 output unchanged).
+  const v1Discloses = r.revenue_disclosed !== undefined || (r.revenue ?? []).some((s) => s.disclosed !== undefined);
+  const disclosedMetric = v1Discloses ? r.revenue_disclosed : asset.income_statement?.revenue.find((l) => l.disclosed !== undefined)?.disclosed;
+  const disclosed = disclosedMetric
+    ? (await listActiveObservations(db, asset.id, disclosedMetric))
         .filter((o) => o.status === 'confirmed' && o.observedAt <= asOf)
         .sort((a, b) => (a.observedAt < b.observedAt ? -1 : 1))
         .map((o) => ({ observedAt: o.observedAt, value: o.value }))
@@ -115,6 +141,7 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
     extra,
     ...(dilution ? { dilution } : {}),
     disclosed,
+    asOf,
   };
   const periodic = periodicMetrics(asset);
   const provisional = new Map<string, Set<string>>();

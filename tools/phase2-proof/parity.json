@@ -1,0 +1,1332 @@
+{
+  "aero": [
+    [
+      "revenue",
+      "incomeStatement.revenue.annualized",
+      "income.revenue.annualized"
+    ],
+    [
+      "revenue growth",
+      "incomeStatement.revenue.growth.annualized",
+      "income.revenue.growth.annualized"
+    ],
+    [
+      "holders",
+      "incomeStatement.holders.annualized",
+      "income.holders.annualized"
+    ],
+    [
+      "holders growth",
+      "incomeStatement.holders.growth.annualized",
+      "income.holders.growth.annualized"
+    ],
+    [
+      "protocol",
+      "incomeStatement.protocol.annualized",
+      "income.protocol.annualized"
+    ],
+    [
+      "operating costs = v1 costs",
+      "incomeStatement.operatingCosts.annualized",
+      "income.costs.annualized"
+    ],
+    [
+      "payout ratio",
+      "incomeStatement.ratios.payoutRatio",
+      "income.payoutRatio"
+    ],
+    [
+      "holder flow total",
+      "incomeStatement.holderFlow.gross",
+      "buckets.cash.gross"
+    ],
+    [
+      "holder flow total net",
+      "incomeStatement.holderFlow.net",
+      "buckets.cash.net"
+    ],
+    [
+      "holder flow cash",
+      "incomeStatement.holderFlow.byBucket.cash.gross",
+      "buckets.cash.gross"
+    ],
+    [
+      "holder flow cash net",
+      "incomeStatement.holderFlow.byBucket.cash.net",
+      "buckets.cash.net"
+    ],
+    [
+      "holder flow cash yield",
+      "incomeStatement.holderFlow.byBucket.cash.yield",
+      "buckets.cash.yield"
+    ],
+    [
+      "holder flow growth",
+      "incomeStatement.holderFlow.growth.annualized",
+      "holderFlowGrowth.annualized"
+    ],
+    [
+      "yield cash",
+      "incomeStatement.yields.cash",
+      "yields.cash"
+    ],
+    [
+      "yield buyback",
+      "incomeStatement.yields.buyback",
+      "yields.buyback"
+    ],
+    [
+      "yield shareholder",
+      "incomeStatement.yields.shareholder",
+      "yields.shareholder"
+    ],
+    [
+      "yield dilution",
+      "incomeStatement.yields.dilution",
+      "yields.dilution"
+    ],
+    [
+      "yield netShareholder",
+      "incomeStatement.yields.netShareholder",
+      "yields.netShareholder"
+    ],
+    [
+      "yield multiple",
+      "incomeStatement.yields.multiple",
+      "yields.multiple"
+    ],
+    [
+      "yield pegTrailing",
+      "incomeStatement.yields.pegTrailing",
+      "yields.pegTrailing"
+    ],
+    [
+      "dilution pct",
+      "incomeStatement.dilution.pct",
+      "yields.dilution"
+    ],
+    [
+      "revenue line fees",
+      "incomeStatement.revenue.lines[id=fees].annualized",
+      "income.lines[id=voter_fees].annualized"
+    ],
+    [
+      "holders line voter_fees",
+      "incomeStatement.holders.lines[id=voter_fees].annualized",
+      "income.lines[id=voter_fees].annualized"
+    ],
+    [
+      "holder flow line voter_fees",
+      "incomeStatement.holderFlow.lines[id=voter_fees].gross",
+      "flows[id=fees].gross"
+    ]
+  ],
+  "cake": [
+    [
+      "revenue",
+      "incomeStatement.revenue.annualized",
+      "income.revenue.annualized"
+    ],
+    [
+      "revenue growth",
+      "incomeStatement.revenue.growth.annualized",
+      "income.revenue.growth.annualized"
+    ],
+    [
+      "holders",
+      "incomeStatement.holders.annualized",
+      "income.holders.annualized"
+    ],
+    [
+      "holders growth",
+      "incomeStatement.holders.growth.annualized",
+      "income.holders.growth.annualized"
+    ],
+    [
+      "protocol",
+      "incomeStatement.protocol.annualized",
+      "income.protocol.annualized"
+    ],
+    [
+      "operating costs = v1 costs",
+      "incomeStatement.operatingCosts.annualized",
+      "income.costs.annualized"
+    ],
+    [
+      "payout ratio",
+      "incomeStatement.ratios.payoutRatio",
+      "income.payoutRatio"
+    ],
+    [
+      "holder flow total",
+      "incomeStatement.holderFlow.gross",
+      "buckets.burn.gross"
+    ],
+    [
+      "holder flow total net",
+      "incomeStatement.holderFlow.net",
+      "buckets.burn.net"
+    ],
+    [
+      "holder flow burn",
+      "incomeStatement.holderFlow.byBucket.burn.gross",
+      "buckets.burn.gross"
+    ],
+    [
+      "holder flow burn net",
+      "incomeStatement.holderFlow.byBucket.burn.net",
+      "buckets.burn.net"
+    ],
+    [
+      "holder flow burn yield",
+      "incomeStatement.holderFlow.byBucket.burn.yield",
+      "buckets.burn.yield"
+    ],
+    [
+      "holder flow growth",
+      "incomeStatement.holderFlow.growth.annualized",
+      "holderFlowGrowth.annualized"
+    ],
+    [
+      "yield cash",
+      "incomeStatement.yields.cash",
+      "yields.cash"
+    ],
+    [
+      "yield buyback",
+      "incomeStatement.yields.buyback",
+      "yields.buyback"
+    ],
+    [
+      "yield shareholder",
+      "incomeStatement.yields.shareholder",
+      "yields.shareholder"
+    ],
+    [
+      "yield dilution",
+      "incomeStatement.yields.dilution",
+      "yields.dilution"
+    ],
+    [
+      "yield netShareholder",
+      "incomeStatement.yields.netShareholder",
+      "yields.netShareholder"
+    ],
+    [
+      "yield multiple",
+      "incomeStatement.yields.multiple",
+      "yields.multiple"
+    ],
+    [
+      "yield pegTrailing",
+      "incomeStatement.yields.pegTrailing",
+      "yields.pegTrailing"
+    ],
+    [
+      "dilution pct",
+      "incomeStatement.dilution.pct",
+      "yields.dilution"
+    ],
+    [
+      "revenue line burn_rev",
+      "incomeStatement.revenue.lines[id=burn_rev].annualized",
+      "income.lines[id=burn].annualized"
+    ],
+    [
+      "revenue line treasury_rev",
+      "incomeStatement.revenue.lines[id=treasury_rev].annualized",
+      "income.lines[id=treasury].annualized"
+    ],
+    [
+      "holders line burn",
+      "incomeStatement.holders.lines[id=burn].annualized",
+      "income.lines[id=burn].annualized"
+    ],
+    [
+      "protocol line treasury",
+      "incomeStatement.protocol.lines[id=treasury].annualized",
+      "income.lines[id=treasury].annualized"
+    ],
+    [
+      "holder flow line burn",
+      "incomeStatement.holderFlow.lines[id=burn].gross",
+      "flows[id=burn].gross"
+    ]
+  ],
+  "crv": [
+    [
+      "revenue",
+      "incomeStatement.revenue.annualized",
+      "income.revenue.annualized"
+    ],
+    [
+      "revenue growth",
+      "incomeStatement.revenue.growth.annualized",
+      "income.revenue.growth.annualized"
+    ],
+    [
+      "holders",
+      "incomeStatement.holders.annualized",
+      "income.holders.annualized"
+    ],
+    [
+      "holders growth",
+      "incomeStatement.holders.growth.annualized",
+      "income.holders.growth.annualized"
+    ],
+    [
+      "protocol",
+      "incomeStatement.protocol.annualized",
+      "income.protocol.annualized"
+    ],
+    [
+      "operating costs = v1 costs",
+      "incomeStatement.operatingCosts.annualized",
+      "income.costs.annualized"
+    ],
+    [
+      "payout ratio",
+      "incomeStatement.ratios.payoutRatio",
+      "income.payoutRatio"
+    ],
+    [
+      "holder flow total",
+      "incomeStatement.holderFlow.gross",
+      "buckets.cash.gross"
+    ],
+    [
+      "holder flow total net",
+      "incomeStatement.holderFlow.net",
+      "buckets.cash.net"
+    ],
+    [
+      "holder flow cash",
+      "incomeStatement.holderFlow.byBucket.cash.gross",
+      "buckets.cash.gross"
+    ],
+    [
+      "holder flow cash net",
+      "incomeStatement.holderFlow.byBucket.cash.net",
+      "buckets.cash.net"
+    ],
+    [
+      "holder flow cash yield",
+      "incomeStatement.holderFlow.byBucket.cash.yield",
+      "buckets.cash.yield"
+    ],
+    [
+      "holder flow growth",
+      "incomeStatement.holderFlow.growth.annualized",
+      "holderFlowGrowth.annualized"
+    ],
+    [
+      "yield cash",
+      "incomeStatement.yields.cash",
+      "yields.cash"
+    ],
+    [
+      "yield buyback",
+      "incomeStatement.yields.buyback",
+      "yields.buyback"
+    ],
+    [
+      "yield shareholder",
+      "incomeStatement.yields.shareholder",
+      "yields.shareholder"
+    ],
+    [
+      "yield dilution",
+      "incomeStatement.yields.dilution",
+      "yields.dilution"
+    ],
+    [
+      "yield netShareholder",
+      "incomeStatement.yields.netShareholder",
+      "yields.netShareholder"
+    ],
+    [
+      "yield multiple",
+      "incomeStatement.yields.multiple",
+      "yields.multiple"
+    ],
+    [
+      "yield pegTrailing",
+      "incomeStatement.yields.pegTrailing",
+      "yields.pegTrailing"
+    ],
+    [
+      "dilution pct",
+      "incomeStatement.dilution.pct",
+      "yields.dilution"
+    ],
+    [
+      "revenue line fees",
+      "incomeStatement.revenue.lines[id=fees].annualized",
+      "income.lines[id=vecrv_fees].annualized"
+    ],
+    [
+      "revenue line treasury_rev",
+      "incomeStatement.revenue.lines[id=treasury_rev].annualized",
+      "income.lines[id=treasury].annualized"
+    ],
+    [
+      "holders line vecrv_fees",
+      "incomeStatement.holders.lines[id=vecrv_fees].annualized",
+      "income.lines[id=vecrv_fees].annualized"
+    ],
+    [
+      "protocol line treasury",
+      "incomeStatement.protocol.lines[id=treasury].annualized",
+      "income.lines[id=treasury].annualized"
+    ],
+    [
+      "holder flow line vecrv_fees",
+      "incomeStatement.holderFlow.lines[id=vecrv_fees].gross",
+      "flows[id=fees].gross"
+    ],
+    [
+      "holder flow line vote_incentives",
+      "incomeStatement.holderFlow.lines[id=vote_incentives].gross",
+      "flows[id=vote_incentives].gross"
+    ],
+    [
+      "below line to holders = v1 vote incentives",
+      "incomeStatement.belowLine.toHolders",
+      "flows[id=vote_incentives].gross"
+    ]
+  ],
+  "cvxcrv": [
+    [
+      "revenue",
+      "incomeStatement.revenue.annualized",
+      "income.revenue.annualized"
+    ],
+    [
+      "revenue growth",
+      "incomeStatement.revenue.growth.annualized",
+      "income.revenue.growth.annualized"
+    ],
+    [
+      "holders",
+      "incomeStatement.holders.annualized",
+      "income.holders.annualized"
+    ],
+    [
+      "holders growth",
+      "incomeStatement.holders.growth.annualized",
+      "income.holders.growth.annualized"
+    ],
+    [
+      "protocol",
+      "incomeStatement.protocol.annualized",
+      "income.protocol.annualized"
+    ],
+    [
+      "operating costs = v1 costs",
+      "incomeStatement.operatingCosts.annualized",
+      "income.costs.annualized"
+    ],
+    [
+      "payout ratio",
+      "incomeStatement.ratios.payoutRatio",
+      "income.payoutRatio"
+    ],
+    [
+      "holder flow total",
+      "incomeStatement.holderFlow.gross",
+      "buckets.cash.gross"
+    ],
+    [
+      "holder flow total net",
+      "incomeStatement.holderFlow.net",
+      "buckets.cash.net"
+    ],
+    [
+      "holder flow cash",
+      "incomeStatement.holderFlow.byBucket.cash.gross",
+      "buckets.cash.gross"
+    ],
+    [
+      "holder flow cash net",
+      "incomeStatement.holderFlow.byBucket.cash.net",
+      "buckets.cash.net"
+    ],
+    [
+      "holder flow cash yield",
+      "incomeStatement.holderFlow.byBucket.cash.yield",
+      "buckets.cash.yield"
+    ],
+    [
+      "holder flow growth",
+      "incomeStatement.holderFlow.growth.annualized",
+      "holderFlowGrowth.annualized"
+    ],
+    [
+      "yield cash",
+      "incomeStatement.yields.cash",
+      "yields.cash"
+    ],
+    [
+      "yield buyback",
+      "incomeStatement.yields.buyback",
+      "yields.buyback"
+    ],
+    [
+      "yield shareholder",
+      "incomeStatement.yields.shareholder",
+      "yields.shareholder"
+    ],
+    [
+      "yield dilution",
+      "incomeStatement.yields.dilution",
+      "yields.dilution"
+    ],
+    [
+      "yield netShareholder",
+      "incomeStatement.yields.netShareholder",
+      "yields.netShareholder"
+    ],
+    [
+      "yield multiple",
+      "incomeStatement.yields.multiple",
+      "yields.multiple"
+    ],
+    [
+      "yield pegTrailing",
+      "incomeStatement.yields.pegTrailing",
+      "yields.pegTrailing"
+    ],
+    [
+      "dilution pct",
+      "incomeStatement.dilution.pct",
+      "yields.dilution"
+    ],
+    [
+      "revenue line vecrv_fees_rev",
+      "incomeStatement.revenue.lines[id=vecrv_fees_rev].annualized",
+      "income.lines[id=vecrv_fees].annualized"
+    ],
+    [
+      "revenue line platform_cvxcrv",
+      "incomeStatement.revenue.lines[id=platform_cvxcrv].annualized",
+      "income.lines[id=crv_lock_incentive].annualized"
+    ],
+    [
+      "revenue line platform_cvx",
+      "incomeStatement.revenue.lines[id=platform_cvx].annualized",
+      "income.lines[id=cvx_stakers].annualized"
+    ],
+    [
+      "revenue line platform_treasury",
+      "incomeStatement.revenue.lines[id=platform_treasury].annualized",
+      "income.lines[id=treasury].annualized"
+    ],
+    [
+      "revenue line callers_fee",
+      "incomeStatement.revenue.lines[id=callers_fee].annualized",
+      "income.lines[id=callers].annualized"
+    ],
+    [
+      "holders line vecrv_fees",
+      "incomeStatement.holders.lines[id=vecrv_fees].annualized",
+      "income.lines[id=vecrv_fees].annualized"
+    ],
+    [
+      "holders line crv",
+      "incomeStatement.holders.lines[id=crv].annualized",
+      "income.lines[id=crv_lock_incentive].annualized"
+    ],
+    [
+      "protocol line cvx_stakers",
+      "incomeStatement.protocol.lines[id=cvx_stakers].annualized",
+      "income.lines[id=cvx_stakers].annualized"
+    ],
+    [
+      "protocol line treasury",
+      "incomeStatement.protocol.lines[id=treasury].annualized",
+      "income.lines[id=treasury].annualized"
+    ],
+    [
+      "operating cost line callers",
+      "incomeStatement.operatingCosts.lines[id=callers].annualized",
+      "income.lines[id=callers].annualized"
+    ],
+    [
+      "holder flow line vecrv_fees",
+      "incomeStatement.holderFlow.lines[id=vecrv_fees].gross",
+      "flows[id=fees].gross"
+    ],
+    [
+      "holder flow line crv",
+      "incomeStatement.holderFlow.lines[id=crv].gross",
+      "flows[id=crv].gross"
+    ],
+    [
+      "holder flow line cvx_rewards",
+      "incomeStatement.holderFlow.lines[id=cvx_rewards].gross",
+      "flows[id=cvx].gross"
+    ],
+    [
+      "below line to holders = v1 outside revenue",
+      "incomeStatement.belowLine.toHolders",
+      "income.outsideRevenue[id=cvx_rewards].annualized"
+    ]
+  ],
+  "hype": [
+    [
+      "revenue",
+      "incomeStatement.revenue.annualized",
+      "income.revenue.annualized"
+    ],
+    [
+      "revenue growth",
+      "incomeStatement.revenue.growth.annualized",
+      "income.revenue.growth.annualized"
+    ],
+    [
+      "holders",
+      "incomeStatement.holders.annualized",
+      "income.holders.annualized"
+    ],
+    [
+      "holders growth",
+      "incomeStatement.holders.growth.annualized",
+      "income.holders.growth.annualized"
+    ],
+    [
+      "protocol",
+      "incomeStatement.protocol.annualized",
+      "income.protocol.annualized"
+    ],
+    [
+      "operating costs = v1 costs",
+      "incomeStatement.operatingCosts.annualized",
+      "income.costs.annualized"
+    ],
+    [
+      "payout ratio",
+      "incomeStatement.ratios.payoutRatio",
+      "income.payoutRatio"
+    ],
+    [
+      "holder flow total",
+      "incomeStatement.holderFlow.gross",
+      "buckets.burn.gross"
+    ],
+    [
+      "holder flow total net",
+      "incomeStatement.holderFlow.net",
+      "buckets.burn.net"
+    ],
+    [
+      "holder flow burn",
+      "incomeStatement.holderFlow.byBucket.burn.gross",
+      "buckets.burn.gross"
+    ],
+    [
+      "holder flow burn net",
+      "incomeStatement.holderFlow.byBucket.burn.net",
+      "buckets.burn.net"
+    ],
+    [
+      "holder flow burn yield",
+      "incomeStatement.holderFlow.byBucket.burn.yield",
+      "buckets.burn.yield"
+    ],
+    [
+      "holder flow growth",
+      "incomeStatement.holderFlow.growth.annualized",
+      "holderFlowGrowth.annualized"
+    ],
+    [
+      "yield cash",
+      "incomeStatement.yields.cash",
+      "yields.cash"
+    ],
+    [
+      "yield buyback",
+      "incomeStatement.yields.buyback",
+      "yields.buyback"
+    ],
+    [
+      "yield shareholder",
+      "incomeStatement.yields.shareholder",
+      "yields.shareholder"
+    ],
+    [
+      "yield dilution",
+      "incomeStatement.yields.dilution",
+      "yields.dilution"
+    ],
+    [
+      "yield netShareholder",
+      "incomeStatement.yields.netShareholder",
+      "yields.netShareholder"
+    ],
+    [
+      "yield multiple",
+      "incomeStatement.yields.multiple",
+      "yields.multiple"
+    ],
+    [
+      "yield pegTrailing",
+      "incomeStatement.yields.pegTrailing",
+      "yields.pegTrailing"
+    ],
+    [
+      "dilution pct",
+      "incomeStatement.dilution.pct",
+      "yields.dilution"
+    ],
+    [
+      "revenue line trading",
+      "incomeStatement.revenue.lines[id=trading].annualized",
+      "revenue.streams[id=trading].annualized"
+    ],
+    [
+      "revenue line reserve_yield",
+      "incomeStatement.revenue.lines[id=reserve_yield].annualized",
+      "revenue.streams[id=reserve_yield].annualized"
+    ],
+    [
+      "holders line af_buyback",
+      "incomeStatement.holders.lines[id=af_buyback].annualized",
+      "income.lines[id=af_buyback].annualized"
+    ],
+    [
+      "holders line reserve_yield_paid",
+      "incomeStatement.holders.lines[id=reserve_yield_paid].annualized",
+      "income.lines[id=reserve_yield].annualized"
+    ],
+    [
+      "holder flow line af_buyback",
+      "incomeStatement.holderFlow.lines[id=af_buyback].gross",
+      "flows[id=af_buyback].gross"
+    ],
+    [
+      "holder flow line reserve_yield_paid",
+      "incomeStatement.holderFlow.lines[id=reserve_yield_paid].gross",
+      "flows[id=reserve_yield].gross"
+    ]
+  ],
+  "link": [
+    [
+      "revenue",
+      "incomeStatement.revenue.annualized",
+      "income.revenue.annualized"
+    ],
+    [
+      "revenue growth",
+      "incomeStatement.revenue.growth.annualized",
+      "income.revenue.growth.annualized"
+    ],
+    [
+      "holders",
+      "incomeStatement.holders.annualized",
+      "income.holders.annualized"
+    ],
+    [
+      "holders growth",
+      "incomeStatement.holders.growth.annualized",
+      "income.holders.growth.annualized"
+    ],
+    [
+      "protocol",
+      "incomeStatement.protocol.annualized",
+      "income.protocol.annualized"
+    ],
+    [
+      "operating costs = v1 costs",
+      "incomeStatement.operatingCosts.annualized",
+      "income.costs.annualized"
+    ],
+    [
+      "payout ratio",
+      "incomeStatement.ratios.payoutRatio",
+      "income.payoutRatio"
+    ],
+    [
+      "holder flow total",
+      "incomeStatement.holderFlow.gross",
+      "buckets.hold.gross"
+    ],
+    [
+      "holder flow total net",
+      "incomeStatement.holderFlow.net",
+      "buckets.hold.net"
+    ],
+    [
+      "holder flow hold",
+      "incomeStatement.holderFlow.byBucket.hold.gross",
+      "buckets.hold.gross"
+    ],
+    [
+      "holder flow hold net",
+      "incomeStatement.holderFlow.byBucket.hold.net",
+      "buckets.hold.net"
+    ],
+    [
+      "holder flow hold yield",
+      "incomeStatement.holderFlow.byBucket.hold.yield",
+      "buckets.hold.yield"
+    ],
+    [
+      "holder flow growth",
+      "incomeStatement.holderFlow.growth.annualized",
+      "holderFlowGrowth.annualized"
+    ],
+    [
+      "yield cash",
+      "incomeStatement.yields.cash",
+      "yields.cash"
+    ],
+    [
+      "yield buyback",
+      "incomeStatement.yields.buyback",
+      "yields.buyback"
+    ],
+    [
+      "yield shareholder",
+      "incomeStatement.yields.shareholder",
+      "yields.shareholder"
+    ],
+    [
+      "yield dilution",
+      "incomeStatement.yields.dilution",
+      "yields.dilution"
+    ],
+    [
+      "yield netShareholder",
+      "incomeStatement.yields.netShareholder",
+      "yields.netShareholder"
+    ],
+    [
+      "yield multiple",
+      "incomeStatement.yields.multiple",
+      "yields.multiple"
+    ],
+    [
+      "yield pegTrailing",
+      "incomeStatement.yields.pegTrailing",
+      "yields.pegTrailing"
+    ],
+    [
+      "dilution pct",
+      "incomeStatement.dilution.pct",
+      "yields.dilution"
+    ],
+    [
+      "revenue line onchain_fees",
+      "incomeStatement.revenue.lines[id=onchain_fees].annualized",
+      "revenue.streams[id=onchain_fees].annualized"
+    ],
+    [
+      "holders line reserve",
+      "incomeStatement.holders.lines[id=reserve].annualized",
+      "income.lines[id=reserve].annualized"
+    ],
+    [
+      "holder flow line reserve",
+      "incomeStatement.holderFlow.lines[id=reserve].gross",
+      "flows[id=reserve].gross"
+    ]
+  ],
+  "pump": [
+    [
+      "revenue",
+      "incomeStatement.revenue.annualized",
+      "income.revenue.annualized"
+    ],
+    [
+      "revenue growth",
+      "incomeStatement.revenue.growth.annualized",
+      "income.revenue.growth.annualized"
+    ],
+    [
+      "holders",
+      "incomeStatement.holders.annualized",
+      "income.holders.annualized"
+    ],
+    [
+      "holders growth",
+      "incomeStatement.holders.growth.annualized",
+      "income.holders.growth.annualized"
+    ],
+    [
+      "protocol",
+      "incomeStatement.protocol.annualized",
+      "income.protocol.annualized"
+    ],
+    [
+      "operating costs = v1 costs",
+      "incomeStatement.operatingCosts.annualized",
+      "income.costs.annualized"
+    ],
+    [
+      "payout ratio",
+      "incomeStatement.ratios.payoutRatio",
+      "income.payoutRatio"
+    ],
+    [
+      "holder flow total",
+      "incomeStatement.holderFlow.gross",
+      "buckets.burn.gross"
+    ],
+    [
+      "holder flow total net",
+      "incomeStatement.holderFlow.net",
+      "buckets.burn.net"
+    ],
+    [
+      "holder flow burn",
+      "incomeStatement.holderFlow.byBucket.burn.gross",
+      "buckets.burn.gross"
+    ],
+    [
+      "holder flow burn net",
+      "incomeStatement.holderFlow.byBucket.burn.net",
+      "buckets.burn.net"
+    ],
+    [
+      "holder flow burn yield",
+      "incomeStatement.holderFlow.byBucket.burn.yield",
+      "buckets.burn.yield"
+    ],
+    [
+      "holder flow growth",
+      "incomeStatement.holderFlow.growth.annualized",
+      "holderFlowGrowth.annualized"
+    ],
+    [
+      "yield cash",
+      "incomeStatement.yields.cash",
+      "yields.cash"
+    ],
+    [
+      "yield buyback",
+      "incomeStatement.yields.buyback",
+      "yields.buyback"
+    ],
+    [
+      "yield shareholder",
+      "incomeStatement.yields.shareholder",
+      "yields.shareholder"
+    ],
+    [
+      "yield dilution",
+      "incomeStatement.yields.dilution",
+      "yields.dilution"
+    ],
+    [
+      "yield netShareholder",
+      "incomeStatement.yields.netShareholder",
+      "yields.netShareholder"
+    ],
+    [
+      "yield multiple",
+      "incomeStatement.yields.multiple",
+      "yields.multiple"
+    ],
+    [
+      "yield pegTrailing",
+      "incomeStatement.yields.pegTrailing",
+      "yields.pegTrailing"
+    ],
+    [
+      "dilution pct",
+      "incomeStatement.dilution.pct",
+      "yields.dilution"
+    ],
+    [
+      "revenue line protocol",
+      "incomeStatement.revenue.lines[id=protocol].annualized",
+      "revenue.streams[id=protocol].annualized"
+    ],
+    [
+      "holders line buyback",
+      "incomeStatement.holders.lines[id=buyback].annualized",
+      "income.lines[id=buyback].annualized"
+    ],
+    [
+      "holder flow line buyback",
+      "incomeStatement.holderFlow.lines[id=buyback].gross",
+      "flows[id=buyback].gross"
+    ]
+  ],
+  "sky": [
+    [
+      "revenue",
+      "incomeStatement.revenue.annualized",
+      "income.revenue.annualized"
+    ],
+    [
+      "revenue growth",
+      "incomeStatement.revenue.growth.annualized",
+      "income.revenue.growth.annualized"
+    ],
+    [
+      "holders",
+      "incomeStatement.holders.annualized",
+      "income.holders.annualized"
+    ],
+    [
+      "holders growth",
+      "incomeStatement.holders.growth.annualized",
+      "income.holders.growth.annualized"
+    ],
+    [
+      "operating costs = v1 costs",
+      "incomeStatement.operatingCosts.annualized",
+      "income.costs.annualized"
+    ],
+    [
+      "payout ratio",
+      "incomeStatement.ratios.payoutRatio",
+      "income.payoutRatio"
+    ],
+    [
+      "holder flow total",
+      "incomeStatement.holderFlow.gross",
+      "buckets.cash.gross"
+    ],
+    [
+      "holder flow total net",
+      "incomeStatement.holderFlow.net",
+      "buckets.cash.net"
+    ],
+    [
+      "holder flow cash",
+      "incomeStatement.holderFlow.byBucket.cash.gross",
+      "buckets.cash.gross"
+    ],
+    [
+      "holder flow cash net",
+      "incomeStatement.holderFlow.byBucket.cash.net",
+      "buckets.cash.net"
+    ],
+    [
+      "holder flow cash yield",
+      "incomeStatement.holderFlow.byBucket.cash.yield",
+      "buckets.cash.yield"
+    ],
+    [
+      "holder flow growth",
+      "incomeStatement.holderFlow.growth.annualized",
+      "holderFlowGrowth.annualized"
+    ],
+    [
+      "yield cash",
+      "incomeStatement.yields.cash",
+      "yields.cash"
+    ],
+    [
+      "yield buyback",
+      "incomeStatement.yields.buyback",
+      "yields.buyback"
+    ],
+    [
+      "yield shareholder",
+      "incomeStatement.yields.shareholder",
+      "yields.shareholder"
+    ],
+    [
+      "yield dilution",
+      "incomeStatement.yields.dilution",
+      "yields.dilution"
+    ],
+    [
+      "yield netShareholder",
+      "incomeStatement.yields.netShareholder",
+      "yields.netShareholder"
+    ],
+    [
+      "yield multiple",
+      "incomeStatement.yields.multiple",
+      "yields.multiple"
+    ],
+    [
+      "yield pegTrailing",
+      "incomeStatement.yields.pegTrailing",
+      "yields.pegTrailing"
+    ],
+    [
+      "dilution pct",
+      "incomeStatement.dilution.pct",
+      "yields.dilution"
+    ],
+    [
+      "revenue line surplus_usds",
+      "incomeStatement.revenue.lines[id=surplus_usds].annualized",
+      "revenue.streams[id=surplus_usds].annualized"
+    ],
+    [
+      "revenue line surplus_buyback",
+      "incomeStatement.revenue.lines[id=surplus_buyback].annualized",
+      "revenue.streams[id=surplus_buyback].annualized"
+    ],
+    [
+      "holders line stakers",
+      "incomeStatement.holders.lines[id=stakers].annualized",
+      "income.lines[id=stakers].annualized"
+    ],
+    [
+      "holders line buyback",
+      "incomeStatement.holders.lines[id=buyback].annualized",
+      "income.lines[id=buyback].annualized"
+    ],
+    [
+      "holder flow line stakers",
+      "incomeStatement.holderFlow.lines[id=stakers].gross",
+      "flows[id=stakers].gross"
+    ],
+    [
+      "holder flow line buyback",
+      "incomeStatement.holderFlow.lines[id=buyback].gross",
+      "flows[id=buyback].gross"
+    ]
+  ],
+  "uni": [
+    [
+      "revenue",
+      "incomeStatement.revenue.annualized",
+      "income.revenue.annualized"
+    ],
+    [
+      "revenue growth",
+      "incomeStatement.revenue.growth.annualized",
+      "income.revenue.growth.annualized"
+    ],
+    [
+      "holders",
+      "incomeStatement.holders.annualized",
+      "income.holders.annualized"
+    ],
+    [
+      "holders growth",
+      "incomeStatement.holders.growth.annualized",
+      "income.holders.growth.annualized"
+    ],
+    [
+      "protocol",
+      "incomeStatement.protocol.annualized",
+      "income.protocol.annualized"
+    ],
+    [
+      "operating costs = v1 costs",
+      "incomeStatement.operatingCosts.annualized",
+      "income.costs.annualized"
+    ],
+    [
+      "payout ratio",
+      "incomeStatement.ratios.payoutRatio",
+      "income.payoutRatio"
+    ],
+    [
+      "holder flow total",
+      "incomeStatement.holderFlow.gross",
+      "buckets.burn.gross"
+    ],
+    [
+      "holder flow total net",
+      "incomeStatement.holderFlow.net",
+      "buckets.burn.net"
+    ],
+    [
+      "holder flow burn",
+      "incomeStatement.holderFlow.byBucket.burn.gross",
+      "buckets.burn.gross"
+    ],
+    [
+      "holder flow burn net",
+      "incomeStatement.holderFlow.byBucket.burn.net",
+      "buckets.burn.net"
+    ],
+    [
+      "holder flow burn yield",
+      "incomeStatement.holderFlow.byBucket.burn.yield",
+      "buckets.burn.yield"
+    ],
+    [
+      "holder flow growth",
+      "incomeStatement.holderFlow.growth.annualized",
+      "holderFlowGrowth.annualized"
+    ],
+    [
+      "yield cash",
+      "incomeStatement.yields.cash",
+      "yields.cash"
+    ],
+    [
+      "yield buyback",
+      "incomeStatement.yields.buyback",
+      "yields.buyback"
+    ],
+    [
+      "yield shareholder",
+      "incomeStatement.yields.shareholder",
+      "yields.shareholder"
+    ],
+    [
+      "yield dilution",
+      "incomeStatement.yields.dilution",
+      "yields.dilution"
+    ],
+    [
+      "yield netShareholder",
+      "incomeStatement.yields.netShareholder",
+      "yields.netShareholder"
+    ],
+    [
+      "yield multiple",
+      "incomeStatement.yields.multiple",
+      "yields.multiple"
+    ],
+    [
+      "yield pegTrailing",
+      "incomeStatement.yields.pegTrailing",
+      "yields.pegTrailing"
+    ],
+    [
+      "dilution pct",
+      "incomeStatement.dilution.pct",
+      "yields.dilution"
+    ],
+    [
+      "revenue line protocol_fees",
+      "incomeStatement.revenue.lines[id=protocol_fees].annualized",
+      "revenue.streams[id=protocol_fees].annualized"
+    ],
+    [
+      "holders line burn",
+      "incomeStatement.holders.lines[id=burn].annualized",
+      "income.lines[id=burn].annualized"
+    ],
+    [
+      "holder flow line burn",
+      "incomeStatement.holderFlow.lines[id=burn].gross",
+      "flows[id=burn].gross"
+    ]
+  ],
+  "vvv": [
+    [
+      "revenue",
+      "incomeStatement.revenue.annualized",
+      "income.revenue.annualized"
+    ],
+    [
+      "revenue growth",
+      "incomeStatement.revenue.growth.annualized",
+      "income.revenue.growth.annualized"
+    ],
+    [
+      "holders",
+      "incomeStatement.holders.annualized",
+      "income.holders.annualized"
+    ],
+    [
+      "holders growth",
+      "incomeStatement.holders.growth.annualized",
+      "income.holders.growth.annualized"
+    ],
+    [
+      "protocol",
+      "incomeStatement.protocol.annualized",
+      "income.protocol.annualized"
+    ],
+    [
+      "operating costs = v1 costs",
+      "incomeStatement.operatingCosts.annualized",
+      "income.costs.annualized"
+    ],
+    [
+      "payout ratio",
+      "incomeStatement.ratios.payoutRatio",
+      "income.payoutRatio"
+    ],
+    [
+      "holder flow total",
+      "incomeStatement.holderFlow.gross",
+      "buckets.burn.gross"
+    ],
+    [
+      "holder flow total net",
+      "incomeStatement.holderFlow.net",
+      "buckets.burn.net"
+    ],
+    [
+      "holder flow burn",
+      "incomeStatement.holderFlow.byBucket.burn.gross",
+      "buckets.burn.gross"
+    ],
+    [
+      "holder flow burn net",
+      "incomeStatement.holderFlow.byBucket.burn.net",
+      "buckets.burn.net"
+    ],
+    [
+      "holder flow burn yield",
+      "incomeStatement.holderFlow.byBucket.burn.yield",
+      "buckets.burn.yield"
+    ],
+    [
+      "holder flow growth",
+      "incomeStatement.holderFlow.growth.annualized",
+      "holderFlowGrowth.annualized"
+    ],
+    [
+      "yield cash",
+      "incomeStatement.yields.cash",
+      "yields.cash"
+    ],
+    [
+      "yield buyback",
+      "incomeStatement.yields.buyback",
+      "yields.buyback"
+    ],
+    [
+      "yield shareholder",
+      "incomeStatement.yields.shareholder",
+      "yields.shareholder"
+    ],
+    [
+      "yield dilution",
+      "incomeStatement.yields.dilution",
+      "yields.dilution"
+    ],
+    [
+      "yield netShareholder",
+      "incomeStatement.yields.netShareholder",
+      "yields.netShareholder"
+    ],
+    [
+      "yield multiple",
+      "incomeStatement.yields.multiple",
+      "yields.multiple"
+    ],
+    [
+      "yield pegTrailing",
+      "incomeStatement.yields.pegTrailing",
+      "yields.pegTrailing"
+    ],
+    [
+      "dilution pct",
+      "incomeStatement.dilution.pct",
+      "yields.dilution"
+    ],
+    [
+      "revenue line business",
+      "incomeStatement.revenue.lines[id=business].annualized",
+      "revenue.streams[id=business].annualized"
+    ],
+    [
+      "holders line burn",
+      "incomeStatement.holders.lines[id=burn].annualized",
+      "income.lines[id=burn].annualized"
+    ],
+    [
+      "holder flow line burn",
+      "incomeStatement.holderFlow.lines[id=burn].gross",
+      "flows[id=burn].gross"
+    ]
+  ]
+}

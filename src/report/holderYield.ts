@@ -31,6 +31,8 @@ export interface ReportLevels {
   dilution?: Record<string, { rate: number | null; cap: number | null }>;
   /** Disclosed revenue levels (oldest first), for `revenue_disclosed`. */
   disclosed: { observedAt: string; value: number }[];
+  /** The as-of the levels were read at (income statement v2's priceBasis and supplyAsOf); absent in fixtures. */
+  asOf?: string;
 }
 
 export interface ReportInput {
@@ -193,7 +195,7 @@ export interface IncomeStatement {
 const finite = (x: number | null): x is number => x !== null && Number.isFinite(x);
 
 /** Sum of `metrics` per day over [end - days + 1, end]; null when any metric misses any day. */
-function windowSum(daily: Map<string, Map<string, number>>, metrics: string[], end: string, days: number): number | null {
+export function windowSum(daily: Map<string, Map<string, number>>, metrics: string[], end: string, days: number): number | null {
   let sum = 0;
   for (const m of metrics) {
     const series = daily.get(m);
@@ -228,7 +230,7 @@ export function growthOf(daily: Map<string, Map<string, number>>, metrics: strin
   return { current, prior, change: ratio - 1, annualized: ratio ** (DAYS_PER_YEAR / days) - 1 };
 }
 
-function recipients(base: RecipientBase, lv: ReportLevels): number | null {
+export function recipients(base: RecipientBase, lv: ReportLevels): number | null {
   if (base === 'all') return lv.totalSupply;
   if (base === 'locked') return lv.lockedSupply ?? lv.stakedSupply;
   return lv.stakedSupply;
