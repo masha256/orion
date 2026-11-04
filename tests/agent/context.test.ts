@@ -74,19 +74,19 @@ describe('context', () => {
     expect((await pack()).trigger).toEqual({ anomaly: null, unverified_note: null });
   });
 
-  it('shows pending proposals, a stored valuation-era proposal with its effect included, how the user decided earlier ones, and the journal', async () => {
+  it('shows pending proposals, a stored config proposal with its valuation-era effect included, how the user decided earlier ones, and the journal', async () => {
     const file = async (value: number, effect: unknown = null) =>
       await insertProposal(w.db, {
-        assetId: 'mini', persona: 'analyst', agentRunId: null, change: { kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'bull', value },
+        assetId: 'mini', persona: 'analyst', agentRunId: null, change: { kind: 'config', edits: [{ path: ['reporting', 'window_days'], value }] },
         filedAgainst: { value: 0 }, rationale: 'r', evidence: [], effect: effect as never, createdAt: AS_OF,
       });
-    const pending = await file(3, { '6m': { from: 10, to: 11 }, '12m': { from: 10, to: 12 } });
-    await decideProposal(w.db, (await file(4)).id, 'rejected', 'too aggressive before the Q3 disclosure', AS_OF);
+    const pending = await file(91, { '6m': { from: 10, to: 11 }, '12m': { from: 10, to: 12 } });
+    await decideProposal(w.db, (await file(120)).id, 'rejected', 'too aggressive before the Q3 disclosure', AS_OF);
     for (const n of [1, 2, 3, 4]) {
       await insertJournalEntry(w.db, { assetId: 'mini', persona: 'analyst', agentRunId: null, createdAt: AS_OF, thesis: `thesis ${n}`, openQuestions: [], summary: 's' });
     }
     const p = await pack();
-    expect(p.proposals.pending).toMatchObject([{ id: pending.id, kind: 'assumption_value', effect: { '12m': { from: 10, to: 12 } } }]);
+    expect(p.proposals.pending).toMatchObject([{ id: pending.id, kind: 'config', effect: { '12m': { from: 10, to: 12 } } }]);
     expect(p.proposals.recently_decided).toMatchObject([{ status: 'rejected', decision_note: 'too aggressive before the Q3 disclosure' }]);
     expect(p.journal.map((e: { thesis: string }) => e.thesis)).toEqual(['thesis 4', 'thesis 3', 'thesis 2']);
   });

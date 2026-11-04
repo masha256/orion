@@ -90,6 +90,8 @@ interface TxState {
   client: pg.PoolClient;
   depth: number;
   ended: boolean;
+  /** The asset whose transaction lock this transaction holds (from its root or an enclosing savepoint), if any. */
+  lockedAsset: string | null;
 }
 
 class PgDbImpl implements PgDb {
@@ -159,7 +161,7 @@ class PgDbImpl implements PgDb {
   async tx<T>(fn: (tx: this) => Promise<T>, opts?: TxOptions): Promise<T> {
     if (this.txState) return this.savepoint(this.txState, fn, opts);
     const client = await this.connect();
-    const state: TxState = { client, depth: 1, ended: false };
+    const state: TxState = { client, depth: 1, ended: false, lockedAsset: opts?.lockAsset ?? null };
     let broken: Error | undefined;
     try {
       try {
@@ -169,7 +171,7 @@ class PgDbImpl implements PgDb {
         throw err;
       }
       try {
-        if (opts?.lockAsset) await client.query('SELECT pg_advisory_xact_lock($1)', [assetLockKey('asset', opts.lockAsset)]);
+        if (opts?.lockAsset) await client.query('SELECT pg_advisory_xact_lock($1)', [assetLockKey('asset', opts.lockAsset, this.shared.config.schema)]);
         const result = await fn(new PgDbImpl(this.shared, state) as this);
         await client.query('COMMIT');
         return result;
@@ -189,11 +191,20 @@ class PgDbImpl implements PgDb {
 
   private async savepoint<T>(outer: TxState, fn: (tx: this) => Promise<T>, opts?: TxOptions): Promise<T> {
     if (outer.ended) throw new Error('this tx handle was used after its transaction has ended');
-    const state: TxState = { client: outer.client, depth: outer.depth + 1, ended: false };
+    // One transaction locks one asset. A nested write that asks for another asset's lock is a row of that asset reached
+    // from this one's (a proposal citing another asset's observation, say): refused, rather than taking a second lock
+    // mid-transaction, which can deadlock against a writer taking the two in the other order.
+    if (opts?.lockAsset && outer.lockedAsset !== null && opts.lockAsset !== outer.lockedAsset) {
+      throw new OrionError(
+        'tx_asset_mismatch',
+        `a write on asset ${opts.lockAsset} was attempted inside a transaction locked on asset ${outer.lockedAsset}`,
+      );
+    }
+    const state: TxState = { client: outer.client, depth: outer.depth + 1, ended: false, lockedAsset: outer.lockedAsset ?? opts?.lockAsset ?? null };
     const sp = `sp${state.depth}`;
     await outer.client.query(`SAVEPOINT ${sp}`);
     try {
-      if (opts?.lockAsset) await outer.client.query('SELECT pg_advisory_xact_lock($1)', [assetLockKey('asset', opts.lockAsset)]);
+      if (opts?.lockAsset) await outer.client.query('SELECT pg_advisory_xact_lock($1)', [assetLockKey('asset', opts.lockAsset, this.shared.config.schema)]);
       const result = await fn(new PgDbImpl(this.shared, state) as this);
       await outer.client.query(`RELEASE SAVEPOINT ${sp}`);
       return result;
@@ -211,6 +222,7 @@ class PgDbImpl implements PgDb {
   }
 
   async tryAssetRunLock(assetId: string, holder: string): Promise<AssetRunLock | null> {
+    const key = assetLockKey('run', assetId, this.shared.config.schema);
     const client = new pg.Client({ ...clientConfig(this.shared.config), application_name: holder });
     let dead = false;
     client.on('error', () => {
@@ -222,7 +234,7 @@ class PgDbImpl implements PgDb {
     await connectOrExplain(client, this.shared);
     let ok = false;
     try {
-      const row = (await client.query<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [assetLockKey('run', assetId)]))
+      const row = (await client.query<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [key]))
         .rows[0];
       ok = row?.ok === true;
     } finally {
@@ -237,7 +249,7 @@ class PgDbImpl implements PgDb {
         released = true;
         runLocks.delete(lock);
         try {
-          if (!dead) await client.query('SELECT pg_advisory_unlock($1)', [assetLockKey('run', assetId)]);
+          if (!dead) await client.query('SELECT pg_advisory_unlock($1)', [key]);
         } catch (err) {
           if (!dead) {
             await client.end().catch(() => undefined);
@@ -252,7 +264,7 @@ class PgDbImpl implements PgDb {
   }
 
   async assetRunLockHolder(assetId: string): Promise<{ holder: string; since: string } | null> {
-    const key = BigInt.asUintN(64, BigInt(assetLockKey('run', assetId)));
+    const key = BigInt.asUintN(64, BigInt(assetLockKey('run', assetId, this.shared.config.schema)));
     const row = await this.one<{ holder: string; since: string }>(
       `SELECT a.application_name AS holder, a.backend_start AS since
          FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid

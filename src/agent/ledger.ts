@@ -215,9 +215,8 @@ export class Ledger {
    */
   async commit(db: Db, ctx: { agentRunId: number | null; now: Date }): Promise<CommitSummary> {
     const nowIso = ctx.now.toISOString();
-    // IMMEDIATE, not the default DEFERRED: this transaction reads before it writes, and a deferred one takes the write
-    // lock only at its first write. Another connection committing in between makes SQLite refuse this one at once with
-    // SQLITE_BUSY_SNAPSHOT, which busy_timeout cannot retry away. Taking the lock at BEGIN means it waits instead.
+    // Under the asset's transaction lock: this transaction reads before it writes, so another connection's write to the
+    // asset waits for this commit instead of landing between the check and the insert.
     return db.tx(async (t): Promise<CommitSummary> => {
       try {
         for (const r of this.resolutions.values()) {

@@ -13,3 +13,4 @@ ticks.jsonl
 update.log
 tick.log
 probe-web-fetch-*.txt
+import-*.json

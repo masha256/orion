@@ -318,9 +318,8 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
       });
       const ids = new Map<string, number | null>(group.members.map((m) => [m.metricKey, null]));
       if (!dryRun) {
-        // IMMEDIATE: each insert reads for rows to supersede before it writes. A deferred transaction takes the write lock
-        // only at its first write, and another connection's commit in between fails it with SQLITE_BUSY_SNAPSHOT, which
-        // busy_timeout cannot retry; taking the lock at BEGIN makes the other connection wait instead.
+        // Under the asset's transaction lock: each insert reads for rows to supersede before it writes, so another
+        // connection's write to the asset waits for this commit instead of landing in between.
         await db.tx(async (t) => {
           for (const m of group.members) {
             for (const c of conflicts) {

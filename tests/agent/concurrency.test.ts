@@ -7,9 +7,10 @@ import { testDbPair } from '../helpers/db.js';
 import { harness } from '../helpers/fetchHarness.js';
 
 /**
- * Two connections to ONE file database, which is what a scheduled run and a manual command are. `openDb` puts SQLite in
- * WAL mode, so readers never block; what matters is when a transaction takes the WRITE lock. A deferred transaction
- * takes it at its first write, after its reads, and SQLite then refuses it outright rather than waiting.
+ * Two pools on ONE schema, which is what a scheduled run and a manual command are. Every transaction that reads before
+ * it writes takes the asset's transaction lock (`tx({ lockAsset })`), so a second connection's write to the same asset
+ * waits for the commit instead of landing between the check and the insert, and a transaction that finds the lock held
+ * waits for it rather than failing.
  */
 
 const NOW = new Date('2026-09-20T00:00:00.000Z');
@@ -33,11 +34,11 @@ type AnyFn = (...args: unknown[]) => unknown;
  * The real connection, with one hook: the moment a query on it (or on a transaction's handle) first reads rows,
  * `onFirstRead` runs, once, and the read waits for it. That is the instant a second connection can slip a write into.
  * `when` narrows "first read" to the first read whose bound parameters satisfy it, for code that reads before the
- * transaction under test begins.
+ * transaction under test begins. (Test setup only: the hook wraps the tx handle, R-b5.)
  */
-function interleaving(db: Db, onFirstRead: () => Promise<void>, when: (params: readonly SqlParam[]) => boolean = () => true): Db {
+function interleaving(db: OrionDb, onFirstRead: () => Promise<void>, when: (params: readonly SqlParam[]) => boolean = () => true): OrionDb {
   let fired = false;
-  const watch = (handle: Db): Db =>
+  const watch = <H extends Db>(handle: H): H =>
     new Proxy(handle, {
       get(target, prop) {
         const value = Reflect.get(target, prop) as unknown;
@@ -54,88 +55,106 @@ function interleaving(db: Db, onFirstRead: () => Promise<void>, when: (params: r
           return out;
         };
       },
-    }) as Db;
+    });
   return watch(db);
 }
 
+const OTHER_AT = '2026-09-19T00:00:00.000Z';
+/** The other connection's row (the fetch writes staked_supply too, at its own time). */
+const otherRows = async (db: Db) => (await listActiveObservations(db, 'mini', 'staked_supply')).filter((o) => o.observedAt === OTHER_AT);
+
 const otherWrite = async (db: Db) =>
-  await insertObservation(db, { assetId: 'mini', metricKey: 'staked_supply', observedAt: '2026-09-19', value: 50, source: 'onchain', fetchedAt: '2026-09-19' });
+  await insertObservation(db, { assetId: 'mini', metricKey: 'staked_supply', observedAt: OTHER_AT, value: 50, source: 'onchain', fetchedAt: '2026-09-19' });
+
+/** B opens a transaction on the asset's lock, writes, holds it `ms`, and commits. Resolves once B holds the lock. */
+async function holdAssetTransaction(db: OrionDb, ms: number): Promise<{ done: Promise<void> }> {
+  let begun!: () => void;
+  const holding = new Promise<void>((resolve) => { begun = resolve; });
+  const done = db.tx(async (t) => {
+    await otherWrite(t);
+    begun();
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }, { lockAsset: 'mini' });
+  await holding;
+  return { done };
+}
 
 describe('Ledger.commit against a second connection', () => {
-  it('commits normally when nothing else holds the write lock, whatever the other connection wrote before it', async () => {
+  it('commits normally when nothing else holds the asset, whatever the other connection wrote before it', async () => {
     await otherWrite(B);
     const summary = await ledger.commit(A, { agentRunId: null, now: NOW });
     expect(summary.observationIds).toHaveLength(1);
     expect((await listActiveObservations(B, 'mini', 'revenue_run_rate_usd')).map((o) => o.id)).toEqual(summary.observationIds); // the other connection sees it
-    expect(await listActiveObservations(B, 'mini', 'staked_supply')).toHaveLength(1);
+    expect(await otherRows(B)).toHaveLength(1);
   });
 
-  it('holds the write lock across its own reads, so the other connection cannot commit underneath it', async () => {
-    B.pragma('busy_timeout = 50');
-    let theOtherWrite = 'never attempted';
+  it('concurrency (Postgres): a write by another connection between the ledger\'s check and its insert waits for the commit, then lands', async () => {
+    const order: string[] = [];
+    let theOtherWrite: Promise<void> | null = null;
     const watched = interleaving(A, async () => {
-      try {
-        await otherWrite(B);
-        theOtherWrite = 'committed';
-      } catch (err) {
-        theOtherWrite = err instanceof Error ? err.message : String(err);
-      }
+      // started, not awaited: it must wait on the ledger's lock, so awaiting it here would deadlock the test
+      theOtherWrite = otherWrite(B).then(() => { order.push('B wrote'); });
+      await new Promise((resolve) => setTimeout(resolve, 100)); // give it every chance to land early
     });
-    // Deferred, this is where it comes apart: B commits against the same snapshot A just read, and A's first write is
-    // then refused with SQLITE_BUSY_SNAPSHOT, which no timeout can retry away.
     const summary = await ledger.commit(watched, { agentRunId: null, now: NOW });
+    order.push('A committed');
+    expect(theOtherWrite).not.toBeNull();
+    await theOtherWrite;
+    expect(order).toEqual(['A committed', 'B wrote']);
     expect(summary.observationIds).toHaveLength(1);
-    expect(theOtherWrite).toMatch(/database is locked/);
-    expect(await listActiveObservations(A, 'mini', 'staked_supply')).toHaveLength(0);
+    expect(await listActiveObservations(A, 'mini', 'revenue_run_rate_usd')).toHaveLength(1);
+    expect(await otherRows(A)).toHaveLength(1);
   });
 
-  it('waits for a write lock another connection holds instead of giving up the moment it wants to write', async () => {
-    // A DEFERRED transaction reads first and only then asks for the write lock. SQLite will not run the busy handler
-    // for that upgrade (a waiting reader can deadlock), so it fails at once, and busy_timeout buys nothing. An
-    // IMMEDIATE transaction asks at BEGIN, holding nothing, so the busy handler runs and it waits out the timeout.
-    A.pragma('busy_timeout = 250');
-    // B takes the write lock (BEGIN IMMEDIATE), writes, and holds the transaction open until `release`; it then rolls back.
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => { release = resolve; });
-    let begun!: () => void;
-    const holding = new Promise<void>((resolve) => { begun = resolve; });
-    const rollback = new Error('rollback');
-    const other = B.tx(async (t) => {
-      await otherWrite(t);
-      begun();
-      await held;
-      throw rollback;
-    });
-    await holding;
+  it('concurrency: the ledger waits for another connection\'s open asset transaction', async () => {
+    const other = await holdAssetTransaction(B, 250);
     const startedAt = Date.now();
-    await expect(ledger.commit(A, { agentRunId: null, now: NOW })).rejects.toThrow(/database is locked/);
+    const summary = await ledger.commit(A, { agentRunId: null, now: NOW });
     const waited = Date.now() - startedAt;
-    release();
-    await expect(other).rejects.toBe(rollback);
+    await other.done;
     expect(waited).toBeGreaterThanOrEqual(200);
-    expect(await listActiveObservations(A, 'mini', 'revenue_run_rate_usd')).toEqual([]); // nothing was written
+    expect(summary.observationIds).toHaveLength(1);
+    expect(await listActiveObservations(A, 'mini', 'revenue_run_rate_usd')).toHaveLength(1);
+    expect(await otherRows(A)).toHaveLength(1);
   });
 });
 
 describe('the flow ingest against a second connection', () => {
-  it('holds the write lock across each day\'s supersede reads, so a commit underneath it waits rather than failing the scan', async () => {
-    B.pragma('busy_timeout = 50');
-    let theOtherWrite = 'never attempted';
-    // The day transaction's first read is insertObservation's supersede lookup, bound as (asset, metric, observed_at). The scan's own
-    // conflict search reads the same metric earlier but binds only (asset, metric), so the length check keeps the hook out of it.
-    const insideDayTransaction = (params: readonly SqlParam[]) => params.length === 3 && params[1] === 'flow_usd.fees' && typeof params[2] === 'string';
+  // The day transaction's first read is insertObservation's supersede lookup, bound as (asset, metric, observed_at). The scan's own
+  // conflict search reads the same metric earlier but binds only (asset, metric), so the length check keeps the hook out of it.
+  const insideDayTransaction = (params: readonly SqlParam[]) => params.length === 3 && params[1] === 'flow_usd.fees' && typeof params[2] === 'string';
+
+  it('concurrency (Postgres): a write by another connection inside a flow day transaction waits for its commit, then lands', async () => {
+    const order: string[] = [];
+    let theOtherWrite: Promise<void> | null = null;
     const watched = interleaving(A, async () => {
-      try {
-        await otherWrite(B);
-        theOtherWrite = 'committed';
-      } catch (err) {
-        theOtherWrite = err instanceof Error ? err.message : String(err);
-      }
+      theOtherWrite = otherWrite(B).then(() => { order.push('B wrote'); });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      order.push('day transaction read');
     }, insideDayTransaction);
     const h = harness(watched);
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
+    order.push('fetch done');
+    expect(theOtherWrite).not.toBeNull();
+    await theOtherWrite;
     expect(r.sources.find((s) => s.sourceId.startsWith('transfer_flow'))!.status).toBe('ok');
-    expect(theOtherWrite).toMatch(/database is locked/);
+    // B landed after the day transaction it tried to slip into, never inside it
+    expect(order[0]).toBe('day transaction read');
+    expect(order).toContain('B wrote');
     expect((await listActiveObservations(B, 'mini', 'flow_usd.fees')).length).toBeGreaterThan(0);
+    expect(await otherRows(B)).toHaveLength(1);
+  });
+
+  it('concurrency: a flow day transaction waits for another connection\'s open asset transaction', async () => {
+    const h = harness(A);
+    const other = await holdAssetTransaction(B, 250);
+    const startedAt = Date.now();
+    const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
+    const waited = Date.now() - startedAt;
+    await other.done;
+    expect(waited).toBeGreaterThanOrEqual(200);
+    expect(r.sources.find((s) => s.sourceId.startsWith('transfer_flow'))!.status).toBe('ok');
+    expect((await listActiveObservations(A, 'mini', 'flow_usd.fees')).length).toBeGreaterThan(0);
+    expect(await otherRows(A)).toHaveLength(1);
   });
 });

@@ -15,9 +15,16 @@ import { defineTool, refuse, ToolRefusal, type AgentTool, type ToolContext } fro
 
 const isActive = (o: Observation): boolean => o.supersededBy === null && o.status !== 'rejected';
 
-/** A lookup over the cited ids: the stored ones are read up front, since `checkEvidence` looks them up synchronously. */
+/** The most observation ids one call may cite: more is never needed, and every id is a parameter of one query. */
+const MAX_EVIDENCE_IDS = 200;
+
+/**
+ * A lookup over the cited ids: the stored ones are read up front, since `checkEvidence` looks them up synchronously.
+ * Only ids shown in this run are read; `checkEvidence` refuses the others without a lookup.
+ */
 async function evidenceLookup(ctx: ToolContext, ids: number[]): Promise<(id: number) => EvidenceRef | null> {
-  const stored = new Map((await getObservationsByIds(ctx.db, ids.filter((id) => id >= 0))).map((o) => [o.id, o]));
+  const wanted = [...new Set(ids.filter((id) => id >= 0 && ctx.ledger.shown.has(id)))];
+  const stored = new Map((await getObservationsByIds(ctx.db, wanted)).map((o) => [o.id, o]));
   return (id) => {
     if (id < 0) return ctx.ledger.hasStagedObservation(id) ? { assetId: ctx.loaded.config.id, active: true } : null;
     const o = stored.get(id);
@@ -26,6 +33,7 @@ async function evidenceLookup(ctx: ToolContext, ids: number[]): Promise<(id: num
 }
 
 async function requireEvidence(ctx: ToolContext, ids: number[]): Promise<void> {
+  if (ids.length > MAX_EVIDENCE_IDS) refuse('invalid_input', `cite at most ${MAX_EVIDENCE_IDS} observation ids as evidence (got ${ids.length})`);
   const refusal = checkEvidence(ids, ctx.loaded.config.id, await evidenceLookup(ctx, ids), ctx.ledger.shown);
   if (refusal) throw new ToolRefusal(refusal);
 }

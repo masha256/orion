@@ -62,9 +62,9 @@ export async function approveProposal(db: Db, home: string, id: number, opts: { 
   }
   if (change.kind === 'config') return approveConfig(db, home, p, note, nowIso);
 
-  // IMMEDIATE: every kind below checks what the proposal was filed against before it writes, and a deferred transaction
-  // takes the write lock only at that first write. A concurrent commit in between would fail this one with
-  // SQLITE_BUSY_SNAPSHOT, which busy_timeout cannot retry away.
+  // Under the asset's transaction lock: every kind below checks what the proposal was filed against before it writes.
+  // A row of another asset reached from here (a stored proposal citing another asset's observation or anomaly) is
+  // refused by the nested write's own lock (`tx_asset_mismatch`), and the transaction rolls back.
   return db.tx(async (t) => {
     let result: ApproveResult;
     switch (change.kind) {

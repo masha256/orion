@@ -50,23 +50,24 @@ describe('a proposal row that is not what the agent files', () => {
     expect(await codeOf(() => approve(p.id))).toBe('invalid_proposal');
     expect((await getProposal(w.db, p.id))!.status).toBe('pending');
     // The database kinds are refused just as early: the check runs before anything reads or writes.
-    const value = await file({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 }, { assetId: 'MINI/../..' });
+    const value = await file({ kind: 'acknowledge_anomaly', anomalyId: 1, note: 'n' }, { status: 'open' }, { assetId: 'MINI/../..' });
     expect(await codeOf(() => approve(value.id))).toBe('invalid_proposal');
     expect(existsSync(join(home, 'assets', '..', 'evil.yaml'))).toBe(false);
   });
 });
 
 describe('proposals', () => {
-  it('approving a stored assumption_value proposal throws proposal_kind_retired; rejecting it works', async () => {
-    // VVV #1 and CAKE #4 are such rows: pending assumption_value proposals from the valuation era, with a 6m/12m effect.
-    const effect = { '6m': { from: 10, to: 11 }, '12m': { from: 10, to: 12 } };
-    const p = await file({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 }, { effect });
-    expect(await codeOf(() => approve(p.id, 'agreed'))).toBe('proposal_kind_retired');
-    await expect(approve(p.id)).rejects.toThrow(/assumption/);
-    expect(await getProposal(w.db, p.id)).toMatchObject({ status: 'pending', effect });
-    expect(await w.db.one('SELECT COUNT(*) AS n FROM assumption_sets')).toEqual({ n: 0 });
-    expect(await rejectProposal(w.db, p.id, 'assumption values are retired', NOW)).toMatchObject({ status: 'rejected', decisionNote: 'assumption values are retired', effect });
-    expect(await codeOf(() => approve(p.id))).toBe('proposal_not_pending');
+  it('proposals: the database refuses kind assumption_value', async () => {
+    // The valuation era's kind: no build files one, the importer does not carry the stored ones, and the CHECK refuses one.
+    await expect(file({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 })).rejects.toThrow(/proposals_kind_check/);
+    await expect(
+      w.db.run(
+        `INSERT INTO proposals (asset_id, persona, kind, change_json, filed_against_json, rationale, evidence_json, status, created_at)
+         VALUES ('mini', 'analyst', 'assumption_value', '{}', '{}', 'r', '[]', 'pending', $1)`,
+        [AS_OF],
+      ),
+    ).rejects.toThrow(/proposals_kind_check/);
+    expect(await w.db.all('SELECT id FROM proposals')).toEqual([]);
   });
 });
 
@@ -102,6 +103,25 @@ describe('approving observation proposals', () => {
     expect((await getObservationsByIds(w.db, [w.ids.price_usd]))[0].status).toBe('rejected');
     const again = await file({ kind: 'reject_observation', observationId: w.ids.price_usd, note: 'again' }, { status: 'confirmed', active: true });
     expect(await codeOf(() => approve(again.id))).toBe('stale_proposal');
+  });
+
+  it('refuses a stored proposal whose observation or anomaly belongs to another asset (tx_asset_mismatch), and changes nothing', async () => {
+    // A row edited in the database, or carried from an older build: approve locks the proposal's asset, and the nested
+    // write on the other asset's row asks for that asset's lock, which is refused rather than taken mid-transaction.
+    const theirs = await insertObservation(w.db, {
+      assetId: 'other', metricKey: 'staked_supply', observedAt: '2026-06-29T12:00:00Z', value: 80, source: 'manual', status: 'provisional',
+      citationUrl: 'https://example.com', fetchedAt: AS_OF,
+    });
+    for (const kind of ['confirm_observation', 'reject_observation'] as const) {
+      const p = await file({ kind, observationId: theirs.id, note: 'n' }, { status: 'provisional', active: true });
+      await expect(approve(p.id)).rejects.toMatchObject({ code: 'tx_asset_mismatch', message: 'a write on asset other was attempted inside a transaction locked on asset mini' });
+      expect((await getProposal(w.db, p.id))!.status).toBe('pending');
+    }
+    expect((await getObservationsByIds(w.db, [theirs.id]))[0]).toMatchObject({ status: 'provisional', supersededBy: null });
+    const theirAnomaly = await raiseAnomaly(w.db, { assetId: 'other', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey: 'x', severity: 'degrading', detail: {}, seenAt: AS_OF });
+    const ack = await file({ kind: 'acknowledge_anomaly', anomalyId: theirAnomaly.id, note: 'n' }, { status: 'open' });
+    expect(await codeOf(() => approve(ack.id))).toBe('tx_asset_mismatch');
+    expect((await getAnomaly(w.db, theirAnomaly.id))!.status).toBe('open');
   });
 
   it('inserts a move-guarded observation as confirmed, keeping the citation, unless the value in force has changed', async () => {
@@ -212,9 +232,17 @@ describe('approving a config proposal', () => {
   it('restores the file when marking the proposal approved fails', async () => {
     const before = readFileSync(yamlPath, 'utf8');
     const p = await file(stalenessEdit, [7]);
-    w.db.exec("CREATE TRIGGER fail_decide BEFORE UPDATE ON proposals BEGIN SELECT RAISE(ABORT, 'disk full'); END;");
-    await expect(approve(p.id)).rejects.toThrow(/disk full/);
-    expect(readFileSync(yamlPath, 'utf8')).toBe(before);
+    // The schema is the test file's and outlives this test (tables are emptied, not dropped): the trigger goes after it.
+    await w.db.run("CREATE FUNCTION fail_decide() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'disk full'; END $$");
+    await w.db.run('CREATE TRIGGER fail_decide BEFORE UPDATE ON proposals FOR EACH ROW EXECUTE FUNCTION fail_decide()');
+    try {
+      await expect(approve(p.id)).rejects.toThrow(/disk full/);
+      expect(readFileSync(yamlPath, 'utf8')).toBe(before);
+      expect((await getProposal(w.db, p.id))!.status).toBe('pending');
+    } finally {
+      await w.db.run('DROP TRIGGER fail_decide ON proposals');
+      await w.db.run('DROP FUNCTION fail_decide()');
+    }
   });
 
   it('never applies an edit under agent: or id, whoever wrote the proposal row: the agent cannot raise its own limits', async () => {
@@ -253,7 +281,7 @@ describe('approving a config proposal', () => {
 
 describe('rejecting, and deciding twice', () => {
   it('needs a note, keeps it, and makes the decision final', async () => {
-    const p = await file({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 });
+    const p = await file({ kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'staleness_days'], value: 14 }] }, [7]);
     expect(await codeOf(() => rejectProposal(w.db, p.id, '  ', NOW))).toBe('note_required');
     expect(await rejectProposal(w.db, p.id, 'wait for the Q3 disclosure', NOW)).toMatchObject({ status: 'rejected', decisionNote: 'wait for the Q3 disclosure' });
     expect(await codeOf(() => approve(p.id))).toBe('proposal_not_pending');

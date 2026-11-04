@@ -53,11 +53,10 @@ const anomaly = async (dedupeKey = 'x') =>
 
 describe('run', () => {
   it('a disclosure run needs no assumption set', async () => {
-    expect(await count('assumption_sets')).toBe(0);
+    expect(await w.db.one("SELECT to_regclass('assumption_sets') AS t")).toEqual({ t: null }); // the table is not even in the schema
     const result = await run([calls(journalCall()), say('Done.')]);
     expect(result.run).toMatchObject({ outcome: 'completed', runType: 'disclosure', error: null });
     expect((await listJournal(w.db, 'mini'))[0]).toMatchObject({ agentRunId: result.run.id });
-    expect(await count('assumption_sets')).toBe(0);
   });
 
   it('commits what it staged in one transaction, and returns run, staged and committed only', async () => {
@@ -105,7 +104,8 @@ describe('run', () => {
     expect(result.run.outcome).toBe('completed');
     expect(result.committed).toMatchObject({ observationIds: [], resolvedAnomalyIds: [], proposalIds: [], devFindings: [] });
     expect(await count('journal')).toBe(1);
-    expect((await count('proposals')) + (await count('valuation_runs')) + (await count('signals'))).toBe(0);
+    expect(await count('proposals')).toBe(0); // and there is no valuation_runs or signals table to write to
+    expect(await w.db.one("SELECT to_regclass('valuation_runs') AS v, to_regclass('signals') AS s")).toEqual({ v: null, s: null });
   });
 
   it('carries --anomaly and --note as pack context, and resolves that anomaly when the evidence supports it', async () => {
@@ -241,17 +241,24 @@ describe('runs that do not finish cleanly', () => {
   it('still finishes the run row when the transcript cannot be stored, keeping a minimal one instead', async () => {
     // A run left `running` while its writes are live is the worst outcome: the next lock takeover would call it
     // `error/abandoned`. Stand in for whatever makes the transcript unstorable with a size limit.
+    // The schema is the test file's and outlives this test (tables are emptied, not dropped): the trigger goes after it.
     await w.db.run(
-      "CREATE TRIGGER no_large_transcripts BEFORE INSERT ON agent_transcripts WHEN length(NEW.messages_json) > 400 " +
-        "BEGIN SELECT RAISE(ABORT, 'transcript too large'); END",
+      'CREATE FUNCTION no_large_transcripts() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN ' +
+        "IF length(NEW.messages_json::text) > 400 THEN RAISE EXCEPTION 'transcript too large'; END IF; RETURN NEW; END $$",
     );
-    const result = await run([calls(stakedCall()), calls(journalCall()), say('Done.')]);
-    expect(result.run).toMatchObject({ outcome: 'completed', error: null });
-    expect(result.committed!.observationIds).toHaveLength(1);
-    expect(await getTranscript(w.db, result.run.id)).toEqual({
-      error: expect.stringContaining('transcript too large'),
-      note: 'the full transcript could not be stored',
-    });
+    await w.db.run('CREATE TRIGGER no_large_transcripts BEFORE INSERT ON agent_transcripts FOR EACH ROW EXECUTE FUNCTION no_large_transcripts()');
+    try {
+      const result = await run([calls(stakedCall()), calls(journalCall()), say('Done.')]);
+      expect(result.run).toMatchObject({ outcome: 'completed', error: null });
+      expect(result.committed!.observationIds).toHaveLength(1);
+      expect(await getTranscript(w.db, result.run.id)).toEqual({
+        error: expect.stringContaining('transcript too large'),
+        note: 'the full transcript could not be stored',
+      });
+    } finally {
+      await w.db.run('DROP TRIGGER no_large_transcripts ON agent_transcripts');
+      await w.db.run('DROP FUNCTION no_large_transcripts()');
+    }
   });
 
   it('does everything but commit on a dry run', async () => {

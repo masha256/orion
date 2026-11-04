@@ -25,9 +25,14 @@ beforeEach(async () => {
 });
 
 describe('orion cli', () => {
-  it('init creates the home layout and database', () => {
+  it('init creates the home layout and no database file', async () => {
     for (const d of ['assets', 'personas', 'skills']) expect(existsSync(join(home, d))).toBe(true);
-    expect(existsSync(join(home, 'orion.db'))).toBe(true);
+    expect(existsSync(join(home, 'orion.db'))).toBe(false); // the database is Postgres, set up by orion db migrate
+    const fresh = mkdtempSync(join(tmpdir(), 'orion-cli-'));
+    const lines: string[] = [];
+    // no database configured at all: init needs none
+    await buildProgram({ home: fresh, stdout: (l) => lines.push(l), now: () => new Date(AS_OF) }).parseAsync(['init', '--json'], { from: 'user' });
+    expect(JSON.parse(lines.join('\n'))).toEqual({ home: fresh });
   });
 
   it('cli: model, signal and update are unknown commands', async () => {

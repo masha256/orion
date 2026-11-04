@@ -7,13 +7,15 @@ import { buildProgram } from '../../src/cli/program.js';
 import { docLabel, normalizeDocText } from '../../src/db/documents.js';
 import { sha256 } from '../../src/util/canonical.js';
 import { AGENT_ASSET_YAML } from '../helpers/agentWorld.js';
-import { testCliContext } from '../helpers/db.js';
+import { testCliContext, useTestDb } from '../helpers/db.js';
 import { AS_OF } from '../helpers/obs.js';
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/disclosure/lit-q3-2026-call-transcript.txt', import.meta.url));
 const SOURCE_URL = 'https://x.com/Lighter_xyz/status/2113065839352336774';
 const LABEL = (model: string) =>
   `machine transcript (${model}): names and numbers may be misheard; every figure in it is the speaker's dated claim, not a fact`;
+
+useTestDb(); // the file's schema, which the in-process CLI opens
 
 let home: string;
 let exitCode: number | undefined;

@@ -21,14 +21,15 @@ afterAll(async () => {
 const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 
 describe('assetLockKey', () => {
-  it('locks: the key is the first 8 bytes of sha256(orion:<space>:<id>) as a signed int64, one key per space', async () => {
+  it('locks: the key is the first 8 bytes of sha256(orion:<schema>:<space>:<id>) as a signed int64, one key per space and schema', async () => {
     const { createHash } = await import('node:crypto');
-    const expected = createHash('sha256').update('orion:run:aero').digest().readBigInt64BE(0).toString();
-    expect(assetLockKey('run', 'aero')).toBe(expected);
-    expect(assetLockKey('asset', 'aero')).not.toBe(assetLockKey('run', 'aero'));
-    expect(assetLockKey('asset', 'aero')).toMatch(/^-?\d+$/);
-    expect(BigInt(assetLockKey('asset', 'aero'))).toBeGreaterThanOrEqual(-(2n ** 63n));
-    expect(BigInt(assetLockKey('asset', 'aero'))).toBeLessThan(2n ** 63n);
+    const expected = createHash('sha256').update('orion:orion:run:aero').digest().readBigInt64BE(0).toString();
+    expect(assetLockKey('run', 'aero', 'orion')).toBe(expected);
+    expect(assetLockKey('asset', 'aero', 'orion')).not.toBe(assetLockKey('run', 'aero', 'orion'));
+    expect(assetLockKey('run', 'aero', 'orion')).not.toBe(assetLockKey('run', 'aero', 'staging'));
+    expect(assetLockKey('asset', 'aero', 'orion')).toMatch(/^-?\d+$/);
+    expect(BigInt(assetLockKey('asset', 'aero', 'orion'))).toBeGreaterThanOrEqual(-(2n ** 63n));
+    expect(BigInt(assetLockKey('asset', 'aero', 'orion'))).toBeLessThan(2n ** 63n);
   });
 });
 
@@ -72,6 +73,27 @@ describe('locks', () => {
     const after = await other.tryAssetRunLock('aero', 'agent run pid 505');
     expect(after).not.toBeNull();
     await after!.release();
+  });
+
+  it('locks: the same asset in another schema of the database has its own run lock and transaction lock', async () => {
+    const elsewhere = await createTestSchema({ migrate: false });
+    const there = await openPgDb(elsewhere);
+    try {
+      const here = await db.tryAssetRunLock('aero', 'tick pid 808');
+      expect(here).not.toBeNull();
+      expect(await there.assetRunLockHolder('aero')).toBeNull();
+      const theirs = await there.tryAssetRunLock('aero', 'tick pid 909');
+      expect(theirs).not.toBeNull();
+      // and a transaction lock held here does not block one there
+      await db.tx(async () => {
+        await there.tx(async () => undefined, { lockAsset: 'aero' });
+      }, { lockAsset: 'aero' });
+      await theirs!.release();
+      await here!.release();
+    } finally {
+      await there.close();
+      await dropTestSchema(elsewhere);
+    }
   });
 
   it('locks: the run lock and a write transaction on the same asset do not block each other', async () => {

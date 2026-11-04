@@ -14,10 +14,11 @@ function tsFiles(dir: string): string[] {
     .map((f) => join(dir, f));
 }
 
+/** Every exported async function under src/db, subdirectories (src/db/pg) included. */
 function asyncDbFunctions(): string[] {
   const names = new Set<string>();
-  for (const f of readdirSync(join(root, 'src/db')).filter((n) => n.endsWith('.ts'))) {
-    for (const m of readFileSync(join(root, 'src/db', f), 'utf8').matchAll(/export async function (\w+)/g)) names.add(m[1]);
+  for (const f of tsFiles('src/db')) {
+    for (const m of readFileSync(join(root, f), 'utf8').matchAll(/export async function (\w+)/g)) names.add(m[1]);
   }
   return [...names].sort();
 }
@@ -28,10 +29,11 @@ describe('await guard', () => {
   it('every call of an async db function is awaited, returned or chained', () => {
     const names = asyncDbFunctions();
     expect(names).toContain('insertObservation');
+    for (const pg of ['openDb', 'openPgDb', 'migrationStatus', 'applyMigrations']) expect(names).toContain(pg); // src/db/pg and connection.ts
     const call = new RegExp(`(?<![\\w$.])(${names.join('|')})\\(`);
     const definition = new RegExp(`function (${names.join('|')})\\(`);
     const bad: string[] = [];
-    for (const file of [...tsFiles('src'), ...tsFiles('tests')]) {
+    for (const file of [...tsFiles('src'), ...tsFiles('tests'), ...tsFiles('tools')]) {
       const lines = readFileSync(join(root, file), 'utf8').split('\n');
       lines.forEach((line, i) => {
         if (!call.test(line)) return;

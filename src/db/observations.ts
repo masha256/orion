@@ -75,8 +75,7 @@ const ACTIVE = "superseded_by IS NULL AND status != 'rejected'";
 
 export async function getObservationsByIds(db: Db, ids: number[]): Promise<Observation[]> {
   if (ids.length === 0) return [];
-  const marks = ids.map((_, i) => `$${i + 1}`).join(',');
-  const rows = await db.all<Row>(`SELECT * FROM observations WHERE id IN (${marks}) ORDER BY id`, ids);
+  const rows = await db.all<Row>('SELECT * FROM observations WHERE id = ANY($1::bigint[]) ORDER BY id', [ids]);
   return rows.map(fromRow);
 }
 

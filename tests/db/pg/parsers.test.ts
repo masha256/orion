@@ -63,6 +63,13 @@ describe('parsers', () => {
     }
   });
 
+  it('parsers: SUM/AVG over a bigint is numeric, which stays a string; a cast makes it a Number (count(*) is int8 already)', async () => {
+    const row = await db.one<Record<string, unknown>>(
+      'SELECT sum(x) AS s, avg(x) AS a, sum(x)::float8 AS sf, avg(x)::float8 AS af, sum(x)::bigint AS sb, count(*) AS n FROM (VALUES (1::bigint), (2::bigint)) v(x)',
+    );
+    expect(row).toEqual({ s: '3', a: '1.5000000000000000', sf: 3, af: 1.5, sb: 3, n: 2 });
+  });
+
   it('parsers: are set on the pool, not on the global pg.types', async () => {
     const pg = (await import('pg')).default;
     expect(pg.types.getTypeParser(20, 'text')('9007199254740993')).toBe('9007199254740993');

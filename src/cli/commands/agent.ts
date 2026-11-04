@@ -93,7 +93,7 @@ export function registerAgent(program: Command, ctx: CliContext): void {
             runAgent(db, loaded, { runType, anomalyId, note: opts.note, dryRun: opts.dryRun, docId, assetYaml }, {
               home: ctx.home, now: ctx.now, modelClient: () => modelClientFor(ctx), reload: () => loadAsset(ctx.home, assetId),
             })
-          , { onReleaseError: (err) => ctx.stderr?.(`warning: the run lock could not be released (${err instanceof Error ? err.message : String(err)}); it expires on its own`) }),
+          , { onReleaseError: (err) => ctx.stderr?.(`warning: the run lock could not be released (${err instanceof Error ? err.message : String(err)}); it goes when the lock connection ends`) }),
         );
         output(ctx, opts.json, result, () => [
           runLine(result.run),
@@ -114,7 +114,7 @@ export function registerAgent(program: Command, ctx: CliContext): void {
     .action((assetId: string | undefined, opts: { limit?: string; json?: boolean }) =>
       guarded(ctx, opts.json, async () => {
         const limit = opts.limit === undefined ? 20 : parseNumber(opts.limit, '--limit');
-        // SQLite reads a negative LIMIT as "no limit": refuse it here rather than return every row.
+        // A negative LIMIT is an error in Postgres (and was "no limit" in SQLite): refuse it here with a clear message.
         if (!Number.isInteger(limit) || limit < 1) throw new OrionError('invalid_limit', `--limit must be a positive whole number, got ${opts.limit}`);
         const list = await withDb(ctx, (db) => listAgentRuns(db, { assetId, limit }));
         output(ctx, opts.json, list, () => (list.length === 0 ? ['no agent runs'] : list.map(runLine)));

@@ -106,13 +106,16 @@ export async function listFetchRuns(db: Db, assetId: string, limit: number): Pro
  * attempted neither extends nor breaks a failure streak.
  */
 export async function recentSourceStatuses(db: Db, assetId: string, sourceId: string, limit: number): Promise<SourceStatus[]> {
-  const out: SourceStatus[] = [];
-  const rows = await db.all<Row>('SELECT * FROM fetch_runs WHERE asset_id = $1 ORDER BY id DESC', [assetId]);
-  for (const row of rows) {
-    const entry = fromRow(row).detail.sources.find((s) => s.sourceId === sourceId);
-    if (!entry || entry.status === 'skipped') continue;
-    out.push(entry.status);
-    if (out.length >= limit) break;
-  }
-  return out;
+  // Per run, the first entry for the source (by position in detail_json.sources); a run whose first entry is skipped
+  // is passed over, as is a run without the source.
+  const rows = await db.all<{ status: SourceStatus }>(
+    `SELECT status FROM (
+       SELECT DISTINCT ON (f.id) f.id, s.e->>'status' AS status
+       FROM fetch_runs f, json_array_elements(f.detail_json->'sources') WITH ORDINALITY AS s(e, ord)
+       WHERE f.asset_id = $1 AND s.e->>'sourceId' = $2
+       ORDER BY f.id DESC, s.ord) firsts
+     WHERE status <> 'skipped' ORDER BY id DESC LIMIT $3`,
+    [assetId, sourceId, limit],
+  );
+  return rows.map((r) => r.status);
 }

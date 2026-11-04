@@ -1,3 +1,9 @@
+import type Database from 'better-sqlite3';
+
+/**
+ * The SQLite schema history (migrations 1-8), moved from src/db/migrations.ts when Orion moved to Postgres (Phase
+ * 1.5b). Dev-only: the importer and the schema comparison test build a SQLite database at schema 8 with `migrate`.
+ */
 /** `rebuildsTables`: the migration drops a table other tables reference, so it runs with foreign keys off and is checked after (see migrate). */
 export const MIGRATIONS: { id: number; sql: string; rebuildsTables?: boolean }[] = [
   {
@@ -376,3 +382,29 @@ ALTER TABLE journal ADD COLUMN catalysts_json TEXT;
 `,
   },
 ];
+
+/** Applies every migration the SQLite database lacks, as `openDb` did before Postgres. */
+export function migrate(db: Database.Database): void {
+  db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)');
+  const applied = new Set(
+    db.prepare('SELECT id FROM schema_migrations').all().map((r) => (r as { id: number }).id),
+  );
+  for (const m of MIGRATIONS) {
+    if (applied.has(m.id)) continue;
+    // A table rebuild drops a table that other tables reference. Foreign keys go off around it (the pragma is a no-op
+    // inside a transaction, so it is set outside), and the rebuilt schema is checked before they come back on.
+    if (m.rebuildsTables) db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(m.sql);
+        if (m.rebuildsTables) {
+          const violations = db.pragma('foreign_key_check') as unknown[];
+          if (violations.length > 0) throw new Error(`migration ${m.id} left ${violations.length} foreign key violation(s); rolled back`);
+        }
+        db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(m.id, new Date().toISOString());
+      })();
+    } finally {
+      if (m.rebuildsTables) db.pragma('foreign_keys = ON');
+    }
+  }
+}

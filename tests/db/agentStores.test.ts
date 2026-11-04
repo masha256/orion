@@ -8,7 +8,7 @@ import type { Db } from '../../src/db/connection.js';
 import { assignPersona, getCoverage, listCoverage } from '../../src/db/coverage.js';
 import { insertJournalEntry, listJournal } from '../../src/db/journal.js';
 import {
-  decideProposal, findPendingDuplicate, getProposal, insertProposal, listProposals, recentlyDecidedProposals, type NewProposal,
+  decideProposal, findPendingDuplicate, getProposal, insertProposal, listProposals, recentlyDecidedProposals, type NewProposal, type ProposalChange,
 } from '../../src/db/proposals.js';
 import type { OrionError } from '../../src/types.js';
 import { useTestDb } from '../helpers/db.js';
@@ -105,7 +105,7 @@ describe('agent runs', () => {
 describe('proposals', () => {
   const proposal = (over: Partial<NewProposal> = {}): NewProposal => ({
     assetId: 'mini', persona: 'analyst', agentRunId: null,
-    change: { kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 0.4 },
+    change: { kind: 'config', edits: [{ path: ['reporting', 'window_days'], value: 91 }] },
     filedAgainst: { value: 0 }, rationale: 'usage is accelerating', evidence: [3, 5],
     effect: { '6m': { from: 10, to: 11 }, '12m': { from: 10, to: 12 } }, createdAt: '2026-09-20T00:00:00Z', ...over,
   });
@@ -113,7 +113,7 @@ describe('proposals', () => {
   it('round-trips a proposal and lists pending ones newest first', async () => {
     const p = await insertProposal(db, proposal());
     expect(p).toMatchObject({ status: 'pending', evidence: [3, 5], decidedAt: null, decisionNote: null, createdAt: '2026-09-20T00:00:00.000Z' });
-    expect(p.change).toEqual({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 0.4 });
+    expect(p.change).toEqual({ kind: 'config', edits: [{ path: ['reporting', 'window_days'], value: 91 }] });
     expect(await getProposal(db, p.id)).toEqual(p);
     // Key order survives storage: a config edit's value is written into the YAML as the author ordered it.
     const band = await insertProposal(db, proposal({ change: { kind: 'config', edits: [{ path: ['assumptions', 'x', 'base'], value: { min: 0, max: 2 } }] } }));
@@ -125,16 +125,16 @@ describe('proposals', () => {
 
   it('finds a pending duplicate whatever the key order, and stops finding it once decided', async () => {
     const p = await insertProposal(db, proposal());
-    const sameChange = { value: 0.4, scenario: 'base', key: 'rev_growth_y1', kind: 'assumption_value' } as const;
+    const sameChange: ProposalChange = { edits: [{ value: 91, path: ['reporting', 'window_days'] }], kind: 'config' };
     expect((await findPendingDuplicate(db, 'mini', sameChange))!.id).toBe(p.id);
-    expect(await findPendingDuplicate(db, 'mini', { ...sameChange, value: 0.5 })).toBeNull();
+    expect(await findPendingDuplicate(db, 'mini', { ...sameChange, edits: [{ path: ['reporting', 'window_days'], value: 92 }] })).toBeNull();
     await decideProposal(db, p.id, 'rejected', 'not yet', '2026-09-21T00:00:00Z');
     expect(await findPendingDuplicate(db, 'mini', sameChange)).toBeNull();
   });
 
   it('decides once, keeps the note, and reports decided proposals newest decision first', async () => {
     const p = await insertProposal(db, proposal());
-    const q = await insertProposal(db, proposal({ change: { kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'bull', value: 1 } }));
+    const q = await insertProposal(db, proposal({ change: { kind: 'config', edits: [{ path: ['reporting', 'window_days'], value: 120 }] } }));
     await decideProposal(db, q.id, 'approved', '  ', '2026-09-21T00:00:00Z');
     const rejected = await decideProposal(db, p.id, 'rejected', ' wait for the Q3 disclosure ', '2026-09-22T00:00:00Z');
     expect(rejected).toMatchObject({ status: 'rejected', decisionNote: 'wait for the Q3 disclosure', decidedAt: '2026-09-22T00:00:00.000Z' });
@@ -156,7 +156,7 @@ describe('proposals', () => {
     expect((await getProposal(db, cited.id))!.citations).toEqual(citations);
     const raw = async (id: number) => (await db.one<{ citations_json: string | null }>('SELECT citations_json FROM proposals WHERE id = $1', [id]))!.citations_json;
     expect(JSON.parse((await raw(cited.id))!)).toEqual(citations);
-    const bare = await insertProposal(db, proposal({ change: { kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'bull', value: 1 }, citations: [] }));
+    const bare = await insertProposal(db, proposal({ change: { kind: 'config', edits: [{ path: ['reporting', 'window_days'], value: 120 }] }, citations: [] }));
     expect(await raw(bare.id)).toBeNull();
   });
 

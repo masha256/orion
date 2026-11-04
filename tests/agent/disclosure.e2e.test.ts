@@ -80,11 +80,12 @@ let before: Record<string, number>;
 let after: Record<string, number>;
 const flowIds: Record<string, { first_id: number; last_id: number }> = {};
 
-/** The database of CLI home `h`, as the CLI sees it. */
-const withDb = async <T>(h: string, fn: (db: Db) => Promise<T> | T): Promise<T> => {
-  testCliContext(h);
-  return await fn(testDb());
-};
+/**
+ * The database the CLI for home `h` opens: the file's one schema, whatever the home. The beforeAll below seeds it once
+ * and captures everything the first describe asserts on (`result`, `before`, `after`), because every test then starts on
+ * emptied tables.
+ */
+const withDb = async <T>(_h: string, fn: (db: Db) => Promise<T> | T): Promise<T> => await fn(testDb());
 
 async function orion(h: string, ...args: string[]): Promise<string> {
   const lines: string[] = [];
@@ -345,6 +346,9 @@ describe('approving the config proposal on a copy of assets/lit.yaml', () => {
     home2 = h2;
     await orion(h2, 'init');
     writeFileSync(join(h2, 'assets/lit.yaml'), preApprovalLitYaml());
+    // The beforeAll seed is gone: every test starts on emptied tables (tests/helpers/db.ts), and this one needs none of
+    // it (the dry run's results were captured in beforeAll), as it needed none of it on its own SQLite file before.
+    expect(await counts(h2)).toEqual({ proposals: 0, journal: 0, observations: 0, documents: 0, agent_runs: 0 });
 
     const approved = await withDb(h2, async (db) => {
       const filed = await insertProposal(db, {

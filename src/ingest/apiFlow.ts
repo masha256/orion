@@ -186,9 +186,8 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
     // The cursor never moves backwards; lastBlock is meaningless for an API series.
     if (!dryRun && newest !== null) await advanceCursor(h, asset.id, args.scanKey, { lastBlock: 0, lastDay: newest }, nowIso);
   };
-  // IMMEDIATE: each insert reads for rows to supersede before it writes. A deferred transaction takes the write lock
-  // only at its first write, and another connection's commit in between fails it with SQLITE_BUSY_SNAPSHOT, which
-  // busy_timeout cannot retry; taking the lock at BEGIN makes the other connection wait instead.
+  // Under the asset's transaction lock: each insert reads for rows to supersede before it writes, so another
+  // connection's write to the asset waits for this commit instead of landing in between.
   if (dryRun) await writeDays(db);
   else await db.tx(async (t) => writeDays(t), { lockAsset: asset.id });
   outcome.retiredObservationIds.push(...retired); // after the commit: a rolled-back transaction retired nothing

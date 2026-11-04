@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate, type DatabaseConfig } from '../../../src/db/connection.js';
+import type { DatabaseConfig } from '../../../src/db/connection.js';
 import { openPgDb, type PgDb } from '../../../src/db/pg/pool.js';
+import { migrate } from '../../../tools/import-sqlite/sqliteMigrations.js';
 import { createTestSchema, dropTestSchema, MISSING_URL_MESSAGE, requireTestDatabaseUrl } from '../../setup/pgGlobal.js';
 
 const CARRIED = [
@@ -43,7 +44,7 @@ afterAll(async () => {
 
 describe('baseline', () => {
   it('baseline: every table\'s columns match the SQLite schema 8 in name and order', async () => {
-    // SQLite at schema 8, built from src/db/migrations.ts (raw better-sqlite3: this is a schema comparison, not app data)
+    // SQLite at schema 8, built from tools/import-sqlite/sqliteMigrations.ts (raw better-sqlite3: this is a schema comparison, not app data)
     const lite = new Database(':memory:');
     try {
       migrate(lite);
@@ -108,11 +109,15 @@ describe('setup', () => {
   it('setup: an unset ORION_TEST_DATABASE_URL fails with the message above', () => {
     expect(MISSING_URL_MESSAGE).toBe(
       'ORION_TEST_DATABASE_URL is not set: the suite needs the local test Postgres (scripts/provision/dev-postgres.sh); ' +
-        'e.g. postgresql:///orion_test?host=/var/run/postgresql',
+        'e.g. postgresql://orion_dev@/orion_test?host=/var/run/postgresql',
     );
     expect(() => requireTestDatabaseUrl({})).toThrow(MISSING_URL_MESSAGE);
     expect(() => requireTestDatabaseUrl({ ORION_TEST_DATABASE_URL: '' })).toThrow(MISSING_URL_MESSAGE);
     expect(requireTestDatabaseUrl({ ORION_TEST_DATABASE_URL: 'postgresql://u@/d' })).toBe('postgresql://u@/d');
+  });
+
+  it('setup: sessions on the test database skip the WAL flush wait (synchronous_commit off, set by the global setup)', async () => {
+    expect(await db.one('SHOW synchronous_commit')).toEqual({ synchronous_commit: 'off' });
   });
 
   it('setup: a test schema is t_<16 hex>, carries its creation time, and is dropped', async () => {

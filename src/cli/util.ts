@@ -1,6 +1,5 @@
-import { join } from 'node:path';
 import { anthropicModelClient, type ModelClient } from '../agent/model.js';
-import { openDb, type Db } from '../db/connection.js';
+import { databaseConfig, openDb, type DatabaseConfig, type OrionDb } from '../db/connection.js';
 import { realFetchDeps } from '../ingest/deps.js';
 import type { FetchDeps, FetchResult } from '../ingest/run.js';
 import { OrionError } from '../types.js';
@@ -17,6 +16,8 @@ export interface CliContext {
   setExitCode?: (code: number) => void;
   /** The model behind `orion agent run`. Tests inject a scripted model; by default the real client is built from the environment. */
   modelClient?: () => ModelClient;
+  /** The database. Tests pass their schema; by default it is read from the environment (`databaseConfig`). */
+  database?: DatabaseConfig;
 }
 
 export function modelClientFor(ctx: CliContext): ModelClient {
@@ -37,17 +38,21 @@ export async function guarded(ctx: CliContext, json: boolean | undefined, action
   }
 }
 
-export function dbPath(ctx: CliContext): string {
-  return join(ctx.home, 'orion.db');
+/** The command's database: the context's, else `ORION_DATABASE_URL` / `ORION_DB_SCHEMA` from the environment over `<home>/.env`. */
+export function databaseFor(ctx: CliContext): DatabaseConfig {
+  return ctx.database ?? databaseConfig(loadEnv(ctx.home, process.env));
 }
 
 export function ingestDepsFor(ctx: CliContext): FetchDeps {
   return ctx.ingestDeps ? ctx.ingestDeps() : realFetchDeps(loadEnv(ctx.home, process.env), ctx.now);
 }
 
-/** Opens the database for one command, and closes it once `fn` has settled, whether it resolved or threw. */
-export async function withDb<T>(ctx: CliContext, fn: (db: Db) => Promise<T> | T): Promise<T> {
-  const db = openDb(dbPath(ctx));
+/**
+ * Opens the database for one command (a pool of one), and closes it once `fn` has settled, whether it resolved or
+ * threw. A schema behind the code is refused (`schema_behind`) before `fn` runs; `checkSchema: false` is for `orion db`.
+ */
+export async function withDb<T>(ctx: CliContext, fn: (db: OrionDb) => Promise<T> | T, opts: { checkSchema?: boolean } = {}): Promise<T> {
+  const db = await openDb(databaseFor(ctx), { max: 1, checkSchema: opts.checkSchema });
   try {
     return await fn(db);
   } finally {

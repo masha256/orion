@@ -3,12 +3,11 @@ import { REPORT_STALE_DAYS, tickAsset, type TickDeps, type TickResult } from '..
 import { summarizeHolderYield, TickReportSchema } from '../../src/app/tickReport.js';
 import { parseAssetYaml, type LoadedAsset } from '../../src/config/load.js';
 import { raiseAnomaly } from '../../src/db/anomalies.js';
-import type { Db, SqlParam } from '../../src/db/connection.js';
+import { openDb, type OrionDb } from '../../src/db/connection.js';
 import { insertObservation } from '../../src/db/observations.js';
-import { acquireRunLock, getRunLock } from '../../src/db/runLocks.js';
 import { addDays } from '../../src/ingest/time.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
-import { testDbPair, useTestDb } from '../helpers/db.js';
+import { testDatabaseConfig, testDbPair, useTestDb } from '../helpers/db.js';
 import { GENESIS_TS, harness, NOW, type Harness } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML, POOL } from '../helpers/ingestAsset.js';
 import { watchAssetYaml } from '../helpers/watchAsset.js';
@@ -21,10 +20,13 @@ const testDb = useTestDb();
 const pair = testDbPair();
 
 let h: Harness;
+/** The harness's database, as the root handle a tick takes its run lock on. */
+let hdb: OrionDb;
 let progress: string[];
 
-function world({ db = testDb(), ...over }: Parameters<typeof harness>[1] & { db?: Db } = {}) {
+function world({ db = testDb(), ...over }: Parameters<typeof harness>[1] & { db?: OrionDb } = {}) {
   h = harness(db, { loaded: reportAsset(), ...over });
+  hdb = db;
   progress = [];
 }
 
@@ -37,7 +39,7 @@ async function seedFees(lastDay: string, days: number, value: number, metricKey 
 }
 
 const deps = (over: Partial<TickDeps> = {}): TickDeps => ({ home: '/nonexistent', now: h.deps.now, fetchDeps: h.deps, onProgress: (l) => progress.push(l), ...over });
-const tick = (over: Partial<TickDeps> = {}, db: Db = h.db): Promise<TickResult> => tickAsset(db, h.loaded, deps(over));
+const tick = (over: Partial<TickDeps> = {}, db: OrionDb = hdb): Promise<TickResult> => tickAsset(db, h.loaded, deps(over));
 const agentRuns = async (): Promise<number> => (await h.db.one<{ n: number }>('SELECT COUNT(*) AS n FROM agent_runs'))!.n;
 
 beforeEach(() => world());
@@ -67,7 +69,7 @@ describe('tickAsset', () => {
     const { report, exitCode } = await tick({ fetchDeps: { ...h.deps, env: {} } });
     expect(exitCode).toBe(1);
     expect(report).toMatchObject({ outcome: 'error', error: { code: 'missing_rpc_url' }, ingest: null, holder_yield: null, report_error: null });
-    expect(await getRunLock(h.db, 'mini')).toBeNull(); // released on the error path too
+    expect(await hdb.assetRunLockHolder('mini')).toBeNull(); // released on the error path too
     expect(TickReportSchema.parse(report)).toEqual(report);
   });
 
@@ -130,13 +132,33 @@ describe('tickAsset', () => {
   it('tick: lock held -> outcome run_in_progress, exit 0, lock.holder set', async () => {
     const [A, B] = pair();
     world({ db: A });
-    await acquireRunLock(B, 'mini', 'agent run pid 42', NOW.toISOString());
+    const held = await B.tryAssetRunLock('mini', 'agent run pid 42');
+    try {
+      const since = (await A.assetRunLockHolder('mini'))!.since;
+      const { report, exitCode } = await tick();
+      expect(exitCode).toBe(0);
+      expect(report).toMatchObject({ outcome: 'run_in_progress', lock: { holder: 'agent run pid 42', acquired_at: since }, ingest: null, holder_yield: null, report_error: null, error: null });
+      expect(progress).toEqual([`asset mini is locked by agent run pid 42 since ${since}`]);
+      expect((await A.assetRunLockHolder('mini'))!.holder).toBe('agent run pid 42'); // not ours to release
+      expect(TickReportSchema.parse(report)).toEqual(report);
+    } finally {
+      await held!.release();
+    }
+  });
+
+  it('tick: after a killed holder, the next tick takes the lock and marks its orphaned agent run abandoned', async () => {
+    const run = await hdb.one<{ id: number }>(
+      "INSERT INTO agent_runs (asset_id, persona, run_type, trigger_kind, trigger_detail_json, outcome, config_hash, model, started_at) VALUES ('mini', 'p', 'deep', 'schedule', '{}', 'running', 'x', 'm', $1) RETURNING id",
+      [NOW.toISOString()],
+    );
+    const dying = await openDb(testDatabaseConfig());
+    await dying.tryAssetRunLock('mini', 'agent run pid 42');
+    await dying.close(); // the holder's process is gone: its connection, and the lock with it
     const { report, exitCode } = await tick();
     expect(exitCode).toBe(0);
-    expect(report).toMatchObject({ outcome: 'run_in_progress', lock: { holder: 'agent run pid 42', acquired_at: NOW.toISOString() }, ingest: null, holder_yield: null, report_error: null, error: null });
-    expect(progress).toEqual(['asset mini is locked by agent run pid 42 since 2026-09-19T12:00:00.000Z']);
-    expect((await getRunLock(A, 'mini'))!.holder).toBe('agent run pid 42'); // not ours to release
-    expect(TickReportSchema.parse(report)).toEqual(report);
+    expect(report.outcome).toBe('completed');
+    expect(progress).toContain('1 orphaned run(s) of a process that is gone marked abandoned');
+    expect(await hdb.one('SELECT outcome, error FROM agent_runs WHERE id = $1', [run!.id])).toEqual({ outcome: 'error', error: 'abandoned' });
   });
 
   it('tick: an open anomaly starts nothing', async () => {
@@ -157,23 +179,26 @@ describe('tickAsset', () => {
 
   it('holds the lock while it ingests and releases it after', async () => {
     let heldDuringFetch: string | null = null;
-    const { report } = await tick({ onFetch: async () => { heldDuringFetch = (await getRunLock(h.db, 'mini'))?.holder ?? null; } });
+    const { report } = await tick({ onFetch: async () => { heldDuringFetch = (await hdb.assetRunLockHolder('mini'))?.holder ?? null; } });
     expect(report.outcome).toBe('completed');
     expect(heldDuringFetch).toBe(`tick pid ${process.pid}`);
-    expect(await getRunLock(h.db, 'mini')).toBeNull();
+    expect(await hdb.assetRunLockHolder('mini')).toBeNull();
   });
 
   it('reports a lock release that fails, and the report is unaffected', async () => {
-    const proxy = new Proxy(h.db, {
+    // The run lock's release fails (the unlock query errors on a live connection).
+    const proxy = new Proxy(hdb, {
       get(target, prop) {
-        const v = Reflect.get(target, prop);
-        if (prop !== 'run') return typeof v === 'function' ? v.bind(target) : v;
-        return async (sql: string, params?: readonly SqlParam[]) => {
-          if (sql.startsWith('DELETE FROM run_locks')) throw new Error('simulated: database is locked');
-          return target.run(sql, params);
-        };
+        if (prop === 'tryAssetRunLock') {
+          return async (assetId: string, holder: string) => {
+            const lock = await target.tryAssetRunLock(assetId, holder);
+            return lock && { release: async () => { await lock.release(); throw new Error('simulated: the unlock failed'); } };
+          };
+        }
+        const v = Reflect.get(target, prop) as unknown;
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
       },
-    }) as Db;
+    });
     const { report, exitCode } = await tick({}, proxy);
     expect(report.outcome).toBe('completed');
     expect(exitCode).toBe(0);

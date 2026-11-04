@@ -1,6 +1,5 @@
 import type { LoadedAsset } from '../config/load.js';
-import type { Db } from '../db/connection.js';
-import { getRunLock } from '../db/runLocks.js';
+import type { OrionDb } from '../db/connection.js';
 import { fetchAsset, type FetchDeps, type FetchResult } from '../ingest/run.js';
 import { dayStartMs, utcDay } from '../ingest/time.js';
 import { loadHolderYieldReport } from '../report/load.js';
@@ -51,7 +50,7 @@ const errorOf = (err: unknown): { code: string; message: string } =>
  * the latest complete day, unlock, then the inbox. No agent run, ever. The report is the answer, whatever happened; only
  * a bug escapes as a throw.
  */
-export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps): Promise<TickResult> {
+export async function tickAsset(db: OrionDb, loaded: LoadedAsset, deps: TickDeps): Promise<TickResult> {
   const asset = loaded.config;
   const started = deps.now();
   const report: TickReport = {
@@ -96,14 +95,14 @@ export async function tickAsset(db: Db, loaded: LoadedAsset, deps: TickDeps): Pr
         deps.onProgress?.(`report stale: ${report.report_error.message}`);
       }
     }, {
-      onTakeover: (n) => deps.onProgress?.(`took over an expired run lock; ${n} stuck run(s) marked abandoned`),
-      onReleaseError: (err) => deps.onProgress?.(`warning: the run lock could not be released (${message(err)}); the next tick finds it held until it expires`),
+      onTakeover: (n) => deps.onProgress?.(`${n} orphaned run(s) of a process that is gone marked abandoned`),
+      onReleaseError: (err) => deps.onProgress?.(`warning: the run lock could not be released (${message(err)}); it goes when this process's lock connection ends`),
     });
   } catch (err) {
     if (!(err instanceof OrionError) || err.code !== 'run_in_progress') throw err;
-    const lock = await getRunLock(db, asset.id);
+    const lock = await db.assetRunLockHolder(asset.id);
     report.outcome = 'run_in_progress';
-    report.lock = lock ? { holder: lock.holder, acquired_at: lock.acquiredAt } : { holder: 'unknown', acquired_at: started.toISOString() };
+    report.lock = lock ? { holder: lock.holder, acquired_at: lock.since } : { holder: 'unknown', acquired_at: started.toISOString() };
     deps.onProgress?.(err.message);
   }
 

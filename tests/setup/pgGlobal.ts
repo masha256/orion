@@ -12,7 +12,7 @@ import { openPgDb } from '../../src/db/pg/pool.js';
 
 export const MISSING_URL_MESSAGE =
   'ORION_TEST_DATABASE_URL is not set: the suite needs the local test Postgres (scripts/provision/dev-postgres.sh); ' +
-  'e.g. postgresql:///orion_test?host=/var/run/postgresql';
+  'e.g. postgresql://orion_dev@/orion_test?host=/var/run/postgresql';
 
 const STALE_MS = 6 * 60 * 60 * 1000;
 const TEST_SCHEMA = /^t_[0-9a-f]{16}$/;
@@ -41,6 +41,12 @@ export default async function setup(): Promise<void> {
   await withClient(async (c) => {
     const version = Number((await c.query<{ v: string }>("SELECT current_setting('server_version_num') AS v")).rows[0]!.v);
     if (version < 180000) throw new Error(`the test Postgres is version ${version}; the suite needs 18 or later`);
+    // The suite commits tens of thousands of small transactions, and each one waiting for its WAL flush made the ingest
+    // tests fsync-bound (4 s for one LINK fetch on this host's disk, past vitest's 5 s timeout under load). A test
+    // database needs no durability: new sessions on it skip the flush wait. (The database's owner may set this; the
+    // provisioning script makes orion_dev the owner of orion_test.) Production pools never see this setting.
+    const db = (await c.query<{ d: string }>('SELECT current_database() AS d')).rows[0]!.d;
+    await c.query(`ALTER DATABASE "${db.replace(/"/g, '""')}" SET synchronous_commit = off`);
     const schemas = await c.query<{ name: string; comment: string | null }>(
       "SELECT nspname AS name, obj_description(oid, 'pg_namespace') AS comment FROM pg_namespace WHERE nspname LIKE 't\\_%'",
     );

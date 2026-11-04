@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { TickReport } from '../../src/app/tickReport.js';
 import { buildProgram } from '../../src/cli/program.js';
-import { acquireRunLock } from '../../src/db/runLocks.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
 import { testCliContext, useTestDb } from '../helpers/db.js';
 import { harness, NOW } from '../helpers/fetchHarness.js';
@@ -78,11 +77,15 @@ describe('orion tick', () => {
   });
 
   it('exits 0 with run_in_progress when the asset is locked, and writes only the report', async () => {
-    await acquireRunLock(testDb(), 'mini', 'agent run pid 7', NOW.toISOString());
-    const report = JSON.parse(await orion('tick', 'mini')) as TickReport;
-    expect(report).toMatchObject({ outcome: 'run_in_progress', lock: { holder: 'agent run pid 7' }, ingest: null, holder_yield: null });
-    expect(exitCodes).toEqual([]);
-    expect(existsSync(join(home, 'signals.jsonl'))).toBe(false);
-    expect(lines('ticks.jsonl')).toHaveLength(1);
+    const held = await testDb().tryAssetRunLock('mini', 'agent run pid 7');
+    try {
+      const report = JSON.parse(await orion('tick', 'mini')) as TickReport;
+      expect(report).toMatchObject({ outcome: 'run_in_progress', lock: { holder: 'agent run pid 7' }, ingest: null, holder_yield: null });
+      expect(exitCodes).toEqual([]);
+      expect(existsSync(join(home, 'signals.jsonl'))).toBe(false);
+      expect(lines('ticks.jsonl')).toHaveLength(1);
+    } finally {
+      await held!.release();
+    }
   });
 });

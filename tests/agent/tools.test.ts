@@ -5,6 +5,7 @@ import { eligibleObservations, valueInForce } from '../../src/app/eligibility.js
 import { TRANSCRIPT_WINDOW } from '../../src/agent/guardrails.js';
 import { confirmObservation, insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { insertProposal } from '../../src/db/proposals.js';
+import type { OrionDb, SqlParam } from '../../src/db/connection.js';
 import { AGENT_ASSET_YAML, agentWorld, DOC_CITE, PAGE_URL, QUOTE, STAKED_QUOTE, type AgentWorld } from '../helpers/agentWorld.js';
 import { sha256 } from '../../src/util/canonical.js';
 import { AS_OF } from '../helpers/obs.js';
@@ -361,6 +362,40 @@ describe('propose_change', () => {
     expect((await propose({ kind: 'acknowledge_anomaly', anomaly_id: open.id, evidence: [w.ids.revenue_run_rate_usd] })).result.refused).toBe('evidence_not_shown');
     await seeRevenue();
     expect((await propose({ kind: 'acknowledge_anomaly', anomaly_id: open.id, evidence: [w.ids.revenue_run_rate_usd] })).isError).toBe(false);
+  });
+
+  it('evidence: reads only cited ids that were shown, and refuses more than 200 ids before reading any', async () => {
+    // The ids are the model's: an unshown id is refused without a database read, and a huge list never becomes a query.
+    await testDb.reset();
+    const idReads: SqlParam[] = [];
+    const db = testDb();
+    const spy = new Proxy(db, {
+      get(target, prop) {
+        const v = Reflect.get(target, prop) as unknown;
+        if (prop === 'all') {
+          return async (sql: string, params: readonly SqlParam[] = []) => {
+            if (/id = ANY/.test(sql)) idReads.push(...params);
+            return target.all(sql, params);
+          };
+        }
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    }) as OrionDb;
+    w = await agentWorld(spy);
+    const open = await anomaly('degrading', 'a');
+    const shownId = await seeRevenue();
+    idReads.length = 0;
+    const r = await w.call('resolve_anomaly', { id: open.id, note: 'n', evidence: [shownId, 99_999, 88_888] });
+    expect(r.result).toMatchObject({ refused: 'evidence_not_shown', ids: [99_999, 88_888] });
+    expect(JSON.stringify(idReads)).not.toMatch(/99999|88888/);
+    const many = Array.from({ length: 201 }, (_, i) => shownId + i);
+    idReads.length = 0;
+    expect(await w.call('resolve_anomaly', { id: open.id, note: 'n', evidence: many })).toMatchObject({
+      isError: true, result: { refused: 'invalid_input', message: 'cite at most 200 observation ids as evidence (got 201)' },
+    });
+    expect(idReads).toEqual([]);
+    expect(await w.call('resolve_anomaly', { id: open.id, note: 'n', evidence: [shownId] })).toMatchObject({ isError: false });
+    expect(JSON.stringify(idReads)).toContain(String(shownId));
   });
 
   it('refuses a duplicate of a pending or a staged proposal, and stops at the run\'s proposal budget', async () => {

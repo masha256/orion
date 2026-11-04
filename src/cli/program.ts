@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { registerAgent } from './commands/agent.js';
 import { registerAsset } from './commands/asset.js';
 import { registerData } from './commands/data.js';
+import { registerDb } from './commands/db.js';
 import { registerDoc } from './commands/doc.js';
 import { registerInbox } from './commands/inbox.js';
 import { registerInit } from './commands/init.js';
@@ -22,6 +23,7 @@ export function buildProgram(ctx: CliContext): Command {
       writeErr: (s) => ctx.stdout(s.trimEnd()),
     });
   registerInit(program, ctx);
+  registerDb(program, ctx);
   registerAsset(program, ctx);
   registerData(program, ctx);
   registerProposals(program, ctx);

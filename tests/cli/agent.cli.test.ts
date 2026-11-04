@@ -8,7 +8,6 @@ import { raiseAnomaly } from '../../src/db/anomalies.js';
 import type { Db } from '../../src/db/connection.js';
 import { insertDocument } from '../../src/db/documents.js';
 import { insertProposal, type ProposalChange } from '../../src/db/proposals.js';
-import { acquireRunLock, getRunLock, releaseRunLock } from '../../src/db/runLocks.js';
 import type { OrionError } from '../../src/types.js';
 import { AGENT_ASSET_YAML, PERSONA_MD } from '../helpers/agentWorld.js';
 import { testCliContext, useTestDb } from '../helpers/db.js';
@@ -268,17 +267,18 @@ describe('orion agent run', () => {
   });
 
   it('exits 1 with run_in_progress while another holder has the asset\'s lock, and releases its own lock afterwards', async () => {
-    await withDb((db) => acquireRunLock(db, 'mini', 'tick pid 999', AS_OF));
+    const held = await testDb().tryAssetRunLock('mini', 'tick pid 999');
+    const since = (await testDb().assetRunLockHolder('mini'))!.since;
     script = [calls(journalCall()), say('Done.')];
     await expect(orion(...runArgs())).rejects.toMatchObject({ code: 'run_in_progress' });
     const out = JSON.parse(await orion(...runArgs('--json'))) as { error: { code: string; message: string } };
-    expect(out.error).toEqual({ code: 'run_in_progress', message: 'asset mini is locked by tick pid 999 since 2026-06-30T00:00:00.000Z' });
+    expect(out.error).toEqual({ code: 'run_in_progress', message: `asset mini is locked by tick pid 999 since ${since}` });
     expect(exitCode).toBe(1);
     expect(await orion('agent', 'runs', 'list')).toBe('no agent runs');
-    await withDb((db) => releaseRunLock(db, 'mini', 'tick pid 999'));
+    await held!.release();
     await orion(...runArgs());
     expect(exitCode).toBeUndefined();
-    expect(await withDb((db) => getRunLock(db, 'mini'))).toBeNull();
+    expect(await testDb().assetRunLockHolder('mini')).toBeNull();
   });
 
   it('lists past runs and shows one with its cost estimate and, on request, its transcript', async () => {
@@ -327,7 +327,7 @@ describe('orion agent run', () => {
     expect(JSON.parse(await orion('agent', 'runs', 'list', '--json'))).toMatchObject([{ id: 1, runType: 'weekly' }]);
   });
 
-  it('refuses a --limit that is not a positive whole number, rather than let SQLite read it as no limit', async () => {
+  it('refuses a --limit that is not a positive whole number, rather than pass it to the database', async () => {
     for (const bad of ['-5', '0', '2.5', 'many']) {
       await expect(orion('agent', 'runs', 'list', '--limit', bad)).rejects.toMatchObject({ code: bad === 'many' ? 'invalid_number' : 'invalid_limit' });
     }
@@ -338,26 +338,27 @@ describe('orion agent run', () => {
   });
 });
 
+const STALENESS_EDIT: ProposalChange = { kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'staleness_days'], value: 14 }] };
+
 describe('orion proposals', () => {
   beforeEach(async () => {
     await seed();
   });
 
-  it('lists and shows a stored assumption_value proposal with its effect, refuses to approve it, and rejects it', async () => {
+  it('lists and shows a stored config proposal with a valuation-era effect as retired, and rejects it', async () => {
+    // A carried config proposal may hold a 6m/12m effect from the valuation era (the assumption_value kind itself is not
+    // carried: the database refuses it). Its numbers are never printed as a live target.
     expect(await orion('proposals', 'list')).toBe('no proposals');
-    const p = await fileProposal({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 }, { '6m': { from: 10, to: 11 }, '12m': { from: 10, to: 12.5 } });
-    expect(await orion('proposals', 'list', 'mini')).toContain(`#${p.id}  mini  analyst  assumption_value  pending  rev_growth_y1 (base) -> 1.8  [effect: valuation-era (retired), not computed]  0d old`);
+    const p = await fileProposal(STALENESS_EDIT, [7], { '6m': { from: 10, to: 11 }, '12m': { from: 10, to: 12.5 } });
+    const listed = await orion('proposals', 'list', 'mini');
+    expect(listed).toContain(`#${p.id}  mini  analyst  config  pending`);
+    expect(listed).toContain('[effect: valuation-era (retired), not computed]  0d old');
     const shown = await orion('proposals', 'show', String(p.id));
     expect(shown).toContain('[effect: valuation-era (retired), not computed]');
     expect(shown).not.toContain('12.50');
     expect(shown).toContain('rationale: because');
     expect(shown).toContain('revenue_run_rate_usd = 1000');
-    await expect(orion('proposals', 'approve', String(p.id))).rejects.toMatchObject({ code: 'proposal_kind_retired' });
-    const refused = JSON.parse(await orion('proposals', 'approve', String(p.id), '--json')) as { error: { code: string } };
-    expect(refused.error.code).toBe('proposal_kind_retired');
-    expect(exitCode).toBe(1);
-    expect(await orion('proposals', 'list', 'mini')).toContain('pending');
-    expect(await orion('proposals', 'reject', String(p.id), '--note', 'assumptions are retired')).toBe(`proposal #${p.id} rejected: assumptions are retired`);
+    expect(await orion('proposals', 'reject', String(p.id), '--note', 'not now')).toBe(`proposal #${p.id} rejected: not now`);
     expect(await orion('proposals', 'list')).toBe('no proposals');
     expect(await orion('proposals', 'list', '--all')).toContain('rejected');
   });
@@ -365,11 +366,11 @@ describe('orion proposals', () => {
   it('a stored valuation-era effect: human lines say retired, the JSON of inbox and proposals list/show still carries the stored effect object', async () => {
     const effect = { '6m': { from: 10, to: 11 }, '12m': { from: 10, to: 12.5 } };
     const blocked = { blocked: ['missing_metric:revenue_run_rate_usd'] };
-    const p = await fileProposal({ kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.8 }, { value: 0 }, effect);
-    const b = await fileProposal({ kind: 'assumption_value', key: 'discount_rate_base', scenario: 'bull', value: 0.09 }, { value: 0.1 }, blocked);
+    const p = await fileProposal(STALENESS_EDIT, [7], effect);
+    const b = await fileProposal({ kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'staleness_days'], value: 30 }] }, [7], blocked);
     const inboxText = (await orion('inbox', 'mini')).split('\n');
-    expect(inboxText).toContain(`prop #${p.id}  assumption_value  filed ${AS_OF.slice(0, 10)} by analyst  effect: valuation-era (retired), not computed`);
-    expect(inboxText).toContain(`prop #${b.id}  assumption_value  filed ${AS_OF.slice(0, 10)} by analyst  effect: valuation-era (retired), not computed`);
+    expect(inboxText).toContain(`prop #${p.id}  config  filed ${AS_OF.slice(0, 10)} by analyst  effect: valuation-era (retired), not computed`);
+    expect(inboxText).toContain(`prop #${b.id}  config  filed ${AS_OF.slice(0, 10)} by analyst  effect: valuation-era (retired), not computed`);
     const inbox = JSON.parse(await orion('inbox', 'mini', '--json')) as { proposals: { id: number; effect: unknown }[] };
     expect(inbox.proposals.find((x) => x.id === p.id)!.effect).toEqual(effect);
     expect(inbox.proposals.find((x) => x.id === b.id)!.effect).toEqual(blocked);

@@ -160,8 +160,8 @@ export async function listAgentRuns(db: Db, filter: { assetId?: string; limit?: 
 }
 
 /**
- * A killed process leaves a `running` row behind. The run lock decides when that has happened (its holder's lock expired
- * and was taken over); this marks the rows. Returns how many were marked.
+ * A killed process leaves a `running` row behind. The run lock decides when that has happened (whoever holds an asset's
+ * run lock knows no other process is running it); this marks the rows. Returns how many were marked.
  */
 export async function abandonRunningRuns(db: Db, assetId: string, nowIso: string): Promise<number> {
   const result = await db.run(

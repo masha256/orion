@@ -111,6 +111,27 @@ describe('pool', () => {
     expect(r).toBe(1);
   });
 
+  it('pool: a nested tx that asks for another asset\'s lock is refused (tx_asset_mismatch) and the transaction rolls back', async () => {
+    await expect(
+      db.tx(async (t) => {
+        await addCoverage(t, 'one');
+        await t.tx(async (t2) => addCoverage(t2, 'two'), { lockAsset: 'two' });
+      }, { lockAsset: 'one' }),
+    ).rejects.toMatchObject({ code: 'tx_asset_mismatch', message: 'a write on asset two was attempted inside a transaction locked on asset one' });
+    expect((await assets(db)).filter((x) => x === 'one' || x === 'two')).toEqual([]);
+    // two levels down, the root's asset still holds; a nested level without lockAsset inherits it
+    await expect(
+      db.tx(async (t) => t.tx(async (t2) => t2.tx(async () => undefined, { lockAsset: 'two' })), { lockAsset: 'one' }),
+    ).rejects.toMatchObject({ code: 'tx_asset_mismatch' });
+    // a root without a lock may take one in a nested level, and that level's asset then binds deeper levels
+    await expect(
+      db.tx(async (t) => t.tx(async (t2) => t2.tx(async () => undefined, { lockAsset: 'two' }), { lockAsset: 'one' })),
+    ).rejects.toMatchObject({ code: 'tx_asset_mismatch' });
+    await db.tx(async (t) => t.tx(async (t2) => addCoverage(t2, 'one'), { lockAsset: 'one' }));
+    expect((await assets(db)).filter((x) => x === 'one' || x === 'two')).toEqual(['one']);
+    await db.run("DELETE FROM coverage WHERE asset_id = 'one'");
+  });
+
   it('pool: a tx handle refuses queries after its transaction ended', async () => {
     let leaked: PgDb | undefined;
     await db.tx(async (t) => {

@@ -30,7 +30,7 @@ async function world() {
     sourceDetail: 'typed from the August report', citationUrl: 'https://example.com/aug', fetchedAt: T,
   });
   const withEffect = await insertProposal(db, {
-    assetId: 'mini', persona: 'analyst', agentRunId: runId, change: { kind: 'assumption_value', key: 'rev_growth_y1', scenario: 'base', value: 1.2 },
+    assetId: 'mini', persona: 'analyst', agentRunId: runId, change: { kind: 'config', edits: [{ path: ['reporting', 'window_days'], value: 91 }] },
     filedAgainst: { value: 0 }, rationale: 'growth is faster than the band allows', evidence: [researched.id],
     effect: { '6m': { from: 10, to: 11 }, '12m': { from: 12, to: 14.5 } }, createdAt: T,
   });
@@ -67,7 +67,7 @@ describe('buildInbox', () => {
 
     expect(inbox.proposals).toEqual([
       { id: w.noEffect.id, kind: 'reject_observation', persona: 'analyst', agent_run_id: null, filed_at: T, effect: null },
-      { id: w.withEffect.id, kind: 'assumption_value', persona: 'analyst', agent_run_id: w.runId, filed_at: T, effect: { '6m': { from: 10, to: 11 }, '12m': { from: 12, to: 14.5 } } },
+      { id: w.withEffect.id, kind: 'config', persona: 'analyst', agent_run_id: w.runId, filed_at: T, effect: { '6m': { from: 10, to: 11 }, '12m': { from: 12, to: 14.5 } } },
     ]);
 
     expect(inbox.anomalies).toEqual([
@@ -102,12 +102,13 @@ describe('buildInbox', () => {
 });
 
 describe('inbox', () => {
-  it('a stored proposal with a 6m/12m effect still parses', async () => {
-    // VVV #1 and CAKE #4 are pending assumption_value proposals from the valuation era, filed with a target effect. No
-    // run files one now (new proposals store effect null), but the inbox must keep reading the rows that exist.
+  it('inbox: a stored config proposal with an old 6m/12m effect still parses', async () => {
+    // Valuation-era proposals were filed with a target effect. No run files one now (new proposals store effect null),
+    // and the assumption_value kind is not carried (the database refuses it), but a carried config proposal can hold an
+    // old effect, and the inbox must keep reading it.
     const w = await world();
     await insertProposal(w.db, {
-      assetId: 'mini', persona: 'analyst', agentRunId: w.runId, change: { kind: 'assumption_value', key: 'discount_rate_base', scenario: 'bull', value: 0.09 },
+      assetId: 'mini', persona: 'analyst', agentRunId: w.runId, change: { kind: 'config', edits: [{ path: ['reporting', 'window_days'], value: 120 }] },
       filedAgainst: { value: 0.1 }, rationale: 'r', evidence: [], effect: { blocked: ['missing_metric:revenue_run_rate_usd'] }, createdAt: T,
     });
     const inbox = InboxSchema.parse(JSON.parse(JSON.stringify(await buildInbox(w.db, w.asset, T)))) as Inbox;
@@ -117,7 +118,7 @@ describe('inbox', () => {
     expect(props).toEqual([
       expect.stringMatching(/  effect: valuation-era \(retired\), not computed$/),
       `prop #${w.noEffect.id}  reject_observation  filed 2026-09-20 by analyst  no target effect`,
-      `prop #${w.withEffect.id}  assumption_value  filed 2026-09-20 by analyst run #${w.runId}  effect: valuation-era (retired), not computed`,
+      `prop #${w.withEffect.id}  config  filed 2026-09-20 by analyst run #${w.runId}  effect: valuation-era (retired), not computed`,
     ]);
   });
 });
@@ -141,7 +142,7 @@ describe('inboxLines', () => {
       `obs #${w.typed.id}  flow_usd.fees  90 31d to 2026-09-01  no confirmed value  entered by hand  https://example.com/aug`,
       `obs #${w.researched.id}  revenue_run_rate_usd  1200 at 2026-09-15  +20.0% vs confirmed  by analyst run #${w.runId}  https://example.com/q3`,
       `prop #${w.noEffect.id}  reject_observation  filed 2026-09-20 by analyst  no target effect`,
-      `prop #${w.withEffect.id}  assumption_value  filed 2026-09-20 by analyst run #${w.runId}  effect: valuation-era (retired), not computed`,
+      `prop #${w.withEffect.id}  config  filed 2026-09-20 by analyst run #${w.runId}  effect: valuation-era (retired), not computed`,
       `anom #${w.open.id}  cross_check_mismatch  price_usd  degrading  seen 2x since 2026-09-18  reading {"primary":10,"check":10.6,"diff_pct":6,"tolerance_pct":2,"primary_source":"coingecko","check_source":"http_json:x"}`,
     ]);
     expect(inboxLines(emptyInbox())).toEqual(['nothing to decide']);

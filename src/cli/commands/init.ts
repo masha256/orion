@@ -1,16 +1,15 @@
 import type { Command } from 'commander';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { dbPath, output, withDb, type CliContext } from '../util.js';
+import { output, type CliContext } from '../util.js';
 
 export function registerInit(program: Command, ctx: CliContext): void {
   program
     .command('init')
-    .description('create the project layout and database in the Orion home directory')
+    .description('create the project layout (assets/, personas/, skills/) in the Orion home directory; the database is set up with orion db migrate')
     .option('--json', 'JSON output')
-    .action(async (opts: { json?: boolean }) => {
+    .action((opts: { json?: boolean }) => {
       for (const d of ['assets', 'personas', 'skills']) mkdirSync(join(ctx.home, d), { recursive: true });
-      await withDb(ctx, () => undefined);
-      output(ctx, opts.json, { home: ctx.home, db: dbPath(ctx) }, () => [`initialized ${ctx.home}`]);
+      output(ctx, opts.json, { home: ctx.home }, () => [`initialized ${ctx.home}`]);
     });
 }

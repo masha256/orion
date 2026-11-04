@@ -104,7 +104,6 @@ describe('commit', () => {
     expect(await listJournal(db, 'mini')).toHaveLength(1);
     expect((await listJournal(db, 'mini'))[0]).toMatchObject({ id: summary.journalId, thesis: 'steady, still', persona: 'analyst' });
     expect((await listProposals(db))[0]).toMatchObject({ id: summary.proposalIds[0], persona: 'analyst', status: 'pending', citations: [CITATION] });
-    expect((await count('assumption_sets')) + (await count('assumption_changes'))).toBe(0);
   });
 
   it('previews what it would write without writing', async () => {
@@ -125,7 +124,7 @@ describe('dev findings', () => {
   };
   const tableCounts = async (): Promise<Record<string, number>> => {
     const counts: Record<string, number> = {};
-    for (const t of db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[]) {
+    for (const t of await db.all<{ name: string }>('SELECT tablename AS name FROM pg_tables WHERE schemaname = current_schema() ORDER BY tablename')) {
       counts[t.name] = await count(`"${t.name}"`);
     }
     return counts;
