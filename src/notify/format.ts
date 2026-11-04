@@ -1,6 +1,8 @@
 import { inboxLines } from '../app/inbox.js';
 import type { TickHolderYield, TickReport } from '../app/tickReport.js';
 import type { JobStatus } from '../db/jobs.js';
+import type { RegistryRow } from '../db/registry.js';
+import type { WatchStateRow } from '../db/watchState.js';
 import type { WatchFiring } from '../types.js';
 import { slackEscape } from './slack.js';
 
@@ -223,4 +225,69 @@ export function splitForSlack(blocks: string[][], max = SLACK_MAX_CHARS): string
   }
   flush();
   return posts;
+}
+
+// ---- The nightly report ---------------------------------------------------------------------------------------------
+
+/** What the nightly report prints (spec 6): everything comes from jobs and the registry; nothing is decided here. */
+export interface NightlyInput {
+  env: string;
+  /** The UTC day the slot reports on (`reportDay`). */
+  day: string;
+  releaseTag: string | null;
+  /** The slot's finished refreshes of assets that ran (skipped ones are in `notRun`), by asset id. */
+  results: (AssetRunResult & { assetId: string })[];
+  /** Paused, inactive and missing assets. */
+  notRun: RegistryRow[];
+  /** Symbols by asset id, for the lines of assets with no result (a missing asset has no YAML: its id upper-cased). */
+  symbols: Record<string, string>;
+  /** Assets whose registry `config_hash` changed since the previous delivered nightly. */
+  configChanged: string[];
+  /** Assets resumed since the last slot after a pause longer than their API series can refill. */
+  resumedShort: { assetId: string; pausedDays: number; backfillDays: number }[];
+  firingWatches: WatchStateRow[];
+  /** Active assets with no finished refresh at the 3 h cut. */
+  refreshesMissing: string[];
+  /** The slot, for the REFRESH MISSING line. */
+  slot: string;
+}
+
+export const NIGHTLY_REPLY_LINE = 'reply to Raymond: confirm <id> | reject <id> | approve <id> [note] | decline <id> <note> | ack <id> <note> | resolve <id> <note>';
+
+/** How many alerts the report carries: each alerting asset block, and each refresh missing at the cut. */
+export function nightlyAlerts(input: NightlyInput): number {
+  return input.results.filter((r) => formatAssetBlock(r).alert).length + input.refreshesMissing.length;
+}
+
+/**
+ * The nightly posts: a head block (`ORION ALERT <env> nightly <day>: <n> alert(s)` when any asset block alerts or a
+ * refresh is missing, else `ORION NIGHTLY <env> <day>: <n> assets ok`; the release; PAUSED, INACTIVE and MISSING lines;
+ * CONFIG CHANGED; RESUMED; WATCH FIRING; REFRESH MISSING), then one block per asset headed `== <SYM> ==`, then the
+ * reply line; split for Slack at asset boundaries. Registry text (by, reason) is outside text: cleaned.
+ */
+export function formatNightly(input: NightlyInput): string[] {
+  const sym = (id: string): string => input.symbols[id] ?? id.toUpperCase();
+  const results = [...input.results].sort((a, b) => (a.assetId < b.assetId ? -1 : a.assetId > b.assetId ? 1 : 0));
+  const blocks = results.map((r) => formatAssetBlock(r));
+  const alerts = blocks.filter((b) => b.alert).length + input.refreshesMissing.length;
+  const head = [
+    alerts > 0 ? `ORION ALERT ${input.env} nightly ${input.day}: ${alerts} alert(s)` : `ORION NIGHTLY ${input.env} ${input.day}: ${results.length} assets ok`,
+    `release ${input.releaseTag ?? '(dev checkout)'}`,
+  ];
+  const order: Record<string, number> = { paused: 0, inactive: 1, missing: 2 };
+  const notRun = [...input.notRun].sort((a, b) => (order[a.state]! - order[b.state]!) || (a.assetId < b.assetId ? -1 : 1));
+  for (const r of notRun) {
+    const reason = r.stateReason ? `: ${slackClean(r.stateReason)}` : '';
+    head.push(`${r.state.toUpperCase()} ${sym(r.assetId)} since ${r.stateSince.slice(0, 10)} by ${slackClean(r.stateBy, 80)}${reason}`);
+  }
+  for (const id of [...input.configChanged].sort()) head.push(`CONFIG CHANGED ${sym(id)}`);
+  for (const r of [...input.resumedShort].sort((a, b) => (a.assetId < b.assetId ? -1 : 1))) {
+    head.push(`RESUMED ${sym(r.assetId)} after ${r.pausedDays} days; API series refill only ${r.backfillDays} days back`);
+  }
+  for (const w of input.firingWatches) {
+    head.push(`WATCH FIRING ${sym(w.assetId)}: ${w.metricKey} ${w.rule} ${w.lastValue === null ? 'n/a' : exact(w.lastValue)} since ${w.since.slice(0, 10)}`);
+  }
+  for (const id of [...input.refreshesMissing].sort()) head.push(`REFRESH MISSING ${sym(id)}: no finished refresh 3 h after the ${input.slot} slot`);
+  const assetBlocks = results.map((r, i) => [`== ${r.symbol} ==`, ...blocks[i]!.lines]);
+  return splitForSlack([head, ...assetBlocks, [NIGHTLY_REPLY_LINE]]);
 }

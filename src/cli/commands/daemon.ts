@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { hostname } from 'node:os';
 import type { Command } from 'commander';
 import { activeAssetIds, Daemon, defaultHandlers, realClock } from '../../daemon/daemon.js';
+import { nightlyStatus, type NightlyStatus } from '../../daemon/jobs/nightlyReport.js';
 import { daemonLog } from '../../daemon/log.js';
 import { loadSchedule, nextSlot, type ScheduleEntry } from '../../daemon/schedule.js';
 import { realSpawn, systemdNotifier } from '../../daemon/systemd.js';
@@ -40,6 +41,12 @@ function nextSlots(ctx: CliContext, env: OrionEnv): { key: string; slot: string 
   }
   const now = ctx.now();
   return entries.map((e) => ({ key: e.key, slot: nextSlot(e.cadence, now).toISOString() }));
+}
+
+function nightlyLine(label: string, n: NightlyStatus | null): string {
+  if (!n) return `${label}: none`;
+  const failed = n.failed_sources.length === 0 ? 'no failed sources' : `failed sources: ${n.failed_sources.join(', ')}`;
+  return `${label}: ${n.nightly_slot} (release ${n.tag ?? '(dev checkout)'}) ${n.status}, ${failed}`;
 }
 
 function heartbeatLine(h: HeartbeatRow | null): string {
@@ -129,7 +136,7 @@ export function registerDaemon(program: Command, ctx: CliContext): void {
 
   daemon
     .command('status')
-    .description('the daemon heartbeat, release, registry, last 10 jobs and the next slots')
+    .description('the daemon heartbeat, release, registry, last 10 jobs, the next slots, this release\'s soak (its newest scheduled nightly) and the last nightly')
     .option('--json', 'JSON output')
     .action((_o: unknown, cmd: Command) => {
       const opts = cmd.optsWithGlobals<{ json?: boolean }>();
@@ -143,6 +150,8 @@ export function registerDaemon(program: Command, ctx: CliContext): void {
           registry: await listRegistry(db),
           last_jobs: await listJobs(db, { limit: 10 }),
           next,
+          soak: ctx.release ? await nightlyStatus(db, ctx.release.tag) : null,
+          last_nightly: await nightlyStatus(db),
         }));
         output(ctx, opts.json, s, () => [
           `env ${s.env}, release ${s.release?.tag ?? '(dev checkout)'}`,
@@ -152,6 +161,8 @@ export function registerDaemon(program: Command, ctx: CliContext): void {
           ...(s.last_jobs.length === 0 ? ['  none'] : s.last_jobs.map((j) => `  ${j.id} ${j.kind} ${j.assetId ?? '-'} ${j.slot} ${j.status}`)),
           'next:',
           ...s.next.map((n) => `  ${n.key} ${n.slot}`),
+          nightlyLine('soak', s.soak),
+          nightlyLine('last nightly', s.last_nightly),
         ]);
       });
     });

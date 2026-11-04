@@ -6,7 +6,7 @@ import type { JobContext } from '../../src/daemon/daemon.js';
 import { makeLevelsHandler, type LevelsHandlerOptions } from '../../src/daemon/jobs/levels.js';
 import { enqueueJob, type Job } from '../../src/db/jobs.js';
 import { insertRegistryRow } from '../../src/db/registry.js';
-import type { Db } from '../../src/db/connection.js';
+import type { OrionDb } from '../../src/db/connection.js';
 import type { FetchDeps } from '../../src/ingest/run.js';
 import { FakeClock } from './clock.js';
 
@@ -24,7 +24,7 @@ export function cleanupAfterAll(dirs: { cleanup(): void }[]): void {
   });
 }
 
-export async function activate(db: Db, ids: string[]): Promise<void> {
+export async function activate(db: OrionDb, ids: string[]): Promise<void> {
   for (const id of ids) await insertRegistryRow(db, id, 'active', 'h', { at: '2026-09-01T00:00:00.000Z', by: 'test', reason: null, releaseTag: null });
 }
 
@@ -36,7 +36,7 @@ export interface LevelsRun {
 }
 
 /** A job context on `db` and `root` whose Slack and dead-man calls are recorded. */
-export function levelsContext(db: Db, root: string, now: Date | string, envVars: Record<string, string | undefined> = {}, post = true): LevelsRun {
+export function levelsContext(db: OrionDb, root: string, now: Date | string, envVars: Record<string, string | undefined> = {}, post = true): LevelsRun {
   const posts: string[] = [];
   const pings: string[] = [];
   const enqueued: unknown[] = [];

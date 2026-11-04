@@ -14,6 +14,8 @@ import { loadAssetYamls, reconcileFromDisk } from '../registry/reconcile.js';
 import { checkPublishTarget } from '../push/publisher.js';
 import { OrionError } from '../types.js';
 import { levelsHandler } from './jobs/levels.js';
+import { nightlyReportHandler } from './jobs/nightlyReport.js';
+import { refreshHandler } from './jobs/refresh.js';
 import { retentionHandler } from './jobs/retention.js';
 import { snapshotPushHandler } from './jobs/snapshotPush.js';
 import { loadSchedule, newestSlot, type ScheduleEntry } from './schedule.js';
@@ -50,7 +52,8 @@ export type JobOutcome =
   | { status: 'deferred'; untilMs: number };
 
 export interface JobContext {
-  db: Db;
+  /** A root handle (pool): `tickAsset` takes the asset's run lock on its own connection. */
+  db: OrionDb;
   clock: Clock;
   env: OrionEnv;
   paths: OrionPaths;
@@ -65,6 +68,11 @@ export interface JobContext {
   signal: AbortSignal;
   enqueue(j: NewJob): Promise<Job | null>;
   log(line: string): void;
+  /**
+   * The CoinGecko market_chart replies shared by every job of one slot (N8: the nightly's refreshes fetch each chart
+   * once). Unset: no sharing.
+   */
+  sharedHttpCache?: (slot: string) => Map<string, Promise<unknown>>;
 }
 
 export type JobHandler = (job: Job, ctx: JobContext) => Promise<JobOutcome>;
@@ -97,6 +105,8 @@ export const RESTART_RETRY_MS = 600_000;
 export const JOB_ERROR_MAX = 300;
 /** The singleton's lock id, in the run-lock key space (schema-scoped; no asset id contains a colon). */
 export const DAEMON_LOCK_ID = 'orion:daemon';
+/** Slots whose shared HTTP cache is kept: the nightly's, plus one more (a run-now job meanwhile does not evict it). */
+export const SHARED_CACHE_SLOTS = 2;
 
 /**
  * The active assets the nightly slot `slot` refreshes: active since `slot` or earlier. An asset activated (or resumed)
@@ -115,8 +125,8 @@ function notBuiltYet(task: string): JobHandler {
 /** The handlers `orion daemon` runs with. */
 export function defaultHandlers(): Partial<Record<JobKind, JobHandler>> {
   return {
-    refresh: notBuiltYet('Task 10'),
-    nightly_report: notBuiltYet('Task 10'),
+    refresh: refreshHandler,
+    nightly_report: nightlyReportHandler,
     levels: levelsHandler,
     snapshot_push: snapshotPushHandler,
     disclosure_watch: notBuiltYet('Task 11'),
@@ -142,11 +152,24 @@ export class Daemon {
   private fatal: OrionError | null = null;
   private wakeStop!: () => void;
   private readonly stopSignal: Promise<void>;
+  /** Per slot, oldest first: the market_chart replies the slot's jobs share. */
+  private readonly slotCaches = new Map<string, Map<string, Promise<unknown>>>();
 
   constructor(private readonly d: DaemonDeps) {
     this.stopSignal = new Promise((resolve) => {
       this.wakeStop = resolve;
     });
+  }
+
+  /** The slot's shared HTTP cache; only the SHARED_CACHE_SLOTS newest slots asked for are kept. */
+  private sharedHttpCache(slot: string): Map<string, Promise<unknown>> {
+    let cache = this.slotCaches.get(slot);
+    if (!cache) {
+      cache = new Map();
+      this.slotCaches.set(slot, cache);
+      while (this.slotCaches.size > SHARED_CACHE_SLOTS) this.slotCaches.delete(this.slotCaches.keys().next().value!);
+    }
+    return cache;
   }
 
   private envVars(): Record<string, string | undefined> {
@@ -325,6 +348,7 @@ export class Daemon {
         db, clock, env, paths, envVars, notify: this.fenced(this.d.notifier(envVars), abort.signal, name), signal: abort.signal,
         enqueue: async (j) => await enqueueJob(db, { releaseTag: this.releaseTag, ...j }),
         log: (line) => this.d.log(`${name}: ${line}`),
+        sharedHttpCache: (slot) => this.sharedHttpCache(slot),
       };
       const handler = this.d.handlers[job.kind];
       outcome = handler ? await handler(job, ctx) : { status: 'failed', result: null, error: `no handler for job kind ${job.kind}` };

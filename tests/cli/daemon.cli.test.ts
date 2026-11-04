@@ -111,7 +111,8 @@ describe('orion daemon drain / undrain / status', () => {
     await insertRegistryRow(db(), 'mini', 'active', 'h', { at: NOW, by: 't', reason: null, releaseTag: null });
     const r = await orion(home(), 'daemon', 'status', '--json');
     const s = JSON.parse(r.out);
-    expect(Object.keys(s)).toEqual(['env', 'heartbeat', 'release', 'registry', 'last_jobs', 'next']);
+    expect(Object.keys(s)).toEqual(['env', 'heartbeat', 'release', 'registry', 'last_jobs', 'next', 'soak', 'last_nightly']);
+    expect([s.soak, s.last_nightly]).toEqual([null, null]);
     expect(s.env).toBe('dev');
     expect(s.heartbeat).toMatchObject({ daemonId: 'other-daemon', state: 'running', currentJobId: 1, drainRequestedAt: NOW });
     expect(s.release).toBeNull();
@@ -125,6 +126,48 @@ describe('orion daemon drain / undrain / status', () => {
     ]);
     const text = await orion(home(), 'daemon', 'status');
     expect(text.out).toContain('other-daemon');
+  });
+});
+
+describe('orion daemon status: soak', () => {
+  const TAG = 'orion-2026.11.03.1';
+  /** A finished job of `kind`, as the scheduler (or run-now) made it under `tag`. */
+  async function finished(kind: 'refresh' | 'nightly_report', assetId: string | null, slot: string, tag: string, result: unknown, o: { by?: string; status?: string } = {}) {
+    const j = (await enqueueJob(db(), { kind, assetId, slot, releaseTag: tag, requestedBy: o.by }))!;
+    await db().run('UPDATE jobs SET status = $2, result_json = $3, attempts = 1 WHERE id = $1', [j.id, o.status ?? 'done', JSON.stringify(result)]);
+  }
+  const tick = (failed: string[]) => ({ report: { ingest: { sources_failed: failed } }, fetchLines: [], alertFlags: [], levels: 0 });
+
+  it("status: soak names the tag's first scheduled nightly and its failed sources; run-now nightlies do not count", async () => {
+    const S1 = '2026-11-01T02:45:00.000Z';
+    const S2 = '2026-11-02T02:45:00.000Z';
+    // The older release's nightly, then the tag's scheduled one (a source failed, and one refresh failed whole).
+    await finished('refresh', 'mini', S1, 'orion-2026.10.30.1', tick(['http_json:old']));
+    await finished('nightly_report', null, S1, 'orion-2026.10.30.1', { delivered: true });
+    await finished('refresh', 'mini', S2, TAG, tick(['coingecko:mini-token', 'http_json:https://api.example.test/stats']));
+    await finished('refresh', 'other', S2, TAG, { report: { ingest: null }, fetchLines: [], alertFlags: [], levels: 0 }, { status: 'failed' });
+    await finished('nightly_report', null, S2, TAG, { delivered: true });
+    // A run-now nightly under the tag, newer: not a soak.
+    await finished('nightly_report', null, '2026-11-03T01:30:00.000Z', TAG, { delivered: true }, { by: 'run-now:mike' });
+
+    const release = { tag: TAG, commit: 'c', schema: 2, builtAt: 'b' };
+    const lines: string[] = [];
+    await buildProgram(testCliContext(home(), { stdout: (l) => lines.push(l), now: () => new Date(NOW), release })).parseAsync(['daemon', 'status', '--json'], { from: 'user' });
+    const s = JSON.parse(lines.join('\n'));
+    expect(s.soak).toEqual({
+      tag: TAG, nightly_slot: S2, status: 'done', failed_sources: ['mini:coingecko:mini-token', 'mini:http_json:https://api.example.test/stats', 'other:*'],
+    });
+    expect(s.last_nightly).toEqual(s.soak);
+
+    // A newer release that has not run its first nightly yet: no soak; last_nightly is still the tag's.
+    const later: string[] = [];
+    await buildProgram(testCliContext(home(), { stdout: (l) => later.push(l), now: () => new Date(NOW), release: { ...release, tag: 'orion-2026.11.04.1' } }))
+      .parseAsync(['daemon', 'status', '--json'], { from: 'user' });
+    const s2 = JSON.parse(later.join('\n'));
+    expect(s2.soak).toBeNull();
+    expect(s2.last_nightly).toMatchObject({ tag: TAG, nightly_slot: S2 });
+    const text = await orion(home(), 'daemon', 'status');
+    expect(text.out).toContain(`last nightly: ${S2} (release ${TAG}) done, failed sources: mini:coingecko:mini-token, mini:http_json:https://api.example.test/stats, other:*`);
   });
 });
 

@@ -267,6 +267,19 @@ describe('daemon worker', () => {
     expect(calls).toBe(2);
   });
 
+  it("daemon: the refreshes of one slot share one HTTP cache; another slot's jobs get their own", async () => {
+    const clock = new FakeClock('2026-11-03T01:00:00.000Z');
+    const seen: Map<string, Promise<unknown>>[] = [];
+    const w = daemon({ clock, handlers: { refresh: async (j, ctx) => { seen.push(ctx.sharedHttpCache!(j.slot)); return { status: 'done', result: null }; } } });
+    await enqueueJob(db(), { kind: 'refresh', assetId: 'mini', slot: '2026-11-03T00:45:00.000Z' });
+    await enqueueJob(db(), { kind: 'refresh', assetId: 'other', slot: '2026-11-03T00:45:00.000Z' });
+    await enqueueJob(db(), { kind: 'refresh', assetId: 'mini', slot: '2026-11-03T00:50:00.000Z' });
+    for (let i = 0; i < 3; i++) expect(await w.daemon.workerTick()).toBe(true);
+    expect(seen).toHaveLength(3);
+    expect(seen[0]).toBe(seen[1]);
+    expect(seen[2]).not.toBe(seen[0]);
+  });
+
   it('daemon: a handler that throws fails with its message capped at 300, retried after 10 minutes', async () => {
     const clock = new FakeClock('2026-11-03T01:00:00.000Z');
     const w = daemon({ clock, handlers: { refresh: async () => { throw new Error('x'.repeat(400)); }, levels: async () => { throw new Error('boom'); } } });
