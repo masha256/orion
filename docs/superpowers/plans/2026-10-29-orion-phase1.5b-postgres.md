@@ -42,10 +42,10 @@ and "Spec corrections" sections supersede them.
 - History carried (D8, with this plan's corrections): kept tables in full except observations of metrics not declared
   in the release's YAML (Phase 1 D3a), `assumption_value` proposals, and transcripts of non-disclosure runs.
 - Test commands: `npx vitest run --maxWorkers=2`, then `npm run typecheck`. From Task 7 on, prefix
-  `ORION_TEST_DATABASE_URL='postgresql:///orion_test?host=/var/run/postgresql'`. CLI test files that time out are rerun
+  `ORION_TEST_DATABASE_URL='postgresql://orion_dev@/orion_test?host=/var/run/postgresql'`. CLI test files that time out are rerun
   alone with `--maxWorkers=1`; report both runs' real counts.
 - **Gate before Task 7:** Mike has run `scripts/provision/dev-postgres.sh` (1.5a), and its self-check passed:
-  `psql -d orion_test -c 'select version()'` as `hermes` prints PostgreSQL 18.x. Tasks 1-6 need no Postgres.
+  `psql -U orion_dev -d orion_test -c 'select version()'` as `hermes` prints PostgreSQL 18.x. Tasks 1-6 need no Postgres.
 - The worktree gets its **own** `node_modules` (`npm ci`). Never symlink the live tree's: `npm install pg` through a
   symlink would modify the live install.
 - **Do not merge `feat/platform-pg` into `main` before the cutover (§8.4).** The live install runs `dist/` built from
@@ -140,7 +140,7 @@ and "Spec corrections" sections supersede them.
   not built into `dist/` (Tasks 8-10; `sqliteMigrations.ts` is `src/db/migrations.ts` moved by `git mv`).
 - `tests/helpers/db.ts`: `useTestDb`, `testDbPair`, `testCliContext` (Task 6; Postgres in Task 8);
   `tests/setup/pgGlobal.ts` (Task 7); `tests/db/pg/*.test.ts`, `tests/tools/*.test.ts`, `tests/meta/awaits.test.ts`.
-- Docs (Task 11): `docs/ops/postgres.md`, `README.md` dev section, `docs/superpowers/notes/2026-10-29-orion-phase1.5b-followups.md`.
+- Docs (Task 11): `docs/ops/postgres.md`, `README.md` dev section, `docs/superpowers/notes/2026-10-29-orion-phase1.5b-postgres-followups.md`.
 
 ---
 
@@ -355,7 +355,7 @@ export function openDb(path: string, opts?: { txWaitMs?: number }): OrionDb;   /
     it refuses `migration_changed` (ids listed) and `migration_breaking` (without the flag), and applies each pending
     file in its own transaction under `pg_advisory_xact_lock(assetLockKey('asset','__migrate__'))`.
   - `tests/setup/pgGlobal.ts`: exits with `ORION_TEST_DATABASE_URL is not set: the suite needs the local test Postgres
-    (scripts/provision/dev-postgres.sh); e.g. postgresql:///orion_test?host=/var/run/postgresql` when unset. It checks
+    (scripts/provision/dev-postgres.sh); e.g. postgresql://orion_dev@/orion_test?host=/var/run/postgresql` when unset. It checks
     `server_version_num >= 180000` and drops `t_%` schemas whose `COMMENT` (creation ISO time) is older than 6 h.
   - `createTestSchema(): Promise<DatabaseConfig>` / `dropTestSchema(config)` exported from `tests/setup/pgGlobal.ts`:
     creates `t_<16 hex>` with the comment and applies the migrations.
@@ -504,7 +504,7 @@ WHERE status <> 'skipped' ORDER BY id DESC LIMIT $3
 - [ ] **Step 3:** Implement and delete as listed. `git grep -nE "better-sqlite3|sqlite_|\.prepare\(|lastInsertRowid" -- src` is empty.
 - [ ] **Step 4:** Suite and typecheck green on Postgres. Report the count: Task 7's, minus the deleted SQLite-mechanics
   tests, plus the new ones (list both).
-- [ ] **Step 5:** `npm run build`; in a scratch home with `.env` = `ORION_DATABASE_URL=postgresql:///orion_dev?host=/var/run/postgresql`
+- [ ] **Step 5:** `npm run build`; in a scratch home with `.env` = `ORION_DATABASE_URL=postgresql://orion_dev@/orion_dev?host=/var/run/postgresql`
   and `ORION_DB_SCHEMA=scratch_<stamp>`: `node dist/cli/index.js db migrate --json` applies `[1]`, and `db status` is
   `current`. Drop the schema afterwards.
 - [ ] **Step 6:** Commit: `feat!(db): Orion runs on Postgres: pg pool, schema check on open, orion db migrate|status, advisory run lock replaces run_locks; SQLite leaves src/`.
@@ -597,7 +597,7 @@ WHERE status <> 'skipped' ORDER BY id DESC LIMIT $3
 **Files:**
 - Create: `docs/ops/postgres.md` (dev setup and env vars; `db status|migrate`; import and proof runbook; Postgres
   versions of the skill's diagnostic queries, e.g. the failed-source query with `json_array_elements(detail_json->'sources')`),
-  `docs/superpowers/notes/2026-10-29-orion-phase1.5b-followups.md`
+  `docs/superpowers/notes/2026-10-29-orion-phase1.5b-postgres-followups.md`
 - Modify: `README.md` (dev: Postgres, `ORION_DATABASE_URL`, `ORION_TEST_DATABASE_URL`, `orion db migrate`)
 
 - [ ] **Step 1:** Snapshot live read-only: `sqlite3 /home/hermes/git/orion/orion.db ".backup '$TMPDIR/p15b-snap.db'"`;

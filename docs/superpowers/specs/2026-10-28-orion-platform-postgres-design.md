@@ -176,7 +176,7 @@ it would write, changes nothing), never print a secret, and end with a self-chec
    `postgresql-common`, or the keyring + `sources.list.d` file by hand), `postgresql-18`, `postgresql-client-18`,
    `pgbackrest`; cluster `18/main` with `listen_addresses = ''`; role `orion_dev` (LOGIN, CREATEDB so tests can make
    per-file schemas), mapped from Unix `hermes` by `pg_ident.conf` (peer auth, no password); databases `orion_dev` and
-   `orion_test` owned by it. Self-check: `psql -d orion_dev -c 'select version()'` and a create/drop schema in
+   `orion_test` owned by it. Self-check: `psql -U orion_dev -d orion_dev -c 'select version()'` and a create/drop schema in
    `orion_test` as `hermes`. Can run before Phase 1 lands.
 2. **`orion-host.sh --hostname <h> [--backup-disk <path>] [--nut]`** (the server, refuses anything but resolute
    without `--force-os`):
@@ -275,7 +275,7 @@ Assets live in the release (`assets/*.yaml`), so a YAML change is a release. Tha
 
 | key | prod | staging | dev |
 |---|---|---|---|
-| `ORION_DATABASE_URL` | `postgresql:///orion_prod?host=/var/run/postgresql` (peer auth, no password) | same with `orion_stage` | local socket |
+| `ORION_DATABASE_URL` | `postgresql://orion_prod@/orion_prod?host=/var/run/postgresql` (peer auth, no password; the URL must name the role) | `postgresql://orion_stage@/orion_stage?host=/var/run/postgresql` | local socket |
 | `ORION_ETH_RPC_URL`, `ORION_BASE_RPC_URL`, `ORION_BNB_RPC_URL`, Solana | prod Alchemy app | a separate Alchemy app (own key, own quota line; same account and bill) | Mike's current key |
 | `COINGECKO_API_KEY` | Basic plan key (roadmap decision 3) | a free Demo key (10k credits/mo; §5.7 sizes staging under it) | none |
 | `ANTHROPIC_API_KEY` | disclosure runs only | none: staging watcher runs `--dry-run` | as today |

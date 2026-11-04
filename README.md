@@ -12,6 +12,8 @@ Design of what stays: `docs/superpowers/specs/2026-09-19-orion-ingestion-design.
 npm install && npm run build && npm link     # provides the `orion` command
 export ORION_HOME="$PWD"
 orion init
+# .env (mode 600): ORION_DATABASE_URL=postgresql://orion_dev@/orion_dev?host=/var/run/postgresql   (always name the role)
+orion db migrate                             # creates schema `orion` (or ORION_DB_SCHEMA) and applies the migrations
 orion asset validate
 orion data fetch vvv --dry-run               # read and cross-check everything, write nothing
 orion data fetch vvv                         # the first real run backfills the flows
@@ -21,13 +23,14 @@ orion report yield vvv
 ## Where things live
 
 - Human-authored, in git: `assets/*.yaml` (metrics, sources, cross-checks, holder flows, the `reporting` block), `personas/` and `skills/` (the disclosure analyst).
-- Machine-written, in `orion.db` (git-ignored): observations, fetch runs, anomalies, documents, agent runs and their transcripts, proposals, the journal. The valuation-era tables (`assumption_sets`, `assumptions`, `assumption_changes`, `assumption_evidence`, `snapshots`, `valuation_runs`, `signals`, `trigger_firings`) are left in place, never read or written.
+- Machine-written, in PostgreSQL 18 (since Phase 1.5b; schema `ORION_DB_SCHEMA`, default `orion`): observations, fetch runs, fetch cursors, anomalies, coverage, documents, agent runs and their transcripts, proposals, the journal. The SQLite `orion.db` of earlier releases is imported once with `tools/import-sqlite` and then archived. Its valuation-era tables, `config_versions` and `run_locks` are not carried. Setup, migrations, the import runbook and diagnostic queries are in `docs/ops/postgres.md`.
 
 ## Commands
 
-Kept: `init`, `asset`, `data`, `report`, `doc`, `proposals`, `inbox`, `persona`, `agent` (disclosure runs only), `tick`. Removed in Phase 1: `model`, `signal`, `update` (each is now an unknown command). `proposals` moved from `model proposals` to the top level.
+Kept: `init`, `db`, `asset`, `data`, `report`, `doc`, `proposals`, `inbox`, `persona`, `agent` (disclosure runs only), `tick`. Removed in Phase 1: `model`, `signal`, `update` (each is now an unknown command). `proposals` moved from `model proposals` to the top level.
 
 ```bash
+orion db status | migrate [--breaking]    # the Postgres schema vs this build; migrations never run on open
 orion asset list | show <id> | validate [id]
 orion data fetch [asset] [--metric <key>]... [--backfill-days <n>] [--adopt] [--dry-run]
 orion data sources vvv                    # per metric: source, cross-checks, last fetch outcome, age of the value in force
@@ -62,11 +65,24 @@ Metrics with a `source:` in `assets/<id>.yaml` are fetched; the rest are entered
 - Metrics that share one transfer scan share its cursor: `--metric` on any one of them fetches all of them. A metric added later to an existing scan gets no history by itself: re-run with `--backfill-days <n>`.
 - Cross-check readings are never stored. A reading outside its tolerance opens an anomaly; so does a source failing three runs in a row (except a source that feeds only `monitor_only` metrics) and, for VVV, a usage move since the last revenue disclosure (`revenue_disclosure_stale`, advisory). Anomalies never close themselves and nothing acts on them by itself: `ack` or `resolve` them. An acknowledged anomaly carries the latest reading, so check `orion data anomalies <a> --all` now and then; for a disagreement you expect to last, widen that cross-check's `tolerance_pct` instead.
 - A `watch` rule on a `monitor_only` metric reports a move in the fetch detail and the tick report, never as an anomaly.
-- Configuration, from the environment or `<ORION_HOME>/.env` (git-ignored, mode 600): `ORION_BASE_RPC_URL` (default `https://mainnet.base.org`; the RPC must return `blockTimestamp` on logs), `ORION_ETH_RPC_URL` (required for the Ethereum assets: there is no keyless default), `COINGECKO_API_KEY` (optional demo key; keyless works, more slowly), `ANTHROPIC_API_KEY` (disclosure runs only).
+- Configuration, from the environment or `<ORION_HOME>/.env` (git-ignored, mode 600): `ORION_DATABASE_URL` (required; it must name the role, e.g. `postgresql://orion_dev@/orion_dev?host=/var/run/postgresql`), `ORION_DB_SCHEMA` (default `orion`), `ORION_BASE_RPC_URL` (default `https://mainnet.base.org`; the RPC must return `blockTimestamp` on logs), `ORION_ETH_RPC_URL` (required for the Ethereum assets: there is no keyless default), `COINGECKO_API_KEY` (optional demo key; keyless works, more slowly), `ANTHROPIC_API_KEY` (disclosure runs only).
 
 ## The report
 
 `orion report yield <a>` covers the asset's `reporting.window_days` (91) up to its latest complete day: price, market cap (price x circulating supply), FDV (price x total supply), protocol revenue (the sum of the `reporting.revenue` streams) and its growth, holder flows by bucket (burn, hold, cash) with their yields on price, dilution, the payout ratio and the revenue multiple. Nothing in it is a forecast.
+
+## Development
+
+Tests need the local Postgres 18 (`scripts/provision/dev-postgres.sh --os-user <you>`, on `main`; see `docs/ops/postgres.md`) and a `*_test` database. The suite refuses to start without one:
+
+```bash
+export ORION_TEST_DATABASE_URL='postgresql://orion_dev@/orion_test?host=/var/run/postgresql'   # the role must be named
+npx vitest run --maxWorkers=2
+npm run typecheck
+npm run lint:promises
+```
+
+Each test file gets its own schema `t_<hex>` in `orion_test`, which is dropped afterwards. No test mocks the database.
 
 ## Daily operation
 
@@ -74,7 +90,7 @@ Metrics with a `source:` in `assets/<id>.yaml` are fetched; the rest are entered
 
 `./run-daily.sh [asset]` is the same as a script for any scheduler: it needs no environment, calls `dist/cli/index.js` directly, prints the tick report on stdout and keeps stderr in `tick.log`. The scheduled Hermes job that runs it, reports to Slack and carries out the owner's decisions is in `docs/ops/hermes-daily-job.md`. Run it once a day, any time after 00:05 UTC and well clear of midnight (the live server: 05:05 to 06:05 America/Los_Angeles, one asset every 5 minutes).
 
-**The run lock** is one row per asset in `run_locks`. `orion tick` and `orion agent run` take it; a second one finds it held (`run_in_progress` for tick, exit 0; an error and exit 1 for `agent run`). A lock older than two hours belongs to a process that died: the next acquirer takes it over and marks any `running` agent run of the asset `error/abandoned`.
+**The run lock** is a Postgres session advisory lock per asset, held on its own connection for the whole run. `orion tick` and `orion agent run` take it. A second one finds it held and gets `run_in_progress` naming the holder and since when: exit 0 for tick, an error and exit 1 for `agent run`. The lock dies with its holder's connection, so a killed run frees it at once. The next acquirer marks any `running` agent run of the asset `error/abandoned`.
 
 ## Disclosure runs
 
@@ -82,7 +98,7 @@ The one analyst run left. A `disclosure` run reads one stored issuer document (`
 
 Credentials: `ANTHROPIC_API_KEY=...` in `<ORION_HOME>/.env` or the environment. A run either finishes cleanly and commits everything together, or commits nothing (`budget_exhausted`, `refused`, `no_journal`, `conflict`, `error`); the run row, transcript and token counts are kept either way. Exit `0` completed, `1` anything else. Old weekly, triage, deep and bootstrap runs stay readable with `orion agent runs list|show`.
 
-Approving a config proposal edits `assets/<id>.yaml` in place, keeping comments and layout: review it with `git diff` and commit it (the asset's hash-pin test fails until it is re-pinned). Valuation-era `assumption_value` proposals can no longer be approved (`proposal_kind_retired`): reject them with a note. Personas and skills are markdown files; runs record the hash of what they used.
+Approving a config proposal edits `assets/<id>.yaml` in place, keeping comments and layout: review it with `git diff` and commit it (the asset's hash-pin test fails until it is re-pinned). Valuation-era `assumption_value` proposals are not carried into Postgres, and the database refuses that kind. Personas and skills are markdown files; runs record the hash of what they used.
 
 ## Maintaining the system
 
