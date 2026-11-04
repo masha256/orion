@@ -17,6 +17,9 @@ CREATE TABLE asset_registry (
   asset_id text COLLATE "C" PRIMARY KEY,
   state text COLLATE "C" NOT NULL CHECK (state IN ('inactive','active','paused','missing')),
   state_since timestamptz NOT NULL, state_by text COLLATE "C" NOT NULL, state_reason text COLLATE "C",
+  -- The state a paused asset left, which `asset resume` restores (R-c5); null unless state = 'paused'.
+  paused_from text COLLATE "C" CHECK (paused_from IN ('inactive','active')),
+  CHECK ((state = 'paused') = (paused_from IS NOT NULL)),
   config_hash text COLLATE "C" NOT NULL, first_seen_release text COLLATE "C",
   last_job_id bigint, last_run_at timestamptz, last_outcome text COLLATE "C");
 CREATE TABLE asset_state_events (

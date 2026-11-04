@@ -153,5 +153,9 @@ describe('orion cli', () => {
     expect(await orion('asset', 'resume', 'mini', '--by', 'mike')).toBe('MINI active (was paused 0 days): flows backfill from their cursors');
     const err = JSON.parse(await orion('asset', 'resume', 'mini', '--json'));
     expect(err.error).toEqual({ code: 'invalid_state_transition', message: 'mini is active; resume needs paused' });
+    // R-c5: an asset paused while inactive resumes to inactive.
+    await testDb().run("UPDATE asset_registry SET state = 'inactive'");
+    await orion('asset', 'pause', 'mini', '--reason', 'hold', '--by', 'mike');
+    expect(await orion('asset', 'resume', 'mini', '--by', 'mike')).toBe('MINI inactive (was paused 0 days): asset activate starts it');
   });
 });

@@ -122,7 +122,7 @@ describe('registry reconcile', () => {
 
   it('reconcile: planReconcile is pure and sorted; a paused asset whose YAML returns unchanged is not touched', async () => {
     const row = (assetId: string, state: 'inactive' | 'active' | 'paused' | 'missing', configHash: string) => ({
-      assetId, state, configHash, stateSince: T0.toISOString(), stateBy: 'x', stateReason: null, firstSeenRelease: null, lastJobId: null, lastRunAt: null, lastOutcome: null,
+      assetId, state, configHash, stateSince: T0.toISOString(), stateBy: 'x', stateReason: null, pausedFrom: state === 'paused' ? 'active' as const : null, firstSeenRelease: null, lastJobId: null, lastRunAt: null, lastOutcome: null,
     });
     const rows = [row('b', 'paused', 'h1'), row('a', 'missing', 'h0'), row('c', 'active', 'h2'), row('d', 'missing', 'h3')];
     const yamls = [{ id: 'z', hash: 'hz' }, { id: 'b', hash: 'h1' }, { id: 'a', hash: 'h0x' }, { id: 'e', hash: 'he' }];

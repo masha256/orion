@@ -51,7 +51,7 @@ describe('registry actions', () => {
     expect(paused.from).toBe('active');
     expect(paused.row).toMatchObject({ state: 'paused', stateBy: 'mike via raymond', stateReason: 'AERO+VELO merger rebuild', stateSince: at(1).toISOString() });
     const out = await resumeAsset(db(), 'mini', { ...opts(at(3)), configRoot: root });
-    expect(out).toEqual({ pausedDays: 2, backfillDays: null, refillShort: false }); // mini has no API series
+    expect(out).toEqual({ state: 'active', pausedDays: 2, backfillDays: null, refillShort: false }); // mini has no API series
     const events = await listStateEvents(db(), 'mini', 10);
     expect(events).toHaveLength(before + 2);
     expect(events.slice(0, 2).map((e) => [e.fromState, e.toState, e.by, e.reason, e.at, e.releaseTag])).toEqual([
@@ -61,12 +61,27 @@ describe('registry actions', () => {
     expect(await getRegistryRow(db(), 'mini')).toMatchObject({ state: 'active', stateSince: at(3).toISOString(), stateBy: 'mike', stateReason: null });
   });
 
+  it('actions: resume restores the state before the pause; only activate makes an asset active (R-c5)', async () => {
+    // Paused while inactive (a new asset never activated): resume leaves it inactive.
+    await pauseAsset(db(), 'mini', { ...opts(at(1)), reason: 'hold before launch' });
+    expect(await getRegistryRow(db(), 'mini')).toMatchObject({ state: 'paused', pausedFrom: 'inactive' });
+    expect(await resumeAsset(db(), 'mini', { ...opts(at(2)), configRoot: root })).toEqual({ state: 'inactive', pausedDays: 1, backfillDays: null, refillShort: false });
+    expect(await getRegistryRow(db(), 'mini')).toMatchObject({ state: 'inactive', pausedFrom: null, stateSince: at(2).toISOString() });
+    expect((await listStateEvents(db(), 'mini', 1)).map((e) => [e.fromState, e.toState])).toEqual([['paused', 'inactive']]);
+    // Only activate makes it active; a later pause/resume of the active asset returns it to active.
+    await activateAsset(db(), 'mini', opts(at(3)));
+    await pauseAsset(db(), 'mini', { ...opts(at(4)), reason: 'rebuild' });
+    expect((await getRegistryRow(db(), 'mini'))!.pausedFrom).toBe('active');
+    expect((await resumeAsset(db(), 'mini', { ...opts(at(5)), configRoot: root })).state).toBe('active');
+    expect(await getRegistryRow(db(), 'mini')).toMatchObject({ state: 'active', pausedFrom: null });
+  });
+
   it('actions: resume after 40 days on an asset with backfill_days 30 reports refillShort', async () => {
     await activateAsset(db(), 'apis', opts(T0));
     await pauseAsset(db(), 'apis', { ...opts(T0), reason: 'source outage' });
-    expect(await resumeAsset(db(), 'apis', { ...opts(at(40)), configRoot: root })).toEqual({ pausedDays: 40, backfillDays: 30, refillShort: true });
+    expect(await resumeAsset(db(), 'apis', { ...opts(at(40)), configRoot: root })).toEqual({ state: 'active', pausedDays: 40, backfillDays: 30, refillShort: true });
     await pauseAsset(db(), 'apis', { ...opts(at(40)), reason: 'again' });
-    expect(await resumeAsset(db(), 'apis', { ...opts(at(70)), configRoot: root })).toEqual({ pausedDays: 30, backfillDays: 30, refillShort: false });
+    expect(await resumeAsset(db(), 'apis', { ...opts(at(70)), configRoot: root })).toEqual({ state: 'active', pausedDays: 30, backfillDays: 30, refillShort: false });
   });
 
   it('actions: activate refuses a paused asset with invalid_state_transition', async () => {

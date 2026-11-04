@@ -20,6 +20,8 @@ export interface ActionOpts {
 }
 
 export interface ResumeResult {
+  /** The state the asset is back in: the one it was paused from (R-c5). */
+  state: AssetState;
   /** Whole days the asset was paused. */
   pausedDays: number;
   /** How far back the asset's API series can refill (the shortest primary `backfill_days`); null without API series. */
@@ -34,13 +36,15 @@ function requireReason(reason: string | undefined): string {
   return r;
 }
 
-/** Moves `id` from one of `from` to `to` under lock; the row as it was before. */
-async function transition(db: Db, id: string, verb: string, from: AssetState[], to: AssetState, o: ActionOpts, reason: string | null): Promise<RegistryRow> {
+/** Moves `id` from one of `from` to `to` (or the state `to` picks from the locked row) under lock; the row as it was before. */
+async function transition(
+  db: Db, id: string, verb: string, from: AssetState[], to: AssetState | ((row: RegistryRow) => AssetState), o: ActionOpts, reason: string | null,
+): Promise<RegistryRow> {
   return await db.tx(async (tx) => {
     const row = await lockRegistryRow(tx, id);
     if (!row) throw new OrionError('asset_not_in_registry', `${id} is not in the asset registry (the daemon adds every YAML in the release at start-up)`);
     if (!from.includes(row.state)) throw new OrionError('invalid_state_transition', `${id} is ${row.state}; ${verb} needs ${from.join(' or ')}`);
-    await setRegistryState(tx, id, row.state, to, { at: o.now.toISOString(), by: o.by, reason, releaseTag: o.releaseTag });
+    await setRegistryState(tx, id, row.state, typeof to === 'function' ? to(row) : to, { at: o.now.toISOString(), by: o.by, reason, releaseTag: o.releaseTag });
     return row;
   }, { lockAsset: REGISTRY_LOCK });
 }
@@ -71,15 +75,21 @@ export function apiBackfillDays(config: AssetConfig): number | null {
 }
 
 /**
- * `paused` → `active`. On-chain flows backfill the paused days from their cursors on their own; API series only as far
+ * `paused` → the state it was paused from (`paused_from`, R-c5): an asset paused while inactive stays inactive; only
+ * `asset activate` makes an asset active. On-chain flows backfill the paused days from their cursors on their own; API series only as far
  * back as `backfill_days`, so the result says whether the pause was longer than that.
  */
 export async function resumeAsset(db: Db, id: string, opts: ActionOpts & { configRoot: string; reason?: string }): Promise<ResumeResult> {
   // The YAML first: an asset whose config cannot load is not resumed.
   const backfillDays = apiBackfillDays(loadAsset(opts.configRoot, id).config);
-  const before = await transition(db, id, 'resume', ['paused'], 'active', opts, opts.reason?.trim() || null);
+  const before = await transition(db, id, 'resume', ['paused'], resumedState, opts, opts.reason?.trim() || null);
   const pausedDays = Math.floor((opts.now.getTime() - new Date(before.stateSince).getTime()) / MS_PER_DAY);
-  return { pausedDays, backfillDays, refillShort: backfillDays !== null && pausedDays > backfillDays };
+  return { state: resumedState(before), pausedDays, backfillDays, refillShort: backfillDays !== null && pausedDays > backfillDays };
+}
+
+function resumedState(row: RegistryRow): AssetState {
+  if (row.pausedFrom === null) throw new OrionError('invalid_state_transition', `${row.assetId} is paused but has no pre-pause state`);
+  return row.pausedFrom;
 }
 
 /** `inactive` → `active`: the only way a new asset starts running. */

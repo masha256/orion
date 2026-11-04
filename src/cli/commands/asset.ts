@@ -90,7 +90,7 @@ export function registerAsset(program: Command, ctx: CliContext): void {
 
   asset
     .command('resume <id>')
-    .description('run a paused asset again; flows backfill from their cursors')
+    .description('end a pause: the asset returns to the state it was paused from (active or inactive)')
     .option('--by <who>', 'who (default $USER)')
     .option('--json', 'JSON output')
     .action((id: string, opts: { by?: string; json?: boolean }) =>
@@ -98,6 +98,7 @@ export function registerAsset(program: Command, ctx: CliContext): void {
         const by = byOf(opts.by);
         const r = await withDb(ctx, (db) => resumeAsset(db, id, { by, now: ctx.now(), releaseTag: ctx.release?.tag ?? null, configRoot: ctx.configRoot }));
         output(ctx, opts.json, r, () => [
+          r.state !== 'active' ? `${id.toUpperCase()} ${r.state} (was paused ${r.pausedDays} days): asset activate starts it` :
           `${id.toUpperCase()} active (was paused ${r.pausedDays} days): flows backfill from their cursors` +
             (r.refillShort ? `; API series refill only ${r.backfillDays} days, so ${r.pausedDays - r.backfillDays!} paused days stay empty` : ''),
         ]);

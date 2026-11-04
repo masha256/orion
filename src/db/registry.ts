@@ -13,6 +13,8 @@ export interface RegistryRow {
   stateSince: string;
   stateBy: string;
   stateReason: string | null;
+  /** The state a paused asset left (`inactive` or `active`), which resume restores; null unless paused. */
+  pausedFrom: AssetState | null;
   configHash: string;
   firstSeenRelease: string | null;
   lastJobId: number | null;
@@ -45,6 +47,7 @@ interface Row {
   state_since: string;
   state_by: string;
   state_reason: string | null;
+  paused_from: AssetState | null;
   config_hash: string;
   first_seen_release: string | null;
   last_job_id: number | null;
@@ -65,7 +68,7 @@ interface EventRow {
 
 function fromRow(r: Row): RegistryRow {
   return {
-    assetId: r.asset_id, state: r.state, stateSince: r.state_since, stateBy: r.state_by, stateReason: r.state_reason,
+    assetId: r.asset_id, state: r.state, stateSince: r.state_since, stateBy: r.state_by, stateReason: r.state_reason, pausedFrom: r.paused_from,
     configHash: r.config_hash, firstSeenRelease: r.first_seen_release, lastJobId: r.last_job_id, lastRunAt: r.last_run_at,
     lastOutcome: r.last_outcome,
   };
@@ -118,9 +121,16 @@ export async function insertRegistryRow(db: Db, assetId: string, state: AssetSta
   await insertEvent(db, assetId, null, state, c);
 }
 
-/** Moves an existing row from `from` to `to`, with its event. Call inside a transaction, on a row read `FOR UPDATE`. */
+/**
+ * Moves an existing row from `from` to `to`, with its event. Call inside a transaction, on a row read `FOR UPDATE`.
+ * Moving to `paused` stores `from` as `paused_from` (resume restores it, R-c5); any other move clears it.
+ */
 export async function setRegistryState(db: Db, assetId: string, from: AssetState, to: AssetState, c: StateChange): Promise<void> {
-  await db.run('UPDATE asset_registry SET state = $2, state_since = $3, state_by = $4, state_reason = $5 WHERE asset_id = $1', [assetId, to, c.at, c.by, c.reason]);
+  const pausedFrom = to === 'paused' ? from : null;
+  await db.run(
+    'UPDATE asset_registry SET state = $2, state_since = $3, state_by = $4, state_reason = $5, paused_from = $6 WHERE asset_id = $1',
+    [assetId, to, c.at, c.by, c.reason, pausedFrom],
+  );
   await insertEvent(db, assetId, from, to, c);
 }
 
