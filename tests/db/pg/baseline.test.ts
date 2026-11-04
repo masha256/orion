@@ -29,6 +29,8 @@ const NOT_CARRIED = [
   'valuation_runs',
   'signals',
 ];
+/** 0002_daemon's tables: not in SQLite, not carried; checked in tests/db/daemonSchema.test.ts. */
+const DAEMON = ['asset_registry', 'asset_state_events', 'daemon_heartbeat', 'day_blocks', 'jobs', 'latest_levels', 'snapshots_out', 'watch_state'];
 
 let config: DatabaseConfig;
 let db: PgDb;
@@ -62,7 +64,7 @@ describe('baseline', () => {
           [config.schema],
         )
       ).map((r) => r.table_name);
-      expect(pgTables).toEqual([...CARRIED, 'schema_migrations'].sort());
+      expect(pgTables).toEqual([...CARRIED, ...DAEMON, 'schema_migrations'].sort());
       for (const t of NOT_CARRIED) expect(pgTables).not.toContain(t);
 
       for (const table of CARRIED) {
@@ -83,8 +85,8 @@ describe('baseline', () => {
   it('baseline: column types follow section 7.1 (bigint ids, double precision, text COLLATE "C", json, smallint dry_run)', async () => {
     const cols = await db.all<{ table_name: string; column_name: string; data_type: string; collation_name: string | null }>(
       `SELECT table_name, column_name, data_type, collation_name FROM information_schema.columns
-       WHERE table_schema = $1 AND table_name <> 'schema_migrations'`,
-      [config.schema],
+       WHERE table_schema = $1 AND table_name = ANY($2)`,
+      [config.schema, CARRIED],
     );
     expect(cols.length).toBeGreaterThanOrEqual(100);
     for (const c of cols) {

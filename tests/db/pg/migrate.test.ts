@@ -40,18 +40,21 @@ afterAll(async () => {
 });
 
 describe('migrate', () => {
-  it('migrate: baseline applies to an empty schema; a second run applies nothing; status is current', async () => {
+  it('migrate: the shipped migrations apply to an empty schema; a second run applies nothing; status is current', async () => {
     const db = await emptySchema();
     const before = await migrationStatus(db);
-    expect(before).toMatchObject({ schema: db.schema, dbAt: 0, codeRequires: 1, applied: [], changed: [], state: 'behind' });
-    expect(before.pending).toEqual([{ id: 1, name: 'baseline', breaking: false }]);
+    expect(before).toMatchObject({ schema: db.schema, dbAt: 0, codeRequires: 2, applied: [], changed: [], state: 'behind' });
+    expect(before.pending).toEqual([{ id: 1, name: 'baseline', breaking: false }, { id: 2, name: 'daemon', breaking: false }]);
 
-    expect(await applyMigrations(db, {})).toEqual({ applied: [1] });
+    expect(await applyMigrations(db, {})).toEqual({ applied: [1, 2] });
     expect(await applyMigrations(db, {})).toEqual({ applied: [] });
     const after = await migrationStatus(db);
-    const baseline = loadMigrations()[0]!;
-    expect(after).toMatchObject({ dbAt: 1, codeRequires: 1, pending: [], changed: [], state: 'current' });
-    expect(after.applied).toEqual([{ id: 1, name: 'baseline', sha256: baseline.sha256, appliedAt: expect.stringMatching(/Z$/) }]);
+    const [baseline, daemon] = loadMigrations();
+    expect(after).toMatchObject({ dbAt: 2, codeRequires: 2, pending: [], changed: [], state: 'current' });
+    expect(after.applied).toEqual([
+      { id: 1, name: 'baseline', sha256: baseline!.sha256, appliedAt: expect.stringMatching(/Z$/) },
+      { id: 2, name: 'daemon', sha256: daemon!.sha256, appliedAt: expect.stringMatching(/Z$/) },
+    ]);
     expect((await db.one<{ n: number }>('SELECT count(*) AS n FROM observations'))?.n).toBe(0);
   });
 
@@ -59,7 +62,7 @@ describe('migrate', () => {
     const db = await emptySchema();
     await db.run(`DROP SCHEMA ${db.schema}`);
     expect((await migrationStatus(db)).state).toBe('behind');
-    expect(await applyMigrations(db, {})).toEqual({ applied: [1] });
+    expect(await applyMigrations(db, {})).toEqual({ applied: [1, 2] });
     expect((await migrationStatus(db)).state).toBe('current');
   });
 

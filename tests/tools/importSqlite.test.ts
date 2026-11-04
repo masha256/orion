@@ -91,7 +91,7 @@ describe('import', () => {
     ]);
     expect(m.source).toMatchObject({ path: f.path, bytes: statSync(f.path).size, schema: 8, integrity: 'ok' });
     expect(m.source.sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(m.target).toEqual({ database: 'orion_test', schema: config.schema, schemaVersion: 1 });
+    expect(m.target).toEqual({ database: 'orion_test', schema: config.schema, schemaVersion: 2 });
     expect(Date.parse(m.ended_at)).toBeGreaterThanOrEqual(Date.parse(m.started_at));
   });
 
@@ -290,7 +290,10 @@ describe('carry', () => {
     };
     const fromPg = new Map<string, [string, string][]>();
     for (const c of cols) fromPg.set(c.table_name, [...(fromPg.get(c.table_name) ?? []), [c.column_name, pgTypeOf[c.data_type] ?? c.data_type]]);
-    expect([...fromPg.keys()].sort()).toEqual(CARRIED_TABLES.map((t) => t.table).sort());
+    // The daemon's tables (0002) are environment-local: nothing in a SQLite release feeds them.
+    const daemonTables = ['asset_registry', 'asset_state_events', 'daemon_heartbeat', 'day_blocks', 'jobs', 'latest_levels', 'snapshots_out', 'watch_state'];
+    expect([...fromPg.keys()].filter((t) => !daemonTables.includes(t)).sort()).toEqual(CARRIED_TABLES.map((t) => t.table).sort());
+    expect([...fromPg.keys()].filter((t) => daemonTables.includes(t)).sort()).toEqual(daemonTables);
     for (const t of CARRIED_TABLES) expect(t.columns.map((c) => [c.name, c.type]), t.table).toEqual(fromPg.get(t.table));
   });
 });
