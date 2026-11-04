@@ -1,0 +1,9 @@
+# When the daemon runs each job. Every slot is UTC (tz: UTC); a daily or weekly slot in 07:00-08:00 UTC is refused,
+# because that hour's Pacific date differs between PDT and PST. Hourly jobs may run in it (levels at 07:15).
+# staging_overrides apply on ORION_ENV=stage, field by field over the entry above; env: stage entries run only there.
+nightly:  { at: "00:45", tz: UTC }
+levels:   { every: 1h, minute: 15 }
+disclosure_watch: { at: "16:40", tz: UTC }
+staging_refresh:  { weekly: sun, at: "10:30", tz: UTC, env: stage }
+retention: { at: "03:30", tz: UTC }
+staging_overrides: { nightly: { at: "02:45", tz: UTC }, levels: { every: 6h } }

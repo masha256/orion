@@ -67,6 +67,18 @@ describe('orion cli', () => {
     await expect(orion('asset', 'validate', 'bad')).rejects.toThrow(/validation failed/);
   });
 
+  it('cli: asset validate fails on a schedule.yaml with a 07:30 slot', async () => {
+    writeFileSync(join(home, 'schedule.yaml'), 'nightly: { at: "00:45", tz: UTC }\nlevels: { every: 1h, minute: 15 }\n');
+    expect(JSON.parse(await orion('asset', 'validate', '--json'))).toEqual([{ id: 'mini', errors: [] }, { id: 'schedule.yaml', errors: [] }]);
+    writeFileSync(join(home, 'schedule.yaml'), 'nightly: { at: "07:30", tz: UTC }\n');
+    const lines: string[] = [];
+    const program = buildProgram(testCliContext(home, { stdout: (l) => lines.push(l), now: () => new Date(AS_OF) }));
+    await expect(program.parseAsync(['asset', 'validate'], { from: 'user' })).rejects.toThrow('validation failed for: schedule.yaml');
+    expect(lines).toEqual(['mini: ok', 'schedule.yaml:', '  nightly at 07:30 UTC falls in 07:00-08:00 UTC, whose Pacific date differs between PDT and PST']);
+    // `asset validate <id>` checks that asset only.
+    expect(await orion('asset', 'validate', 'mini')).toBe('mini: ok');
+  });
+
   it('rejects data for a metric the asset does not define', async () => {
     await expect(orion('data', 'set', 'mini', 'nonsense', '1')).rejects.toThrow(/not defined/);
   });

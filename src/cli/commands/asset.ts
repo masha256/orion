@@ -1,5 +1,8 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Command } from 'commander';
 import { listAssetIds, loadAsset } from '../../config/load.js';
+import { loadSchedule } from '../../daemon/schedule.js';
 import { listRegistry, type RegistryRow } from '../../db/registry.js';
 import { activateAsset, pauseAsset, resumeAsset, seedRegistry } from '../../registry/actions.js';
 import { loadAssetYamls, planReconcile, type RegistryDiff } from '../../registry/reconcile.js';
@@ -56,17 +59,22 @@ export function registerAsset(program: Command, ctx: CliContext): void {
 
   asset
     .command('validate [id]')
+    .description('check asset YAMLs (and, without an id, schedule.yaml)')
     .option('--json', 'JSON output')
     .action((id: string | undefined, opts: { json?: boolean }) => {
-      const results = (id ? [id] : listAssetIds(ctx.configRoot)).map((assetId) => {
+      const check = (name: string, fn: () => unknown): { id: string; errors: string[] } => {
         try {
-          loadAsset(ctx.configRoot, assetId);
-          return { id: assetId, errors: [] as string[] };
+          fn();
+          return { id: name, errors: [] };
         } catch (err) {
-          if (err instanceof OrionError) return { id: assetId, errors: err.message.split('\n') };
+          if (err instanceof OrionError) return { id: name, errors: err.message.split('\n') };
           throw err;
         }
-      });
+      };
+      const results = (id ? [id] : listAssetIds(ctx.configRoot)).map((assetId) => check(assetId, () => loadAsset(ctx.configRoot, assetId)));
+      // Without an id, the release's schedule.yaml too, when there is one (the daemon refuses to start on a bad one).
+      // parseSchedule checks every entry and override whatever the env.
+      if (!id && existsSync(join(ctx.configRoot, 'schedule.yaml'))) results.push(check('schedule.yaml', () => loadSchedule(ctx.configRoot, 'prod')));
       output(ctx, opts.json, results, () =>
         results.flatMap((r) => (r.errors.length === 0 ? [`${r.id}: ok`] : [`${r.id}:`, ...r.errors.map((e) => `  ${e}`)])),
       );
