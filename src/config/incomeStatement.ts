@@ -1,0 +1,313 @@
+import { z } from 'zod';
+import type { IncomeStatementDef } from './schema.js';
+
+/**
+ * Income statement v2 (spec 2026-10-28 §6, plan correction 6): revenue is everything users pay; each use section says
+ * where it goes (cost of revenue to the supply side, holders by bucket, protocol, operating costs), and below_line holds
+ * income users did not pay (third-party bribes, treasury programs). Every node is strict and nothing has a default, so the
+ * parsed block is what the YAML says and an asset without it keeps its config hash. `window_days`, `volume`, `dilution`
+ * and `burned_tokens` reuse `reporting`'s shapes: they are added to this base in `schema.ts`.
+ */
+
+const LineId = z.string().regex(/^[a-z0-9_]+$/);
+const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+/** A fraction of a gross series (0 < share <= 1). */
+const Share = z.number().positive().max(1);
+const Haircut = z.number().min(0).max(0.5);
+const BucketSchema = z.enum(['burn', 'hold', 'cash']);
+const RecipientBaseSchema = z.enum(['all', 'staked', 'locked']);
+const ValuedPerSchema = z.enum(['supply', 'recipients']);
+const CaptureRuleSchema = z.enum(['contractual', 'programmatic', 'discretionary']);
+const CategorySchema = z.enum(['dex', 'perp_dex', 'launchpad', 'cdp_stablecoin', 'lending', 'oracle', 'ai_platform', 'liquid_locker', 'lst']);
+const CostToSchema = z.enum(['lps', 'lenders', 'savers', 'builders', 'referrers', 'partners', 'creators', 'deployers', 'node_operators', 'other']);
+/** A fixed contractual ratio of a measured revenue line (Convex's caller fee: 5 percent of the 10 percent lock line). */
+const EstimateSchema = z.strictObject({ of: LineId, ratio: z.number().positive().max(10) });
+
+/**
+ * A revenue line, with exactly one value source: `metric` (a flow; `settlement` daily or periodic, `started` dating a young
+ * stream), `derived` (a gross from a flow the protocol keeps a known share of), `disclosed` (a level: the company's own
+ * run rate, the only revenue line, optionally with a `cross_check` flow), `estimate`, or `not_measured` (shown as n/m).
+ */
+export const IsRevenueLineSchema = z.strictObject({
+  id: LineId,
+  label: z.string().optional(),
+  metric: z.string().optional(),
+  settlement: z.enum(['daily', 'periodic']).optional(),
+  started: Day.optional(),
+  disclosed: z.string().optional(),
+  cross_check: z.string().optional(),
+  estimate: EstimateSchema.optional(),
+  derived: z.strictObject({ from: z.string(), share: Share, share_metric: z.string().optional() }).optional(),
+  not_measured: z.string().min(1).optional(),
+});
+
+/**
+ * A use line, with exactly one value source: its own `metric` (a flow), `of` a revenue line (that line's series,
+ * settlement, start and run-rate weight, times `share`, default 1, optionally read daily from `share_metric`), an
+ * `estimate`, or `not_measured`.
+ */
+const useShape = {
+  id: LineId,
+  label: z.string().optional(),
+  note: z.string().optional(),
+  metric: z.string().optional(),
+  of: LineId.optional(),
+  share: Share.optional(),
+  share_metric: z.string().optional(),
+  estimate: EstimateSchema.optional(),
+  not_measured: z.string().min(1).optional(),
+};
+export const IsUseLineSchema = z.strictObject(useShape);
+
+/** Paid to holders out of revenue, by bucket. `paid_metric` is the series measured at the recipients (holder flow, yields). */
+export const IsHolderLineSchema = z.strictObject({
+  ...useShape,
+  bucket: BucketSchema,
+  haircut: Haircut,
+  recipient_base: RecipientBaseSchema,
+  valued_per: ValuedPerSchema.optional(),
+  capture_rule: CaptureRuleSchema,
+  paid_metric: z.string().optional(),
+});
+
+/** What users paid that goes to the supply side and partners. */
+export const IsCostLineSchema = z.strictObject({ ...useShape, to: CostToSchema });
+
+/** Income not paid by users: exactly one of `metric` (a flow), `run_rate` (a level in USD/yr) or `not_measured`. */
+export const IsBelowLineSchema = z.strictObject({
+  id: LineId,
+  label: z.string().optional(),
+  note: z.string().optional(),
+  metric: z.string().optional(),
+  run_rate: z.string().optional(),
+  not_measured: z.string().min(1).optional(),
+  to: z.enum(['holders', 'protocol']),
+  bucket: BucketSchema.optional(),
+  haircut: Haircut.optional(),
+  recipient_base: RecipientBaseSchema.optional(),
+  valued_per: ValuedPerSchema.optional(),
+  capture_rule: CaptureRuleSchema.optional(),
+});
+
+/** A reconciliation: measured total flow metrics that the listed lines should add up to (the gap is reported, never booked). */
+export const IsCheckSchema = z.strictObject({
+  id: LineId,
+  type: z.literal('sum'),
+  total: z.array(z.string()).min(1),
+  parts: z.array(LineId).min(1),
+  tolerance_pct: z.number().nonnegative(),
+});
+
+/** The block without the four keys shared with `reporting` (window_days, volume, dilution, burned_tokens; see schema.ts). */
+export const IncomeStatementBaseSchema = z.strictObject({
+  category: CategorySchema,
+  /** What revenue covers, shown with every figure. */
+  scope: z.enum(['complete', 'protocol_share_only', 'partial']),
+  revenue: z.array(IsRevenueLineSchema).min(1),
+  cost_of_revenue: z.array(IsCostLineSchema).min(1).optional(),
+  holders: z.array(IsHolderLineSchema).min(1).optional(),
+  protocol: z.array(IsUseLineSchema).min(1).optional(),
+  operating_costs: z.array(IsUseLineSchema).min(1).optional(),
+  /** The one section closed as revenue less the rest (it lists no line of its own). */
+  remainder: z.enum(['protocol', 'operating_costs']).optional(),
+  below_line: z.array(IsBelowLineSchema).min(1).optional(),
+  checks: z.array(IsCheckSchema).min(1).optional(),
+});
+
+export type IsCategory = z.infer<typeof CategorySchema>;
+export type IsBucket = z.infer<typeof BucketSchema>;
+export type CostTo = z.infer<typeof CostToSchema>;
+export type IsRevenueLine = z.infer<typeof IsRevenueLineSchema>;
+export type IsUseLine = z.infer<typeof IsUseLineSchema>;
+export type IsHolderLine = z.infer<typeof IsHolderLineSchema>;
+export type IsCostLine = z.infer<typeof IsCostLineSchema>;
+export type IsBelowLine = z.infer<typeof IsBelowLineSchema>;
+export type IsCheck = z.infer<typeof IsCheckSchema>;
+
+type AnyUseLine = IsUseLine | IsHolderLine | IsCostLine;
+type UseSection = 'cost_of_revenue' | 'holders' | 'protocol' | 'operating_costs';
+const USE_SECTIONS: UseSection[] = ['cost_of_revenue', 'holders', 'protocol', 'operating_costs'];
+
+/** The lines' own fields that are defined, counted by name (a parser that kept an absent key as undefined must not count). */
+const present = (line: object, keys: string[]): string[] => keys.filter((k) => (line as Record<string, unknown>)[k] !== undefined);
+
+/**
+ * The validation rules the schema cannot express (spec §6 + correction 6): one value source per line, ids unique across
+ * sections (a use line may reuse the id of the revenue line it passes on in full), metric types and references, a
+ * disclosed revenue line alone, remainder only on an empty section, burns at haircut 0, and no series read twice (a use of
+ * a revenue series goes through `of`). The shared reporting keys are checked in schema.ts. Messages are prefixed.
+ */
+export function incomeStatementIssues(asset: { metrics: Record<string, { type: string; unit: string }>; income_statement?: IncomeStatementDef }): string[] {
+  const is = asset.income_statement;
+  if (!is) return [];
+  const out: string[] = [];
+  const issue = (message: string) => out.push(`income_statement: ${message}`);
+  const typed = (type: string, label: string) => (m: string, where: string) => {
+    if (asset.metrics[m]?.type !== type) issue(`${where} "${m}" is not a ${label} metric`);
+  };
+  const flow = typed('flow', 'flow');
+  const level = typed('level', 'level');
+
+  const revById = new Map(is.revenue.map((r) => [r.id, r] as const));
+  const measuredRevenue = (id: string) => {
+    const r = revById.get(id);
+    return r !== undefined && (r.metric !== undefined || r.derived !== undefined);
+  };
+  const estimateRef = (of: string, where: string) => {
+    if (!measuredRevenue(of)) issue(`${where} estimate of "${of}" is not a measured revenue line (one with a metric or derived)`);
+  };
+
+  // Line ids, unique across sections. A use line `of` a revenue line in full (no share) may carry that line's id.
+  const ids = new Set<string>();
+  const passedOn = new Set<string>();
+  const addId = (id: string, passOf?: string) => {
+    if (!ids.has(id)) return void ids.add(id);
+    if (passOf === id && revById.get(id) !== undefined && !passedOn.has(id)) return void passedOn.add(id);
+    issue(`line id "${id}" is used twice`);
+  };
+
+  // Which line reads each series: revenue first, so a use or below_line reading a revenue series gets its own message.
+  const revenueMetric = new Map<string, string>();
+  const readBy = new Map<string, string>();
+  const read = (m: string, where: string) => {
+    const first = readBy.get(m);
+    if (first !== undefined) issue(`metric "${m}" is read by two lines (${first} and ${where})`);
+    else readBy.set(m, where);
+  };
+
+  for (const r of is.revenue) {
+    const w = `revenue.${r.id}`;
+    addId(r.id);
+    if (present(r, ['metric', 'derived', 'disclosed', 'estimate', 'not_measured']).length !== 1) {
+      issue(`${w} takes exactly one of metric, derived, disclosed, estimate or not_measured`);
+    }
+    if (r.metric !== undefined) {
+      flow(r.metric, `${w} metric`);
+      read(r.metric, w);
+      revenueMetric.set(r.metric, r.id);
+    }
+    if (r.derived !== undefined) {
+      flow(r.derived.from, `${w} derived from`);
+      read(r.derived.from, w);
+      revenueMetric.set(r.derived.from, r.id);
+      if (r.derived.share_metric !== undefined) level(r.derived.share_metric, `${w} derived share_metric`);
+    }
+    if (r.disclosed !== undefined) level(r.disclosed, `${w} disclosed`);
+    if (r.cross_check !== undefined) {
+      if (r.disclosed === undefined) issue(`only a disclosed revenue line takes a cross_check ("${r.id}")`);
+      flow(r.cross_check, `${w} cross_check`);
+    }
+    if ((r.settlement !== undefined || r.started !== undefined) && r.metric === undefined && r.derived === undefined) {
+      issue(`${w} takes settlement and started only with a metric or derived`);
+    }
+    if (r.settlement === 'periodic' && r.started === undefined) issue(`${w} is periodic and needs started (its first covered day)`);
+    if (r.estimate !== undefined) estimateRef(r.estimate.of, w);
+  }
+  if (is.revenue.some((r) => r.disclosed !== undefined) && is.revenue.length > 1) {
+    issue('a disclosed revenue line is the whole revenue; list no other revenue line');
+  }
+
+  for (const section of USE_SECTIONS) {
+    for (const l of (is[section] ?? []) as AnyUseLine[]) {
+      const w = `${section}.${l.id}`;
+      const fullPassOn = l.of !== undefined && l.share === undefined && l.share_metric === undefined ? l.of : undefined;
+      addId(l.id, fullPassOn);
+      if (present(l, ['metric', 'of', 'estimate', 'not_measured']).length !== 1) issue(`${w} takes exactly one of metric, of, estimate or not_measured`);
+      if (l.metric !== undefined) {
+        flow(l.metric, `${w} metric`);
+        const rev = revenueMetric.get(l.metric);
+        if (rev !== undefined) issue(`${w} metric "${l.metric}" is revenue line ${rev}'s metric: use of: ${rev}`);
+        else read(l.metric, w);
+      }
+      if (l.of !== undefined) {
+        const rev = revById.get(l.of);
+        if (rev === undefined) issue(`${w} of "${l.of}" is not a revenue line`);
+        else if (rev.not_measured !== undefined) issue(`${w} of "${l.of}" is a not_measured revenue line`);
+      }
+      if ((l.share !== undefined || l.share_metric !== undefined) && l.of === undefined) issue(`${w} takes share or share_metric only with of`);
+      if (l.share_metric !== undefined) level(l.share_metric, `${w} share_metric`);
+      if (l.estimate !== undefined) estimateRef(l.estimate.of, w);
+      if (section === 'holders') {
+        const h = l as IsHolderLine;
+        if (h.bucket === 'burn' && h.haircut !== 0) issue(`${w} is a burn, whose haircut is 0`);
+        if (h.valued_per === 'recipients' && h.recipient_base !== 'staked') issue(`${w} can be valued per recipients only with recipient_base staked`);
+        if (h.paid_metric !== undefined) {
+          flow(h.paid_metric, `${w} paid_metric`);
+          if (h.not_measured !== undefined) issue(`${w} takes no paid_metric when not_measured`);
+        }
+      }
+    }
+  }
+
+  for (const b of is.below_line ?? []) {
+    const w = `below_line.${b.id}`;
+    addId(b.id);
+    if (present(b, ['metric', 'run_rate', 'not_measured']).length !== 1) issue(`${w} takes exactly one of metric, run_rate or not_measured`);
+    if (b.metric !== undefined) {
+      flow(b.metric, `${w} metric`);
+      if (revenueMetric.has(b.metric)) issue(`${w} metric "${b.metric}" is a revenue metric: below-line income is what users did not pay`);
+      else read(b.metric, w);
+    }
+    if (b.run_rate !== undefined) level(b.run_rate, `${w} run_rate`);
+    if (b.to === 'holders') {
+      const measured = b.metric !== undefined || b.run_rate !== undefined;
+      if (measured && (b.bucket === undefined || b.haircut === undefined || b.recipient_base === undefined)) {
+        issue(`${w} to holders needs bucket, haircut and recipient_base`);
+      }
+    } else if (present(b, ['bucket', 'haircut', 'recipient_base', 'valued_per', 'capture_rule']).length > 0) {
+      issue(`${w} to protocol takes no bucket, haircut, recipient_base, valued_per or capture_rule`);
+    }
+    if (b.bucket === 'burn' && (b.haircut ?? 0) !== 0) issue(`${w} is a burn, whose haircut is 0`);
+    if (b.valued_per === 'recipients' && b.recipient_base !== 'staked') issue(`${w} can be valued per recipients only with recipient_base staked`);
+  }
+
+  if (is.remainder !== undefined && (is[is.remainder] ?? []).length > 0) {
+    issue(`remainder ${is.remainder} closes that section as revenue less the rest; list no ${is.remainder} line`);
+  }
+
+  const checkIds = new Set<string>();
+  for (const c of is.checks ?? []) {
+    if (checkIds.has(c.id)) issue(`check id "${c.id}" is used twice`);
+    checkIds.add(c.id);
+    for (const m of c.total) flow(m, `check ${c.id} total`);
+    for (const p of c.parts) if (!ids.has(p)) issue(`check ${c.id} part "${p}" is not a line id`);
+  }
+  return out;
+}
+
+/** A use line with its `of` resolved: what the report reads for it. */
+export interface ResolvedUse {
+  id: string;
+  /** The revenue line it passes on (`of`): its run-rate weight (a young stream's) applies to this line too. */
+  revenue?: IsRevenueLine;
+  metric?: string;
+  /** 1 unless the line sets one. */
+  share: number;
+  share_metric?: string;
+  settlement?: 'daily' | 'periodic';
+  started?: string;
+  estimate?: { of: string; ratio: number };
+  derived?: { from: string; share: number; share_metric?: string };
+  disclosed?: string;
+  not_measured?: string;
+}
+
+const defined = <T extends object>(o: T): T => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
+
+/**
+ * Resolve a use line (cost of revenue, holders, protocol, operating costs): `share` defaults to 1 here, never in the
+ * schema, and an `of` line inherits its revenue line's value source, settlement and start (and so its run-rate weight).
+ * Throws on an `of` naming no revenue line, which validation refuses.
+ */
+export function resolveUse(def: IncomeStatementDef, line: AnyUseLine): ResolvedUse {
+  const share = line.share ?? 1;
+  if (line.of === undefined) {
+    return defined({ id: line.id, metric: line.metric, share, estimate: line.estimate, not_measured: line.not_measured });
+  }
+  const rev = def.revenue.find((r) => r.id === line.of);
+  if (rev === undefined) throw new Error(`income_statement: ${line.id} of "${line.of}" is not a revenue line`);
+  return defined({
+    id: line.id, revenue: rev, metric: rev.metric, share, share_metric: line.share_metric, settlement: rev.settlement, started: rev.started,
+    estimate: rev.estimate, derived: rev.derived, disclosed: rev.disclosed, not_measured: rev.not_measured,
+  });
+}

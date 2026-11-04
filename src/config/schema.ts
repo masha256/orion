@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { STD_METRICS, WATCH_RULES } from '../types.js';
+import { IncomeStatementBaseSchema, incomeStatementIssues } from './incomeStatement.js';
 import { CrossCheckSchema, IngestSchema, SourceSchema, sourceIssues } from './sources.js';
 
 const MetricDefSchema = z.strictObject({
@@ -34,14 +35,43 @@ const MetricDefSchema = z.strictObject({
     .optional(),
 });
 
+/** The trailing window for every series, and the length of each half of a growth comparison. */
+const WindowDaysSchema = z.number().int().min(7).max(365);
+/** Flow metrics whose sum is the gross the protocol handles (e.g. the CRV a locker collects before its cut). */
+const VolumeSchema = z.array(z.string()).min(1);
+/**
+ * Supply released to the market outside the emission schedule (UNI's Labs vest from the Timelock): a level in tokens per
+ * year, optionally capped by a level in tokens (what governance has approved so far). Added to the report's dilution
+ * only, never to the valuation: under effective_total supply those tokens are already counted.
+ */
+const DilutionSchema = z
+  .array(z.strictObject({ id: z.string().regex(/^[a-z0-9_]+$/), metric: z.string(), cap_metric: z.string().optional(), note: z.string().optional() }))
+  .min(1);
+/**
+ * Flow metrics in tokens whose sum is the supply the holder flows remove (UNI's burn in UNI). With it the report sets the
+ * tokens removed against the tokens added (emissions + dilution) in one unit, so a price move between the days burned
+ * and today cannot flip the sign of the net. Optional with no default (hashes).
+ */
+const BurnedTokensSchema = z.array(z.string()).min(1);
+
+/** The keys `reporting` and `income_statement` share, with one shape and one set of checks. */
+const sharedReportingShape = {
+  window_days: WindowDaysSchema,
+  volume: VolumeSchema.optional(),
+  dilution: DilutionSchema.optional(),
+  burned_tokens: BurnedTokensSchema.optional(),
+};
+
+/** Income statement v2 (src/config/incomeStatement.ts), beside `reporting` for one release. Optional, no default (hashes). */
+const IncomeStatementSchema = IncomeStatementBaseSchema.extend(sharedReportingShape);
+
 /**
  * Report-only holder-yield and growth series (no driver, no grade, no signal): the holder flows in three buckets with a
  * haircut each, yields on price, period-over-period growth, and the protocol's own revenue. Optional with no default,
  * so an asset without it keeps its config hash.
  */
 const ReportingSchema = z.strictObject({
-  /** The trailing window for every series, and the length of each half of a growth comparison. */
-  window_days: z.number().int().min(7).max(365),
+  ...sharedReportingShape,
   /**
    * Per holder flow id: the fraction lost turning the flow into a holder's cash. A cash payout's slippage, sized from
    * pool depth; a buy-and-hold's overhang. A burn has none (0).
@@ -79,23 +109,6 @@ const ReportingSchema = z.strictObject({
       outside_revenue: z.array(z.strictObject({ id: z.string().regex(/^[a-z0-9_]+$/), metric: z.string(), note: z.string().optional() })).optional(),
     })
     .optional(),
-  /** Flow metrics whose sum is the gross the protocol handles (e.g. the CRV a locker collects before its cut). */
-  volume: z.array(z.string()).min(1).optional(),
-  /**
-   * Supply released to the market outside the emission schedule (UNI's Labs vest from the Timelock): a level in tokens per
-   * year, optionally capped by a level in tokens (what governance has approved so far). Added to the report's dilution
-   * only, never to the valuation: under effective_total supply those tokens are already counted.
-   */
-  dilution: z
-    .array(z.strictObject({ id: z.string().regex(/^[a-z0-9_]+$/), metric: z.string(), cap_metric: z.string().optional(), note: z.string().optional() }))
-    .min(1)
-    .optional(),
-  /**
-   * Flow metrics in tokens whose sum is the supply the holder flows remove (UNI's burn in UNI). With it the report sets the
-   * tokens removed against the tokens added (emissions + dilution) in one unit, so a price move between the days burned
-   * and today cannot flip the sign of the net. Optional with no default (hashes).
-   */
-  burned_tokens: z.array(z.string()).min(1).optional(),
   /** A level metric entered from disclosures (VVV's revenue run rate): its growth between disclosures. */
   revenue_disclosed: z.string().optional(),
   /**
@@ -187,6 +200,7 @@ export const AssetConfigSchema = z
     holder_flows: z.array(HolderFlowSchema).min(1),
     agent: AgentConfigSchema.optional(),
     reporting: ReportingSchema.optional(),
+    income_statement: IncomeStatementSchema.optional(),
   })
   .superRefine((a, ctx) => {
     const issue = (message: string) => ctx.addIssue({ code: 'custom', message });
@@ -265,22 +279,10 @@ export const AssetConfigSchema = z
         }
         for (const o of inc.outside_revenue ?? []) flow(o.metric, `outside_revenue ${o.id}`);
       }
-      for (const field of ['volume'] as const) {
-        const list = r[field] ?? [];
-        if (new Set(list).size !== list.length) issue(`reporting: ${field} lists a metric twice`);
-        for (const m of list) if (a.metrics[m]?.type !== 'flow') issue(`reporting: ${field} "${m}" is not a flow metric`);
-      }
+      for (const message of sharedReportingIssues(a.metrics, r, 'reporting')) issue(message);
       for (const x of r.extra_cash ?? []) {
         if (a.metrics[x.metric]?.type !== 'level') issue(`reporting: extra_cash "${x.id}" must reference a level metric`);
         if (a.holder_flows.some((f) => f.id === x.id)) issue(`reporting: extra_cash id "${x.id}" is also a holder flow id`);
-      }
-      for (const m of r.burned_tokens ?? []) {
-        if (a.metrics[m]?.type !== 'flow' || a.metrics[m]?.unit !== 'tokens') issue(`reporting: burned_tokens "${m}" is not a flow metric in tokens`);
-      }
-      for (const d of r.dilution ?? []) {
-        for (const m of [d.metric, ...(d.cap_metric ? [d.cap_metric] : [])]) {
-          if (a.metrics[m]?.type !== 'level') issue(`reporting: dilution "${d.id}" metric "${m}" is not a level metric`);
-        }
       }
       if (r.revenue_disclosed !== undefined && a.metrics[r.revenue_disclosed]?.type !== 'level') {
         issue(`reporting: revenue_disclosed "${r.revenue_disclosed}" is not a level metric`);
@@ -321,12 +323,42 @@ export const AssetConfigSchema = z
       }
     }
 
+    if (a.income_statement) {
+      for (const message of sharedReportingIssues(a.metrics, a.income_statement, 'income_statement')) issue(message);
+      for (const message of incomeStatementIssues(a)) issue(message);
+    }
+
     for (const message of sourceIssues(a, required)) issue(message);
   });
+
+/** The checks on the keys `reporting` and `income_statement` share (volume, burned_tokens, dilution), prefixed by block. */
+function sharedReportingIssues(
+  metrics: Record<string, { type: string; unit: string }>,
+  block: { volume?: string[]; burned_tokens?: string[]; dilution?: { id: string; metric: string; cap_metric?: string }[] },
+  where: string,
+): string[] {
+  const out: string[] = [];
+  const list = block.volume ?? [];
+  if (new Set(list).size !== list.length) out.push(`${where}: volume lists a metric twice`);
+  for (const m of list) if (metrics[m]?.type !== 'flow') out.push(`${where}: volume "${m}" is not a flow metric`);
+  for (const m of block.burned_tokens ?? []) {
+    if (metrics[m]?.type !== 'flow' || metrics[m]?.unit !== 'tokens') out.push(`${where}: burned_tokens "${m}" is not a flow metric in tokens`);
+  }
+  for (const d of block.dilution ?? []) {
+    for (const m of [d.metric, ...(d.cap_metric ? [d.cap_metric] : [])]) {
+      if (metrics[m]?.type !== 'level') out.push(`${where}: dilution "${d.id}" metric "${m}" is not a level metric`);
+    }
+  }
+  return out;
+}
 
 export type AssetConfig = z.infer<typeof AssetConfigSchema>;
 export type MetricDef = AssetConfig['metrics'][string];
 export type ReportingDef = NonNullable<AssetConfig['reporting']>;
+export type IncomeStatementDef = NonNullable<AssetConfig['income_statement']>;
+export type {
+  CostTo, IsBelowLine, IsBucket, IsCategory, IsCheck, IsCostLine, IsHolderLine, IsRevenueLine, IsUseLine,
+} from './incomeStatement.js';
 export type HolderFlowDef = AssetConfig['holder_flows'][number];
 export type FlowKind = HolderFlowDef['kind'];
 export type CaptureRule = HolderFlowDef['capture_rule'];
