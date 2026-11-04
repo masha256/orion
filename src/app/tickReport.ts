@@ -42,6 +42,8 @@ export const TickHolderYieldSchema = z.strictObject({
   scope: z.enum(['complete', 'protocol_share_only', 'partial']).optional(),
   /** The statement's display flags: not-measured lines, third-party lines, the payout ratio basis. */
   flags: z.array(z.string()).optional(),
+  /** Computing the income statement threw (ruling C4): its message. The v1 fields above are unaffected. */
+  statement_error: z.string().optional(),
 });
 
 export type TickHolderYield = z.infer<typeof TickHolderYieldSchema>;
@@ -62,6 +64,7 @@ export function summarizeHolderYield(r: HolderYieldReport): TickHolderYield {
     multiple: r.yields.multiple,
     holder_flow_growth_annualized: r.holderFlowGrowth.annualized,
     ...(r.incomeStatement ? statementFields(r.incomeStatement) : {}),
+    ...(r.incomeStatementError !== undefined ? { statement_error: r.incomeStatementError } : {}),
   };
 }
 

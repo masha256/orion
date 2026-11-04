@@ -55,7 +55,7 @@ export function statementLines(is: IsV2): string[] {
 /** `report yield` text: the header, the v2 statement block, then (with --legacy) the v1 lines, then the notes. */
 export function reportLines(r: YieldReport | HolderYieldReport): string[] {
   const head = `${r.asset}  day ${r.day}  window ${r.windowDays}d  price ${r.price ?? 'n/a'}  mcap ${usd(r.marketCap)}  fdv ${usd(r.fdv)}`;
-  const v2 = r.incomeStatement ? statementLines(r.incomeStatement) : [];
+  const v2 = r.incomeStatement ? statementLines(r.incomeStatement) : r.incomeStatementError !== undefined ? [`  income statement unavailable: ${r.incomeStatementError}`] : [];
   const v1 = 'flows' in r ? legacyLines(r) : [];
   return [head, ...v2, ...v1, ...r.notes.map((n) => `  note: ${n}`)];
 }

@@ -174,7 +174,9 @@ export interface HolderYieldReport {
    * Income statement v2 (`loadHolderYieldReport` with `legacy`): appended after every v1 key, so deleting it gives the
    * v1 object byte for byte. Absent for an asset with no `income_statement` block, and from `holderYieldReport` itself.
    */
-  incomeStatement?: IsV2;
+  incomeStatement?: IsV2 | null;
+  /** Why `incomeStatement` is null: computing it threw (ruling C4). The v1 keys are unaffected. */
+  incomeStatementError?: string;
 }
 
 /** One line of the income statement, annualized over the window. */

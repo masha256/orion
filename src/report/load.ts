@@ -116,7 +116,9 @@ export interface YieldReport {
   price: number | null;
   marketCap: number | null;
   fdv: number | null;
-  incomeStatement?: IsV2;
+  /** Null when computing it threw (`incomeStatementError` says why); absent without an income_statement block. */
+  incomeStatement?: IsV2 | null;
+  incomeStatementError?: string;
   notes: string[];
 }
 
@@ -125,13 +127,26 @@ export interface ReportOptions {
   legacy?: boolean;
 }
 
+/**
+ * Ruling C4: income statement v2 is new code beside the legacy report for one release, so an exception inside it never
+ * fails the legacy report, the tick or the snapshot: the report carries `incomeStatement: null` and the error's message
+ * (`incomeStatementError`), the tick `holder_yield.statement_error`, and the nightly block an ALERT line, so a broken
+ * statement is never silent.
+ */
+function statementOf(input: ReportInput, v1: HolderYieldReport): { incomeStatement: IsV2 } | { incomeStatement: null; incomeStatementError: string } {
+  try {
+    return { incomeStatement: incomeStatementV2(input, v1) };
+  } catch (err) {
+    return { incomeStatement: null, incomeStatementError: (err instanceof Error ? err.message : String(err)).slice(0, 300) };
+  }
+}
+
 /** The report object for one input: v1 then v2, from the same input (pure). */
 export function yieldReport(input: ReportInput, opts: { legacy: true }): HolderYieldReport;
 export function yieldReport(input: ReportInput, opts?: ReportOptions): YieldReport | HolderYieldReport;
 export function yieldReport(input: ReportInput, opts: ReportOptions = {}): YieldReport | HolderYieldReport {
   const v1 = holderYieldReport(input);
-  const is = input.asset.income_statement ? incomeStatementV2(input, v1) : undefined;
-  const withIs = is ? { incomeStatement: is } : {};
+  const withIs = input.asset.income_statement ? statementOf(input, v1) : {};
   if (opts.legacy) return { ...v1, ...withIs };
   return { asset: v1.asset, day: v1.day, windowDays: v1.windowDays, price: v1.price, marketCap: v1.marketCap, fdv: v1.fdv, ...withIs, notes: v1.notes };
 }
