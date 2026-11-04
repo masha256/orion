@@ -187,6 +187,12 @@ export async function abandonRunning(db: Db, now: Date): Promise<{ requeued: Job
   return await returnRunning(db, '', [], now.toISOString());
 }
 
+/** One job by id; null when there is none. */
+export async function getJob(db: Db, id: number): Promise<Job | null> {
+  const r = await db.one<Row>('SELECT * FROM jobs WHERE id = $1', [id]);
+  return r ? fromRow(r) : null;
+}
+
 /** Newest slot first. `since`: slots at or after it. Default limit 100. */
 export async function listJobs(db: Db, f: { since?: string; kind?: JobKind; slot?: string; limit?: number }): Promise<Job[]> {
   const rows = await db.all<Row>(

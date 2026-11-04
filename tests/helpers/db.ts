@@ -91,6 +91,15 @@ export function testDatabaseConfig(): DatabaseConfig {
 }
 
 /**
+ * The variables a CLI subprocess needs to reach the file's schema (the URL names the test role and database). Add
+ * `ORION_HOME` / `ORION_ENV_FILE` pointing at a scratch dir, so no real `.env` is read.
+ */
+export function subprocessDbEnv(): { ORION_DATABASE_URL: string; ORION_DB_SCHEMA: string } {
+  const { config } = requireFile();
+  return { ORION_DATABASE_URL: config.url, ORION_DB_SCHEMA: config.schema };
+}
+
+/**
  * The in-process CLI context for `home`, on the file's schema: a dev checkout, so `home` is also the config root and
  * `<home>/.env` the env file (override any of them in `over`). The file must call `useTestDb()` or `testDbPair()`.
  */

@@ -9,8 +9,8 @@ import { loadAssetYamls, planReconcile, type RegistryDiff } from '../../registry
 import { OrionError } from '../../types.js';
 import { guarded, output, withDb, type CliContext } from '../util.js';
 
-/** Who a registry change is recorded as: `--by`, else the login user. */
-function byOf(by: string | undefined): string {
+/** Who a registry change (or a requested job) is recorded as: `--by`, else the login user. */
+export function byOf(by: string | undefined): string {
   const who = (by ?? process.env.USER ?? '').trim();
   if (who === '') throw new OrionError('by_required', 'who made the change is required (--by <who>; $USER is not set)');
   return who;
