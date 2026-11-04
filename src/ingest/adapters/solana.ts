@@ -1,5 +1,5 @@
 import { parseMarketChart } from '../flow.js';
-import { COINGECKO_API, coingeckoHeaders } from '../sources/coingecko.js';
+import { coingeckoBase, coingeckoHeaders } from '../sources/coingecko.js';
 import { ownerBalance, solanaRpcUrl, tokenSupply } from '../transport/solana.js';
 import type { SourceContext, SourceValue } from '../types.js';
 import { toFiniteNumber } from '../units.js';
@@ -117,7 +117,7 @@ async function supplyBurnDaily(ctx: SourceContext, params: Record<string, unknow
   const todayStart = Math.floor(Date.parse(ctx.nowIso) / MS_PER_DAY) * MS_PER_DAY;
   const windowStart = todayStart - days * MS_PER_DAY;
   const hourly = parseMarketChart(
-    await ctx.http.getJson(`${COINGECKO_API}/coins/${encodeURIComponent(priceId)}/market_chart?vs_currency=usd&days=${Math.min(365, Math.max(2, days + 1))}`, coingeckoHeaders(ctx.env)),
+    await ctx.http.getJson(`${coingeckoBase(ctx.env)}/coins/${encodeURIComponent(priceId)}/market_chart?vs_currency=usd&days=${Math.min(365, Math.max(2, days + 1))}`, coingeckoHeaders(ctx.env)),
     `coingecko ${priceId}`,
   );
   const price = dailyMeanPrice(hourly);

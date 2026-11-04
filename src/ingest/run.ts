@@ -3,6 +3,7 @@ import type { MetricDef } from '../config/schema.js';
 import { isChainSource } from '../config/sources.js';
 import { findStandingAnomaly, raiseAnomaly } from '../db/anomalies.js';
 import type { Db } from '../db/connection.js';
+import type { DayBlockCache } from '../db/dayBlocks.js';
 import { getCursor } from '../db/fetchCursors.js';
 import { emptySourceOutcome, insertFetchRun, recentSourceStatuses, type FetchOutcome, type SourceOutcome } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations } from '../db/observations.js';
@@ -20,7 +21,7 @@ import { sourceId } from './sourceId.js';
 import { getSourceHandler } from './sources/registry.js';
 import { monthOf, utcDay } from './time.js';
 import { CHAINS } from './transport/chains.js';
-import { withRunCache, type HttpTransport } from './transport/http.js';
+import { isMarketChartUrl, withRunCache, withSharedCache, type HttpTransport } from './transport/http.js';
 import type { BlockRef, RpcFactory, RpcTransport } from './transport/rpc.js';
 import {
   contractResolver, failed, type DailyPoint, type RaisedAnomaly, type ReadingResult, type SourceContext, type SourceRequest, type WrittenObservation,
@@ -38,6 +39,10 @@ export interface FetchDeps {
   env: Record<string, string | undefined>;
   sleep(ms: number): Promise<void>;
   now(): Date;
+  /** The day-boundary block cache of a chain (N9). Unset: every scan searches its boundaries. */
+  dayBlocks?: (chainId: number) => DayBlockCache;
+  /** Shared across fetches (the nightly keeps one per slot, N8): CoinGecko market_chart replies. Unset: per run only. */
+  sharedHttpCache?: Map<string, Promise<unknown>>;
 }
 
 export interface FetchOptions {
@@ -185,7 +190,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   }
   const historyDays = opts.backfillDays ?? (firstAdapterFlow ? (asset.ingest?.backfill_days ?? DEFAULT_API_FLOW_BACKFILL_DAYS) : undefined);
   const ctx: SourceContext = {
-    asset, nowIso: startedAt, http: withRunCache(deps.http), rpc, block, env: deps.env, contract: contractResolver(asset),
+    asset, nowIso: startedAt, http: withRunCache(deps.sharedHttpCache ? withSharedCache(deps.http, deps.sharedHttpCache, isMarketChartUrl) : deps.http), rpc, block, env: deps.env, contract: contractResolver(asset),
     observations: async (metricKey) => await listActiveObservations(db, asset.id, metricKey),
     ...(historyDays !== undefined ? { backfillDays: historyDays } : {}),
   };
@@ -378,6 +383,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     }
     const scan = await scanFlowGroup({
       db, asset, group, rpc, latest: block, http: ctx.http, env: deps.env, sleep: deps.sleep, now,
+      ...(deps.dayBlocks ? { dayBlocks: deps.dayBlocks(asset.ingest!.chain_id) } : {}),
       backfillDays: opts.backfillDays ?? asset.ingest!.backfill_days, rescan: opts.backfillDays !== undefined,
       adopt: opts.adopt ?? false, dryRun, onProgress: opts.onProgress,
     });

@@ -163,3 +163,31 @@ export function withRunCache(inner: HttpTransport): HttpTransport {
     ...(inner.getText ? { getText: (url: string, headers?: Record<string, string>) => once(`TEXT ${url}`, () => inner.getText!(url, headers)) as Promise<string> } : {}),
   };
 }
+
+/**
+ * GETs whose URL `match`es are answered from `cache`, a map the caller keeps across runs (the nightly keeps one per
+ * slot, so assets that price the same token fetch its market_chart once a night). Every other request passes through.
+ * Unlike the run cache, a failure is not kept: the next asset asks again.
+ */
+export function withSharedCache(inner: HttpTransport, cache: Map<string, Promise<unknown>>, match: (url: string) => boolean): HttpTransport {
+  return {
+    getJson: (url, headers) => {
+      if (!match(url)) return inner.getJson(url, headers);
+      const key = `GET ${url}`;
+      let pending = cache.get(key);
+      if (!pending) {
+        pending = inner.getJson(url, headers);
+        cache.set(key, pending);
+        void pending.catch(() => {
+          if (cache.get(key) === pending) cache.delete(key);
+        });
+      }
+      return pending;
+    },
+    postJson: (url, body, headers) => inner.postJson(url, body, headers),
+    ...(inner.getText ? { getText: (url: string, headers?: Record<string, string>) => inner.getText!(url, headers) } : {}),
+  };
+}
+
+/** The URLs a nightly shares between assets: CoinGecko price charts. */
+export const isMarketChartUrl = (url: string): boolean => new URL(url).pathname.includes('/market_chart');

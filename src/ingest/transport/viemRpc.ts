@@ -64,6 +64,11 @@ export const createViemRpc: RpcFactory = (url, chainId) => {
         const b = await client.getBlock();
         return { number: b.number, timestamp: Number(b.timestamp) };
       }),
+    finalizedBlock: () =>
+      clean(async () => {
+        const b = await client.getBlock({ blockTag: 'finalized' });
+        return { number: b.number, timestamp: Number(b.timestamp) };
+      }),
     getBlock: (number) =>
       clean(async () => {
         const b = await client.getBlock({ blockNumber: number });

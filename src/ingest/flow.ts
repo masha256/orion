@@ -1,12 +1,13 @@
 import type { AssetConfig } from '../config/schema.js';
 import type { Db } from '../db/connection.js';
+import type { DayBlockCache } from '../db/dayBlocks.js';
 import { advanceCursor, getCursor } from '../db/fetchCursors.js';
 import { emptySourceOutcome, type FlowConflict, type SourceOutcome, type UnlistedTransfer } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
 import { MS_PER_DAY, OrionError } from '../types.js';
 import type { FlowGroup, FlowMember } from './plan.js';
 import { ERC20_ABI } from './sources/chainLevels.js';
-import { COINGECKO_API, coingeckoHeaders } from './sources/coingecko.js';
+import { coingeckoBase, coingeckoHeaders } from './sources/coingecko.js';
 import { addDays, dayStartMs, utcDay } from './time.js';
 import type { HttpTransport } from './transport/http.js';
 import { firstBlockAtOrAfter, getLogsChunked, type BlockRef, type ReceiptLog, type RpcTransport } from './transport/rpc.js';
@@ -14,6 +15,8 @@ import type { DailyPoint, WrittenObservation } from './types.js';
 import { unitsToNumber } from './units.js';
 
 const SECONDS_PER_DAY = 86_400;
+/** A day boundary is cached only when it is at least this much older than the scan's upper bound (reorg margin). */
+const DAY_BLOCK_MIN_AGE_SEC = 3600;
 const MAX_LISTED_UNLISTED = 50;
 
 /** `ts` is in milliseconds. */
@@ -62,7 +65,7 @@ export function priceAt(series: PriceSeries, tsMs: number): number | null {
 }
 
 async function loadPrices(http: HttpTransport, env: Record<string, string | undefined>, id: string, startMs: number, nowMs: number): Promise<PriceSeries> {
-  const chart = (days: number) => `${COINGECKO_API}/coins/${encodeURIComponent(id)}/market_chart?vs_currency=usd&days=${days}`;
+  const chart = (days: number) => `${coingeckoBase(env)}/coins/${encodeURIComponent(id)}/market_chart?vs_currency=usd&days=${days}`;
   const hourly = parseMarketChart(await http.getJson(chart(90), coingeckoHeaders(env)), `coingecko ${id} hourly`);
   let daily: PricePoint[] = [];
   if (startMs < hourly[0].ts) {
@@ -97,8 +100,10 @@ export interface FlowScanArgs {
   asset: AssetConfig;
   group: FlowGroup;
   rpc: RpcTransport;
-  /** The latest block at plan start. */
+  /** The latest block at plan start. The scan's upper bound is the finalized block when the transport has one. */
   latest: BlockRef;
+  /** The chain's day-boundary cache (N9). Read on every run; written only by a real run, and only for final boundaries. */
+  dayBlocks?: DayBlockCache;
   http: HttpTransport;
   env: Record<string, string | undefined>;
   sleep(ms: number): Promise<void>;
@@ -152,13 +157,14 @@ export function mintDepositor(logs: ReceiptLog[], vault: string, sink: string, v
 }
 
 export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult> {
-  const { db, asset, group, rpc, latest, dryRun } = args;
+  const { db, asset, group, rpc, dryRun } = args;
   const outcome = emptySourceOutcome(group.sourceId);
   const result: FlowScanResult = { outcome, written: [], unlisted: [], daily: new Map(group.members.map((m) => [m.metricKey, []])) };
   const nowIso = args.now.toISOString();
 
   try {
-    // 1. Range: completed UTC days only.
+    // 1. Range: completed UTC days only, up to the finalized block when the chain reports one.
+    const latest = rpc.finalizedBlock ? await rpc.finalizedBlock() : args.latest;
     const lastMidnightSec = Math.floor(latest.timestamp / SECONDS_PER_DAY) * SECONDS_PER_DAY;
     const lastCompleteDay = utcDay(lastMidnightSec * 1000 - MS_PER_DAY);
     const cursor = await getCursor(db, asset.id, group.scanKey);
@@ -223,11 +229,19 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
     let mintsAttributed = 0;
     const retired = new Set<number>();
     const wroteAny = new Set<string>();
-    let from = await firstBlockAtOrAfter(rpc, rangeStartMs / 1000, latest, latest);
+    // The first block of day `d`: from the chain's cache, else searched (and cached once it is safely final).
+    const dayStart = async (d: string, anchor: BlockRef): Promise<BlockRef> => {
+      const hit = await args.dayBlocks?.get(d);
+      if (hit) return hit;
+      const found = await firstBlockAtOrAfter(rpc, dayStartMs(d) / 1000, anchor, latest);
+      if (args.dayBlocks && !dryRun && found.timestamp <= latest.timestamp - DAY_BLOCK_MIN_AGE_SEC) await args.dayBlocks.put(d, found);
+      return found;
+    };
+    let from = await dayStart(startDay, latest);
 
     for (let day = startDay; day <= lastCompleteDay; day = addDays(day, 1)) {
       const dayEndMs = dayStartMs(day) + MS_PER_DAY;
-      const next = await firstBlockAtOrAfter(rpc, dayEndMs / 1000, from, latest);
+      const next = await dayStart(addDays(day, 1), from);
       const sums = new Map(group.members.map((m) => [m.metricKey, 0]));
       const senders = new Map<string, { count: number; tokens: number }>();
       let counted = 0;
