@@ -374,7 +374,7 @@ describe('daemon worker', () => {
     expect(await job(2)).toMatchObject({ status: 'failed', attempts: 1, last_error: 'boom' });
   });
 
-  it('daemon: a job kind not built yet (staging_refresh) is skipped quietly: one log line, no retry, no post (R-c16)', async () => {
+  it('daemon: staging_refresh outside stage is skipped quietly through the daemon: no retry, no post', async () => {
     const clock = new FakeClock('2026-11-03T17:00:00.000Z');
     const h = defaultHandlers();
     const w = daemon({ clock, handlers: { staging_refresh: h.staging_refresh } });
@@ -383,7 +383,7 @@ describe('daemon worker', () => {
     expect(await w.daemon.workerTick()).toBe(false);
     expect(await job(1)).toMatchObject({ status: 'skipped', attempts: 1, last_error: null });
     expect(w.posts).toEqual([]);
-    expect(w.logs.filter((l) => /not installed/.test(l))).toEqual(['job 1 staging_refresh: not installed in this release (Task 12): skipped']);
+    expect(w.logs.filter((l) => /not stage/.test(l))).toEqual(['job 1 staging_refresh: not stage: skipped (the refresh only ever restores into staging)']);
     expect(w.logs.filter((l) => /failed|retry/.test(l))).toEqual([]);
   });
 

@@ -70,9 +70,19 @@ export default async function setup(): Promise<void> {
   });
 }
 
-/** A fresh schema for one test file, migrated unless `migrate: false`. Drop it with `dropTestSchema` in `afterAll`. */
-export async function createTestSchema(opts: { migrate?: boolean } = {}): Promise<DatabaseConfig> {
-  const config: DatabaseConfig = { url: requireTestDatabaseUrl(), schema: `t_${randomBytes(8).toString('hex')}` };
+/** A fresh `t_<16 hex>` schema name (not created). */
+export function newTestSchemaName(): string {
+  return `t_${randomBytes(8).toString('hex')}`;
+}
+
+/**
+ * A fresh schema for one test file, migrated unless `migrate: false`; named `opts.schema` when given (a test schema
+ * name, e.g. one a test freed by renaming). Drop it with `dropTestSchema` in `afterAll`.
+ */
+export async function createTestSchema(opts: { migrate?: boolean; schema?: string } = {}): Promise<DatabaseConfig> {
+  const schema = opts.schema ?? newTestSchemaName();
+  if (!TEST_SCHEMA.test(schema)) throw new Error(`refusing to create ${schema}: not a test schema name`);
+  const config: DatabaseConfig = { url: requireTestDatabaseUrl(), schema };
   await withClient(async (c) => {
     await c.query(`CREATE SCHEMA ${config.schema}`);
     await c.query(`COMMENT ON SCHEMA ${config.schema} IS '${new Date().toISOString()}'`);

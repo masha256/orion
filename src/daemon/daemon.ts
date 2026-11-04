@@ -21,6 +21,7 @@ import { nightlyReportHandler } from './jobs/nightlyReport.js';
 import { refreshHandler } from './jobs/refresh.js';
 import { retentionHandler } from './jobs/retention.js';
 import { snapshotPushHandler } from './jobs/snapshotPush.js';
+import { stagingRefreshHandler } from './jobs/stagingRefresh.js';
 import { loadSchedule, newestSlot, type ScheduleEntry } from './schedule.js';
 import type { SystemdNotifier } from './systemd.js';
 
@@ -120,17 +121,6 @@ export async function activeAssetIds(db: Db, slot: Date): Promise<string[]> {
   return (await listRegistry(db)).filter((r) => r.state === 'active' && Date.parse(r.stateSince) <= at).map((r) => r.assetId);
 }
 
-/**
- * A handler for a job kind a later task builds (R-c16): the job ends `skipped` with one log line, so the queue keeps
- * moving. Never a failure, a retry, a Slack post or an alert.
- */
-function notBuiltYet(task: string): JobHandler {
-  return async (_job, ctx) => {
-    ctx.log(`not installed in this release (${task}): skipped`);
-    return { status: 'skipped', result: { reason: `not installed in this release (${task})` } };
-  };
-}
-
 /** The handlers `orion daemon` runs with. */
 export function defaultHandlers(): Partial<Record<JobKind, JobHandler>> {
   return {
@@ -139,7 +129,7 @@ export function defaultHandlers(): Partial<Record<JobKind, JobHandler>> {
     levels: levelsHandler,
     snapshot_push: snapshotPushHandler,
     disclosure_watch: disclosureWatchHandler,
-    staging_refresh: notBuiltYet('Task 12'),
+    staging_refresh: stagingRefreshHandler,
     retention: retentionHandler,
   };
 }
