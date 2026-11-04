@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
+import { OrionError } from '../types.js';
 import { MIGRATIONS } from './migrations.js';
 import { SqliteCompatDb } from './sqliteCompat.js';
 
@@ -26,6 +28,31 @@ export interface DbCore {
 export type LegacySqlite = Pick<Database.Database, 'prepare' | 'exec' | 'pragma' | 'transaction' | 'inTransaction'>;
 export type Db = DbCore & LegacySqlite; // Task 8: `export type Db = DbCore`
 export type OrionDb = Db & { close(): Promise<void> };
+
+/** A Postgres database and the schema Orion's tables live in. The URL holds credentials: never print it. */
+export interface DatabaseConfig {
+  url: string;
+  schema: string;
+}
+
+const SCHEMA_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
+
+/** Refuses a schema name that is not a plain lower-case identifier (it is interpolated into `search_path` and DDL). */
+export function checkSchemaName(schema: string): string {
+  if (!SCHEMA_NAME.test(schema)) {
+    throw new OrionError('invalid_db_schema', `schema ${JSON.stringify(schema)} must match ${SCHEMA_NAME.source}`);
+  }
+  return schema;
+}
+
+/**
+ * The advisory lock key for an asset, in decimal: the first 8 bytes of `sha256('orion:<space>:<assetId>')` read as a
+ * signed int64. Two key spaces, so a refresh's session lock never blocks its own writes: `'asset'` is the transaction
+ * lock (`db.tx(fn, { lockAsset })`), `'run'` the session lock held for a whole run (`tryAssetRunLock`).
+ */
+export function assetLockKey(space: 'asset' | 'run', assetId: string): string {
+  return createHash('sha256').update(`orion:${space}:${assetId}`).digest().readBigInt64BE(0).toString();
+}
 
 export function migrate(db: LegacySqlite): void {
   db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)');
