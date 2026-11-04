@@ -110,6 +110,34 @@ describe('orion agent run', () => {
     expect(exitCode).toBeUndefined();
   });
 
+  it('cli: agent run is refused on stage before any request, even with a key in the env file (I-4)', async () => {
+    // The stage watcher's CLI child re-reads ~/shared/.env through ORION_ENV_FILE: a key there must still not spend.
+    writeFileSync(join(home, '.env'), 'ANTHROPIC_API_KEY=sk-ant-stage-test\n');
+    const model = scriptedModel([calls(staked()), calls(journalCall()), say('Done.')]);
+    const lines: string[] = [];
+    exitCode = undefined;
+    const program = buildProgram(testCliContext(home, {
+      stdout: (l) => lines.push(l), now: () => new Date(AS_OF), setExitCode: (c) => (exitCode = c), modelClient: () => model,
+    }));
+    const saved = process.env.ORION_ENV;
+    process.env.ORION_ENV = 'stage';
+    try {
+      await program.parseAsync(runArgs('--dry-run', '--json'), { from: 'user' });
+    } finally {
+      if (saved === undefined) delete process.env.ORION_ENV;
+      else process.env.ORION_ENV = saved;
+    }
+    const json = JSON.parse(lines.join('\n')) as { error: { code: string; message: string } };
+    expect(json.error.code).toBe('agent_refused_stage');
+    expect(exitCode).toBe(1);
+    expect(model.requests).toEqual([]);
+    expect(await withDb(async (db) => (await db.one<{ n: number }>('SELECT count(*)::int AS n FROM agent_runs'))!.n)).toBe(0);
+    // ORION_ENV named in the env file itself is refused the same way.
+    writeFileSync(join(home, '.env'), 'ANTHROPIC_API_KEY=sk-ant-stage-test\nORION_ENV=stage\n');
+    const again = JSON.parse(await orion(...runArgs('--dry-run', '--json'))) as { error: { code: string } };
+    expect(again.error.code).toBe('agent_refused_stage');
+  });
+
   it('cli: agent run --out <file> is accepted, writes no file, JSON keys are run, staged, committed', async () => {
     // The disclosure watcher's own command line: agent run <a> --type disclosure --doc <id> --out <home>/signals.jsonl --json.
     script = [calls(staked()), calls(journalCall()), say('Done.')];

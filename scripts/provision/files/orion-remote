@@ -31,11 +31,13 @@ undrains and restarts the daemon, logs `recovered ...` to deploys.log and prints
   confirm <id> | reject <id> | approve <id> [note] | decline <id> <note> | ack <id> <note> | resolve <id> <note>
   asset pause <a> --reason <text> [--for <who>] | asset resume|activate <a> [--for <who>] | asset registry [diff]
   job run-now <kind> [asset] [--slot <iso>] | sql-ro <query> (prod: orion db query-ro as orion_prod_ro, never psql) | refresh-staging (stage) | reconcile --allow-retire [--yes]
+  refresh-staging --stdin <sha256> (stage) a pg_dump -Fc dump on stdin (8 GB cap) -> ~/home/incoming/staging-refresh.dump
+                                  (600), sha256 checked; the daemon's staging_refresh job restores it, then it is removed
 
 Test hooks (scripts/provision/test/test_orion_remote.py): only when ORION_REMOTE_TEST=1 and the uid is not 0,
 ORION_REMOTE_TEST_USER (the Unix user), ORION_REMOTE_TEST_BIN (a directory with fake node, npm, pg_dump, pg_isready,
-systemctl), $HOME, ORION_REMOTE_TEST_MAX_BYTES, ORION_REMOTE_TEST_POLL and
-ORION_REMOTE_TEST_HEARTBEAT_TIMEOUT are honoured.
+systemctl), $HOME, ORION_REMOTE_TEST_MAX_BYTES, ORION_REMOTE_TEST_MAX_DUMP_BYTES, ORION_REMOTE_TEST_POLL,
+ORION_REMOTE_TEST_HEARTBEAT_TIMEOUT and ORION_REMOTE_TEST_REFRESH_TIMEOUT are honoured.
 """
 
 import datetime
@@ -62,6 +64,12 @@ SYSTEMCTL = '/usr/bin/systemctl'
 
 MAX_COMMAND = 8192
 MAX_TARBALL = 300 * 1024 * 1024
+MAX_DUMP = 8 * 1024 * 1024 * 1024
+REFRESH_TIMEOUT_S = 3 * 3600.0  # the job's pg_restore may take 2 h (src/daemon/jobs/stagingRefresh.ts)
+# refresh-staging --stdin's file, under $HOME: <ORION_HOME>/incoming/staging-refresh.dump, where the staging_refresh
+# job looks for an upload (src/daemon/jobs/stagingRefresh.ts UPLOADED_DUMP; tests/release/orionRemote.test.ts checks it).
+UPLOADED_DUMP = ('home', 'incoming', 'staging-refresh.dump')
+PG_CUSTOM_MAGIC = b'PGDMP'
 SQL_OUTPUT_CAP = 1024 * 1024
 DRAIN_WAIT = '30m'
 HEARTBEAT_TIMEOUT_S = 60.0
@@ -123,6 +131,8 @@ class Env:
             return float(os.environ[var]) if test and var in os.environ else default
 
         self.max_tarball = int(num('ORION_REMOTE_TEST_MAX_BYTES', MAX_TARBALL))
+        self.max_dump = int(num('ORION_REMOTE_TEST_MAX_DUMP_BYTES', MAX_DUMP))
+        self.refresh_timeout_s = num('ORION_REMOTE_TEST_REFRESH_TIMEOUT', REFRESH_TIMEOUT_S)
         self.poll_s = num('ORION_REMOTE_TEST_POLL', POLL_S)
         self.heartbeat_timeout_s = num('ORION_REMOTE_TEST_HEARTBEAT_TIMEOUT', HEARTBEAT_TIMEOUT_S)
 
@@ -442,10 +452,91 @@ def v_job(env, args):
 
 
 def v_refresh_staging(env, args):
-    parse(args, usage='refresh-staging')
+    usage = 'refresh-staging [--stdin <sha256>] (--stdin: a pg_dump -Fc dump on stdin)'
+    o = parse(args, [('sha256', pattern(SHA_RE, 'sha256'), False)], {'--stdin': None}, usage=usage)
     if env.name != 'stage':
         raise Refused('refresh-staging is stage-only')
-    return passthrough(env, ['job', 'run-now', 'staging_refresh', '--by', 'raymond', '--json'])
+    if not o.get('stdin'):
+        if 'sha256' in o:
+            raise Refused(f'a sha256 goes with --stdin (usage: {usage})')
+        return passthrough(env, ['job', 'run-now', 'staging_refresh', '--by', 'raymond', '--json'])
+    if 'sha256' not in o:
+        raise Refused(f"--stdin needs the dump's sha256 (usage: {usage})")
+    need_current(env)
+    lock = deploy_lock(env)
+    try:
+        return refresh_from_stdin(env, o['sha256'])
+    finally:
+        lock.close()
+
+
+def refresh_from_stdin(env, want):
+    """I-1/I-2: staging's data from a dump proven elsewhere. The dump (pg_dump -Fc) is read from stdin into
+    ~/home/incoming/staging-refresh.dump (600, the dir 700) with its sha256 checked, then the daemon's own
+    staging_refresh job restores it (the same filtered list, schema check, single transaction and Slack line as the
+    weekly refresh) and removes it. Waits for the job; prints it; exit 0 only when it is done. The file is removed
+    here too, whatever happens: a job that has not started by then finds no upload (and no prod dump on staging)."""
+    incoming = env.path(*UPLOADED_DUMP[:-1])
+    os.makedirs(incoming, mode=0o700, exist_ok=True)
+    os.chmod(incoming, 0o700)
+    dump = env.path(*UPLOADED_DUMP)
+    partial = dump + '.partial'
+    try:
+        for p in (partial, dump):  # an earlier upload whose session died: never restored
+            if os.path.lexists(p):
+                os.unlink(p)
+        h = hashlib.sha256()
+        size = 0
+        head = b''
+        with os.fdopen(os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as f:
+            while True:
+                chunk = sys.stdin.buffer.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > env.max_dump:
+                    raise Failed(f'the dump is larger than {env.max_dump // (1024 * 1024)} MB ({env.max_dump} bytes): refused')
+                if len(head) < len(PG_CUSTOM_MAGIC):
+                    head += chunk[:len(PG_CUSTOM_MAGIC) - len(head)]
+                h.update(chunk)
+                f.write(chunk)
+        got = h.hexdigest()
+        if got != want:
+            raise Failed(f'sha256 mismatch: got {got}, expected {want}; nothing restored')
+        if head != PG_CUSTOM_MAGIC:
+            raise Failed('not a pg_dump custom-format dump (make it with pg_dump -Fc -n orion); nothing restored')
+        os.replace(partial, dump)
+        rc, queued = orion_json(env, ['job', 'run-now', 'staging_refresh', '--by', 'raymond', '--json'])
+        job_id = queued.get('id') if isinstance(queued, dict) else None
+        if rc != 0 or not isinstance(job_id, int):
+            print(json.dumps(queued, indent=2))
+            raise Failed(f'job run-now staging_refresh exit {rc}; nothing restored')
+        job = wait_for_job(env, job_id)
+        if job is None:
+            raise Failed(f'the staging_refresh job {job_id} did not finish within {int(env.refresh_timeout_s)} s; '
+                         'the upload was removed (a job that has not started finds none and is skipped): see `jobs` and `logs`')
+        print(json.dumps(job, indent=2))
+        if job.get('status') != 'done':
+            raise Failed(f"staging_refresh job {job_id} {job.get('status')}: {job.get('lastError') or job.get('result')}")
+        return 0
+    finally:
+        for p in (partial, dump):
+            if os.path.lexists(p):
+                os.unlink(p)
+
+
+def wait_for_job(env, job_id):
+    """Polls `job list --kind staging_refresh` until job `job_id` is done, failed or skipped; None at the timeout."""
+    deadline = time.monotonic() + env.refresh_timeout_s
+    while True:
+        rc, jobs = orion_json(env, ['job', 'list', '--kind', 'staging_refresh', '--json'])
+        if rc == 0 and isinstance(jobs, list):
+            for j in jobs:
+                if isinstance(j, dict) and j.get('id') == job_id and j.get('status') in ('done', 'failed', 'skipped'):
+                    return j
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(env.poll_s)
 
 
 def single_statement(query):

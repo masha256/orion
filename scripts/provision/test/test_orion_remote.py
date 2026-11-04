@@ -36,6 +36,9 @@ rec = {{
     'current': os.readlink(cur) if os.path.islink(cur) else None,
     'env': dict(os.environ),
 }}
+inc = os.path.join(home, 'home', 'incoming')
+if os.path.isdir(inc):  # what the uploaded-dump directory held while this tool ran (name -> octal mode)
+    rec['incoming'] = {{n: oct(os.stat(os.path.join(inc, n)).st_mode & 0o777) for n in sorted(os.listdir(inc))}}
 with open(os.path.join(STATE, 'calls.jsonl'), 'a') as f:
     f.write(json.dumps(rec) + '\n')
 try:
@@ -80,6 +83,20 @@ if tool == 'node':
         out(b.get('diff', {{'added': [], 'missing': [], 'returned': [], 'configChanged': []}}))
     if rest[:2] == ['asset', 'registry']:
         out([])
+    if rest[:2] == ['job', 'run-now'] and 'job_states' in b:
+        if b.get('run_now_exit'):
+            out({{'error': {{'code': 'job_exists', 'message': 'exists'}}}}, b['run_now_exit'])
+        out({{'id': 7, 'kind': rest[2], 'status': 'queued', 'requestedBy': 'run-now:raymond'}})
+    if rest[:2] == ['job', 'list'] and 'job_states' in b:
+        n_file = os.path.join(STATE, 'job_list_calls')
+        n = int(open(n_file).read()) if os.path.exists(n_file) else 0
+        with open(n_file, 'w') as f:
+            f.write(str(n + 1))
+        states = b['job_states']
+        status = states[min(n, len(states) - 1)]
+        out([{{'id': 8, 'kind': 'staging_refresh', 'status': 'done'}},
+             {{'id': 7, 'kind': 'staging_refresh', 'status': status, 'result': {{'tables': 10}},
+              'lastError': 'pg_restore exit 1: boom' if status == 'failed' else None}}])
     if rest[:2] == ['db', 'query-ro']:
         n = b.get('query_bytes')
         sys.stdout.write('x' * n if n else json.dumps({{'rows': [{{'one': 1}}], 'rowCount': 1}}))
@@ -734,6 +751,93 @@ class VerbTests(RemoteCase):
         rc, _out, err = self.remote('refresh-staging')
         self.assertEqual(rc, 64)
         self.assertIn('stage-only', err)
+
+    # ---- refresh-staging --stdin (I-1/I-2: staging's data from a dump made on uranus) -------------------------------
+
+    DUMP = b'PGDMP\x01\x10\x00' + b'custom-format body ' * 64
+    DUMP_NAME = 'staging-refresh.dump'
+
+    def stdin_refresh(self, data=None, sha=None, user='orion-stage', extra_env=None):
+        data = self.DUMP if data is None else data
+        return self.remote(f'refresh-staging --stdin {sha or hashlib.sha256(data).hexdigest()}', stdin=data, user=user,
+                           extra_env=extra_env)
+
+    def incoming(self):
+        d = os.path.join(self.home, 'home', 'incoming')
+        return sorted(os.listdir(d)) if os.path.isdir(d) else []
+
+    def test_refresh_staging_stdin_restores_the_uploaded_dump_and_removes_it(self):
+        self.behave(job_states=['queued', 'running', 'done'])
+        rc, out, err = self.stdin_refresh()
+        self.assertEqual(rc, 0, err)
+        argvs = self.node_argv()
+        self.assertEqual(argvs[0], ['job', 'run-now', 'staging_refresh', '--by', 'raymond', '--json'])
+        self.assertEqual(argvs[1:], [['job', 'list', '--kind', 'staging_refresh', '--json']] * 3)
+        # The dump sat in ~/home/incoming (600, the dir 700) while the daemon's job ran, under the name the job reads.
+        for c in self.calls('node'):
+            self.assertEqual(c['incoming'], {self.DUMP_NAME: '0o600'})
+            self.assertEqual(c['env']['ORION_ENV'], 'stage')
+        self.assertEqual(oct(os.stat(os.path.join(self.home, 'home', 'incoming')).st_mode & 0o777), '0o700')
+        self.assertEqual(json.loads(out)['status'], 'done')
+        self.assertEqual(json.loads(out)['id'], 7)
+        self.assertEqual(self.incoming(), [])
+        self.assertTrue(self.log_lines()[-1].endswith(' orion-stage refresh-staging 3 ok'))
+
+    def test_refresh_staging_stdin_refuses_a_bad_upload_before_any_job(self):
+        self.behave(job_states=['done'])
+        rc, _out, err = self.stdin_refresh(sha='0' * 64)
+        self.assertEqual(rc, 1)
+        self.assertIn('sha256 mismatch', err)
+        rc, _out, err = self.stdin_refresh(data=b'-- plain SQL, not -Fc\nSELECT 1;\n')
+        self.assertEqual(rc, 1)
+        self.assertIn('not a pg_dump custom-format dump', err)
+        big = self.DUMP + b'x' * 4096
+        rc, _out, err = self.stdin_refresh(data=big, extra_env={'ORION_REMOTE_TEST_MAX_DUMP_BYTES': str(len(self.DUMP) + 100)})
+        self.assertEqual(rc, 1)
+        self.assertIn('larger than', err)
+        self.assertEqual(self.calls('node'), [])
+        self.assertEqual(self.incoming(), [])
+        # Usage: --stdin needs the sha256, a sha256 needs --stdin; prod is refused before reading anything.
+        for cmd in ('refresh-staging --stdin', 'refresh-staging --stdin xyz', f'refresh-staging {"a" * 64}',
+                    f'refresh-staging --stdin {"a" * 64} {"b" * 64}'):
+            self.assertEqual(self.remote(cmd, stdin=self.DUMP, user='orion-stage')[0], 64, cmd)
+        rc, _out, err = self.stdin_refresh(user='orion-prod')
+        self.assertEqual(rc, 64)
+        self.assertIn('stage-only', err)
+        self.assertEqual(self.calls('node'), [])
+        self.assertEqual(self.incoming(), [])
+
+    def test_refresh_staging_stdin_a_failed_or_unfinished_job_exits_1_and_removes_the_dump(self):
+        self.behave(job_states=['running', 'failed'])
+        rc, out, err = self.stdin_refresh()
+        self.assertEqual(rc, 1)
+        self.assertIn('staging_refresh job 7 failed: pg_restore exit 1: boom', err)
+        self.assertEqual(json.loads(out)['status'], 'failed')
+        self.assertEqual(self.incoming(), [])
+        os.unlink(os.path.join(self.state, 'job_list_calls'))
+        self.behave(job_states=['queued'])
+        rc, _out, err = self.stdin_refresh(extra_env={'ORION_REMOTE_TEST_REFRESH_TIMEOUT': '0.3'})
+        self.assertEqual(rc, 1)
+        self.assertIn('did not finish', err)
+        self.assertEqual(self.incoming(), [])
+        self.behave(job_states=['done'], run_now_exit=1)
+        rc, _out, err = self.stdin_refresh()
+        self.assertEqual(rc, 1)
+        self.assertIn('job run-now staging_refresh exit 1', err)
+        self.assertEqual(self.incoming(), [])
+
+    def test_refresh_staging_stdin_replaces_a_leftover_upload(self):
+        # An earlier upload whose ssh session died: its file is replaced, never restored.
+        inc = os.path.join(self.home, 'home', 'incoming')
+        os.makedirs(inc, mode=0o700)
+        for name in (self.DUMP_NAME, self.DUMP_NAME + '.partial'):
+            with open(os.path.join(inc, name), 'wb') as f:
+                f.write(b'PGDMP stale')
+        self.behave(job_states=['done'])
+        rc, _out, err = self.stdin_refresh()
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.calls('node')[0]['incoming'], {self.DUMP_NAME: '0o600'})
+        self.assertEqual(self.incoming(), [])
 
     def test_reconcile_allow_retire_needs_yes_and_prints_the_diff_first(self):
         self.behave(diff={'added': [], 'missing': ['aero', 'cake', 'crv'], 'returned': [], 'configChanged': []})

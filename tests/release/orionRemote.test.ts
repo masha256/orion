@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { UPLOADED_DUMP } from '../../src/daemon/jobs/stagingRefresh.js';
 import { JOB_KINDS } from '../../src/db/jobs.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -32,5 +33,9 @@ describe('orion-remote', () => {
     const m = /^JOB_KINDS = \(([^)]*)\)$/m.exec(src);
     expect(m).not.toBeNull();
     expect(m![1]!.split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter((s) => s !== '')).toEqual([...JOB_KINDS]);
+    // refresh-staging --stdin writes the dump where the daemon's staging_refresh job looks for an upload (ORION_HOME = ~/home).
+    const u = /^UPLOADED_DUMP = \(([^)]*)\)/m.exec(src);
+    expect(u).not.toBeNull();
+    expect(u![1]!.split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter((s) => s !== '')).toEqual(['home', ...UPLOADED_DUMP.split('/')]);
   });
 });

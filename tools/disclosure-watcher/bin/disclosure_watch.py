@@ -1022,6 +1022,11 @@ def process_post(post_id, cfg, state, orion, opts):
             state.save()
             return out([f"ORION DISCLOSURE {asset}: dry run without Anthropic credentials: the analyst run was skipped "
                         f"for post {post_id}; doc #{doc_id} is stored"])
+        if err.get("code") == "agent_refused_stage" and dry_run:  # Orion refuses every agent run on stage (I-4)
+            state.set(post_id, error="run: agent_refused_stage (dry run)")
+            state.save()
+            return out([f"ORION DISCLOSURE {asset}: dry run on stage (agents never run on stage): the analyst run was "
+                        f"skipped for post {post_id}; doc #{doc_id} is stored"])
         return out(fail("run", f"{err.get('code')}: {err.get('message')}", status="run_failed"))
     run = res.get("run")
     if not isinstance(run, dict):

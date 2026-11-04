@@ -202,7 +202,8 @@ fi
 # ================================================================== packages
 echo "== packages"
 apt_pgdg
-pkgs=("postgresql-$PG_MAJOR" "postgresql-client-$PG_MAJOR" pgbackrest python3-venv ffmpeg ufw age xz-utils)
+# git: the snapshot publisher shells out to it (src/push/gitPublisher.ts)
+pkgs=("postgresql-$PG_MAJOR" "postgresql-client-$PG_MAJOR" pgbackrest python3-venv ffmpeg ufw age xz-utils git)
 ((NUT)) && pkgs+=(nut-client)
 apt_install "${pkgs[@]}"
 
@@ -570,6 +571,7 @@ selfcheck "timezone is UTC" check_eq UTC psql_as_postgres 'show timezone'
 selfcheck "shared_buffers is 2GB" check_eq 2GB psql_as_postgres 'show shared_buffers'
 selfcheck "data_directory is $DATADIR" check_eq "$DATADIR" psql_as_postgres 'show data_directory'
 selfcheck "node $NODE_VERSION at $NODE_LINK" check_node
+selfcheck "git is installed (the publisher pushes with it): $(git --version 2>&1 || true)" git --version
 selfcheck "$ORION_REMOTE is root:root 755" check_mode "$ORION_REMOTE" "755 root:root"
 selfcheck "$REFRESH_DIR is 2750 postgres:$REFRESH_GROUP" check_mode "$REFRESH_DIR" "2750 postgres:$REFRESH_GROUP"
 for env in "${ENVS[@]}"; do

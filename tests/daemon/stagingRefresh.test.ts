@@ -7,7 +7,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { OrionEnv } from '../../src/cli/paths.js';
 import { defaultHandlers, type JobContext } from '../../src/daemon/daemon.js';
 import {
-  DEFAULT_REFRESH_DUMP, ENV_LOCAL_TABLES, makeStagingRefreshHandler, PG_BIN_DIR, REFRESH_DUMP_MAX_AGE_MS,
+  DEFAULT_REFRESH_DUMP, ENV_LOCAL_TABLES, makeStagingRefreshHandler, PG_BIN_DIR, REFRESH_DUMP_MAX_AGE_MS, UPLOADED_DUMP,
   type CommandRunner,
 } from '../../src/daemon/jobs/stagingRefresh.js';
 import { openDb, type OrionDb } from '../../src/db/connection.js';
@@ -261,6 +261,48 @@ describe('stagingRefresh', () => {
     expect(w.posts).toEqual(['ORION ALERT stage staging_refresh: pg_restore exit 1: pg_restore: error: could not execute query: ERROR:  boom']);
   });
 
+  it('stagingRefresh: an uploaded dump (refresh-staging --stdin) is restored in place of prod\'s, then removed', async () => {
+    expect(UPLOADED_DUMP).toBe(join('incoming', 'staging-refresh.dump'));
+    await seedStaging(db());
+    const prodDump = dumpFile(2 * HOUR);
+    const root = configRoot();
+    const uploaded = join(root, UPLOADED_DUMP);
+    mkdirSync(join(root, 'incoming'), { mode: 0o700 });
+    const upload = (): void => {
+      writeFileSync(uploaded, 'PGDMP uploaded', { mode: 0o600 });
+      const t = new Date(Date.parse(NOW) - 60_000); // sent a minute ago
+      utimesSync(uploaded, t, t);
+    };
+    upload();
+    const f = fakeRunner({ schema: db().schema });
+    const w = world({ dump: prodDump, root });
+    const out = await makeStagingRefreshHandler({ run: f.run })(job, w.ctx);
+    expect(out.status).toBe('done');
+    // The same three pg_restore calls (TOC, schema_migrations, the filtered restore), all on the uploaded file.
+    expect(f.calls).toHaveLength(3);
+    for (const c of f.calls) expect(c.at(-1)).toBe(uploaded);
+    const mtime = new Date(Date.parse(NOW) - 60_000).toISOString();
+    expect(w.posts).toEqual([`ORION STAGING REFRESH done: restored the uploaded dump (${mtime}), ${PROD_DATA_TABLES.length} tables`]);
+    expect(out).toMatchObject({ result: { source: 'upload', tables: PROD_DATA_TABLES.length } });
+    expect(existsSync(uploaded)).toBe(false);
+    expect(existsSync(prodDump)).toBe(true);
+
+    // A refused upload (another schema's dump) is removed too, so the weekly job never picks it up later.
+    upload();
+    const bad = fakeRunner({ schema: 'orion_elsewhere' });
+    const w2 = world({ dump: prodDump, root });
+    const out2 = await makeStagingRefreshHandler({ run: bad.run })(job, w2.ctx);
+    expect(out2).toMatchObject({ status: 'failed', result: { source: 'upload' } });
+    expect(w2.posts[0]).toMatch(/^ORION ALERT stage staging_refresh: the dump holds no table of schema/);
+    expect(existsSync(uploaded)).toBe(false);
+
+    // Without an upload, the weekly job reads prod's dump as before.
+    const f3 = fakeRunner({ schema: db().schema });
+    const out3 = await makeStagingRefreshHandler({ run: f3.run })(job, world({ dump: prodDump, root }).ctx);
+    expect(out3).toMatchObject({ status: 'done', result: { source: 'prod' } });
+    expect(f3.calls.at(-1)!.at(-1)).toBe(prodDump);
+  });
+
   it('stagingRefresh: a password in ORION_DATABASE_URL goes to PGPASSWORD, never on argv', async () => {
     await seedStaging(db());
     const seen: { args: string[]; env: Record<string, string> }[] = [];
@@ -297,7 +339,7 @@ async function sql(text: string): Promise<void> {
 }
 
 describe('stagingRefresh (real pg_dump / pg_restore)', () => {
-  it("stagingRefresh: staging's registry rows survive; prod's data replaces staging's", async () => {
+  it.each(['prod', 'upload'] as const)("stagingRefresh: staging's registry rows survive; prod's data replaces staging's (%s dump)", async (source) => {
     const bin = existsSync(join(PG_BIN_DIR, 'pg_dump')) ? PG_BIN_DIR : '';
     const pgDump = bin ? join(bin, 'pg_dump') : 'pg_dump';
     // "prod": its own schema, filled, dumped; then renamed away (kept as the reference), and "staging" created under
@@ -305,8 +347,11 @@ describe('stagingRefresh (real pg_dump / pg_restore)', () => {
     const prodCfg = await createTestSchema();
     const name = prodCfg.schema;
     const refName = newTestSchemaName();
+    // The release's config root doubles as ORION_HOME: an upload lands in its incoming/ (refresh-staging --stdin).
+    const root = configRoot();
     const work = scratch('orion-sr-real-');
-    const dump = join(work, 'latest.dump');
+    if (source === 'upload') mkdirSync(join(root, 'incoming'), { mode: 0o700 });
+    const dump = source === 'upload' ? join(root, UPLOADED_DUMP) : join(work, 'latest.dump');
     let staging: OrionDb | null = null;
     const created = [prodCfg.schema];
     try {
@@ -332,7 +377,6 @@ describe('stagingRefresh (real pg_dump / pg_restore)', () => {
       await createTestSchema({ schema: name });
       staging = await openDb({ url: requireTestDatabaseUrl(), schema: name });
       // The registry row matches the release's YAML, so reconciliation after the restore changes nothing.
-      const root = configRoot();
       await seedStaging(staging, loadAssetYamls(root)[0]!.hash);
       const running = await enqueueJob(staging, { kind: 'staging_refresh', assetId: null, slot: NOW });
       await staging.run("UPDATE jobs SET status = 'running', lease_owner = 'stage-daemon', attempts = 1 WHERE id = $1", [running!.id]);
@@ -347,11 +391,15 @@ describe('stagingRefresh (real pg_dump / pg_restore)', () => {
       const before = new Map<string, string>();
       for (const t of ENV_LOCAL_TABLES) before.set(t, await tableJson(staging, t));
 
-      const w = world({ db: staging, dump, root });
-      w.ctx.clock = new FakeClock(new Date(statSync(dump).mtimeMs + HOUR));
+      const mtime = statSync(dump).mtime;
+      const w = world({ db: staging, dump: source === 'upload' ? join(work, 'none.dump') : dump, root });
+      w.ctx.clock = new FakeClock(new Date(mtime.getTime() + HOUR));
       const out = await makeStagingRefreshHandler({ role: 'orion_dev' })(job, w.ctx);
-      expect(out).toMatchObject({ status: 'done' });
-      expect(w.posts).toEqual([`ORION STAGING REFRESH done: restored ${statSync(dump).mtime.toISOString()}, ${PROD_DATA_TABLES.length} tables`]);
+      expect(out).toMatchObject({ status: 'done', result: { source } });
+      const what = source === 'upload' ? `the uploaded dump (${mtime.toISOString()})` : mtime.toISOString();
+      expect(w.posts).toEqual([`ORION STAGING REFRESH done: restored ${what}, ${PROD_DATA_TABLES.length} tables`]);
+      // An upload is consumed by the run; prod's dump is left for the next week.
+      expect(existsSync(dump)).toBe(source === 'prod');
 
       for (const t of ENV_LOCAL_TABLES) expect({ t, rows: await tableJson(staging, t) }).toEqual({ t, rows: before.get(t) });
       expect((await listRegistry(staging)).map((r) => r.assetId)).toEqual(['mini']);

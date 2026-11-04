@@ -137,6 +137,7 @@ proposals list [<a>] [--all] | agent runs list [<a>] | inbox <a>
 confirm|reject <id> | approve <id> [note] | decline|ack|resolve <id> <note>
 job run-now <kind> [asset] [--slot <iso>]   # enqueues; nightly_report needs --slot (the slot to report again)
 refresh-staging          # stage only: job run-now staging_refresh
+refresh-staging --stdin <sha256> < dump   # stage only: restore an uploaded pg_dump -Fc dump (below); waits for the job
 sql-ro "<one SELECT>"    # prod only: orion db query-ro as orion_prod_ro (read-only, 30 s, one statement, no backslash)
 ```
 
@@ -160,6 +161,7 @@ own lines (`job <id> refresh lit: ...`). A job's full result is in `jobs` (`resu
 | `ORION DISCLOSURE ...` / `ORION DISCLOSURE ALERT ...` | disclosure_watch | the watcher's own lines (`docs/ops/disclosure-watcher.md`) |
 | `ORION ALERT <env> disclosure_watch exit <code>: <stderr line>` | disclosure_watch | the scan crashed or timed out (2 h) |
 | `ORION STAGING REFRESH done: restored <dump mtime>, <n> tables` | staging_refresh | staging holds prod's data as of that dump |
+| `ORION STAGING REFRESH done: restored the uploaded dump (<mtime>), <n> tables` | staging_refresh | the dump sent with `refresh-staging --stdin` is restored |
 | `ORION ALERT stage staging_refresh: <reason>` | staging_refresh | below |
 
 Silence means broken: the dead-man ping is withheld whenever a post is undelivered, the nightly report could not be
@@ -187,3 +189,12 @@ Weekly (Sun 10:30 UTC) or by `refresh-staging`. Restores prod's nightly dump `/h
 - Then registry reconciliation against staging's release and a migration status check; then the done line.
 
 It runs at priority 5 with one worker, so nothing else runs meanwhile.
+
+**An uploaded dump (`refresh-staging --stdin <sha256>`, I-1/I-2).** Staging's data can also come from a dump made on
+uranus (an import proven there, `docs/ops/deploy.md` "First staging deploy"): `ssh orion-stage refresh-staging --stdin
+<sha256> < latest.dump`. orion-remote reads the stdin (8 GB cap) into `~/home/incoming/staging-refresh.dump` (600, the
+directory 700), refuses a wrong sha256 or a file that is not a `pg_dump -Fc` dump (no `PGDMP` header), queues
+`staging_refresh`, waits for it (up to 3 h), prints the job and exits 0 only when it is `done`. While that file exists the
+job restores it instead of prod's dump, by exactly the steps above (filtered list, schema check, one transaction, the
+Slack line says `the uploaded dump`), and removes it afterwards whatever the outcome; orion-remote removes it too, so it
+is never restored twice and never ages into the 36 h alert. Nothing for Mike to place by hand.

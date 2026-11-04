@@ -57,12 +57,24 @@ export function credentialSource(env: Record<string, string | undefined>, profil
 }
 
 /**
+ * No agent ever runs on stage (I-4): staging runs the disclosure watcher dry, and its CLI child re-reads the stage
+ * `.env` through ORION_ENV_FILE, so "the stage .env has no key" must not be the only thing between staging and a paid
+ * run. `env` is the process environment over the env file (ORION_ENV from either refuses).
+ */
+export function refuseAgentOnStage(env: Record<string, string | undefined>): void {
+  if (env.ORION_ENV?.trim() === 'stage') {
+    throw new OrionError('agent_refused_stage', 'agent runs are refused on stage (ORION_ENV=stage): no request is sent, whatever credentials are set');
+  }
+}
+
+/**
  * The real client. This is the only place in Orion that constructs the SDK client, so no test can reach the network by
  * accident. `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) from <ORION_HOME>/.env or the environment is passed
  * explicitly when set, because the SDK reads only the process environment; otherwise the SDK resolves credentials
- * itself (an `ant auth login` profile, or workload identity federation).
+ * itself (an `ant auth login` profile, or workload identity federation). Refused on stage before anything else.
  */
 export function anthropicModelClient(env: Record<string, string | undefined>): ModelClient {
+  refuseAgentOnStage(env);
   if (credentialSource(env, existsSync(join(homedir(), '.config', 'anthropic'))) === null) {
     throw new OrionError('no_credentials', 'no Anthropic credentials: set ANTHROPIC_API_KEY in <ORION_HOME>/.env or the environment, or run "ant auth login"');
   }

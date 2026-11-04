@@ -38,15 +38,18 @@ never on argv or printed).
 
 ## Prerequisites (once)
 
-- Mike has run `orion-host.sh` with sudo on venus from a commit at or after `2e45881` (the export at
-  `/home/hermes/orion-provision-2e45881/provision`). Never the 32d2ec5 copy: its `orion-remote sql-ro` gives a shell
-  (review C-1). That run installs the full `orion-remote`, the user unit, `known_hosts` with GitHub's host keys, the
-  `orion-refresh` group and directory, and (with `--with-watcher`) the watcher venv.
+- Mike has run `orion-host.sh` with sudo on venus from a commit that has the final-review fix wave (`refresh-staging
+  --stdin` and `git`) or later. The export at `/home/hermes/orion-provision-2e45881/provision` predates it: its
+  orion-remote has no `--stdin` and it installs no git, so make a fresh export of `scripts/provision/` at that commit.
+  Never the 32d2ec5 copy: its `orion-remote sql-ro` gives a shell (review C-1). That run installs the full
+  `orion-remote`, the user unit, `known_hosts` with GitHub's host keys, the `orion-refresh` group and directory, `git`
+  (the publisher pushes with it; the self-check prints `git --version`), and (with `--with-watcher`) the watcher venv.
 - Each `~/shared/.env` is filled (Mike): `ORION_DATABASE_URL=postgresql://orion_<env>@/orion_<env>?host=/var/run/postgresql`
   (the role must be named), the RPC URLs, `COINGECKO_API_KEY` (and `COINGECKO_PLAN=pro` on prod once it has the Basic
   key), `SLACK_WEBHOOK_URL` (different per env), `ORION_PUBLISH` (`git:git@github.com:masha256/orion-data[-staging].git#main`
-  or `off`), `ORION_DEADMAN_NIGHTLY_URL`, prod also `ORION_DEADMAN_URL` and `ANTHROPIC_API_KEY`. Staging never gets an
-  Anthropic key.
+  or `off`; the daemon refuses to start without it), `ORION_DEADMAN_NIGHTLY_URL`, prod also `ORION_DEADMAN_URL` and
+  `ANTHROPIC_API_KEY`. Staging never gets an Anthropic key (and Orion refuses every agent run on stage regardless:
+  `agent_refused_stage`). No `ORION_HOME` line.
 
 ## 1. Tag and build
 
@@ -92,6 +95,68 @@ when every step worked.
 
 Then check: `ssh orion-stage status`, `ssh orion-stage logs 50`, and #orion-staging at the next slot. The first nightly
 on the new tag (02:45 UTC on staging) is the soak.
+
+## First staging deploy (empty `orion_stage`)
+
+The order is **deploy -> data restore -> `asset activate` per asset -> watch the 02:45 UTC nightly** (final review I-1,
+I-2). `asset registry seed` does not appear: it is only for an empty registry, and `switch` starts the daemon, whose
+start-up already writes 13 `inactive` rows. There is no `systemctl` step either: `switch` starts the unit. Times UTC.
+`ST` = `ssh -i ~/.ssh/orion-stage_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes orion-stage@192.168.0.12`, `WT` = the
+worktree at the release's commit with `dist/` built, `CLI` = `node $WT/dist/cli/index.js`.
+
+0. **Prerequisites (Mike, above).** `orion-host.sh` re-run from this fix wave or later (paste the SELF-CHECK: orion-remote
+   755 root, the unit verifies and is enabled, linger, `known_hosts`, the `orion-refresh` group, `git --version`); the
+   stage `.env` has `ORION_DATABASE_URL` (role named), `SLACK_WEBHOOK_URL` (#orion-staging), `ORION_DEADMAN_NIGHTLY_URL`,
+   `ORION_PUBLISH`, and no `ANTHROPIC_*` or `ORION_HOME` line. Without `--with-watcher` expect a daily `disclosure_watch
+   exit 1` ALERT. The branch and the tag are pushed (HTTPS + `GH_PAT`, in a shell of their own); `$ST status` prints the
+   full form (`env: stage`, `current: none`, `postgres: accepting connections`, `daemon: no release installed`), else stop.
+1. **Deploy.** `scripts/release/deploy.sh stage <tag> --branch feat/daemon`. Expect `install`: `db.state: behind`
+   (pending 1, 2), registry `added` = the 13 ids; `switch`: `from: null`, `migrations: [1,2]`. The daemon now runs with 13
+   `inactive` rows, and its first scheduler tick runs each entry's newest past slot at once: in #orion-staging an
+   immediate nightly (13 INACTIVE lines), levels, retention, and (with the venv) a dry disclosure scan. If `switch`
+   fails at the restart or the heartbeat wait: `$ST logs 50` for `ORION ALERT stage: daemon not started: <reason>`
+   (usually the `.env`: Mike fixes it; the unit retries every 30 s); do not re-run deploy.sh (install and switch refuse
+   a second time).
+2. **Data: import and prove on uranus, dump, send (`refresh-staging --stdin`).** In a private dir (mode 700, it holds
+   production data; removed at the end):
+   ```
+   P=/home/hermes/git/orion/.worktrees/stage-import-$(date -u +%Y%m%dT%H%M%SZ); mkdir -m 700 "$P"
+   pgrep -af 'dist/cli/index.js|run-daily' | grep -v pgrep          # must be empty: no live tick mid-run
+   sqlite3 /home/hermes/git/orion/orion.db ".backup '$P/snap.db'" && sqlite3 "$P/snap.db" 'PRAGMA integrity_check'
+   psql -X -U orion_dev -d orion_dev -Atc "select count(*) from pg_namespace where nspname='orion'"   # must be 0
+   mkdir -m 700 "$P/new" "$P/ref" && cp -r $WT/assets $WT/personas $WT/skills "$P/new/"
+   printf 'ORION_DATABASE_URL=postgresql://orion_dev@/orion_dev?host=/var/run/postgresql\n' > "$P/new/.env"
+   ORION_HOME="$P/new" $CLI db migrate --json                        # applied [1,2]: the release's own files
+   U='postgresql://orion_dev@/orion_dev?host=/var/run/postgresql'
+   cd $WT && ORION_HOME="$P/new" npx tsx tools/import-sqlite/cli.ts import --from "$P/snap.db" --to "$U" \
+     --schema orion --assets $WT/assets --manifest-dir "$P"
+   npx tsx tools/import-sqlite/cli.ts proof --from "$P/snap.db" --to "$U" --schema orion --assets $WT/assets \
+     --manifest "$P"/import-*.json                                   # ok: true
+   for a in aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv; do
+     ORION_HOME="$P/new" $CLI report yield $a --day <D> --json > "$P/ref/$a.json"; done   # D = yesterday UTC
+   /usr/lib/postgresql/18/bin/pg_dump -Fc -n orion -f "$P/latest.dump" "$U"
+   $ST refresh-staging --stdin "$(sha256sum "$P/latest.dump" | cut -d' ' -f1)" < "$P/latest.dump"
+   ```
+   The manifest exclusions must be only `observations undeclared_metric`, `agent_transcripts non_disclosure_transcript`
+   and `proposals retired_kind`; anything else: stop. `refresh-staging --stdin` checks the sha256 and the `PGDMP` header,
+   then the daemon's `staging_refresh` job restores the file (the same filtered list, schema-equality check and single
+   transaction as the weekly refresh; it overwrites anything the first dry scan added) and both remove it; the call
+   waits and prints the job, exit 0 only when it is `done`. #orion-staging: `ORION STAGING REFRESH done: restored the
+   uploaded dump (<mtime>), 10 tables`. `schema mismatch` means the prep schema was not migrated by this release's
+   files: redo the migrate. Then verify (the dump leg is outside the import proof, M-2):
+   ```
+   for a in <the 13 ids>; do $ST report yield $a --day <D> | cmp - "$P/ref/$a.json"; done     # all identical
+   ```
+   and compare `$ST data anomalies --all` / `$ST proposals list --all` with `$CLI ... --json` on `$P/new`.
+3. **Activate.** `for a in aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv; do $ST asset activate $a --for
+   mike; done`, then `$ST asset registry` (13 active). Optionally `$ST job run-now refresh <a>` per asset for data now;
+   otherwise the first refreshes come with the nightly (an asset activated after a slot began gets none for that slot).
+4. **Clean up on uranus.** `psql -X -U orion_dev -d orion_dev -c 'drop schema orion cascade'`, remove `$P`.
+5. **Watch.** The 02:45 UTC nightly in #orion-staging (the first soak candidate; `$ST status --json` shows `soak` once a
+   scheduler-made nightly with at least one refresh ran on the tag) and the healthchecks stage-nightly check green; the
+   first commit in `orion-data-staging`; levels at 06:15/12:15/18:15; the 16:40 dry disclosure line, which must say `dry
+   run on stage` (a run id means an agent ran: pause and stop); `$ST jobs` for any `failed` job other than real source
+   failures.
 
 ## 3. The soak rule and prod
 
@@ -153,6 +218,7 @@ ssh orion-<env> status [--json]       # release, heartbeat, registry, last jobs,
 ssh orion-<env> logs [n]              # daemon.log
 ssh orion-<env> jobs [--since <iso>]
 ssh orion-stage refresh-staging       # restore prod's latest dump into staging now (docs/ops/daemon.md)
+ssh orion-stage refresh-staging --stdin <sha256> < x.dump   # restore an uploaded pg_dump -Fc dump; waits for the job
 ```
 
 If an orion-remote call died between drain and restart (ssh dropped), the next call of any verb recovers: it undrains,

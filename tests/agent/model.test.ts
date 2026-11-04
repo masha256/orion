@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { credentialSource } from '../../src/agent/model.js';
+import { anthropicModelClient, credentialSource, refuseAgentOnStage } from '../../src/agent/model.js';
+import { OrionError } from '../../src/types.js';
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
@@ -19,6 +20,23 @@ describe('the SDK seam', () => {
   it('no test constructs the real client', () => {
     const offenders = sourceFiles('tests').filter((f) => !f.endsWith('model.test.ts') && readFileSync(f, 'utf8').includes('anthropicModelClient'));
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('anthropicModelClient on stage', () => {
+  it('model: refuses on stage before building a client, whatever credentials are set (I-4)', () => {
+    for (const env of [{ ORION_ENV: 'stage', ANTHROPIC_API_KEY: 'sk-ant-x' }, { ORION_ENV: 'stage', ANTHROPIC_AUTH_TOKEN: 't' }, { ORION_ENV: 'stage' }]) {
+      let err: unknown;
+      try {
+        anthropicModelClient(env);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(OrionError);
+      expect(err).toMatchObject({ code: 'agent_refused_stage' });
+    }
+    expect(() => refuseAgentOnStage({ ORION_ENV: 'prod' })).not.toThrow();
+    expect(() => refuseAgentOnStage({})).not.toThrow();
   });
 });
 

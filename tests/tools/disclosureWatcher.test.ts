@@ -8,7 +8,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const WATCHER = join(ROOT, 'tools', 'disclosure-watcher');
 /** Phase 1 Task 0 Step 6: 110 tests; plus the 7 cases of test_platform.py (Phase 1.5c Task 11) and the 3 of
  * test_stage_dry_state.py (fix wave 2). */
-const EXPECTED_TESTS = 120;
+const EXPECTED_TESTS = 121;
 
 /**
  * The watcher's Python: `ORION_WATCHER_PYTHON`, else `python3` when it can import yaml. Neither: the test fails

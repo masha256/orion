@@ -866,15 +866,23 @@ Spec §12 steps 5-7 and §8.4. Live-install rules apply; nothing here runs befor
 2. Raymond, on Mike's go: create `~/.ssh/orion-stage_ed25519` and `~/.ssh/orion-prod_ed25519`; Mike re-runs
    `orion-host.sh` with `--deploy-key-stage/--deploy-key-prod` (installs full `orion-remote`, units, venvs); paste back
    the self-check.
-3. Tag and build the first release (`build.sh`); `deploy.sh stage <tag>`; import a fresh `.backup` of live SQLite into
-   `orion_stage` (1.5b importer, run on the server by Mike's admin key); `orion asset registry seed --reason "carried
-   from SQLite install" --by import` on staging; `systemctl --user enable --now orion-daemon` as `orion-stage`.
+3. Tag and build the first release (`build.sh`); then, in this order (final review I-1): **deploy -> data restore ->
+   `asset activate` per asset**. `deploy.sh stage <tag>`: `switch` starts the daemon (the unit is enabled at
+   provisioning), whose start-up reconciles 13 `inactive` registry rows, and its first scheduler tick runs each entry's
+   newest past slot at once (a nightly with 0 assets, levels, retention, a dry disclosure scan). Data: import a fresh
+   `.backup` of live SQLite on uranus into a dev schema, prove it, `pg_dump -Fc -n orion`, and send it with
+   `ssh orion-stage refresh-staging --stdin <sha256> < dump` (I-2: no importer ships to the server; the restore
+   overwrites any document the first dry scan added). Then `asset activate <a> --for mike` for each of the 13 (`asset
+   registry seed` is only for an empty registry, i.e. never after a daemon start: it is refused once rows exist). No
+   `systemctl` step: `switch` already started the unit (M-13). Runbook: `docs/ops/deploy.md` "First staging deploy".
 4. Parallel run ≥ 3 days (spec §8.3) with the daily observation diff by UTC day; first restore drill (§10.3).
 5. `deploy.sh prod <tag>` (soak gate passes on the staging nightly).
 6. Cutover (§8.4): pause the 13 `orion-<asset>` Hermes jobs and `orion-disclosure-watch`; check nothing is mid-run;
-   `.backup` + `integrity_check`; import into `orion_prod`; rerun the §8.2 proofs against prod; `registry seed` as
-   above; copy the watcher's `state/lit.json`, `transcripts/` and `log/` into `~orion-prod/home/disclosure/` and the
-   dev queue to `~orion-prod/home/disclosure/dev-queue.md`; `enable --now orion-daemon` as `orion-prod`; check the first
+   `.backup` + `integrity_check`; the same order as staging (I-1): copy the watcher's `state/lit.json`, `transcripts/`
+   and `log/` into `~orion-prod/home/disclosure/` and the dev queue to `~orion-prod/home/disclosure/dev-queue.md`
+   **before** the deploy (its first tick runs the newest past disclosure slot for real); `deploy.sh prod <tag>`; the data
+   into `orion_prod` (the prod import route is still open: followups note, "Open before prod"); rerun the §8.2 proofs
+   against prod; `asset activate` per asset (not `registry seed`: the daemon has already reconciled); check the first
    heartbeat, the first `levels` job, both dead-man checks green, the first snapshot commit in `orion-data`; watch the
    next 00:45 UTC nightly and its Slack post.
 7. Then remove the Hermes jobs and their 13 wrapper scripts plus `orion-disclosure-watch.sh` (cron-job-administration

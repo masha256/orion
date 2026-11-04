@@ -31,6 +31,13 @@ export const ENV_LOCAL_TABLES = [
 
 /** Where prod's nightly dump lands (orion-pg-dump, `postgres:orion-refresh` 640); `$ORION_REFRESH_DUMP` overrides. */
 export const DEFAULT_REFRESH_DUMP = '/home/orion-refresh/latest.dump';
+/**
+ * Where `orion-remote refresh-staging --stdin <sha256>` puts a dump it was sent (relative to ORION_HOME, i.e.
+ * `~/home/incoming/staging-refresh.dump`, 600): an import proven on the dev host and dumped there (I-1/I-2). When it
+ * exists, the job restores it in place of prod's dump and removes it afterwards, whatever the outcome. orion-remote's
+ * UPLOADED_DUMP names the same path (tests/release/orionRemote.test.ts).
+ */
+export const UPLOADED_DUMP = join('incoming', 'staging-refresh.dump');
 /** The dump is written daily at 08:30 UTC; one older than this means the dump timer stopped. */
 export const REFRESH_DUMP_MAX_AGE_MS = 36 * 3_600_000;
 /** pg_restore must be at least the dump's pg_dump version: the server's own binaries, PATH when absent. */
@@ -211,7 +218,9 @@ export function splitPassword(url: string): { url: string; password: string | nu
 type Check = { ok: true } | { ok: false; error: string };
 
 /**
- * `stagingRefreshHandler(job, ctx)`: refuses unless `ctx.env === 'stage'` (`skipped`, `not stage`). No dump file at
+ * `stagingRefreshHandler(job, ctx)`: refuses unless `ctx.env === 'stage'` (`skipped`, `not stage`). An uploaded dump
+ * (`<ORION_HOME>/incoming/staging-refresh.dump`, from `orion-remote refresh-staging --stdin`) is restored in place of
+ * prod's, by the same steps, and removed afterwards (`result.source`: `upload` or `prod`). No dump file at
  * `$ORION_REFRESH_DUMP` (default /home/orion-refresh/latest.dump) is `skipped` quietly (`no dump yet`: prod's dump
  * timer is not enabled yet); a dump that is not a readable file or is older than 36 h fails with an alert. Refuses a
  * dump whose migrations (ids and checksums) differ from staging's, or that holds no table of staging's schema, before
@@ -228,28 +237,43 @@ export function makeStagingRefreshHandler(o: StagingRefreshOptions = {}): JobHan
       ctx.log('not stage: skipped (the refresh only ever restores into staging)');
       return { status: 'skipped', result: { reason: 'not stage' } };
     }
-    const dump = ctx.envVars.ORION_REFRESH_DUMP?.trim() || DEFAULT_REFRESH_DUMP;
+    const uploaded = join(ctx.paths.home, UPLOADED_DUMP);
+    if (!existsSync(uploaded)) return await refresh(ctx, ctx.envVars.ORION_REFRESH_DUMP?.trim() || DEFAULT_REFRESH_DUMP, 'prod');
+    try {
+      return await refresh(ctx, uploaded, 'upload');
+    } finally {
+      // Consumed: never restored a second time by the weekly job, and never left to raise its "older than 36 h".
+      try {
+        unlinkSync(uploaded);
+      } catch (err) {
+        ctx.log(`the uploaded dump ${uploaded} could not be removed: ${(err as Error).message}`);
+      }
+    }
+  };
+
+  async function refresh(ctx: JobContext, dump: string, source: 'prod' | 'upload'): Promise<JobOutcome> {
+    const fail = async (error: string, result: Record<string, unknown> = {}): Promise<JobOutcome> => await failJob(ctx, error, { ...result, source });
     let mtime: Date;
     try {
       const st = statSync(dump);
-      if (!st.isFile()) return await fail(ctx, `dump ${dump} is not a file`);
+      if (!st.isFile()) return await fail(`dump ${dump} is not a file`);
       accessSync(dump, constants.R_OK);
       mtime = st.mtime;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') {
         ctx.log(`no dump yet at ${dump} (prod's nightly dump is not enabled): skipped`);
-        return { status: 'skipped', result: { reason: 'no dump yet', dump } };
+        return { status: 'skipped', result: { reason: 'no dump yet', dump, source } };
       }
-      return await fail(ctx, `dump ${dump} cannot be read: ${code ?? (err as Error).message}`);
+      return await fail(`dump ${dump} cannot be read: ${code ?? (err as Error).message}`);
     }
     const ageMs = ctx.clock.now().getTime() - mtime.getTime();
     if (ageMs > REFRESH_DUMP_MAX_AGE_MS) {
-      return await fail(ctx, `dump ${dump} is ${Math.floor(ageMs / 3_600_000)} h old (older than 36 h): prod's nightly dump has stopped`);
+      return await fail(`dump ${dump} is ${Math.floor(ageMs / 3_600_000)} h old (older than 36 h): prod's nightly dump has stopped`);
     }
     const dumpMtime = mtime.toISOString();
     const urlRaw = ctx.envVars.ORION_DATABASE_URL?.trim();
-    if (!urlRaw) return await fail(ctx, 'ORION_DATABASE_URL is not set');
+    if (!urlRaw) return await fail('ORION_DATABASE_URL is not set');
     const { url, password } = splitPassword(urlRaw);
     const bin = o.pgBin ?? (existsSync(join(PG_BIN_DIR, 'pg_restore')) ? PG_BIN_DIR : '');
     const pgRestore = bin ? join(bin, 'pg_restore') : 'pg_restore';
@@ -260,21 +284,21 @@ export function makeStagingRefreshHandler(o: StagingRefreshOptions = {}): JobHan
 
     // 1. The dump's TOC and its schema version, read from the file only.
     const toc = await run(pgRestore, ['-l', '-v', dump], { env, timeoutMs: READ_TIMEOUT_MS, signal: ctx.signal });
-    if (toc.code !== 0) return await fail(ctx, `pg_restore -l exit ${toc.code}: ${lastLine(toc.stderr)}`);
+    if (toc.code !== 0) return await fail(`pg_restore -l exit ${toc.code}: ${lastLine(toc.stderr)}`);
     const entries = parseToc(toc.stdout);
     const plan = planRestore(entries, schema);
     const tables = plan.keep.filter((e) => e.type === 'TABLE');
     if (tables.length === 0) {
       const schemas = [...new Set(entries.filter((e) => e.type === 'TABLE').map((e) => e.schema))].sort();
-      return await fail(ctx, `the dump holds no table of schema ${schema} (its schemas: ${schemas.join(', ') || 'none'})`);
+      return await fail(`the dump holds no table of schema ${schema} (its schemas: ${schemas.join(', ') || 'none'})`);
     }
     const versions = await run(pgRestore, ['-f', '-', '--data-only', '-n', schema, '-t', 'schema_migrations', dump], { env, timeoutMs: READ_TIMEOUT_MS, signal: ctx.signal });
-    if (versions.code !== 0) return await fail(ctx, `pg_restore of schema_migrations exit ${versions.code}: ${lastLine(versions.stderr)}`);
+    if (versions.code !== 0) return await fail(`pg_restore of schema_migrations exit ${versions.code}: ${lastLine(versions.stderr)}`);
     const prodRows = parseMigrationsCopy(versions.stdout)?.rows ?? [];
     const stageRows = await ctx.db.all<{ id: number; sha256: string }>('SELECT id, sha256 FROM schema_migrations ORDER BY id');
     const same = checkSameSchema(prodRows, stageRows);
-    if (!same.ok) return await fail(ctx, same.error);
-    if (ctx.signal.aborted) return { status: 'failed', result: { dumpMtime }, error: 'aborted before the restore' };
+    if (!same.ok) return await fail(same.error);
+    if (ctx.signal.aborted) return { status: 'failed', result: { dumpMtime, source }, error: 'aborted before the restore' };
 
     // 2. The restore: one transaction, so a failure leaves staging as it was.
     const dir = mkdtempSync(join(tmpdir(), 'orion-staging-refresh-'));
@@ -295,9 +319,9 @@ export function makeStagingRefreshHandler(o: StagingRefreshOptions = {}): JobHan
       }
       rmdirSync(dir);
     }
-    const base = { dumpMtime, tables: tables.length, localEntries: plan.local.length, outsideEntries: plan.outside.length };
+    const base = { dumpMtime, tables: tables.length, localEntries: plan.local.length, outsideEntries: plan.outside.length, source };
     if (restore.code !== 0) {
-      return await fail(ctx, `pg_restore exit ${restore.code}: ${lastLine(restore.stderr)}`, { ...base, stderr: restore.stderr.slice(-STDERR_KEEP) });
+      return await fail(`pg_restore exit ${restore.code}: ${lastLine(restore.stderr)}`, { ...base, stderr: restore.stderr.slice(-STDERR_KEEP) });
     }
 
     // 3. Staging's own registry against its release's YAML, then the schema must still be current.
@@ -306,16 +330,17 @@ export function makeStagingRefreshHandler(o: StagingRefreshOptions = {}): JobHan
       const diff = await reconcileFromDisk(ctx.db, ctx.paths.configRoot, ctx.paths.release?.tag ?? null, ctx.clock.now());
       reconciled = diff as unknown as Record<string, unknown>;
     } catch (err) {
-      return await fail(ctx, `restored, but registry reconciliation failed: ${(err as Error).message}`, base);
+      return await fail(`restored, but registry reconciliation failed: ${(err as Error).message}`, base);
     }
     const status = await migrationStatus(ctx.db);
     if (status.pending.length > 0 || status.state === 'changed') {
-      return await fail(ctx, `restored, but the schema is ${status.state} (pending ${status.pending.map((p) => p.id).join(', ') || 'none'})`, base);
+      return await fail(`restored, but the schema is ${status.state} (pending ${status.pending.map((p) => p.id).join(', ') || 'none'})`, base);
     }
-    const res = await ctx.notify.post(`ORION STAGING REFRESH done: restored ${dumpMtime}, ${tables.length} tables`);
+    const what = source === 'upload' ? `the uploaded dump (${dumpMtime})` : dumpMtime;
+    const res = await ctx.notify.post(`ORION STAGING REFRESH done: restored ${what}, ${tables.length} tables`);
     if (!res.ok) ctx.log('the done line was not delivered');
     return { status: 'done', result: { ...base, reconciled, delivered: res.ok } };
-  };
+  }
 }
 
 /** The dump's migrations must be staging's: the same ids with the same checksums. */
@@ -330,7 +355,7 @@ function checkSameSchema(prod: { id: number; sha256: string }[], stage: { id: nu
 }
 
 /** Posts the one ALERT line (the fenced notifier drops it once the job was aborted) and fails the job (no retry). */
-async function fail(ctx: JobContext, error: string, result: Record<string, unknown> = {}): Promise<JobOutcome> {
+async function failJob(ctx: JobContext, error: string, result: Record<string, unknown> = {}): Promise<JobOutcome> {
   ctx.log(error);
   const res = await ctx.notify.post(`ORION ALERT stage staging_refresh: ${error}`);
   return { status: 'failed', result: { ...result, delivered: res.ok }, error };

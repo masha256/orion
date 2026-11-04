@@ -79,6 +79,24 @@ Runbooks: `docs/ops/daemon.md`, `docs/ops/deploy.md`, `docs/ops/disclosure-watch
 - A password in `ORION_DATABASE_URL` (none on venus: peer auth) would go to `PGPASSWORD`, never on argv.
 - Not tested on venus yet: the first real run needs the dump timer (backups step). `refresh-staging` then proves it.
 
+## Minors from the final review (before the first staging deploy)
+
+From `review-final-findings.md` at 2934c1f; I-1..I-4 were fixed in the final-review fix wave. One line each:
+
+- **M-1 (proof is blind to bytes).** The proof reads both sides through JS, so invalid UTF-8 (U+FFFD) and `documents.sha256`/`bytes` vs `text` go unchecked; recompute `sha256(text)` and compare `length(CAST(text AS BLOB))` with `octet_length(text)`.
+- **M-2 (dump leg unproven).** In the dump route the `pg_dump`/`pg_restore` leg after the proof is not covered by it; verify with byte-equal `report yield --day D` per asset (now step 2 of `docs/ops/deploy.md` "First staging deploy").
+- **M-3 (single-statement scan bypassable).** `queryRo`/orion-remote track only `'` and `"`, so dollar quotes and comments can hide a `;` (writes still impossible: SELECT-only role, read-only default); send with the extended protocol and refuse `pg_advisory`/`pg_sleep`/`dblink`.
+- **M-4 (all-skipped nightly soaks).** A nightly whose refreshes were all `skipped` still counts as a soak; require at least one `done`.
+- **M-5 (whole-database dump restore never run).** Only a `pg_dump -n` dump has been restored for real; orion-pg-dump's whole-database dump (`public`, DEFAULT ACL, ACLs) is covered only by the fake TOC; confirm on the first real refresh or add a test case.
+- **M-6 (hand-placed dump ages into a weekly ALERT).** Moot for the first deploy: `refresh-staging --stdin` replaces the hand-placed `latest.dump`, and the uploaded file is removed by the job and orion-remote; a dump Mike still places by hand must be removed after use.
+- **M-7 (watcher gets every secret).** The watcher, pip, yt-dlp and ffmpeg inherit the whole `.env` (RPC keys, webhook, DB URL, prod's Anthropic key), including the weekly unpinned `pip install --upgrade yt-dlp`; allow-list what the watcher needs.
+- **M-8 (2027-03-08 search collision).** From PDT, stage's 16:40 UTC scan and the Hermes watcher's 09:40 PT run share a minute and an IP (DuckDuckGo 202 = failure); only matters if the parallel run lasts past 2027-03-08.
+- **M-9 (READY may race `systemd-notify`, unverified).** READY via a spawned `systemd-notify --pid` can be lost if systemd cannot map the exited sender; the first `switch` shows it (90 s timeout, unit loops); fix with `Type=simple` + heartbeat or a notify helper that stays alive.
+- **M-10 (`changed` schema not refused on open).** `openDb` and daemon start refuse `behind` but not `changed` (an applied migration edited since); `switch` catches it via `db migrate`, a rollback or hand-run CLI does not; refuse `changed` on open too.
+- **M-11 (run-lock connection gaps).** `tryAssetRunLock`'s own `pg.Client` has no connect timeout, and `tx_asset_mismatch` checks only the outer transaction's lock (no caller relies on that today).
+- **M-12 (stage publish check).** On stage `checkPublishTarget` refuses only the prod repo; any other repo passes (GitHub's per-repo deploy keys stop the push: fail-loud, not a leak).
+- **M-13 (docs: no `systemctl` step).** Fixed in the fix wave: the rollout step and the cutover text no longer tell Raymond to `systemctl --user enable --now` (`switch` starts the unit).
+
 ## Found during execution
 
 - **PUMP `supply_burn_daily` is unstable after the UTC close (source, not platform).** The controller's live check
@@ -120,15 +138,23 @@ RESTARTED line and a single re-run.
 - **C-1 install.** Mike re-runs `orion-host.sh` from 2e45881 or later (never the 32d2ec5 copy) before the prod deploy key
   gets the full verb set.
 - **Prod cutover checklist** (the plan's "Rollout checklist", steps 4-7, each on Mike's go): parallel run of at least 3
-  days with the daily observation diff by UTC day (PUMP buyback excepted, above); `deploy.sh prod <tag>` after the soak;
+  days with the daily observation diff by UTC day (PUMP buyback excepted, above);
   pause the 13 `orion-<asset>` jobs and `orion-disclosure-watch`, check nothing is mid-run; SQLite `.backup` +
-  `integrity_check`; import into `orion_prod` and rerun the §8.2 proofs; `asset registry seed --reason "carried from
-  SQLite install" --by import`; copy the watcher's `state/lit.json`, `transcripts/`, `log/` and the dev queue into
-  `~orion-prod/home/disclosure/`; start the daemon; check the first heartbeat, the first `levels` job, both dead-man checks
+  `integrity_check`; then the order is **deploy -> data restore -> `asset activate` per asset** (final review I-1):
+  copy the watcher's `state/lit.json`, `transcripts/`, `log/` and the dev queue into `~orion-prod/home/disclosure/`
+  before the deploy; `deploy.sh prod <tag>` after the soak (`switch` starts the daemon: its start-up reconciles 13 `inactive` rows and
+  its first scheduler tick runs each entry's newest past slot at once); the data into `orion_prod` and the §8.2 proofs;
+  `asset activate <a>` for each asset. `asset registry seed` is only for an empty registry, i.e. never after a daemon
+  start (it is refused once rows exist). Check the first heartbeat, the first `levels` job, both dead-man checks
   green, the first commit in `orion-data`, the next 00:45 UTC nightly and its post; then remove the Hermes jobs and
   wrappers, archive the final SQLite file read-only (`orion-final-<stamp>.db`, chmod 400, local + Spaces) with
   `signals.jsonl`, and rewrite the `orion` skill for the server. Fallback for the first week: stop the prod daemon and
   re-enable the Hermes jobs on the archived copy (`docs/ops/hermes-daily-job.md`).
+- **The prod data route (final review I-2).** No importer ships to the server (`tools/import-sqlite` is not packed, its
+  `better-sqlite3`/`tsx` are dev dependencies, venus has no toolchain), and `refresh-staging --stdin` is stage-only.
+  Before prod, pick one: an `orion db import-sqlite` in the release (built `dist/`, `better-sqlite3` as an optional prod
+  dependency or a prebuilt binary), or a prod verb that restores a dump proven on uranus (the same filtered,
+  schema-checked, single-transaction restore), and write it into the cutover steps above.
 - Later, not blocking prod: the S3-compatible publisher driver (when Mike picks a bucket); the yearly snapshot-repo roll
   once a repo passes 500 MB; `pgbackrest info` age in `status` (plan R16: the Orion users cannot read the pgBackRest
-  config); an optional Hermes second-opinion check on the nightly; M-4 and M-6 above.
+  config); an optional Hermes second-opinion check on the nightly; fix wave 2's M-4 and M-6 above.

@@ -218,6 +218,8 @@ for re in \
   'ufw allow from 192\.168\.0\.201 to any port 22 proto tcp' \
   'ufw allow from 100\.109\.70\.114 to any port 22 proto tcp' \
   'ufw --force enable' \
+  '(ok: package git \(|apt-get install .* git( |$))' \
+  'SKIP: git is installed \(the publisher pushes with it\): ' \
   'SKIP: .*orion-stage -> orion_prod' \
   'SKIP: SET ROLE orion_prod as orion_stage is refused' \
   'SKIP: orion_prod_ro cannot write' \

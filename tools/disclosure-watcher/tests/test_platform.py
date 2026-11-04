@@ -191,6 +191,15 @@ class TestPlatform(Base):
         self.assertTrue(lines[0].startswith(f"ORION DISCLOSURE ALERT lit: run failed for post {Q3}: no_credentials"),
                         lines)
 
+    def test_dry_run_refused_on_stage_is_not_an_alert(self):
+        # I-4: Orion refuses every agent run on stage (agent_refused_stage), key or no key; the dry scan says so.
+        self._seed_queued()
+        err = (1, {"error": {"code": "agent_refused_stage", "message": "no agent runs on stage"}})
+        lines = self._scan(FakeOrion(runs=[err]), dry_run=True, queue_file=str(self.base / "dq.md"))
+        self.assertFalse(any(line.startswith("ORION DISCLOSURE ALERT") for line in lines), lines)
+        self.assertIn("ORION DISCLOSURE lit: dry run on stage (agents never run on stage): the analyst run was skipped for "
+                      f"post {Q3}; doc #1 is stored", lines)
+
     def test_venv_yt_dlp_comes_first(self):
         # The daemon upgrades the venv's yt-dlp weekly: the one beside the running interpreter wins over PATH.
         bindir = self.base / "venv" / "bin"

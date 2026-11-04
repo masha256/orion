@@ -1,4 +1,4 @@
-import { anthropicModelClient, type ModelClient } from '../agent/model.js';
+import { anthropicModelClient, refuseAgentOnStage, type ModelClient } from '../agent/model.js';
 import { databaseConfig, openDb, type DatabaseConfig, type OrionDb } from '../db/connection.js';
 import { realFetchDeps } from '../ingest/deps.js';
 import type { FetchDeps, FetchResult } from '../ingest/run.js';
@@ -28,8 +28,11 @@ export interface CliContext {
   database?: DatabaseConfig;
 }
 
+/** The model for `orion agent run`, built at preflight; refused on stage before any client exists, injected or real (I-4). */
 export function modelClientFor(ctx: CliContext): ModelClient {
-  return ctx.modelClient ? ctx.modelClient() : anthropicModelClient(loadEnv(ctx.envFile, process.env));
+  const env = loadEnv(ctx.envFile, process.env);
+  refuseAgentOnStage(env);
+  return ctx.modelClient ? ctx.modelClient() : anthropicModelClient(env);
 }
 
 /**

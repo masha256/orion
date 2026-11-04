@@ -52,7 +52,10 @@ that window, Mondays only. On a day that is not a scan day the script exits 0 an
   Without a key it runs dry and the digest starts with `ORION ALERT prod disclosure_watch: no Anthropic credentials
   (ANTHROPIC_API_KEY) in the env file: the scan ran dry, nothing was filed`.
 - **Staging** always runs dry (`--dry-run`): the Anthropic variables are removed from the watcher's environment whatever
-  the `.env` holds, so it can never start a paid run. Findings go to `~/home/disclosure/dev-queue.dry.md`, and the posts
+  the `.env` holds, and Orion itself refuses every agent run when `ORION_ENV=stage` (`agent_refused_stage`, before any
+  request, even with a key in the `.env`: the watcher's CLI child re-reads it through `ORION_ENV_FILE`), so it can never
+  start a paid run. The digest then says `ORION DISCLOSURE <a>: dry run on stage (agents never run on stage): the analyst
+  run was skipped for post <id>; doc #<n> is stored` (not an alert). Findings go to `~/home/disclosure/dev-queue.dry.md`, and the posts
   a dry scan processed are remembered in `--dry-state` (`state/dry-seen.json`), so each is reported once, not every scan
   day. The real state file is never written by a dry run. A dry run still runs `doc add` against staging's own database
   (documents are append-only and deduped by sha256).
