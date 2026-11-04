@@ -14,11 +14,11 @@ export function registerPersona(program: Command, ctx: CliContext): void {
     .action((opts: { json?: boolean }) =>
       guarded(ctx, opts.json, async () => {
         const coverage = await withDb(ctx, (db) => listCoverage(db));
-        const personas = listPersonaNames(ctx.home).map((name) => {
-          const p = loadPersona(ctx.home, name);
+        const personas = listPersonaNames(ctx.configRoot).map((name) => {
+          const p = loadPersona(ctx.configRoot, name);
           return { name: p.name, model: p.model, effort: p.effort, sectors: p.sectors, covers: coverage.filter((c) => c.persona === name).map((c) => c.assetId) };
         });
-        const skills = loadSkills(ctx.home).map((s) => ({ name: s.name, run_types: s.runTypes, description: s.description }));
+        const skills = loadSkills(ctx.configRoot).map((s) => ({ name: s.name, run_types: s.runTypes, description: s.description }));
         output(ctx, opts.json, { personas, skills }, () => [
           ...(personas.length === 0 ? ['no personas in personas/'] : personas.map((p) => `${p.name}  ${p.model}  effort ${p.effort}  covers: ${p.covers.join(', ') || 'nothing'}`)),
           ...skills.map((s) => `  skill ${s.name}  [${s.run_types.join(', ')}]  ${s.description}`),
@@ -32,7 +32,7 @@ export function registerPersona(program: Command, ctx: CliContext): void {
     .option('--json', 'JSON output')
     .action((name: string, opts: { json?: boolean }) =>
       guarded(ctx, opts.json, () => {
-        const p = loadPersona(ctx.home, name);
+        const p = loadPersona(ctx.configRoot, name);
         output(ctx, opts.json, p, () => [`${p.name}  ${p.model}  effort ${p.effort}  ${p.temperament}`, `sectors: ${p.sectors.join(', ') || 'none'}`, '', p.body]);
       }),
     );
@@ -43,8 +43,8 @@ export function registerPersona(program: Command, ctx: CliContext): void {
     .option('--json', 'JSON output')
     .action((assetId: string, name: string, opts: { json?: boolean }) =>
       guarded(ctx, opts.json, async () => {
-        loadAsset(ctx.home, assetId); // both must exist before the assignment is recorded
-        loadPersona(ctx.home, name);
+        loadAsset(ctx.configRoot, assetId); // both must exist before the assignment is recorded
+        loadPersona(ctx.configRoot, name);
         const c = await withDb(ctx, (db) => assignPersona(db, assetId, name, ctx.now().toISOString()));
         output(ctx, opts.json, c, () => [`${c.persona} now covers ${c.assetId}`]);
       }),

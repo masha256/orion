@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach } from 'vitest';
 import type { CliContext } from '../../src/cli/util.js';
 import { openDb, type DatabaseConfig, type OrionDb } from '../../src/db/connection.js';
@@ -89,7 +90,15 @@ export function testDatabaseConfig(): DatabaseConfig {
   return requireFile().config;
 }
 
-/** The in-process CLI context for `home`, on the file's schema. The file must call `useTestDb()` or `testDbPair()`. */
+/**
+ * The in-process CLI context for `home`, on the file's schema: a dev checkout, so `home` is also the config root and
+ * `<home>/.env` the env file (override any of them in `over`). The file must call `useTestDb()` or `testDbPair()`.
+ */
 export function testCliContext(home: string, over: Partial<CliContext> = {}): CliContext {
-  return { home, stdout: () => undefined, now: () => new Date(), database: requireFile().config, ...over };
+  return { ...devPaths(home), stdout: () => undefined, now: () => new Date(), database: requireFile().config, ...over };
+}
+
+/** A dev checkout's paths for `home` (no release): what `resolvePaths` gives with only `ORION_HOME` set. */
+export function devPaths(home: string): Pick<CliContext, 'home' | 'configRoot' | 'envFile' | 'release'> {
+  return { home, configRoot: home, envFile: join(home, '.env'), release: null };
 }

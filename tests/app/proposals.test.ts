@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { approveProposal, rejectProposal } from '../../src/app/proposals.js';
+import type { ReleaseInfo } from '../../src/cli/paths.js';
 import { loadAsset } from '../../src/config/load.js';
 import { decideAnomaly, getAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
 import { getObservationsByIds, insertObservation, listActiveObservations } from '../../src/db/observations.js';
@@ -276,6 +277,44 @@ describe('approving a config proposal', () => {
     expect(existsSync(`${yamlPath}.tmp`)).toBe(false);
     const orphan = await file(stalenessEdit, [7], { assetId: 'ghost' });
     expect(await codeOf(() => approve(orphan.id))).toBe('asset_not_found');
+  });
+});
+
+describe('approving a config proposal in a release (D6)', () => {
+  const RELEASE: ReleaseInfo = { tag: 'orion-2026.11.02.1', commit: '0123456789abcdef0123456789abcdef01234567', schema: 1, builtAt: '2026-11-02T10:00:00.000Z' };
+  const stalenessEdit: ProposalChange = { kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'staleness_days'], value: 14 }] };
+  const approveInRelease = (id: number) => approveProposal(w.db, home, id, { now: NOW, release: RELEASE });
+
+  it('proposals: release mode refuses an unshipped config proposal with config_needs_release and writes no file', async () => {
+    const p = await file(stalenessEdit, [7]);
+    const bytes = readFileSync(yamlPath);
+    const mtime = statSync(yamlPath).mtimeMs;
+    await expect(approveInRelease(p.id)).rejects.toThrow(expect.objectContaining({
+      code: 'config_needs_release',
+      message: `proposal ${p.id} changes assets/mini.yaml; commit the change, ship a release, deploy it, then approve`,
+    }));
+    expect(readFileSync(yamlPath).equals(bytes)).toBe(true);
+    expect(statSync(yamlPath).mtimeMs).toBe(mtime);
+    expect(existsSync(`${yamlPath}.tmp`)).toBe(false);
+    expect((await getProposal(w.db, p.id))!.status).toBe('pending');
+  });
+
+  it('proposals: release mode approves a config proposal the release already carries', async () => {
+    const p = await file(stalenessEdit, [7]);
+    // The change was committed and shipped: the release's YAML holds the proposed value.
+    writeFileSync(yamlPath, readFileSync(yamlPath, 'utf8').replace('staleness_days: 7 }', 'staleness_days: 14 }'));
+    const bytes = readFileSync(yamlPath);
+    const mtime = statSync(yamlPath).mtimeMs;
+    const { proposal, result } = await approveInRelease(p.id);
+    expect(proposal.status).toBe('approved');
+    expect(result).toEqual({ kind: 'config', file: yamlPath, changes: [{ path: ['metrics', 'staked_supply', 'staleness_days'], from: 14, to: 14 }] });
+    expect(readFileSync(yamlPath).equals(bytes)).toBe(true);
+    expect(statSync(yamlPath).mtimeMs).toBe(mtime);
+  });
+
+  it('release mode still refuses an edit under agent: before anything else', async () => {
+    const p = await file({ kind: 'config', edits: [{ path: ['agent', 'max_step_fraction'], value: 1 }] }, [null]);
+    expect(await codeOf(() => approveInRelease(p.id))).toBe('path_not_proposable');
   });
 });
 

@@ -117,7 +117,7 @@ export function registerProposals(program: Command, ctx: CliContext): void {
     .option('--json', 'JSON output')
     .action((id: string, opts: { note?: string; json?: boolean }) =>
       guarded(ctx, opts.json, async () => {
-        const outcome = await withDb(ctx, (db) => approveProposal(db, ctx.home, parseNumber(id, 'id'), { note: opts.note, now: ctx.now() }));
+        const outcome = await withDb(ctx, (db) => approveProposal(db, ctx.configRoot, parseNumber(id, 'id'), { note: opts.note, now: ctx.now(), release: ctx.release }));
         output(ctx, opts.json, outcome, () => [`proposal #${outcome.proposal.id} approved`, ...approvedLines(outcome.result)]);
       }),
     );

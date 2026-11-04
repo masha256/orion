@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProgram } from '../../src/cli/program.js';
-import type { CliContext } from '../../src/cli/util.js';
 import { databaseConfig, openDb, type DatabaseConfig } from '../../src/db/connection.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
+import { devPaths } from '../helpers/db.js';
 import { AS_OF } from '../helpers/obs.js';
 import { createTestSchema, dropTestSchema, requireTestDatabaseUrl } from '../setup/pgGlobal.js';
 
@@ -28,10 +28,10 @@ function home(): string {
   return h;
 }
 
-async function orion(ctx: Omit<CliContext, 'stdout' | 'now' | 'setExitCode'>, ...args: string[]): Promise<{ out: string; exit: number[] }> {
+async function orion(ctx: { home: string; database?: DatabaseConfig }, ...args: string[]): Promise<{ out: string; exit: number[] }> {
   const lines: string[] = [];
   const exit: number[] = [];
-  const program = buildProgram({ ...ctx, stdout: (l) => lines.push(l), now: () => new Date(AS_OF), setExitCode: (c) => exit.push(c) });
+  const program = buildProgram({ ...devPaths(ctx.home), database: ctx.database, stdout: (l) => lines.push(l), now: () => new Date(AS_OF), setExitCode: (c) => exit.push(c) });
   await program.parseAsync(args, { from: 'user' });
   return { out: lines.join('\n'), exit };
 }

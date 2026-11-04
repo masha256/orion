@@ -49,7 +49,7 @@ export function registerData(program: Command, ctx: CliContext): void {
     .option('--quote <text>', 'quoted source text')
     .option('--json', 'JSON output')
     .action(async (assetId: string, metric: string, value: string, opts: SetOpts) => {
-      const { config } = loadAsset(ctx.home, assetId);
+      const { config } = loadAsset(ctx.configRoot, assetId);
       const def = config.metrics[metric];
       if (!def) throw new OrionError('unknown_metric', `metric "${metric}" is not defined in assets/${assetId}.yaml`);
       if (!SOURCES.includes(opts.source as ObservationSource)) throw new OrionError('invalid_source', `source must be one of ${SOURCES.join(', ')}`);
@@ -113,13 +113,13 @@ export function registerData(program: Command, ctx: CliContext): void {
         backfillDays = parseNumber(opts.backfillDays, '--backfill-days');
         if (!Number.isInteger(backfillDays) || backfillDays < 1) throw new OrionError('invalid_number', '--backfill-days must be a positive whole number');
       }
-      const ids = assetId ? [assetId] : listAssetIds(ctx.home).filter((id) => hasSources(loadAsset(ctx.home, id).config));
+      const ids = assetId ? [assetId] : listAssetIds(ctx.configRoot).filter((id) => hasSources(loadAsset(ctx.configRoot, id).config));
       const deps = ingestDepsFor(ctx);
       const results: FetchResult[] = [];
       await withDb(ctx, async (db) => {
         for (const id of ids) {
           results.push(
-            await fetchAsset(db, loadAsset(ctx.home, id), ctx.now(), deps, {
+            await fetchAsset(db, loadAsset(ctx.configRoot, id), ctx.now(), deps, {
               metrics: opts.metric, backfillDays, adopt: opts.adopt, dryRun: opts.dryRun, onProgress: (line) => ctx.stderr?.(line),
             }),
           );
@@ -135,7 +135,7 @@ export function registerData(program: Command, ctx: CliContext): void {
     .description('per metric: its source and cross-checks, the last fetch outcome, and the age of the value in force')
     .option('--json', 'JSON output')
     .action(async (assetId: string, opts: { json?: boolean }) => {
-      const { config } = loadAsset(ctx.home, assetId);
+      const { config } = loadAsset(ctx.configRoot, assetId);
       const rows = await withDb(ctx, (db) => describeSources(db, config, ctx.now()));
       output(ctx, opts.json, rows, () =>
         rows.length === 0

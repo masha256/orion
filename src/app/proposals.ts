@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
+import type { ReleaseInfo } from '../cli/paths.js';
 import { applyEditsToYaml, getAtPath, unproposableEdits } from '../config/edit.js';
 import { loadAsset, parseAssetYaml } from '../config/load.js';
 import { decideAnomaly, getAnomaly } from '../db/anomalies.js';
@@ -39,13 +40,17 @@ export async function rejectProposal(db: Db, id: number, note: string, now: Date
 
 /**
  * Applies a proposal through the same functions the CLI uses, after checking that what it was filed against still holds.
- * Database kinds are one transaction. A config proposal edits assets/<id>.yaml in place and restores the file if marking
- * the proposal approved fails.
+ * Database kinds are one transaction. A config proposal edits `<configRoot>/assets/<id>.yaml` in place and restores the
+ * file if marking the proposal approved fails. With `release` (the config root is a shipped release, D6) a config
+ * proposal never writes: it is approved only once the release's YAML already holds every proposed value, else
+ * `config_needs_release`.
  */
-export async function approveProposal(db: Db, home: string, id: number, opts: { note?: string; now: Date }): Promise<{ proposal: Proposal; result: ApproveResult }> {
+export async function approveProposal(
+  db: Db, configRoot: string, id: number, opts: { note?: string; now: Date; release?: ReleaseInfo | null },
+): Promise<{ proposal: Proposal; result: ApproveResult }> {
   const p = await pending(db, id);
   // The asset id becomes part of a file path below, and it comes off a stored row. A row from an older build, or one
-  // edited in the database, must not be able to steer a write out of <home>/assets. Checked before any path is built.
+  // edited in the database, must not be able to steer a write out of <configRoot>/assets. Checked before any path is built.
   if (!/^[a-z0-9-]+$/.test(p.assetId)) {
     throw new OrionError('invalid_proposal', `proposal ${id} names "${p.assetId}", which is not an asset id`);
   }
@@ -53,7 +58,7 @@ export async function approveProposal(db: Db, home: string, id: number, opts: { 
   const note = opts.note?.trim() || null;
   const change = p.change;
 
-  if (change.kind === 'config') return approveConfig(db, home, p, note, nowIso);
+  if (change.kind === 'config') return approveConfig(db, configRoot, p, note, nowIso, opts.release ?? null);
 
   // Under the asset's transaction lock: every kind below checks what the proposal was filed against before it writes.
   // A row of another asset reached from here (a stored proposal citing another asset's observation or anomaly) is
@@ -88,7 +93,7 @@ export async function approveProposal(db: Db, home: string, id: number, opts: { 
       }
 
       case 'observation': {
-        const { config } = loadAsset(home, p.assetId);
+        const { config } = loadAsset(configRoot, p.assetId);
         const filed = (p.filedAgainst as { inForce: number | null }).inForce;
         // The last CONFIRMED value: the same baseline the move guard measured from when it filed this proposal.
         const inForce = await valueInForce(t, config, change.metricKey, nowIso, { confirmedOnly: true });
@@ -124,7 +129,9 @@ function writeAtomically(file: string, text: string): void {
 
 const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-async function approveConfig(db: Db, home: string, p: Proposal, note: string | null, nowIso: string): Promise<{ proposal: Proposal; result: ApproveResult }> {
+async function approveConfig(
+  db: Db, configRoot: string, p: Proposal, note: string | null, nowIso: string, release: ReleaseInfo | null,
+): Promise<{ proposal: Proposal; result: ApproveResult }> {
   if (p.change.kind !== 'config') throw new Error('not a config proposal');
   const edits = p.change.edits;
 
@@ -139,7 +146,7 @@ async function approveConfig(db: Db, home: string, p: Proposal, note: string | n
     throw new OrionError('invalid_proposal', `proposal ${p.id} does not record what each of its ${edits.length} edits was filed against`);
   }
 
-  const file = join(home, 'assets', `${p.assetId}.yaml`);
+  const file = join(configRoot, 'assets', `${p.assetId}.yaml`);
   if (!existsSync(file)) throw new OrionError('asset_not_found', `no asset config at ${file}`);
   const original = readFileSync(file, 'utf8');
 
@@ -147,9 +154,18 @@ async function approveConfig(db: Db, home: string, p: Proposal, note: string | n
   const raw = parseYaml(original) as unknown;
   const current = edits.map((e) => getAtPath(raw, e.path));
   const changes = edits.map((e, i) => ({ path: e.path, from: current[i], to: e.value }));
-  // The file already holds every proposed value: an earlier approve renamed the file and died before recording it.
+  // The file already holds every proposed value: an earlier approve renamed the file and died before recording it, or
+  // (in a release) the change was committed, shipped and deployed.
   if (edits.every((e, i) => same(current[i], e.value))) {
     return { proposal: await decideProposal(db, p.id, 'approved', note, nowIso), result: { kind: 'config', file, changes } };
+  }
+  // A release's files are what was built and deployed: an edit in place would be overwritten by the next deploy and
+  // would make the running config differ from its tag. The change goes through git and a release instead (D6).
+  if (release !== null) {
+    throw new OrionError(
+      'config_needs_release',
+      `proposal ${p.id} changes assets/${p.assetId}.yaml; commit the change, ship a release, deploy it, then approve`,
+    );
   }
   edits.forEach((e, i) => {
     if (!same(current[i], filed[i])) stale(p.id, `${e.path.join(' > ')} was ${JSON.stringify(filed[i])} when it was filed and is ${JSON.stringify(current[i])} now`);

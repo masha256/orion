@@ -78,11 +78,11 @@ export function registerReport(program: Command, ctx: CliContext): void {
     .option('--json', 'JSON output')
     .action(async (assetId: string | undefined, opts: { day?: string; json?: boolean }) => {
       if (opts.day !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(opts.day)) throw new OrionError('invalid_day', '--day must be YYYY-MM-DD');
-      const ids = assetId ? [assetId] : listAssetIds(ctx.home).filter((id) => loadAsset(ctx.home, id).config.reporting !== undefined);
+      const ids = assetId ? [assetId] : listAssetIds(ctx.configRoot).filter((id) => loadAsset(ctx.configRoot, id).config.reporting !== undefined);
       const reports = await withDb(ctx, async (db) => {
         const out: HolderYieldReport[] = [];
         for (const id of ids) {
-          const asset = loadAsset(ctx.home, id).config;
+          const asset = loadAsset(ctx.configRoot, id).config;
           if (!asset.reporting) throw new OrionError('no_reporting', `assets/${id}.yaml has no reporting block`);
           out.push(await loadHolderYieldReport(db, asset, opts.day));
         }

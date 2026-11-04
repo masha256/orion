@@ -18,7 +18,7 @@ export function registerTick(program: Command, ctx: CliContext): void {
     )
     .option('--json', 'accepted for consistency; tick always writes JSON')
     .action(async (assetId: string) => {
-      const loaded = loadAsset(ctx.home, assetId);
+      const loaded = loadAsset(ctx.configRoot, assetId);
       const { report, exitCode } = await withDb(ctx, (db) =>
         tickAsset(db, loaded, {
           home: ctx.home, now: ctx.now, fetchDeps: ingestDepsFor(ctx),

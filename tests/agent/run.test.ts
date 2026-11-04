@@ -34,7 +34,7 @@ const run = (script: ScriptStep[], opts: Partial<RunAgentOptions> = {}, deps: Pa
   model = scriptedModel(script);
   return runAgent(
     w.db, w.loaded, { runType: 'disclosure', docId: w.doc.id, assetYaml: AGENT_ASSET_YAML, ...opts },
-    { home, now: () => new Date(AS_OF), modelClient: () => model, reload: () => w.loaded, ...deps },
+    { configRoot: home, now: () => new Date(AS_OF), modelClient: () => model, reload: () => w.loaded, ...deps },
   );
 };
 const codeOf = async (p: Promise<unknown>): Promise<string | undefined> => p.then(() => undefined, (err: OrionError) => err.code);

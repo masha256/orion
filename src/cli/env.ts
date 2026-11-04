@@ -1,5 +1,4 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 
 /**
  * KEY=value lines; optional "export "; optional single or double quotes; # comments. Anything else is
@@ -25,13 +24,13 @@ export function parseEnvFile(text: string): Record<string, string> {
 }
 
 /**
- * The process environment, over <ORION_HOME>/.env when that file exists. A process value that is
+ * The process environment, over `envFile` (`OrionPaths.envFile`: `<ORION_HOME>/.env` unless `ORION_ENV_FILE` names
+ * another) when that file exists. A process value that is
  * undefined, empty or whitespace-only does not override the file (a shell that exports
  * `ANTHROPIC_API_KEY=""` must not hide the real key in .env); it is kept only when the file lacks the key.
  */
-export function loadEnv(home: string, processEnv: Record<string, string | undefined>): Record<string, string | undefined> {
-  const path = join(home, '.env');
-  const fromFile = existsSync(path) ? parseEnvFile(readFileSync(path, 'utf8')) : {};
+export function loadEnv(envFile: string, processEnv: Record<string, string | undefined>): Record<string, string | undefined> {
+  const fromFile = existsSync(envFile) ? parseEnvFile(readFileSync(envFile, 'utf8')) : {};
   const out: Record<string, string | undefined> = { ...fromFile };
   for (const [key, value] of Object.entries(processEnv)) {
     const blank = value === undefined || value.trim() === '';

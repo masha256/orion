@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildProgram } from '../../src/cli/program.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
-import { testCliContext, useTestDb } from '../helpers/db.js';
+import { devPaths, testCliContext, useTestDb } from '../helpers/db.js';
 import { AS_OF } from '../helpers/obs.js';
 
 const testDb = useTestDb();
@@ -31,7 +31,7 @@ describe('orion cli', () => {
     const fresh = mkdtempSync(join(tmpdir(), 'orion-cli-'));
     const lines: string[] = [];
     // no database configured at all: init needs none
-    await buildProgram({ home: fresh, stdout: (l) => lines.push(l), now: () => new Date(AS_OF) }).parseAsync(['init', '--json'], { from: 'user' });
+    await buildProgram({ ...devPaths(fresh), stdout: (l) => lines.push(l), now: () => new Date(AS_OF) }).parseAsync(['init', '--json'], { from: 'user' });
     expect(JSON.parse(lines.join('\n'))).toEqual({ home: fresh });
   });
 

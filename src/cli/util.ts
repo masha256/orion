@@ -4,9 +4,17 @@ import { realFetchDeps } from '../ingest/deps.js';
 import type { FetchDeps, FetchResult } from '../ingest/run.js';
 import { OrionError } from '../types.js';
 import { loadEnv } from './env.js';
+import type { ReleaseInfo } from './paths.js';
 
 export interface CliContext {
+  /** The data home (`ORION_HOME`): `ticks.jsonl` and other files Orion writes. */
   home: string;
+  /** Where `assets/`, `personas/` and `skills/` are read from: the release, or `home` in a dev checkout (`resolvePaths`). */
+  configRoot: string;
+  /** The `.env` file every command reads its secrets and database from. */
+  envFile: string;
+  /** The release the config root was shipped as; null in a dev checkout. */
+  release: ReleaseInfo | null;
   stdout: (line: string) => void;
   now: () => Date;
   /** Transports and environment for fetching. Tests inject fakes; by default the real ones are built. */
@@ -21,7 +29,7 @@ export interface CliContext {
 }
 
 export function modelClientFor(ctx: CliContext): ModelClient {
-  return ctx.modelClient ? ctx.modelClient() : anthropicModelClient(loadEnv(ctx.home, process.env));
+  return ctx.modelClient ? ctx.modelClient() : anthropicModelClient(loadEnv(ctx.envFile, process.env));
 }
 
 /**
@@ -38,13 +46,13 @@ export async function guarded(ctx: CliContext, json: boolean | undefined, action
   }
 }
 
-/** The command's database: the context's, else `ORION_DATABASE_URL` / `ORION_DB_SCHEMA` from the environment over `<home>/.env`. */
+/** The command's database: the context's, else `ORION_DATABASE_URL` / `ORION_DB_SCHEMA` from the environment over the env file. */
 export function databaseFor(ctx: CliContext): DatabaseConfig {
-  return ctx.database ?? databaseConfig(loadEnv(ctx.home, process.env));
+  return ctx.database ?? databaseConfig(loadEnv(ctx.envFile, process.env));
 }
 
 export function ingestDepsFor(ctx: CliContext): FetchDeps {
-  return ctx.ingestDeps ? ctx.ingestDeps() : realFetchDeps(loadEnv(ctx.home, process.env), ctx.now);
+  return ctx.ingestDeps ? ctx.ingestDeps() : realFetchDeps(loadEnv(ctx.envFile, process.env), ctx.now);
 }
 
 /**

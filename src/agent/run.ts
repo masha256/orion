@@ -37,7 +37,8 @@ export interface RunAgentOptions {
 }
 
 export interface RunAgentDeps {
-  home: string;
+  /** Where the persona and the skills are read from (`CliContext.configRoot`). */
+  configRoot: string;
   now: () => Date;
   /** Built during preflight, so missing credentials fail before a run row exists. Tests pass a scripted model. */
   modelClient: () => ModelClient;
@@ -74,8 +75,8 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   }
   const coverage = await getCoverage(db, asset.id);
   if (!coverage) throw new OrionError('no_persona_assigned', `no persona covers ${asset.id}; run "orion persona assign ${asset.id} <name>"`);
-  const persona = loadPersona(deps.home, coverage.persona);
-  const skills = skillsFor(deps.home, opts.runType);
+  const persona = loadPersona(deps.configRoot, coverage.persona);
+  const skills = skillsFor(deps.configRoot, opts.runType);
   const note = opts.note?.trim() || undefined;
   if (opts.docId === undefined) throw new OrionError('disclosure_needs_doc', 'a disclosure run needs --doc <id>');
   // Another asset's document is not found: the run may only ever cite its own asset's document.

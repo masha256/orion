@@ -8,6 +8,7 @@ import { openPgDb, type PgDb } from '../../src/db/pg/pool.js';
 import { CARRIED_TABLES } from '../../tools/import-sqlite/carry.js';
 import { runCli } from '../../tools/import-sqlite/cli.js';
 import { importSqlite, type ImportManifest } from '../../tools/import-sqlite/importer.js';
+import { devPaths } from '../helpers/db.js';
 import { buildSqliteFixture, FIXTURE_EXPECTED, FIXTURE_SEQUENCES, type SqliteFixture } from '../helpers/sqliteFixture.js';
 import { createTestSchema, dropTestSchema } from '../setup/pgGlobal.js';
 
@@ -228,7 +229,7 @@ describe('import', () => {
     const orion = async (...args: string[]) => {
       lines.length = 0;
       exit = undefined;
-      const program = buildProgram({ home, stdout: (l) => lines.push(l), now: () => new Date('2026-10-05T00:00:00.000Z'), setExitCode: (c) => (exit = c), database: config });
+      const program = buildProgram({ ...devPaths(home), stdout: (l) => lines.push(l), now: () => new Date('2026-10-05T00:00:00.000Z'), setExitCode: (c) => (exit = c), database: config });
       await program.parseAsync(args, { from: 'user' });
       return lines.join('\n');
     };

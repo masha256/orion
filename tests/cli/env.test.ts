@@ -15,41 +15,51 @@ describe('.env loading', () => {
     expect(parseEnvFile(text)).toEqual({ F: 'value', G: 'quoted # not a comment', H: 'also # not a comment', I: 'nohash#stuck' });
   });
 
-  it('lets the process environment win over <ORION_HOME>/.env, and works without a file', () => {
+  it('lets the process environment win over the env file, and works without a file', () => {
     const home = mkdtempSync(join(tmpdir(), 'orion-env-'));
-    expect(loadEnv(home, { X: 'proc' })).toEqual({ X: 'proc' });
-    writeFileSync(join(home, '.env'), 'ORION_BASE_RPC_URL=https://rpc.example\nX=file\n');
-    expect(loadEnv(home, { X: 'proc' })).toEqual({ ORION_BASE_RPC_URL: 'https://rpc.example', X: 'proc' });
+    const envFile = join(home, '.env');
+    expect(loadEnv(envFile, { X: 'proc' })).toEqual({ X: 'proc' });
+    writeFileSync(envFile, 'ORION_BASE_RPC_URL=https://rpc.example\nX=file\n');
+    expect(loadEnv(envFile, { X: 'proc' })).toEqual({ ORION_BASE_RPC_URL: 'https://rpc.example', X: 'proc' });
+  });
+
+  it('env: loadEnv reads the given file, not <home>/.env', () => {
+    const home = mkdtempSync(join(tmpdir(), 'orion-env-home-'));
+    writeFileSync(join(home, '.env'), 'FROM=home\nHOME_ONLY=1\n');
+    const shared = mkdtempSync(join(tmpdir(), 'orion-env-shared-'));
+    writeFileSync(join(shared, '.env'), 'FROM=shared\n');
+    expect(loadEnv(join(shared, '.env'), {})).toEqual({ FROM: 'shared' });
   });
 
   describe('an empty or whitespace-only process value does not override .env', () => {
-    const home = mkdtempSync(join(tmpdir(), 'orion-env-empty-'));
-    writeFileSync(join(home, '.env'), 'ANTHROPIC_API_KEY=sk-from-file\nONLY_FILE=file-only\n');
+    const dir = mkdtempSync(join(tmpdir(), 'orion-env-empty-'));
+    const envFile = join(dir, '.env');
+    writeFileSync(envFile, 'ANTHROPIC_API_KEY=sk-from-file\nONLY_FILE=file-only\n');
 
     it('uses the file value when the process value is empty', () => {
-      expect(loadEnv(home, { ANTHROPIC_API_KEY: '' }).ANTHROPIC_API_KEY).toBe('sk-from-file');
+      expect(loadEnv(envFile, { ANTHROPIC_API_KEY: '' }).ANTHROPIC_API_KEY).toBe('sk-from-file');
     });
 
     it('uses the file value when the process value is whitespace only', () => {
-      expect(loadEnv(home, { ANTHROPIC_API_KEY: '  \t ' }).ANTHROPIC_API_KEY).toBe('sk-from-file');
+      expect(loadEnv(envFile, { ANTHROPIC_API_KEY: '  \t ' }).ANTHROPIC_API_KEY).toBe('sk-from-file');
     });
 
     it('uses the file value when the process value is undefined', () => {
-      expect(loadEnv(home, { ANTHROPIC_API_KEY: undefined }).ANTHROPIC_API_KEY).toBe('sk-from-file');
+      expect(loadEnv(envFile, { ANTHROPIC_API_KEY: undefined }).ANTHROPIC_API_KEY).toBe('sk-from-file');
     });
 
     it('still lets a non-empty process value win', () => {
-      expect(loadEnv(home, { ANTHROPIC_API_KEY: 'sk-from-proc' }).ANTHROPIC_API_KEY).toBe('sk-from-proc');
+      expect(loadEnv(envFile, { ANTHROPIC_API_KEY: 'sk-from-proc' }).ANTHROPIC_API_KEY).toBe('sk-from-proc');
     });
 
     it('keeps a key that is only in the process env, empty or not', () => {
-      const env = loadEnv(home, { ONLY_PROC: 'proc-only', EMPTY_PROC: '' });
+      const env = loadEnv(envFile, { ONLY_PROC: 'proc-only', EMPTY_PROC: '' });
       expect(env.ONLY_PROC).toBe('proc-only');
       expect(env.EMPTY_PROC).toBe('');
     });
 
     it('keeps a key that is only in the file', () => {
-      expect(loadEnv(home, {}).ONLY_FILE).toBe('file-only');
+      expect(loadEnv(envFile, {}).ONLY_FILE).toBe('file-only');
     });
   });
 });

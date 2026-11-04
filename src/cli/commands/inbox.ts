@@ -9,7 +9,7 @@ export function registerInbox(program: Command, ctx: CliContext): void {
     .description("everything awaiting your decision: provisional observations to confirm, pending proposals, open anomalies; ids and Orion's numbers only")
     .option('--json', 'JSON output')
     .action(async (assetId: string, opts: { json?: boolean }) => {
-      const asset = loadAsset(ctx.home, assetId).config;
+      const asset = loadAsset(ctx.configRoot, assetId).config;
       const nowIso = ctx.now().toISOString();
       // Guarded like the tick's: a stored shape the schema does not expect lists nothing and warns, rather than failing.
       const inbox = await withDb(ctx, async (db) => {

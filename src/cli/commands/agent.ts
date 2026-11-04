@@ -85,13 +85,13 @@ export function registerAgent(program: Command, ctx: CliContext): void {
         const runType = opts.type;
         const anomalyId = opts.anomaly === undefined ? undefined : parseNumber(opts.anomaly, '--anomaly');
         const docId = opts.doc === undefined ? undefined : parseNumber(opts.doc, '--doc');
-        const loaded = loadAsset(ctx.home, assetId);
+        const loaded = loadAsset(ctx.configRoot, assetId);
         // The file as the user wrote it, comments included: the pack shows it.
-        const assetYaml = readFileSync(join(ctx.home, 'assets', `${assetId}.yaml`), 'utf8');
+        const assetYaml = readFileSync(join(ctx.configRoot, 'assets', `${assetId}.yaml`), 'utf8');
         const result = await withDb(ctx, (db) =>
           withRunLock(db, assetId, lockHolder('agent run'), ctx.now(), () =>
             runAgent(db, loaded, { runType, anomalyId, note: opts.note, dryRun: opts.dryRun, docId, assetYaml }, {
-              home: ctx.home, now: ctx.now, modelClient: () => modelClientFor(ctx), reload: () => loadAsset(ctx.home, assetId),
+              configRoot: ctx.configRoot, now: ctx.now, modelClient: () => modelClientFor(ctx), reload: () => loadAsset(ctx.configRoot, assetId),
             })
           , { onReleaseError: (err) => ctx.stderr?.(`warning: the run lock could not be released (${err instanceof Error ? err.message : String(err)}); it goes when the lock connection ends`) }),
         );

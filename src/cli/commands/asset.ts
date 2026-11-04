@@ -10,7 +10,7 @@ export function registerAsset(program: Command, ctx: CliContext): void {
     .command('list')
     .option('--json', 'JSON output')
     .action((opts: { json?: boolean }) => {
-      const ids = listAssetIds(ctx.home);
+      const ids = listAssetIds(ctx.configRoot);
       output(ctx, opts.json, ids, () => (ids.length > 0 ? ids : ['no assets found in assets/']));
     });
 
@@ -18,7 +18,7 @@ export function registerAsset(program: Command, ctx: CliContext): void {
     .command('show <id>')
     .option('--json', 'JSON output')
     .action((id: string, opts: { json?: boolean }) => {
-      const loaded = loadAsset(ctx.home, id);
+      const loaded = loadAsset(ctx.configRoot, id);
       const c = loaded.config;
       output(ctx, opts.json, loaded, () => [
         `${c.symbol}  ${c.name}  (${c.id})`,
@@ -32,9 +32,9 @@ export function registerAsset(program: Command, ctx: CliContext): void {
     .command('validate [id]')
     .option('--json', 'JSON output')
     .action((id: string | undefined, opts: { json?: boolean }) => {
-      const results = (id ? [id] : listAssetIds(ctx.home)).map((assetId) => {
+      const results = (id ? [id] : listAssetIds(ctx.configRoot)).map((assetId) => {
         try {
-          loadAsset(ctx.home, assetId);
+          loadAsset(ctx.configRoot, assetId);
           return { id: assetId, errors: [] as string[] };
         } catch (err) {
           if (err instanceof OrionError) return { id: assetId, errors: err.message.split('\n') };

@@ -87,7 +87,7 @@ export function registerDoc(program: Command, ctx: CliContext): void {
         guarded(ctx, opts.json, async () => {
           if (!isDocKind(opts.kind)) throw new OrionError('invalid_doc_kind', `--kind must be one of ${DOC_KINDS.join(', ')}, got "${opts.kind}"`);
           const kind = opts.kind;
-          loadAsset(ctx.home, assetId);
+          loadAsset(ctx.configRoot, assetId);
           checkUrl(opts.url);
           if (opts.publishedAt !== undefined && !isIsoDateOrInstant(opts.publishedAt)) {
             throw new OrionError('invalid_published_at', `--published-at must be an ISO date (YYYY-MM-DD) or an instant with a zone (e.g. 2026-10-22T16:00:00Z), got "${opts.publishedAt}"`);
