@@ -54,6 +54,7 @@ class OutDir:
                 self.write(side, name, js_json(body))
                 status.append(f"{side}\t{name}\t0")
         (self.root / "status.tsv").write_text("\n".join(status) + "\n")
+        (self.root / "run.txt").write_text(f"legacy=none\nassets={' '.join(assets)}\nday=2026-10-27\nORION_DB_SCHEMA=p2proof_x\n")
 
     def write(self, side, name, text):
         (self.root / side / name).write_text(text)
@@ -96,18 +97,6 @@ class CompareTest(unittest.TestCase):
     def test_key_order_is_a_difference(self):
         obj = report("uni")
         self.out.write("new", "uni.json", js_json(dict(reversed(list(obj.items())))))
-        ok, _ = self.run_compare()
-        self.assertFalse(ok)
-
-    def test_deleting_income_statement_makes_a_new_side_file_comparable(self):
-        obj = report("aero")
-        obj["incomeStatement"] = {"revenue": {"annualized": 99.0}}
-        self.out.write("new", "aero.json", js_json(obj))
-        ok, lines = self.run_compare()
-        self.assertTrue(ok, lines)
-        # but anything else extra on the new side still fails
-        obj["somethingNew"] = 1
-        self.out.write("new", "aero.json", js_json(obj))
         ok, _ = self.run_compare()
         self.assertFalse(ok)
 
@@ -160,53 +149,176 @@ class CompareTest(unittest.TestCase):
         p.write_text(json.dumps(pairs))
         return p
 
-    def with_income_statement(self):
-        for a in ASSETS:
-            obj = report(a)
-            obj["incomeStatement"] = {"revenue": {"annualized": 100.0}}
-            self.out.write("new", f"{a}.json", js_json(obj))
-
-    def test_a_parity_miss_over_1e12_rel_fails(self):
-        self.with_income_statement()
-        base = {a: [["revenue", 100.0, 100.0]] for a in compare.PARITY_ASSETS}
-        ok, lines = self.run_compare(parity=self.write_parity(base))
-        self.assertTrue(ok, lines)
-        within = dict(base, cake=[["revenue", 100.0, 100.0 * (1 + 5e-13)]])
-        ok, lines = self.run_compare(parity=self.write_parity(within))
-        self.assertTrue(ok, lines)
-        miss = dict(base, cake=[["revenue", 100.0, 100.0 * (1 + 3e-12)]])
-        ok, lines = self.run_compare(parity=self.write_parity(miss))
-        self.assertFalse(ok)
-        self.assertTrue(any(l.startswith("FAIL cake") and "parity" in l for l in lines), lines)
-
-    def test_a_parity_asset_missing_from_the_map_fails(self):
-        self.with_income_statement()
-        base = {a: [["revenue", 1.0, 1.0]] for a in compare.PARITY_ASSETS if a != "vvv"}
-        ok, lines = self.run_compare(parity=self.write_parity(base))
-        self.assertFalse(ok)
-        self.assertTrue(any(l.startswith("FAIL vvv") for l in lines), lines)
-
     def write_reclass(self, values):
         p = self.out.root / "expected.json"
         p.write_text(json.dumps(values))
         return p
 
+    def with_income_statement(self, value=100.0, assets=ASSETS):
+        for a in assets:
+            obj = report(a)
+            obj["incomeStatement"] = {"revenue": {"annualized": value}}
+            self.out.write("new", f"{a}.json", js_json(obj))
+
+    REV_PAIR = ["revenue", "incomeStatement.revenue.annualized", "income.revenue.annualized"]
+
+    def parity_map(self, **override):
+        return dict({a: [self.REV_PAIR] for a in compare.PARITY_ASSETS}, **override)
+
+    def reclass_map(self, **override):
+        return dict({a: {"incomeStatement.revenue.annualized": 100.0} for a in compare.RECLASS_ASSETS}, **override)
+
+    def run_v2(self, parity=None, reclass=None):
+        return self.run_compare(
+            parity=self.write_parity(self.parity_map() if parity is None else parity),
+            reclass=self.write_reclass(self.reclass_map() if reclass is None else reclass),
+        )
+
+    def test_deleting_income_statement_makes_a_new_side_file_comparable(self):
+        self.with_income_statement()
+        ok, lines = self.run_v2()
+        self.assertTrue(ok, lines)
+        # but anything else extra on the new side still fails
+        obj = self.out.new_obj("aero")
+        obj["somethingNew"] = 1
+        self.out.write("new", "aero.json", js_json(obj))
+        ok, _ = self.run_v2()
+        self.assertFalse(ok)
+
+    # I1 / R7: the parity map names paths; compare reads both values from the reports.
+    def test_parity_reads_the_values_from_both_reports(self):
+        self.with_income_statement()
+        ok, lines = self.run_v2()
+        self.assertTrue(ok, lines)
+        self.assertIn("parity", lines[-1])
+
+    def test_a_parity_miss_over_1e12_rel_fails(self):
+        self.with_income_statement()
+        obj = self.out.new_obj("cake")
+        obj["incomeStatement"]["revenue"]["annualized"] = 100.0 * (1 + 5e-13)
+        self.out.write("new", "cake.json", js_json(obj))
+        ok, lines = self.run_v2()
+        self.assertTrue(ok, lines)
+        obj["incomeStatement"]["revenue"]["annualized"] = 100.0 * (1 + 3e-12)
+        self.out.write("new", "cake.json", js_json(obj))
+        ok, lines = self.run_v2()
+        self.assertFalse(ok)
+        self.assertTrue(any(l.startswith("FAIL cake") and "parity revenue" in l for l in lines), lines)
+
+    def test_a_self_consistent_map_does_not_pass_a_new_side_that_differs(self):
+        """The old triple format ([label, 100, 100]) let any report through; values now come from the reports."""
+        self.with_income_statement(value=250.0)
+        ok, lines = self.run_v2(reclass=self.reclass_map(**{a: {"incomeStatement.revenue.annualized": 250.0} for a in compare.RECLASS_ASSETS}))
+        self.assertFalse(ok)
+        self.assertEqual(sum(1 for l in lines if l.startswith("FAIL ") and "parity revenue" in l), 10, lines)
+        self.assertTrue(any(l.startswith("FAIL pump") for l in lines), lines)
+
+    def test_value_triples_are_refused(self):
+        self.with_income_statement()
+        ok, lines = self.run_v2(parity=self.parity_map(uni=[["revenue", 100.0, 100.0]]))
+        self.assertFalse(ok)
+        self.assertTrue(any(l.startswith("FAIL uni") and "parity" in l for l in lines), lines)
+
+    def test_a_parity_path_missing_on_either_side_fails(self):
+        self.with_income_statement()
+        for pair in (["r", "incomeStatement.nope.annualized", "income.revenue.annualized"],
+                     ["r", "incomeStatement.revenue.annualized", "income.nope.annualized"]):
+            with self.subTest(pair=pair):
+                ok, lines = self.run_v2(parity=self.parity_map(hype=[pair]))
+                self.assertFalse(ok)
+                self.assertTrue(any(l.startswith("FAIL hype") and "missing" in l for l in lines), lines)
+
+    def test_parity_null_equals_null_only_when_both_are_null(self):
+        self.with_income_statement()
+        # old side: yields.buyback is null in every report; new side: sky's v2 revenue null, link's a number
+        for a, value in (("sky", None), ("link", 1.0)):
+            new = self.out.new_obj(a)
+            new["incomeStatement"]["revenue"]["annualized"] = value
+            self.out.write("new", f"{a}.json", js_json(new))
+        pair_nn = ["revenue", "incomeStatement.revenue.annualized", "yields.buyback"]
+        ok, lines = self.run_v2(parity=self.parity_map(sky=[pair_nn], link=[pair_nn]))
+        self.assertFalse(ok)
+        self.assertTrue(any(l == "PASS sky" for l in lines), lines)
+        self.assertTrue(any(l.startswith("FAIL link") and "parity revenue" in l for l in lines), lines)
+
+    def test_a_path_may_select_an_array_element_by_id(self):
+        obj = {"income": {"lines": [{"id": "vecrv_fees", "annualized": 0.6}, {"id": "vote_incentives", "annualized": 1.7}]}}
+        self.assertEqual(compare.get_path(obj, "income.lines[id=vecrv_fees].annualized"), 0.6)
+        self.assertEqual(compare.get_path(obj, "income.lines[id=vote_incentives]"), obj["income"]["lines"][1])
+        self.assertIs(compare.get_path(obj, "income.lines[id=nope].annualized"), compare._MISSING)
+        self.assertIs(compare.get_path(obj, "income[id=vecrv_fees].annualized"), compare._MISSING)  # not a list
+        dup = {"income": {"lines": [{"id": "a", "annualized": 1}, {"id": "a", "annualized": 2}]}}
+        self.assertIs(compare.get_path(dup, "income.lines[id=a].annualized"), compare._MISSING)  # ambiguous
+        # and through compare: a parity pair whose v1 side is an income line
+        self.with_income_statement(value=3.5)
+        pair = ["line x", "incomeStatement.revenue.annualized", "income.lines[id=x].annualized"]
+        ok, lines = self.run_v2(parity={a: [pair] for a in compare.PARITY_ASSETS},
+                                reclass=self.reclass_map(**{a: {"incomeStatement.revenue.annualized": 3.5} for a in compare.RECLASS_ASSETS}))
+        self.assertTrue(ok, lines)
+
+    # I2: once the new side has incomeStatement, both maps are required and cover all 13 exactly once.
+    def test_a_v2_run_without_both_maps_fails(self):
+        self.with_income_statement(assets=["aero"])
+        for kw in ({}, {"parity": self.write_parity(self.parity_map())}, {"reclass": self.write_reclass(self.reclass_map())}):
+            with self.subTest(given=sorted(kw)):
+                ok, lines = self.run_compare(**kw)
+                self.assertFalse(ok)
+                self.assertTrue(any(l.startswith("FAIL setup") and "--parity" in l and "--reclass" in l for l in lines), lines)
+
+    def test_a_v1_run_needs_no_maps(self):
+        ok, lines = self.run_compare()
+        self.assertTrue(ok, lines)
+
+    def test_every_asset_must_be_covered_by_exactly_one_map(self):
+        self.with_income_statement()
+        no_vvv = {a: v for a, v in self.parity_map().items() if a != "vvv"}
+        no_lit = {a: v for a, v in self.reclass_map().items() if a != "lit"}
+        cases = {
+            "parity asset missing": (no_vvv, None, "vvv"),
+            "reclass asset missing": (None, no_lit, "lit"),
+            "in both maps": (self.parity_map(lit=[self.REV_PAIR]), None, "lit"),
+            "parity asset in the reclass map": (no_vvv, self.reclass_map(vvv={"incomeStatement.revenue.annualized": 100.0}), "vvv"),
+            "unknown asset": (self.parity_map(foo=[self.REV_PAIR]), None, "foo"),
+        }
+        for name, (parity, reclass, asset) in cases.items():
+            with self.subTest(name):
+                ok, lines = self.run_v2(parity=parity, reclass=reclass)
+                self.assertFalse(ok)
+                self.assertTrue(any(l.startswith("FAIL coverage") and asset in l for l in lines), lines)
+
     def test_a_reclass_value_off_by_more_than_1e12_rel_fails(self):
         self.with_income_statement()
-        exp = {a: {"incomeStatement.revenue.annualized": 100.0} for a in compare.RECLASS_ASSETS}
-        ok, lines = self.run_compare(reclass=self.write_reclass(exp))
+        ok, lines = self.run_v2()
         self.assertTrue(ok, lines)
-        exp["lit"] = {"incomeStatement.revenue.annualized": 100.0 * (1 + 2e-12)}
-        ok, lines = self.run_compare(reclass=self.write_reclass(exp))
+        ok, lines = self.run_v2(reclass=self.reclass_map(lit={"incomeStatement.revenue.annualized": 100.0 * (1 + 2e-12)}))
         self.assertFalse(ok)
         self.assertTrue(any(l.startswith("FAIL lit") and "incomeStatement.revenue.annualized" in l for l in lines), lines)
 
     def test_a_reclass_path_missing_on_the_new_side_fails(self):
         self.with_income_statement()
-        exp = {a: {"incomeStatement.revenue.annualized": 100.0} for a in compare.RECLASS_ASSETS}
-        exp["sdcrv"]["incomeStatement.belowLine.toHolders"] = 1.7
-        ok, _ = self.run_compare(reclass=self.write_reclass(exp))
+        ok, _ = self.run_v2(reclass=self.reclass_map(sdcrv={"incomeStatement.revenue.annualized": 100.0, "incomeStatement.belowLine.toHolders": 1.7}))
         self.assertFalse(ok)
+
+    # M1: each report is the asset it is filed under, for day D (run.txt), on both sides.
+    def test_a_report_for_another_asset_or_day_fails(self):
+        for key, value in (("asset", "cake"), ("day", "2026-10-26")):
+            for sides in (("old", "new"), ("new",)):
+                with self.subTest(key=key, sides=sides):
+                    self.tearDown()
+                    self.setUp()
+                    obj = report("crv")
+                    obj[key] = value
+                    for side in sides:
+                        self.out.write(side, "crv.json", js_json(obj))
+                    ok, lines = self.run_compare()
+                    self.assertFalse(ok)
+                    self.assertTrue(any(l.startswith("FAIL crv") and key in l for l in lines), lines)
+
+    def test_a_missing_run_txt_fails(self):
+        (self.out.root / "run.txt").unlink()
+        ok, lines = self.run_compare()
+        self.assertFalse(ok)
+        self.assertTrue(any(l.startswith("FAIL setup") and "run.txt" in l for l in lines), lines)
 
     def test_cli_exit_codes(self):
         script = str(HERE / "compare.py")
@@ -242,7 +354,7 @@ def old_side(root):
             "revenue": {"annualized": 2.31},
             "holders": {"annualized": 1.5},
             "protocol": {"annualized": 0.7},
-            "lines": [line("ybs_payout", 1.5), line("styc_fee", 0.1, "protocol")],
+            "lines": [line("ybs_payout", 1.5), line("treasury", 0.6, "protocol"), line("styc_fee", 0.1, "protocol")],
         },
         "revenue": None,
         "volume": {"annualized": 2.2},
@@ -275,7 +387,8 @@ class ExpectedTest(unittest.TestCase):
             self.assertEqual(exp["sdcrv"]["incomeStatement.operatingCosts.annualized"], 0.12)
             self.assertAlmostEqual(exp["sdcrv"]["incomeStatement.ratios.payoutRatio"], (0.6 + 0.3) / (3.6 - 1.7), places=15)
             self.assertEqual(exp["ycrv"]["incomeStatement.revenue.annualized"], 2.2)
-            self.assertAlmostEqual(exp["ycrv"]["incomeStatement.unreconciled.annualized"], 2.2 - 1.5 - 0.7, places=15)
+            # R6: the st-yCRV fee is not in the v2 statement, so unreconciled never subtracts it.
+            self.assertAlmostEqual(exp["ycrv"]["incomeStatement.unreconciled.annualized"], 2.2 - 1.5 - 0.6, places=15)
             self.assertAlmostEqual(exp["lit"]["incomeStatement.revenue.annualized"], 41.19 + (16.16 - 8.08), places=12)
             self.assertEqual(exp["lit"]["incomeStatement.costOfRevenue.annualized"], 16.16 * 0.5)
             self.assertEqual(exp["lit"]["incomeStatement.grossProfit.annualized"], 41.19)
@@ -284,7 +397,22 @@ class ExpectedTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             exp = expected.expected_values(old_side(d), ycrv_styc_separate=True)
             self.assertAlmostEqual(exp["ycrv"]["incomeStatement.revenue.annualized"], 2.3, places=15)
-            self.assertAlmostEqual(exp["ycrv"]["incomeStatement.unreconciled.annualized"], 2.3 - 1.5 - 0.7, places=15)
+            self.assertAlmostEqual(exp["ycrv"]["incomeStatement.unreconciled.annualized"], 2.3 - 1.5 - 0.6 - 0.1, places=15)
+
+    def test_ycrv_unreconciled_reads_the_ybs_payout_and_treasury_lines_not_the_protocol_total(self):
+        """R6: a protocol total that differs from treasury (+ styc_fee) must not leak into unreconciled."""
+        with tempfile.TemporaryDirectory() as d:
+            old = old_side(d)
+            obj = json.loads((old / "ycrv.json").read_text())
+            obj["income"]["protocol"]["annualized"] = 9.9
+            obj["income"]["holders"]["annualized"] = 9.9
+            (old / "ycrv.json").write_text(js_json(obj))
+            exp = expected.expected_values(old)
+            self.assertAlmostEqual(exp["ycrv"]["incomeStatement.unreconciled.annualized"], 2.2 - 1.5 - 0.6, places=15)
+            obj["income"]["lines"] = [l for l in obj["income"]["lines"] if l["id"] != "treasury"]
+            (old / "ycrv.json").write_text(js_json(obj))
+            with self.assertRaises(expected.ExpectedError):
+                expected.expected_values(old)
 
     def test_cli_writes_expected_json_beside_old(self):
         with tempfile.TemporaryDirectory() as d:
@@ -393,6 +521,47 @@ const args = process.argv.slice(2);
 if (args.includes('--help')) { process.stdout.write('Usage: orion report yield <asset> [--day <d>] [--json]\n'); process.exit(0); }
 process.stdout.write(JSON.stringify({ args }, null, 2) + '\n');
 """
+
+
+# A release CLI for snapshot.sh: `db migrate` exits 1 unless ORION_ENV_FILE is <ORION_HOME>/.env, else prints JSON.
+MIGRATE_CLI = STRICT_CLI.replace("if (args.includes('--help'))", "if (args[0] === 'db' && args[1] === 'migrate') { process.stdout.write(JSON.stringify({ applied: [] }) + '\\n'); process.exit(0); }\nif (args.includes('--help'))")
+
+
+class SnapshotTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_snapshot_sh_passes_orion_env_file_to_db_migrate(self):
+        import sqlite3
+        src = self.root / "src.db"
+        con = sqlite3.connect(src)
+        con.execute("create table t (x integer)")
+        con.commit()
+        con.close()
+        rel = self.root / "orion-new"
+        (rel / "dist" / "cli").mkdir(parents=True)
+        (rel / "RELEASE").write_text("{}")
+        (rel / "dist" / "cli" / "index.js").write_text(MIGRATE_CLI)
+        # A stub npx stops the script at the import step, so nothing reaches Postgres.
+        bin_ = self.root / "bin"
+        bin_.mkdir()
+        (bin_ / "npx").write_text("#!/bin/sh\necho stub-npx >\"$P2_TEST_NPX_LOG\"\nexit 1\n")
+        (bin_ / "npx").chmod(0o755)
+        log = self.root / "npx.log"
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ORION_")}
+        env.update(TMPDIR=str(self.root), PATH=f"{bin_}:{env.get('PATH', '/usr/bin:/bin')}",
+                   P2_SOURCE_DB=str(src), P2_NEW_DIST=str(rel / "dist"), P2_TEST_NPX_LOG=str(log))
+        P = self.root / "p2"
+        r = subprocess.run(["bash", str(HERE / "snapshot.sh"), str(P)], capture_output=True, text=True, env=env)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("db migrate failed", r.stderr, (P / "migrate.stderr").read_text() if (P / "migrate.stderr").exists() else "")
+        self.assertIn("import failed", r.stderr)
+        self.assertEqual(json.loads((P / "migrate.json").read_text()), {"applied": []})
+        self.assertTrue(log.exists())
 
 
 class ReportsTest(unittest.TestCase):

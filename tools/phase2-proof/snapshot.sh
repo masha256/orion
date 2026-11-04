@@ -8,7 +8,7 @@
 #   schema           the schema name, p2proof_<UTC stamp, lowercase>, written before anything is created in Postgres
 #   new/, old/       homes: assets/ personas/ skills/ and a mode-600 .env holding only ORION_DATABASE_URL and
 #                    ORION_DB_SCHEMA (both homes name the same schema: an older release opens a newer schema)
-#   migrate.json     `db migrate --json` by the NEW dist, with ORION_HOME=<P>/new
+#   migrate.json     `db migrate --json` by the NEW dist, with ORION_HOME=<P>/new and ORION_ENV_FILE=<P>/new/.env
 #   import.json, import-<stamp>.json (manifest), proof.json, and a .stderr beside each command's output
 #
 # Env overrides: P2_NEW_DIST (default <worktree>/dist), P2_SOURCE_DB (default the live orion.db, read-only),
@@ -63,8 +63,9 @@ for side in new old; do
   chmod 600 "$P/$side/.env"
 done
 
-# 3. Migrate with the NEW release, import, prove.
-(cd "$P/new" && ORION_HOME="$P/new" node "$DIST/cli/index.js" db migrate --json) >"$P/migrate.json" 2>"$P/migrate.stderr" \
+# 3. Migrate with the NEW release, import, prove. Like every reports.sh run, migrate gets ORION_HOME and ORION_ENV_FILE:
+# a release refuses to run without both (src/cli/paths.ts resolvePaths, release_env_required).
+(cd "$P/new" && ORION_HOME="$P/new" ORION_ENV_FILE="$P/new/.env" node "$DIST/cli/index.js" db migrate --json) >"$P/migrate.json" 2>"$P/migrate.stderr" \
   || die "db migrate failed (see $P/migrate.json, $P/migrate.stderr)"
 [ -s "$P/migrate.json" ] || die "db migrate printed nothing"
 

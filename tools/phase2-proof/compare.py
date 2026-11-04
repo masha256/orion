@@ -7,18 +7,25 @@
 `incomeStatement` deleted, the two must be the same JSON value: same keys in the same order, same types, numbers exactly
 equal (no tolerance). When the new side has no `incomeStatement` the raw bytes must be identical too. anomalies.json and
 proposals.json must be byte-identical. Every file must be non-empty and parseable, both sides must list the same assets,
-at least 13 of them, and <out>/status.tsv (side, file, exit code) must record exit 0 for every run.
+at least 13 of them, and <out>/status.tsv (side, file, exit code) must record exit 0 for every run. Each report's
+top-level `asset` must be its file name and its `day` the D in <out>/run.txt, on both sides.
 
---parity: {"<asset>": [[label, a, b], ...]}; each pair must agree at rel <= 1e-12. Required for every PARITY_ASSETS asset
-whose new side has an `incomeStatement`.
+--parity: {"<asset>": [[label, "<v2 path in new/<a>.json>", "<v1 path in old/<a>.json>"], ...]} (ruling R7): compare
+reads both values from the reports; they must agree at rel <= 1e-12. A path missing on either side fails; null equals
+null only when both are null.
 --reclass: {"<asset>": {"<dotted path>": expected}} (expected.py); each path, read on the new side (incomeStatement
-included), must equal the value at rel <= 1e-12. Required for every RECLASS_ASSETS asset whose new side has one.
+included), must equal the value at rel <= 1e-12.
+Paths are dotted keys; a step `key[field=value]` selects the one element of the list at `key` whose `field` is `value`
+(e.g. `income.lines[id=vecrv_fees].annualized`); none or several matches is a missing path.
+Once any new-side report has `incomeStatement`, both maps are required and together must cover the 13 assets exactly
+once each: PARITY_ASSETS in --parity, RECLASS_ASSETS in --reclass, nothing else.
 
 Prints one line per asset (and per list file): `PASS <name>` or `FAIL <name>: <reason>`, then a summary. Exit 0 only on
 a full pass.
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -96,13 +103,27 @@ def rel_diff(a, b):
 _MISSING = object()
 
 
+_SELECT = re.compile(r"^([^\[\]]+)\[([A-Za-z_][A-Za-z0-9_]*)=([^\[\]]+)\]$")
+
+
 def get_path(obj, dotted):
-    """obj at a dotted path ("incomeStatement.revenue.annualized"); _MISSING when any step is absent."""
+    """obj at a dotted path ("incomeStatement.revenue.annualized", "income.lines[id=vecrv_fees].annualized");
+    _MISSING when any step is absent, or a `[field=value]` selector matches no element or more than one."""
     node = obj
     for step in dotted.split("."):
-        if not isinstance(node, dict) or step not in node:
+        m = _SELECT.match(step)
+        key = m.group(1) if m else step
+        if not isinstance(node, dict) or key not in node:
             return _MISSING
-        node = node[step]
+        node = node[key]
+        if m:
+            field, want = m.group(2), m.group(3)
+            if not isinstance(node, list):
+                return _MISSING
+            found = [x for x in node if isinstance(x, dict) and x.get(field) == want]
+            if len(found) != 1:
+                return _MISSING
+            node = found[0]
     return node
 
 
@@ -124,6 +145,19 @@ def read_status(out):
     return status
 
 
+def read_day(out):
+    """D from <out>/run.txt (reports.sh writes `day=<D>`); Bad when missing or without one."""
+    p = Path(out) / "run.txt"
+    try:
+        text = p.read_text()
+    except OSError:
+        raise Bad(f"{p}: missing (reports.sh did not finish)") from None
+    days = [row[len("day="):] for row in text.splitlines() if row.startswith("day=")]
+    if len(days) != 1 or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", days[0]):
+        raise Bad(f"{p}: need exactly one day=YYYY-MM-DD line")
+    return days[0]
+
+
 def load_side_map(path, what):
     if path is None:
         return None
@@ -133,16 +167,23 @@ def load_side_map(path, what):
     return {k: v for k, v in value.items() if not k.startswith("_")}
 
 
-def check_parity(asset, pairs):
+def check_parity(asset, new_obj, old_obj, pairs):
+    """Each [label, v2 path, v1 path]: the new report's value at the v2 path vs the old report's at the v1 path."""
     if not isinstance(pairs, list) or not pairs:
         return f"parity: no pairs for {asset}"
     for pair in pairs:
-        if not (isinstance(pair, list) and len(pair) == 3):
-            return f"parity: malformed pair {json.dumps(pair)[:80]}"
-        label, a, b = pair
-        r = rel_diff(a, b)
+        if not (isinstance(pair, list) and len(pair) == 3 and all(isinstance(x, str) and x for x in pair)):
+            return f"parity: malformed pair {json.dumps(pair)[:80]} (need [label, v2 path, v1 path])"
+        label, v2_path, v1_path = pair
+        got = get_path(new_obj, v2_path)
+        if got is _MISSING:
+            return f"parity {label}: {v2_path} missing on the new side"
+        want = get_path(old_obj, v1_path)
+        if want is _MISSING:
+            return f"parity {label}: {v1_path} missing on the old side"
+        r = rel_diff(got, want)
         if not r <= REL_TOL:
-            return f"parity {label}: {json.dumps(a)} vs {json.dumps(b)} (rel {r:.3g} > {REL_TOL:g})"
+            return f"parity {label}: new {v2_path} {json.dumps(got)} vs old {v1_path} {json.dumps(want)} (rel {r:.3g} > {REL_TOL:g})"
     return None
 
 
@@ -163,7 +204,21 @@ def asset_names(side_dir):
     return {p.stem for p in Path(side_dir).glob("*.json") if p.name not in NOT_ASSETS}
 
 
-def compare_asset(out, asset, status, parity, reclass):
+def coverage_errors(parity, reclass):
+    """Why the two maps do not cover the 13 assets exactly once (PARITY_ASSETS by --parity, RECLASS_ASSETS by
+    --reclass), or [] when they do."""
+    errors = []
+    for asset in sorted(set(parity) | set(reclass) | set(PARITY_ASSETS) | set(RECLASS_ASSETS)):
+        where = [n for n, m in (("--parity", parity), ("--reclass", reclass)) if asset in m]
+        want = "--parity" if asset in PARITY_ASSETS else "--reclass" if asset in RECLASS_ASSETS else None
+        if want is None:
+            errors.append(f"{asset} is not one of the 13 assets (in {', '.join(where)})")
+        elif where != [want]:
+            errors.append(f"{asset} must be in {want} only, found in {', '.join(where) or 'neither'}")
+    return errors
+
+
+def compare_asset(out, asset, status, parity, reclass, day):
     """None on a pass, else the reason."""
     for side in ("old", "new"):
         code = status.get((side, f"{asset}.json"))
@@ -178,6 +233,11 @@ def compare_asset(out, asset, status, parity, reclass):
         return str(e)
     if not isinstance(new, dict) or not isinstance(old, dict):
         return "not a JSON object (an error document?)"
+    for side, obj in (("old", old), ("new", new)):
+        if obj.get("asset") != asset:
+            return f"{side}: asset is {json.dumps(obj.get('asset'))}, not {asset!r}"
+        if obj.get("day") != day:
+            return f"{side}: day is {json.dumps(obj.get('day'))}, not {day!r} (run.txt)"
     has_v2 = V2_KEY in new
     legacy = {k: v for k, v in new.items() if k != V2_KEY}
     d = first_diff(old, legacy)
@@ -185,19 +245,24 @@ def compare_asset(out, asset, status, parity, reclass):
         return f"legacy differs at {d}"
     if not has_v2 and old_raw != new_raw:
         return "same JSON value but the bytes differ (formatting)"
-    if parity is not None and (asset in parity or (has_v2 and asset in PARITY_ASSETS)):
-        if asset not in parity:
-            return "parity: asset missing from the parity map"
-        r = check_parity(asset, parity[asset])
+    if parity is not None and asset in parity:
+        r = check_parity(asset, new, old, parity[asset])
         if r:
             return r
-    if reclass is not None and (asset in reclass or (has_v2 and asset in RECLASS_ASSETS)):
-        if asset not in reclass:
-            return "reclass: asset missing from the expected file"
+    if reclass is not None and asset in reclass:
         r = check_reclass(asset, new, reclass[asset])
         if r:
             return r
     return None
+
+
+def has_income_statement(path):
+    """True when the file is a JSON object with a top-level incomeStatement (unreadable files fail elsewhere)."""
+    try:
+        _, obj = load(path)
+    except Bad:
+        return False
+    return isinstance(obj, dict) and V2_KEY in obj
 
 
 def compare_list_file(out, name, status):
@@ -223,6 +288,7 @@ def compare_out(out, parity=None, reclass=None):
     lines = []
     try:
         status = read_status(out)
+        day = read_day(out)
         parity_map = load_side_map(parity, "parity")
         reclass_map = load_side_map(reclass, "reclass")
     except Bad as e:
@@ -237,9 +303,17 @@ def compare_out(out, parity=None, reclass=None):
     if len(assets) < MIN_ASSETS:
         lines.append(f"FAIL count: {len(assets)} assets on both sides, need at least {MIN_ASSETS}")
         ok = False
+    if any(has_income_statement(out / "new" / f"{a}.json") for a in sorted(new_assets)):
+        if parity_map is None or reclass_map is None:
+            lines.append(f"FAIL setup: --parity and --reclass are both required (the new side has {V2_KEY})")
+            ok = False
+        else:
+            for e in coverage_errors(parity_map, reclass_map):
+                lines.append(f"FAIL coverage: {e}")
+                ok = False
     passed = 0
     for a in assets:
-        reason = compare_asset(out, a, status, parity_map, reclass_map)
+        reason = compare_asset(out, a, status, parity_map, reclass_map, day)
         if reason is None:
             passed += 1
             lines.append(f"PASS {a}")
@@ -258,7 +332,7 @@ def compare_out(out, parity=None, reclass=None):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     ap.add_argument("out", help="the directory reports.sh wrote (old/, new/, status.tsv)")
-    ap.add_argument("--parity", help="the parity map: {asset: [[label, a, b], ...]}")
+    ap.add_argument("--parity", help="the parity map: {asset: [[label, v2 path (new side), v1 path (old side)], ...]}")
     ap.add_argument("--reclass", help="expected.json from expected.py: {asset: {dotted path: value}}")
     args = ap.parse_args(argv)
     ok, lines = compare_out(args.out, parity=args.parity, reclass=args.reclass)

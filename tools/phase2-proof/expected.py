@@ -13,7 +13,10 @@ The formulas are the plan's Reclassification Table (global constraints), as writ
   sdCRV ratios.payoutRatio  = (income line vecrv_fees + income line crv_fee_share) / sdCRV revenue
   yCRV revenue              = volume.annualized (flow_usd.yearn_gross)
                               [+ income line styc_fee (flow_usd.yearn_styc_fee) with --ycrv-styc-separate]
-  yCRV unreconciled         = yCRV revenue - income.holders.annualized - income.protocol.annualized
+  yCRV unreconciled         = yCRV revenue - income line ybs_payout - income line treasury
+                              [- income line styc_fee with --ycrv-styc-separate]
+                              Ruling R6 (ycrv-styc-probe.md): by default the st-yCRV fee has no revenue, holders or
+                              protocol line in v2, so it is never subtracted (v1 income.protocol includes it).
   LIT revenue               = revenue.annualized + (robinhood stream grossAnnualized - annualized)
   LIT costOfRevenue         = robinhood stream grossAnnualized * 0.5
   LIT grossProfit           = revenue.annualized (v1)
@@ -25,7 +28,10 @@ import json
 import sys
 from pathlib import Path
 
-# yCRV's income line for flow_usd.yearn_styc_fee is `styc_fee` (assets/ycrv.yaml reporting.income.lines).
+# yCRV's income lines (assets/ycrv.yaml reporting.income.lines): flow_usd.fees, flow_usd.yearn_revenue and
+# flow_usd.yearn_styc_fee.
+YCRV_HOLDERS_LINE = "ybs_payout"
+YCRV_TREASURY_LINE = "treasury"
 YCRV_STYC_LINE = "styc_fee"
 ROBINHOOD_SHARE = 0.5
 
@@ -106,12 +112,17 @@ def sdcrv(obj):
 
 def ycrv(obj, styc_separate):
     a = "ycrv"
+    holders = income_line(obj, a, YCRV_HOLDERS_LINE)
+    treasury = income_line(obj, a, YCRV_TREASURY_LINE)
     revenue = total(obj, "volume", a)
-    if styc_separate:
-        revenue = revenue + income_line(obj, a, YCRV_STYC_LINE)
+    unreconciled = revenue - holders - treasury
+    if styc_separate:  # the spec alternative: styc_fee is a revenue stream and a protocol line
+        styc = income_line(obj, a, YCRV_STYC_LINE)
+        revenue = revenue + styc
+        unreconciled = revenue - holders - treasury - styc
     return {
         "incomeStatement.revenue.annualized": revenue,
-        "incomeStatement.unreconciled.annualized": revenue - income_total(obj, a, "holders") - income_total(obj, a, "protocol"),
+        "incomeStatement.unreconciled.annualized": unreconciled,
     }
 
 
