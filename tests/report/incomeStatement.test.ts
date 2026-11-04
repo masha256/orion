@@ -3,7 +3,7 @@ import { parseAssetYaml } from '../../src/config/load.js';
 import type { MetricDef } from '../../src/config/schema.js';
 import { addDays } from '../../src/ingest/time.js';
 import { holderYieldReport, type ReportInput, type ReportLevels } from '../../src/report/holderYield.js';
-import { incomeStatementV2, listingBar } from '../../src/report/incomeStatement.js';
+import { incomeStatementV2, listingBar, type IsV2 } from '../../src/report/incomeStatement.js';
 import { reportFlowMetrics } from '../../src/report/load.js';
 import { sourceTypeOf } from '../../src/report/sourceTypes.js';
 import { ALL_ASSETS, repoAsset, syntheticInput } from '../helpers/syntheticReport.js';
@@ -265,9 +265,10 @@ describe('source types and provenance', () => {
     expect(tp('hype')).toEqual(['revenue.trading', 'holders.af_buyback']);
     expect(tp('pump')).toEqual(['revenue.protocol']);
     expect(tp('aero')).toEqual(['revenue.fees', 'holders.voter_fees']);
-    expect(tp('vvv')).toEqual(['revenue.business.cross_check']);
-    expect(tp('crv')).toEqual(['below_line.vote_incentives']);
-    for (const id of ['cake', 'cvxcrv', 'link', 'lit', 'sdcrv', 'sky', 'uni', 'ycrv']) expect(tp(id), id).toEqual([]);
+    expect(tp('vvv')).toEqual(['revenue.business.cross_check', 'holders.burn.cross_checks']);
+    expect(tp('crv')).toEqual(['below_line.vote_incentives', 'below_line.vote_incentives.cross_checks']);
+    expect(tp('lit')).toEqual(['holders.buyback.cross_checks']);
+    for (const id of ['cake', 'cvxcrv', 'link', 'sdcrv', 'sky', 'uni', 'ycrv']) expect(tp(id), id).toEqual([]);
   });
 
   it('provenance.sources names each statement series by rung, never a full URL', () => {
@@ -315,5 +316,293 @@ describe('reportFlowMetrics with income_statement', () => {
   it('reads a series only the income statement names', () => {
     const asset = toy(`${BASE}  below_line: [ { id: bribes, metric: flow_usd.bribes, to: holders, bucket: cash, haircut: 0.05, recipient_base: staked, capture_rule: programmatic } ]\n`);
     expect(reportFlowMetrics(asset)).toEqual(['flow_usd.burn', 'flow_usd.fees', 'flow_usd.lp', 'flow_usd.treasury', 'flow_usd.keepers', 'flow_usd.bribes']);
+  });
+});
+
+/** Fix round 1 (Task 3 review, controller rulings I1-I4, M1-M6, M8). */
+describe('fix round 1: disclosed growth and cross-check (I1)', () => {
+  const DISCLOSED = `  revenue: [ { id: business, disclosed: revenue_run_rate_usd, cross_check: flow_usd.fees } ]
+${BURN}  remainder: protocol
+`;
+
+  it("VVV: the disclosed line carries v1's disclosed growth, flags and cross-check; revenue.growth is it", () => {
+    const input = syntheticInput(repoAsset('vvv'));
+    const v1 = holderYieldReport(input);
+    const v2 = incomeStatementV2(input, v1);
+    expect(v1.revenue!.growth.annualized).toEqual(expect.any(Number));
+    expect(v2.revenue.growth).toEqual(v1.revenue!.growth);
+    const line = v2.revenue.lines.find((l) => l.id === 'business')!;
+    expect(line.growth).toEqual(v1.revenue!.streams[0].growth);
+    expect(line.disclosedGrowth).toEqual(v1.revenue!.disclosedGrowth);
+    expect(line.crossCheck).toEqual({ metric: 'flow_usd.revenue_proxy', annualized: v1.revenue!.crossCheck!.annualized, sourceType: 'third_party' });
+  });
+
+  it('one disclosure: growth null with the v1 flag, also in the statement flags', () => {
+    const { v2 } = run(DISCLOSED, { levels: levels({ disclosed: [{ observedAt: '2026-01-01T00:00:00.000Z', value: 5000 }] }) });
+    expect(v2.revenue.annualized).toBe(5000);
+    expect(v2.revenue.growth).toMatchObject({ current: 5000, prior: null, annualized: null, note: 'between the two latest disclosures' });
+    const line = v2.revenue.lines[0];
+    expect(line.disclosedGrowth).toEqual({ annualized: null, gapDays: null, latestAgeDays: 20, flags: ['one disclosure so far: no growth'] });
+    expect(v2.flags).toContain('disclosed revenue: one disclosure so far: no growth');
+  });
+
+  it('two disclosures 30 days apart: growth between them, flagged noisy', () => {
+    const disclosed = [{ observedAt: '2025-12-01T00:00:00.000Z', value: 4000 }, { observedAt: '2025-12-31T00:00:00.000Z', value: 5000 }];
+    const { v2 } = run(DISCLOSED, { levels: levels({ disclosed }) });
+    expect(v2.revenue.growth.annualized).toBeCloseTo((5000 / 4000) ** (365 / 30) - 1);
+    expect(v2.revenue.lines[0].growth.change).toBeCloseTo(0.25);
+    expect(v2.flags).toContain('disclosed revenue: the two latest disclosures are 30 days apart (< 90): a noisy rate');
+    expect(v2.revenue.lines[0].crossCheck).toEqual({ metric: 'flow_usd.fees', annualized: expect.closeTo(year(10)), sourceType: 'disclosure' });
+  });
+
+  it('the statement reads its own disclosed metric (statementDisclosed) when the loader gives it', () => {
+    const { v2 } = run(DISCLOSED, {
+      levels: levels({ disclosed: [{ observedAt: '2026-01-01T00:00:00.000Z', value: 1 }], statementDisclosed: [{ observedAt: '2026-01-01T00:00:00.000Z', value: 7000 }] }),
+    });
+    expect(v2.revenue.annualized).toBe(7000);
+  });
+});
+
+describe('fix round 1: net of dilution (I2)', () => {
+  it('holderFlow.netOfDilution = net - dilution in USD (emissions + releases at price), per token too', () => {
+    const { v1, v2 } = run(BASE);
+    const dilutionUsd = v1.yields.dilution! * v1.fdv!;
+    expect(dilutionUsd).toBeCloseTo(50 * 2); // 50 tokens a year at price 2
+    expect(v2.holderFlow.net).toBeCloseTo(year(5));
+    expect(v2.holderFlow.netOfDilution).toBeCloseTo(year(5) - dilutionUsd);
+    expect(v2.perToken.holderFlow.netOfDilution).toBeCloseTo((year(5) - dilutionUsd) / 500);
+    expect(v2.perToken.perTokenFdv.holderFlow.netOfDilution).toBeCloseTo((year(5) - dilutionUsd) / 1000);
+  });
+
+  it('netOfDilution is null when dilution is unknown', () => {
+    const { v2 } = run(BASE, { levels: levels({ emissionRateAnnual: null }) });
+    expect(v2.holderFlow.net).toBeCloseTo(year(5));
+    expect(v2.holderFlow.netOfDilution).toBeNull();
+  });
+});
+
+describe('fix round 1: below-line not measured is never 0 (I3)', () => {
+  const NM_BRIBES = '  below_line: [ { id: bribes, to: holders, not_measured: "bribe markets not scanned" } ]\n';
+  it('AERO shape: every below-line line to holders not measured -> toHolders and fromBelowLine null, listed', () => {
+    const { v2 } = run(`${BASE}${NM_BRIBES}`);
+    expect(v2.belowLine.toHolders).toBeNull();
+    expect(v2.belowLine.toProtocol).toBe(0);
+    expect(v2.belowLine.notMeasured).toEqual(['bribes']);
+    expect(v2.holderFlow.fromBelowLine).toBeNull();
+    expect(v2.holderFlow.byBucket.burn!.fromBelowLine).toBeNull();
+    expect(v2.holderFlow.notMeasured).toEqual(['bribes']);
+    // Holder-flow totals keep the measured lines (v1 parity: v1 has no such line).
+    expect(v2.holderFlow.gross).toBeCloseTo(year(5));
+    expect(v2.holderFlow.fromRevenue).toBeCloseTo(year(5));
+  });
+
+  it('AERO (repo) on synthetic series: below line null, not 0', () => {
+    const input = syntheticInput(repoAsset('aero'));
+    const v2 = incomeStatementV2(input, holderYieldReport(input));
+    expect(v2.belowLine.toHolders).toBeNull();
+    expect(v2.holderFlow.fromBelowLine).toBeNull();
+    expect(v2.holderFlow.byBucket.cash!.fromBelowLine).toBeNull();
+  });
+
+  it('some measured: the measured sum, the rest listed', () => {
+    const { v2 } = run(`${BASE}  below_line:
+    - { id: bribes, metric: flow_usd.bribes, to: holders, bucket: cash, haircut: 0, recipient_base: all, capture_rule: programmatic }
+    - { id: other_bribes, to: holders, not_measured: "not scanned" }
+`);
+    expect(v2.belowLine.toHolders).toBeCloseTo(year(1));
+    expect(v2.belowLine.notMeasured).toEqual(['other_bribes']);
+    expect(v2.holderFlow.fromBelowLine).toBeCloseTo(year(1));
+    expect(v2.holderFlow.byBucket.cash!.fromBelowLine).toBeCloseTo(year(1));
+    expect(v2.holderFlow.notMeasured).toEqual(['other_bribes']);
+  });
+
+  it('no below-line line at all: 0 (nothing below the line), not null', () => {
+    const { v2 } = run(BASE);
+    expect(v2.belowLine.toHolders).toBe(0);
+    expect(v2.holderFlow.fromBelowLine).toBe(0);
+    expect(v2.holderFlow.byBucket.burn!.fromBelowLine).toBe(0);
+  });
+});
+
+describe('fix round 1: not_measured holders, protocol and operating costs propagate (I4)', () => {
+  const NM_HOLDER = '    - { id: airdrop, not_measured: "airdrop not scanned", bucket: cash, haircut: 0, recipient_base: all, capture_rule: discretionary }\n';
+  const holdersWithNm = `  revenue: [ { id: fees, metric: flow_usd.fees } ]
+  cost_of_revenue: [ { id: lp, to: lps, metric: flow_usd.lp } ]
+  holders:
+    - { id: burn, metric: flow_usd.burn, bucket: burn, haircut: 0, recipient_base: all, capture_rule: programmatic }
+${NM_HOLDER}`;
+
+  it('a not_measured holders line: holders total, payout ratio, unreconciled null; listed and flagged', () => {
+    const { v2 } = run(`${holdersWithNm}  protocol: [ { id: treasury, metric: flow_usd.treasury } ]\n`);
+    expect(v2.holders.annualized).toBeNull();
+    expect(v2.holders.notMeasured).toEqual(['airdrop']);
+    expect(v2.holders.growth.annualized).toBeNull();
+    expect(v2.holders.byBucket.cash).toEqual({ annualized: null });
+    expect(v2.holders.byBucket.burn!.annualized).toBeCloseTo(year(5));
+    expect(v2.grossProfit.annualized).toBeCloseTo(year(8));
+    expect(v2.ratios.payoutRatio).toBeNull();
+    expect(v2.unreconciled.annualized).toBeNull();
+    expect(v2.unreconciled.pct).toBeNull();
+    expect(v2.flags).toContain('not measured: airdrop');
+    expect(v2.flags).toContain('payout ratio n/a: holders not measured: airdrop');
+    // Holder flow: the holders section is not fully measured, so its totals are null too (the line is listed).
+    expect(v2.holderFlow.notMeasured).toEqual(['airdrop']);
+    expect(v2.holderFlow.gross).toBeNull();
+    expect(v2.holderFlow.net).toBeNull();
+    expect(v2.holderFlow.fromRevenue).toBeNull();
+    expect(v2.holderFlow.byBucket.cash).toMatchObject({ gross: null, net: null, yield: null });
+    expect(v2.holderFlow.byBucket.burn!.gross).toBeCloseTo(year(5));
+    expect(v2.multiples.mcapToHolderFlow.total).toBeNull();
+  });
+
+  it('a not_measured holders line makes the remainder null', () => {
+    const { v2 } = run(`${holdersWithNm}  remainder: protocol\n`);
+    expect(v2.protocol.remainder).toBe(true);
+    expect(v2.protocol.annualized).toBeNull();
+    expect(v2.protocol.lines[0].annualized).toBeNull();
+    expect(v2.unreconciled.annualized).toBeNull();
+  });
+
+  it('a not_measured protocol line: protocol null, listed; the opex remainder and unreconciled null', () => {
+    const block = `  revenue: [ { id: fees, metric: flow_usd.fees } ]
+${BURN}  protocol: [ { id: treasury, metric: flow_usd.treasury }, { id: grants, not_measured: "grants not scanned" } ]
+  remainder: operating_costs
+`;
+    const { v2 } = run(block);
+    expect(v2.protocol.annualized).toBeNull();
+    expect(v2.protocol.notMeasured).toEqual(['grants']);
+    expect(v2.operatingCosts.annualized).toBeNull();
+    expect(v2.unreconciled.annualized).toBeNull();
+    expect(v2.ratios.payoutRatio).toEqual(expect.any(Number));
+  });
+
+  it('a not_measured operating cost: opex null, listed; unreconciled null', () => {
+    const { v2 } = run(BASE.replace('operating_costs: [ { id: keepers, metric: flow_usd.keepers } ]', 'operating_costs: [ { id: keepers, metric: flow_usd.keepers }, { id: audits, not_measured: "audit costs not disclosed" } ]'));
+    expect(v2.operatingCosts.annualized).toBeNull();
+    expect(v2.operatingCosts.notMeasured).toEqual(['audits']);
+    expect(v2.unreconciled.annualized).toBeNull();
+    expect(v2.protocol.notMeasured).toEqual([]);
+  });
+});
+
+describe('fix round 1: unreconciled is exactly 0 where the series coincide (M2)', () => {
+  it.each(['aero', 'cake', 'crv', 'cvxcrv', 'link', 'sdcrv', 'sky', 'uni'])('%s: unreconciled === 0 on synthetic series', (id) => {
+    const input = syntheticInput(repoAsset(id));
+    const v2 = incomeStatementV2(input, holderYieldReport(input));
+    expect(v2.unreconciled.annualized).toBe(0);
+  });
+
+  it('a real gap still shows (yCRV: revenue less YBS payouts and treasury; the toy: 0.5/day)', () => {
+    const input = syntheticInput(repoAsset('ycrv'));
+    const v2 = incomeStatementV2(input, holderYieldReport(input));
+    expect(v2.unreconciled.annualized).not.toBe(0);
+    expect(v2.unreconciled.annualized).toBeCloseTo(v2.revenue.annualized! - v2.holders.annualized! - v2.protocol.annualized!, 6);
+    expect(run(BASE).v2.unreconciled.annualized).toBeCloseTo(year(0.5));
+  });
+
+  it('with a disclosed level: from totals', () => {
+    const { v2 } = run(`  revenue: [ { id: business, disclosed: revenue_run_rate_usd } ]\n${BURN}  protocol: [ { id: treasury, metric: flow_usd.treasury } ]\n`, {
+      levels: levels({ disclosed: [{ observedAt: '2026-01-01T00:00:00.000Z', value: 10_000 }] }),
+    });
+    expect(v2.unreconciled.annualized).toBeCloseTo(10_000 - year(5) - year(2));
+  });
+});
+
+describe('fix round 1: a data gap is flagged apart from not_measured (M3)', () => {
+  it('a measured cost with a missing day: payout on revenue flagged as a data gap, not as not measured', () => {
+    const asset = toy(BASE);
+    const lp = flat(20, 2);
+    lp.delete(addDays(DAY, -3));
+    const daily = new Map([
+      ['flow_usd.fees', flat(20, 10)], ['flow_usd.lp', lp], ['flow_usd.burn', flat(20, 5)], ['flow_usd.treasury', flat(20, 2)], ['flow_usd.keepers', flat(20, 0.5)],
+    ]);
+    const input: ReportInput = { asset, day: DAY, daily, levels: levels() };
+    const v2 = incomeStatementV2(input, holderYieldReport(input));
+    expect(v2.grossProfit.annualized).toBeNull();
+    expect(v2.ratios.payoutRatioBasis).toBe('revenue');
+    expect(v2.flags).toContain('payout ratio on revenue: cost of revenue has a missing day');
+    expect(v2.flags).not.toContain('payout ratio on revenue: cost of revenue not measured');
+    expect(v2.flags.some((f) => f.startsWith('cost of revenue not measured'))).toBe(false);
+  });
+});
+
+describe('fix round 1: provenance blind spots (M4)', () => {
+  const def = (source: unknown, extra: object = {}) => ({ type: 'level', unit: 'usd', staleness_days: 1, source, ...extra }) as unknown as MetricDef;
+  it('a derived metric inherits third_party when any input is third_party (given the asset metrics)', () => {
+    const metrics: Record<string, MetricDef> = {
+      'flow_usd.proxy': def({ type: 'defillama', slug: 'x', data_type: 'dailyRevenue' }),
+      'flow_usd.burn': def({ type: 'transfer_flow' }),
+      rate_proxy: def({ type: 'derived', name: 'flow_annualized', params: { metric: 'flow_usd.proxy', days: 91 } }),
+      rate_net: def({ type: 'derived', name: 'flow_annualized', params: { metrics: ['flow_usd.burn', 'flow_usd.burn'], minus: ['flow_usd.proxy'], days: 91 } }),
+      rate_burn: def({ type: 'derived', name: 'flow_annualized', params: { metric: 'flow_usd.burn', days: 91 } }),
+      rate_of_rate: def({ type: 'derived', name: 'flow_annualized', params: { metric: 'rate_proxy', days: 91 } }),
+    };
+    expect(sourceTypeOf(metrics.rate_proxy, metrics)).toBe('third_party');
+    expect(sourceTypeOf(metrics.rate_net, metrics)).toBe('third_party');
+    expect(sourceTypeOf(metrics.rate_of_rate, metrics)).toBe('third_party');
+    expect(sourceTypeOf(metrics.rate_burn, metrics)).toBe('derived');
+    expect(sourceTypeOf(metrics.rate_proxy)).toBe('derived'); // without the map: the rung of the source itself
+  });
+
+  it('metric-level third-party cross_checks of statement lines are listed (section.id.cross_checks)', () => {
+    const tp = (id: string) => {
+      const input = syntheticInput(repoAsset(id));
+      return incomeStatementV2(input, holderYieldReport(input)).provenance.thirdParty;
+    };
+    expect(tp('lit')).toEqual(['holders.buyback.cross_checks']);
+    expect(tp('vvv')).toEqual(['revenue.business.cross_check', 'holders.burn.cross_checks']);
+    expect(tp('crv')).toEqual(['below_line.vote_incentives', 'below_line.vote_incentives.cross_checks']);
+  });
+});
+
+describe('fix round 1: shape (M1 volume, M6)', () => {
+  it.each(['cake', 'cvxcrv', 'uni'])('%s: volume is v1 volume (annualized, growth, metrics)', (id) => {
+    const input = syntheticInput(repoAsset(id));
+    const v1 = holderYieldReport(input);
+    const v2 = incomeStatementV2(input, v1);
+    expect(v1.volume).not.toBeNull();
+    expect(v2.volume).toEqual(v1.volume);
+  });
+
+  it('volume is null without a volume list', () => {
+    expect(run(BASE).v2.volume).toBeNull();
+  });
+
+  it('dilution.tokensPerYear = emissions + releases (tokens a year)', () => {
+    expect(run(BASE).v2.dilution.tokensPerYear).toBe(50);
+    const input = syntheticInput(repoAsset('uni'));
+    const v1 = holderYieldReport(input);
+    const v2 = incomeStatementV2(input, v1);
+    const releases = (v1.yields.dilutionLines ?? []).reduce((s, l) => s + l.tokensPerYear!, 0);
+    expect(v1.yields.dilutionLines!.length).toBeGreaterThan(0);
+    expect(v2.dilution.tokensPerYear).toBeCloseTo(10_000_000 + releases);
+    expect(v2.dilution.tokensPerYear! / 1_000_000_000).toBeCloseTo(v1.yields.dilution!);
+    expect(run(BASE, { levels: levels({ emissionRateAnnual: null }) }).v2.dilution.tokensPerYear).toBeNull();
+  });
+
+  it('holder-flow lines carry method and sourceTypes', () => {
+    const { v2 } = run(`${BASE}  below_line:
+    - { id: bribes, metric: flow_usd.bribes, to: holders, bucket: cash, haircut: 0, recipient_base: all, capture_rule: programmatic }
+    - { id: other_bribes, to: holders, not_measured: "not scanned" }
+`);
+    const line = (id: string) => v2.holderFlow.lines.find((l) => l.id === id)!;
+    // The toy's metrics have no source: entered by hand (disclosure).
+    expect(line('burn')).toMatchObject({ method: 'measured', sourceTypes: ['disclosure'] });
+    expect(line('bribes')).toMatchObject({ method: 'measured', sourceTypes: ['disclosure'] });
+    expect(line('other_bribes')).toMatchObject({ method: 'not_measured', sourceTypes: [] });
+    const hype = (() => {
+      const input = syntheticInput(repoAsset('hype'));
+      return incomeStatementV2(input, holderYieldReport(input));
+    })();
+    expect(hype.holderFlow.lines.find((l) => l.id === 'af_buyback')).toMatchObject({ method: 'measured', sourceTypes: ['third_party'] });
+    expect(hype.holderFlow.lines.find((l) => l.id === 'reserve_yield_paid')).toMatchObject({ method: 'measured', sourceTypes: ['first_party_api'] });
+  });
+
+  it('IsV2 lists its keys in a fixed order (volume after belowLine-adjacent sections)', () => {
+    const keys = Object.keys(run(BASE).v2 as IsV2);
+    expect(keys).toEqual([
+      'schema', 'day', 'windowDays', 'category', 'scope', 'revenue', 'costOfRevenue', 'grossProfit', 'holders', 'protocol', 'operatingCosts', 'unreconciled',
+      'belowLine', 'holderFlow', 'volume', 'dilution', 'ratios', 'multiples', 'yields', 'perToken', 'priceBasis', 'checks', 'provenance', 'flags',
+    ]);
   });
 });

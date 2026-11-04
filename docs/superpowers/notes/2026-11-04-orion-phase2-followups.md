@@ -61,3 +61,43 @@ are unique across sections (ruling R8): a revenue line that a use line passes on
 Scope rule used: `protocol_share_only` where revenue is the protocol's share and the cost of revenue is `not_measured`
 (gross not stored yet); `complete` where revenue is the whole of what users pay (the three lockers, LIT, VVV's disclosed
 business revenue). CRV is `dex + cdp` in the spec; the schema takes one category, so it is `dex`.
+
+## Task 3 review fix round 1 (income statement v2 shape)
+
+Controller rulings on the Task 3 review (ledger `task-3-findings.md`), as built:
+- Disclosed revenue (VVV): the disclosed line carries v1's disclosure-to-disclosure growth (one shared computation,
+  `disclosedGrowthOf` in `src/report/holderYield.ts`), its `disclosedGrowth` gap/age/flags and its `crossCheck`
+  (annualized, with the rung: `third_party` for VVV's DefiLlama proxy); `revenue.growth` is that growth. The disclosure
+  flags are also statement flags (`disclosed revenue: ...`).
+- `holderFlow.gross` / `holderFlow.net` stay as spec §7 shows them (net = after haircuts); `holderFlow.netOfDilution` =
+  net less dilution in USD a year (emissions + releases at price, = `yields.dilution` x FDV) is spec §6's "net holder
+  flow", also per token (`perToken.holderFlow.netOfDilution`).
+- Not measured is never 0: below the line, `toHolders`/`toProtocol` and `holderFlow.fromBelowLine` are null when no line
+  to that side is measured (AERO's bribes); with some measured, the measured sum, the rest listed. A not_measured line in
+  holders, protocol or operating costs makes that section's total null (`notMeasured` on each section) and every figure
+  built on it: the remainder, unreconciled, the payout ratio (flag `payout ratio n/a: holders not measured: ...`) and,
+  for a holders line, holder flow's totals and that bucket. No asset has such a line today.
+- Unreconciled is exactly 0 when every use passes on a revenue series whole (CAKE, CRV, cvxCRV, sdCRV, ...); a real gap
+  (yCRV) is still from the totals, in expected.py's order.
+- A cost line missing a day flags `payout ratio on revenue: cost of revenue has a missing day`, apart from not measured.
+- Provenance: a derived metric inherits `third_party` from any input; a statement line whose series has a third-party
+  metric-level `cross_checks` entry is listed as `<section>.<id>.cross_checks` (LIT `holders.buyback`, VVV
+  `holders.burn`, CRV `below_line.vote_incentives`).
+- Shape: `incomeStatement.volume` (v1's figure over the statement's volume list), `dilution.tokensPerYear`, and
+  `method` + `sourceTypes` on every holder-flow line. The parity map moved to `src/report/parity.ts`; it now also pairs
+  the published `revenue.annualized`/`revenue.growth`, per-flow net/yield/growth, protocol growth, revenue line growth,
+  HYPE growthExNew, the price, volume (CAKE, cvxCRV, UNI) and VVV's cross-check (361 pairs; VVV's growth is paired
+  against the published v1 figure, never null = null).
+- The statement's disclosed line reads the metric its own `disclosed` key names (`levels.statementDisclosed`): the
+  same rows as v1 when the keys agree, its own when they differ.
+- Kept in v1 / top level only (not under `incomeStatement`): `income.protocolMargin`, bucket growth, `marketCap` and
+  `fdv` (top-level report keys).
+
+For Mike at G1 (table notes):
+- The listing bar checks the holders section only (D6). With below-line lines to holders included, CRV would fail on
+  its llama.box vote-incentive run rate.
+- Implementer choices where the spec is silent: multiples and per-token holder flow use net (after haircut) holder
+  flow; per-token dilution is in USD (pct x FDV); with a cost not measured, the remainder and unreconciled use revenue
+  less the measured costs (PUMP 365.05, VVV 89.78 "before costs"); below-line `toHolders` sums the measured lines and
+  lists the rest; revenue is null when a revenue line is not measured; `priceBasis.asOf`/`supplyAsOf` are the levels'
+  read as-of (end of D+1), not each observation's time.

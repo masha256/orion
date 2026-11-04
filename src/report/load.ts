@@ -156,15 +156,18 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
   for (const x of r.extra_cash ?? []) extra[x.metric] = await level(x.metric);
   // Income statement v2's run-rate lines (CRV's vote incentives: the same level extra_cash reads).
   for (const b of asset.income_statement?.below_line ?? []) if (b.run_rate !== undefined && !(b.run_rate in extra)) extra[b.run_rate] = await level(b.run_rate);
-  // v1 reads `revenue_disclosed`; v2's disclosed line is read only when v1 has no disclosed stream (v1 output unchanged).
+  const disclosuresOf = async (metric: string) =>
+    (await listActiveObservations(db, asset.id, metric))
+      .filter((o) => o.status === 'confirmed' && o.observedAt <= asOf)
+      .sort((a, b) => (a.observedAt < b.observedAt ? -1 : 1))
+      .map((o) => ({ observedAt: o.observedAt, value: o.value }));
+  // v1 reads `revenue_disclosed` (output unchanged). The v2 disclosed line reads the metric its own `disclosed` key names:
+  // the same rows when the two keys agree (VVV), its own rows when they differ, so a mismatch can never borrow v1's.
   const v1Discloses = r.revenue_disclosed !== undefined || (r.revenue ?? []).some((s) => s.disclosed !== undefined);
-  const disclosedMetric = v1Discloses ? r.revenue_disclosed : asset.income_statement?.revenue.find((l) => l.disclosed !== undefined)?.disclosed;
-  const disclosed = disclosedMetric
-    ? (await listActiveObservations(db, asset.id, disclosedMetric))
-        .filter((o) => o.status === 'confirmed' && o.observedAt <= asOf)
-        .sort((a, b) => (a.observedAt < b.observedAt ? -1 : 1))
-        .map((o) => ({ observedAt: o.observedAt, value: o.value }))
-    : [];
+  const v1Metric = v1Discloses ? r.revenue_disclosed : undefined;
+  const disclosed = v1Metric ? await disclosuresOf(v1Metric) : [];
+  const statementMetric = asset.income_statement?.revenue.find((l) => l.disclosed !== undefined)?.disclosed;
+  const statementDisclosed = statementMetric === undefined ? undefined : statementMetric === v1Metric ? disclosed : await disclosuresOf(statementMetric);
   let dilution: ReportLevels['dilution'];
   if (r.dilution) {
     dilution = {};
@@ -180,6 +183,7 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
     extra,
     ...(dilution ? { dilution } : {}),
     disclosed,
+    ...(statementDisclosed ? { statementDisclosed } : {}),
     asOf,
   };
   const periodic = periodicMetrics(asset);

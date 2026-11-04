@@ -241,6 +241,19 @@ class CompareTest(unittest.TestCase):
         self.assertTrue(any(l == "PASS sky" for l in lines), lines)
         self.assertTrue(any(l.startswith("FAIL link") and "parity revenue" in l for l in lines), lines)
 
+    def test_parity_a_v1_number_against_a_v2_null_fails(self):
+        """Task 3 fix round 1 (I1): VVV's v1 revenue growth is a number; a v2 that drops it to null must not pass."""
+        self.with_income_statement()
+        new = self.out.new_obj("vvv")
+        new["incomeStatement"]["revenue"]["growth"] = {"annualized": None}
+        self.out.write("new", "vvv.json", js_json(new))
+        pair = ["revenue growth", "incomeStatement.revenue.growth.annualized", "income.revenue.annualized"]
+        ok, lines = self.run_v2(parity=self.parity_map(vvv=[pair]))
+        self.assertFalse(ok)
+        self.assertTrue(any(l.startswith("FAIL vvv") and "parity revenue growth" in l and "null" in l for l in lines), lines)
+        self.assertEqual(compare.rel_diff(None, 11.83), float("inf"))
+        self.assertEqual(compare.rel_diff(11.83, None), float("inf"))
+
     def test_a_path_may_select_an_array_element_by_id(self):
         obj = {"income": {"lines": [{"id": "vecrv_fees", "annualized": 0.6}, {"id": "vote_incentives", "annualized": 1.7}]}}
         self.assertEqual(compare.get_path(obj, "income.lines[id=vecrv_fees].annualized"), 0.6)

@@ -2,8 +2,8 @@ import { resolveUse, type IsBucket, type IsHolderLine, type IsRevenueLine, type 
 import type { AssetConfig, IncomeStatementDef, MetricDef, RecipientBase } from '../config/schema.js';
 import { addDays } from '../ingest/time.js';
 import { DAYS_PER_YEAR, STD_METRICS } from '../types.js';
-import { growthOf, NEW_STREAM_DAYS, recipients, windowSum, type Bucket, type Growth, type HolderYieldReport, type ReportInput } from './holderYield.js';
-import { LISTING_RUNGS, sourceLabelOf, sourceTypeOf, type SourceType } from './sourceTypes.js';
+import { disclosedGrowthOf, growthOf, NEW_STREAM_DAYS, recipients, windowSum, type Bucket, type Growth, type HolderYieldReport, type ReportInput, type RevenueReport } from './holderYield.js';
+import { crossCheckTypesOf, LISTING_RUNGS, sourceLabelOf, sourceTypeOf, type SourceType } from './sourceTypes.js';
 
 /**
  * Income statement v2 (spec 2026-10-28 §6-7, plan corrections 6, 7, 13, 14): a pure function of the same report input as
@@ -16,7 +16,15 @@ import { LISTING_RUNGS, sourceLabelOf, sourceTypeOf, type SourceType } from './s
  *   gross profit   = revenue − Σ cost_of_revenue          (null if any cost line is not_measured)
  *   gross profit   = holders + protocol + operating_costs + unreconciled
  *   payout ratio   = holders / gross profit; holders / revenue (payoutRatioBasis 'revenue') when gross profit is n/m
- *   holder flow    = holders (at the recipients, net of haircuts) + below_line to holders (flagged fromBelowLine)
+ *   holder flow    = holders (at the recipients) + below_line to holders (flagged fromBelowLine):
+ *                      gross            what reaches holders, USD a year
+ *                      net              gross after each line's haircut (slippage, overhang): spec §7, v1's yield basis
+ *                      netOfDilution    net less dilution (emissions + releases, valued at price): spec §6 "net holder flow"
+ *
+ * Not measured is never zero-filled: a not_measured line makes its section's total null (and every figure built on it:
+ * gross profit, the remainder, unreconciled, the payout ratio), and is listed in that section's `notMeasured`. Below the
+ * line and in holder flow, a not_measured below-line line is listed and left out of the measured sum, which is null when
+ * no line to that side is measured.
  */
 
 export type IsMethod = 'measured' | 'derived' | 'disclosed' | 'not_measured';
@@ -30,8 +38,11 @@ interface Term {
   gw: number;
 }
 
-/** What a line reads: daily series (terms), a level in USD a year (a disclosure, a run rate), or nothing (not_measured). */
-type Value = { kind: 'terms'; terms: Term[] } | { kind: 'level'; value: number | null; note: string } | { kind: 'nm'; reason: string };
+/**
+ * What a line reads: daily series (terms), a level in USD a year (a disclosure, a run rate; `growth` when the level has
+ * one, as a disclosure does between its two latest values), or nothing (not_measured).
+ */
+type Value = { kind: 'terms'; terms: Term[] } | { kind: 'level'; value: number | null; note: string; growth?: Growth } | { kind: 'nm'; reason: string };
 
 export interface IsRevenueLineOut {
   id: string;
@@ -50,7 +61,12 @@ export interface IsRevenueLineOut {
   /** Pool coverage (pool_scan lines, Phase 3): null today. */
   coverage: null;
   isNew: boolean;
+  /** A disclosed line: growth between the two latest disclosures (v1's disclosed growth, the same computation). */
   growth: Growth;
+  /** A disclosed line only: the gap between the two latest disclosures, the latest's age and their flags (v1's). */
+  disclosedGrowth?: NonNullable<RevenueReport['disclosedGrowth']>;
+  /** A disclosed line's cross-check series, annualized over the window, and its rung (VVV: DefiLlama, third_party). */
+  crossCheck?: { metric: string; annualized: number | null; sourceType: SourceType | null };
   notMeasured?: string;
 }
 
@@ -79,6 +95,9 @@ export interface HolderFlowLineOut {
   fromBelowLine: boolean;
   /** Null only for a below-line line not measured, which names no bucket (AERO's bribes). */
   bucket: Bucket | null;
+  method: IsMethod;
+  /** The rungs of the series the line reads (paid_metric included). */
+  sourceTypes: SourceType[];
   /** The series holder flow reads (null for a run-rate level or a line not measured). */
   metric: string | null;
   haircut: number;
@@ -120,10 +139,13 @@ export interface IsBelowLineOut {
 }
 
 export interface UseSectionOut<L> {
+  /** Null when any line of the section is not measured (never zero-filled). */
   annualized: number | null;
   growth: Growth;
   /** True when the section is the declared remainder (revenue less the rest): one derived line. */
   remainder: boolean;
+  /** The section's not_measured lines (a remainder: those of the sections it is computed from). */
+  notMeasured: string[];
   lines: L[];
 }
 
@@ -170,8 +192,12 @@ export interface IsV2 {
   unreconciled: { annualized: number | null; pct: number | null; basis: 'grossProfit' | 'revenue' };
   belowLine: { toHolders: number | null; toProtocol: number | null; notMeasured: string[]; lines: IsBelowLineOut[] };
   holderFlow: {
+    /** USD a year reaching holders; null when a holders line is not measured. */
     gross: number | null;
+    /** Gross after the haircuts (spec §7). */
     net: number | null;
+    /** Net less dilution (emissions + releases at price, USD a year): spec §6 "net holder flow". */
+    netOfDilution: number | null;
     /** Growth of every line with a daily series, each net of its haircut (v1 holderFlowGrowth). */
     growth: Growth;
     byBucket: Record<Bucket, BucketFlow | null>;
@@ -180,9 +206,13 @@ export interface IsV2 {
     notMeasured: string[];
     lines: HolderFlowLineOut[];
   };
+  /** The statement's `volume` series (v1's volume figure): null without a volume list. */
+  volume: { metrics: string[]; annualized: number | null; growth: Growth } | null;
   dilution: {
     /** Annual supply growth from emissions and releases (v1 yields.dilution). */
     pct: number | null;
+    /** Tokens a year added: emissions plus releases (null when either is unread). */
+    tokensPerYear: number | null;
     emissionsPerYear: number | null;
     releases: { id: string; tokensPerYear: number | null; yield: number | null }[];
     supply: HolderYieldReport['supply'];
@@ -235,7 +265,8 @@ export interface IsV2 {
 export interface PerToken {
   revenue: number | null;
   grossProfit: number | null;
-  holderFlow: { total: number | null; byBucket: Record<Bucket, number | null> };
+  /** Net holder flow (after haircuts) per token, in total and by bucket, and net of dilution. */
+  holderFlow: { total: number | null; netOfDilution: number | null; byBucket: Record<Bucket, number | null> };
   /** Dilution in USD a year (supply growth × FDV) per token. */
   dilution: number | null;
 }
@@ -255,7 +286,12 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
   const W = is.window_days;
   const metricDef = (m: string): MetricDef | undefined => asset.metrics[m];
   const typesOf = (metrics: (string | undefined)[]): SourceType[] =>
-    uniq(metrics.filter((m): m is string => m !== undefined).map((m) => (metricDef(m) ? sourceTypeOf(metricDef(m)!) : null)).filter((t): t is SourceType => t !== null));
+    uniq(metrics.filter((m): m is string => m !== undefined).map((m) => (metricDef(m) ? sourceTypeOf(metricDef(m)!, asset.metrics) : null)).filter((t): t is SourceType => t !== null));
+  /** The rungs of the cross_checks on the metrics a line reads. */
+  const crossTypesOf = (metrics: (string | undefined)[]): SourceType[] =>
+    uniq(metrics.filter((m): m is string => m !== undefined).flatMap((m) => (metricDef(m) ? crossCheckTypesOf(metricDef(m)!, asset.metrics) : [])));
+  // The disclosed line's levels: its own metric's (the loader reads it apart when v1 discloses another one).
+  const disclosedSeries = lv.statementDisclosed ?? lv.disclosed;
 
   // A line is zero before it began: days before `started` are filled with 0 (as v1 does for reporting.revenue streams).
   const daily = new Map(input.daily);
@@ -301,7 +337,10 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     if (r.not_measured !== undefined) v = { kind: 'nm', reason: r.not_measured };
     else if (r.metric !== undefined) v = { kind: 'terms', terms: [{ metric: r.metric, w: youngWeight(r.started), gw: 1 }] };
     else if (r.derived !== undefined) v = { kind: 'terms', terms: [{ metric: r.derived.from, w: youngWeight(r.started) / r.derived.share, gw: 1 / r.derived.share }] };
-    else if (r.disclosed !== undefined) v = { kind: 'level', value: lv.disclosed.at(-1)?.value ?? null, note: 'a disclosed level: no daily series' };
+    else if (r.disclosed !== undefined) {
+      const g = disclosedGrowthOf(disclosedSeries, day);
+      v = { kind: 'level', value: g.latest?.value ?? null, note: 'a disclosed level: no daily series', growth: g.growth };
+    }
     else {
       const base = is.revenue.find((x) => x.id === r.estimate!.of)!;
       v = ratioOf(revenueValue(base), r.estimate!.ratio);
@@ -311,8 +350,10 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
   };
   const ratioOf = (v: Value, k: number): Value => (v.kind === 'terms' ? { kind: 'terms', terms: scale(v.terms, k) } : v.kind === 'level' ? { kind: 'level', value: finite(v.value) ? v.value * k : null, note: v.note } : v);
   const revenueById = new Map(is.revenue.map((r) => [r.id, r] as const));
-  const revenueTypes = (r: IsRevenueLine): SourceType[] =>
-    r.estimate !== undefined ? revenueTypes(revenueById.get(r.estimate.of)!) : typesOf([r.metric, r.derived?.from, r.derived?.share_metric, r.disclosed]);
+  /** The metrics a revenue line reads (an estimate: those of the line it is a ratio of). */
+  const revenueMetrics = (r: IsRevenueLine): (string | undefined)[] =>
+    r.estimate !== undefined ? revenueMetrics(revenueById.get(r.estimate.of)!) : [r.metric, r.derived?.from, r.derived?.share_metric, r.disclosed];
+  const revenueTypes = (r: IsRevenueLine): SourceType[] => typesOf(revenueMetrics(r));
   const revenueMethod = (r: IsRevenueLine): IsMethod =>
     r.not_measured !== undefined ? 'not_measured' : r.disclosed !== undefined ? 'disclosed' : r.metric !== undefined ? 'measured' : 'derived';
 
@@ -324,8 +365,10 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     if (l.metric !== undefined) return { kind: 'terms', terms: [{ metric: l.metric, w: 1, gw: 1 }] };
     return ratioOf(revenueValue(revenueById.get(l.estimate!.of)!), l.estimate!.ratio);
   };
-  const useTypes = (l: IsUseLine | IsHolderLine | IsCostLine): SourceType[] =>
-    l.of !== undefined ? revenueTypes(revenueById.get(l.of)!) : l.estimate !== undefined ? revenueTypes(revenueById.get(l.estimate.of)!) : typesOf([l.metric]);
+  /** The metrics a use line reads: its own, or those of the revenue line it passes on or estimates from. */
+  const useMetrics = (l: IsUseLine | IsHolderLine | IsCostLine): (string | undefined)[] =>
+    l.of !== undefined ? revenueMetrics(revenueById.get(l.of)!) : l.estimate !== undefined ? revenueMetrics(revenueById.get(l.estimate.of)!) : [l.metric];
+  const useTypes = (l: IsUseLine | IsHolderLine | IsCostLine): SourceType[] => typesOf(useMetrics(l));
   const useMethod = (l: IsUseLine | IsHolderLine | IsCostLine): IsMethod => {
     if (l.not_measured !== undefined) return 'not_measured';
     if (l.of !== undefined) {
@@ -335,7 +378,7 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     return l.metric !== undefined ? 'measured' : 'derived';
   };
   const valueAnnual = (v: Value): number | null => (v.kind === 'terms' ? annual(v.terms) : v.kind === 'level' ? v.value : null);
-  const valueGrowth = (v: Value): Growth => (v.kind === 'terms' ? grow(v.terms) : v.kind === 'level' ? noSeries(v.note) : noSeries('not measured'));
+  const valueGrowth = (v: Value): Growth => (v.kind === 'terms' ? grow(v.terms) : v.kind === 'level' ? (v.growth ?? noSeries(v.note)) : noSeries('not measured'));
 
   /** A section's figure over its measured lines: one pass over the terms, plus any levels. */
   interface Agg {
@@ -365,6 +408,11 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     if (p) for (let i = 0; i < W; i++) if (p.has(addDays(day, -i))) n++;
     return n;
   };
+  /** A disclosed line's cross-check series over the window (v1's `revenue.crossCheck` arithmetic), with its rung. */
+  const crossCheckOf = (m: string): NonNullable<IsRevenueLineOut['crossCheck']> => {
+    const sum = windowSum(daily, [m], day, W);
+    return { metric: m, annualized: sum === null ? null : (sum * DAYS_PER_YEAR) / W, sourceType: metricDef(m) ? sourceTypeOf(metricDef(m)!, asset.metrics) : null };
+  };
   const revLines: IsRevenueLineOut[] = is.revenue.map((r) => {
     const v = revenueValue(r);
     const metric = r.metric ?? r.derived?.from;
@@ -387,10 +435,15 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
       annualized: valueAnnual(v), windowSum: ws, settlement: v.kind === 'terms' ? (r.settlement ?? 'daily') : null, started: r.started ?? null,
       daysMeasured: v.kind === 'terms' ? daysIn(r.started) : null, provisionalDays: pending(metric), coverage: null,
       isNew: age !== null && age < NEW_STREAM_DAYS, growth: valueGrowth(v),
+      ...(r.disclosed !== undefined ? { disclosedGrowth: disclosedGrowthOf(disclosedSeries, day).disclosedGrowth } : {}),
+      ...(r.cross_check !== undefined ? { crossCheck: crossCheckOf(r.cross_check) } : {}),
       ...(r.not_measured !== undefined ? { notMeasured: r.not_measured } : {}),
     };
   });
-  const revenueGrowth = revAgg.nm.length > 0 ? noSeries('a revenue line is not measured') : aggGrowth(revAgg, 'a disclosed level: no daily series');
+  // A disclosed line is the whole revenue (schema): revenue growth is its disclosure-to-disclosure growth, as v1's.
+  const disclosedLine = is.revenue.find((r) => r.disclosed !== undefined);
+  const revenueGrowth =
+    revAgg.nm.length > 0 ? noSeries('a revenue line is not measured') : disclosedLine ? valueGrowth(revenueValue(disclosedLine)) : aggGrowth(revAgg, 'a disclosed level: no daily series');
   const newIds = revLines.filter((l) => l.isNew).map((l) => l.id);
   const oldAgg = agg(revItems.filter((x) => !newIds.includes(x.id)));
   const growthExNew = newIds.length === 0 || revAgg.levels.length > 0 ? null : oldAgg.terms.length === 0 ? noSeries('every line is new') : grow(oldAgg.terms);
@@ -419,11 +472,19 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
   const protocolItems = (is.protocol ?? []).map((l) => ({ id: l.id, v: useValue(l) }));
   const opexItems = (is.operating_costs ?? []).map((l) => ({ id: l.id, v: useValue(l) }));
   const holdersAgg = agg(holderItems);
-  const holdersAnnual = aggAnnual(holdersAgg);
+  const protocolAgg = agg(protocolItems);
+  const opexAgg = agg(opexItems);
+  // A not_measured line makes its section's total null, as a not_measured cost does to gross profit (never zero-filled).
+  const sectionAnnual = (a: Agg): number | null => (a.nm.length > 0 ? null : aggAnnual(a));
+  const sectionGrowth = (a: Agg, levelNote: string): Growth => (a.nm.length > 0 ? noSeries(`not measured: ${a.nm.join(', ')}`) : aggGrowth(a, levelNote));
+  const holdersAnnual = sectionAnnual(holdersAgg);
 
-  // The remainder: revenue less the measured rest, in v1's term order (revenue, -holders, -costs, -the other use).
-  const anyLevel = hasLevel || [holdersAgg, agg(protocolItems), agg(opexItems)].some((a) => a.levels.length > 0);
+  // The remainder: revenue less the measured rest, in v1's term order (revenue, -holders, -costs, -the other use). Null
+  // when holders or the other use has a line not measured: the rest is then unknown.
+  const anyLevel = hasLevel || [holdersAgg, protocolAgg, opexAgg].some((a) => a.levels.length > 0);
   const remainderOf = (other: Agg): { annualized: number | null; growth: Growth } => {
+    const nm = [...holdersAgg.nm, ...other.nm];
+    if (nm.length > 0) return { annualized: null, growth: noSeries(`not measured: ${nm.join(', ')}`) };
     if (anyLevel) {
       const o = aggAnnual(other);
       return { annualized: finite(base) && finite(holdersAnnual) && finite(o) ? base - holdersAnnual - o : null, growth: noSeries('a disclosed level less daily flows') };
@@ -431,27 +492,40 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     const terms = [...revAgg.terms, ...neg(holdersAgg.terms), ...neg(costAgg.terms), ...neg(other.terms)];
     return { annualized: revenueAnnual === null ? null : annual(terms), growth: grow(terms) };
   };
-  const section = (items: { id: string; v: Value }[], lines: IsUseLineOut[], isRemainder: boolean, other: Agg): UseSectionOut<IsUseLineOut> => {
-    if (!isRemainder) {
-      const a = agg(items);
-      return { annualized: aggAnnual(a), growth: aggGrowth(a, 'a disclosed level: no daily series'), remainder: false, lines };
-    }
+  const section = (a: Agg, lines: IsUseLineOut[], isRemainder: boolean, other: Agg): UseSectionOut<IsUseLineOut> => {
+    if (!isRemainder) return { annualized: sectionAnnual(a), growth: sectionGrowth(a, 'a disclosed level: no daily series'), remainder: false, notMeasured: a.nm, lines };
     const r = remainderOf(other);
     const note = costAgg.nm.length > 0 ? 'revenue less holders and the other uses, before the costs not measured' : 'revenue less the rest';
     return {
-      annualized: r.annualized, growth: r.growth, remainder: true,
+      annualized: r.annualized, growth: r.growth, remainder: true, notMeasured: [...holdersAgg.nm, ...other.nm],
       lines: [{ id: 'remainder', label: null, of: null, share: 1, method: 'derived', sourceTypes: [], annualized: r.annualized, growth: r.growth, note }],
     };
   };
-  const protocol = section(protocolItems, (is.protocol ?? []).map(useLine), is.remainder === 'protocol', agg(opexItems));
-  const operatingCosts = section(opexItems, (is.operating_costs ?? []).map(useLine), is.remainder === 'operating_costs', agg(protocolItems));
+  const protocol = section(protocolAgg, (is.protocol ?? []).map(useLine), is.remainder === 'protocol', opexAgg);
+  const operatingCosts = section(opexAgg, (is.operating_costs ?? []).map(useLine), is.remainder === 'operating_costs', protocolAgg);
+  // Unreconciled = gross profit (or revenue less the measured costs) less holders, protocol and operating costs: exactly 0
+  // with a declared remainder, and exactly 0 when every series cancels (each use passes on a revenue line whole, the CRV
+  // and liquid-locker shape), so no float residue is shown. Otherwise it is computed from the totals (a level in play, or
+  // a real gap such as yCRV's), in expected.py's order.
+  const reconciles = (): boolean => {
+    if (anyLevel) return false;
+    const pos = [...revAgg.terms];
+    for (const t of [...costAgg.terms, ...holdersAgg.terms, ...protocolAgg.terms, ...opexAgg.terms]) {
+      const i = pos.findIndex((p) => p.metric === t.metric && p.w === t.w);
+      if (i < 0) return false;
+      pos.splice(i, 1);
+    }
+    return pos.length === 0;
+  };
   const unreconciledAnnual =
     is.remainder !== undefined
       ? finite(protocol.annualized) && finite(operatingCosts.annualized) && finite(base)
         ? 0
         : null
       : finite(base) && finite(holdersAnnual) && finite(protocol.annualized) && finite(operatingCosts.annualized)
-        ? base - holdersAnnual - protocol.annualized - operatingCosts.annualized
+        ? reconciles()
+          ? 0
+          : base - holdersAnnual - protocol.annualized - operatingCosts.annualized
         : null;
 
   // Holder flow: holders lines at their recipients (paid_metric when set), then below-line lines to holders.
@@ -471,13 +545,25 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     }
     return annual(v.terms);
   };
-  const flowLine = (id: string, sectionName: 'holders' | 'below_line', v: Value, bucket: Bucket | null, haircut: number, b: RecipientBase): HolderFlowLineOut & { terms: Term[] } => {
+  interface FlowSpec {
+    id: string;
+    section: 'holders' | 'below_line';
+    v: Value;
+    bucket: Bucket | null;
+    haircut: number;
+    base: RecipientBase;
+    method: IsMethod;
+    sourceTypes: SourceType[];
+  }
+  const flowLine = (s: FlowSpec): HolderFlowLineOut & { terms: Term[] } => {
+    const { v } = s;
     const gross = flowGross(v);
-    const net = gross === null ? null : gross * (1 - haircut);
+    const net = gross === null ? null : gross * (1 - s.haircut);
     const terms = v.kind === 'terms' ? v.terms : [];
     return {
-      id, section: sectionName, fromBelowLine: sectionName === 'below_line', bucket, metric: terms.length === 1 ? terms[0].metric : null, haircut, recipientBase: b,
-      gross, net, yield: yieldOf(net, b),
+      id: s.id, section: s.section, fromBelowLine: s.section === 'below_line', bucket: s.bucket, method: s.method, sourceTypes: s.sourceTypes,
+      metric: terms.length === 1 ? terms[0].metric : null, haircut: s.haircut, recipientBase: s.base,
+      gross, net, yield: yieldOf(net, s.base),
       growth: v.kind === 'terms' ? growthOf(daily, terms.map((t) => t.metric), day, W, terms.map((t) => t.gw)) : v.kind === 'level' ? noSeries('a run-rate level: no daily series') : noSeries('not measured'),
       ...(v.kind === 'nm' ? { notMeasured: v.reason } : {}),
       terms,
@@ -486,10 +572,11 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
   const holderFlowLines: (HolderFlowLineOut & { terms: Term[] })[] = [];
   const holderLines: IsHolderLineOut[] = (is.holders ?? []).map((l) => {
     const v = l.paid_metric !== undefined ? ({ kind: 'terms', terms: [{ metric: l.paid_metric, w: 1, gw: 1 }] } as Value) : useValue(l);
-    const f = flowLine(l.id, 'holders', v, l.bucket, l.haircut, l.recipient_base);
+    const sourceTypes = uniq([...useTypes(l), ...typesOf([l.paid_metric])]);
+    const f = flowLine({ id: l.id, section: 'holders', v, bucket: l.bucket, haircut: l.haircut, base: l.recipient_base, method: useMethod(l), sourceTypes });
     holderFlowLines.push(f);
     return {
-      ...useLine(l), sourceTypes: uniq([...useTypes(l), ...typesOf([l.paid_metric])]),
+      ...useLine(l), sourceTypes,
       bucket: l.bucket, haircut: l.haircut, recipientBase: l.recipient_base, valuedPer: l.valued_per ?? null, captureRule: l.capture_rule,
       paidMetric: l.paid_metric ?? null, gross: f.gross, net: f.net, yield: f.yield,
     };
@@ -498,37 +585,64 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     b.not_measured !== undefined ? { kind: 'nm', reason: b.not_measured } : b.metric !== undefined ? { kind: 'terms', terms: [{ metric: b.metric, w: 1, gw: 1 }] } : { kind: 'level', value: lv.extra[b.run_rate!] ?? null, note: 'a run-rate level: no daily series' };
   const belowLines: IsBelowLineOut[] = (is.below_line ?? []).map((b) => {
     const v = belowValue(b);
-    if (b.to === 'holders') holderFlowLines.push(flowLine(b.id, 'below_line', v, b.bucket ?? null, b.haircut ?? 0, b.recipient_base ?? 'all'));
+    const method: IsMethod = b.not_measured !== undefined ? 'not_measured' : 'measured';
+    const sourceTypes = typesOf([b.metric, b.run_rate]);
+    if (b.to === 'holders') holderFlowLines.push(flowLine({ id: b.id, section: 'below_line', v, bucket: b.bucket ?? null, haircut: b.haircut ?? 0, base: b.recipient_base ?? 'all', method, sourceTypes }));
     return {
-      id: b.id, label: b.label ?? null, to: b.to, method: b.not_measured !== undefined ? 'not_measured' : 'measured', sourceTypes: typesOf([b.metric, b.run_rate]),
+      id: b.id, label: b.label ?? null, to: b.to, method, sourceTypes,
       annualized: valueAnnual(v), growth: valueGrowth(v), bucket: b.bucket ?? null, haircut: b.haircut ?? null, recipientBase: b.recipient_base ?? null,
       captureRule: b.capture_rule ?? null, ...(b.note ? { note: b.note } : {}), ...(b.not_measured !== undefined ? { notMeasured: b.not_measured } : {}),
     };
   });
-  const measuredBelow = (to: 'holders' | 'protocol') => sumOrNull(belowLines.filter((b) => b.to === to && b.method !== 'not_measured').map((b) => b.annualized));
+  /**
+   * The measured sum of `lines`, with the not-measured ones listed elsewhere: 0 with no line, and null when there are
+   * lines but none is measured (a not-measured figure is never published as 0).
+   */
+  const measuredSum = <T>(lines: T[], measured: (x: T) => boolean, value: (x: T) => number | null): number | null => {
+    const m = lines.filter(measured);
+    return lines.length > 0 && m.length === 0 ? null : sumOrNull(m.map(value));
+  };
+  const measuredBelow = (to: 'holders' | 'protocol') => measuredSum(belowLines.filter((b) => b.to === to), (b) => b.method !== 'not_measured', (b) => b.annualized);
   const belowNm = belowLines.filter((b) => b.method === 'not_measured').map((b) => b.id);
 
+  // A not_measured holders line leaves holder flow unknown (its totals and its bucket null); a not_measured below-line
+  // line is listed and kept out of the measured sums (v1 has no such line, so AERO's totals stay v1's).
   const counted = holderFlowLines.filter((f) => f.notMeasured === undefined);
   const hfNm = holderFlowLines.filter((f) => f.notMeasured !== undefined).map((f) => f.id);
+  const holdersNm = holderFlowLines.filter((f) => f.section === 'holders' && f.notMeasured !== undefined);
+  const fromRevenueOf = (ls: typeof holderFlowLines): number | null => sumOrNull(ls.filter((f) => !f.fromBelowLine).map((f) => f.gross));
+  const fromBelowOf = (ls: typeof holderFlowLines): number | null =>
+    measuredSum(ls.filter((f) => f.fromBelowLine), (f) => f.notMeasured === undefined, (f) => f.gross);
   const byBucket = Object.fromEntries(
     BUCKETS.map((bk) => {
       const ls = counted.filter((f) => f.bucket === bk);
-      if (ls.length === 0) return [bk, null];
+      const nmHere = holdersNm.filter((f) => f.bucket === bk);
+      if (ls.length === 0 && nmHere.length === 0) return [bk, null];
+      const unknown = nmHere.length > 0;
+      // A below-line line not measured names no bucket (AERO's bribes): it may land in any bucket.
+      const below = holderFlowLines.filter((f) => f.fromBelowLine && (f.bucket === bk || (f.bucket === null && f.notMeasured !== undefined)));
       return [bk, {
-        gross: sumOrNull(ls.map((f) => f.gross)), net: sumOrNull(ls.map((f) => f.net)), yield: sumOrNull(ls.map((f) => f.yield)),
-        fromRevenue: sumOrNull(ls.filter((f) => !f.fromBelowLine).map((f) => f.gross)), fromBelowLine: sumOrNull(ls.filter((f) => f.fromBelowLine).map((f) => f.gross)),
+        gross: unknown ? null : sumOrNull(ls.map((f) => f.gross)), net: unknown ? null : sumOrNull(ls.map((f) => f.net)), yield: unknown ? null : sumOrNull(ls.map((f) => f.yield)),
+        fromRevenue: unknown ? null : fromRevenueOf(ls), fromBelowLine: fromBelowOf(below),
       }];
     }),
   ) as Record<Bucket, BucketFlow | null>;
   const series = counted.filter((f) => f.terms.length > 0 && f.terms.every((t) => daily.has(t.metric)));
-  const holderFlowGrowth = growthOf(daily, series.flatMap((f) => f.terms.map((t) => t.metric)), day, W, series.flatMap((f) => f.terms.map((t) => (1 - f.haircut) * t.gw)));
+  const holderFlowGrowth =
+    holdersNm.length > 0
+      ? noSeries(`not measured: ${holdersNm.map((f) => f.id).join(', ')}`)
+      : growthOf(daily, series.flatMap((f) => f.terms.map((t) => t.metric)), day, W, series.flatMap((f) => f.terms.map((t) => (1 - f.haircut) * t.gw)));
+  const hfNet = holdersNm.length > 0 ? null : sumOrNull(counted.map((f) => f.net));
+  // Dilution in USD a year: annual supply growth x FDV = (emissions + releases) x price.
+  const dilutionUsd = finite(legacy.yields.dilution) && finite(legacy.fdv) ? legacy.yields.dilution * legacy.fdv : null;
   const holderFlow: IsV2['holderFlow'] = {
-    gross: sumOrNull(counted.map((f) => f.gross)),
-    net: sumOrNull(counted.map((f) => f.net)),
+    gross: holdersNm.length > 0 ? null : sumOrNull(counted.map((f) => f.gross)),
+    net: hfNet,
+    netOfDilution: finite(hfNet) && finite(dilutionUsd) ? hfNet - dilutionUsd : null,
     growth: holderFlowGrowth,
     byBucket,
-    fromRevenue: sumOrNull(counted.filter((f) => !f.fromBelowLine).map((f) => f.gross)),
-    fromBelowLine: sumOrNull(counted.filter((f) => f.fromBelowLine).map((f) => f.gross)),
+    fromRevenue: holdersNm.length > 0 ? null : fromRevenueOf(counted),
+    fromBelowLine: fromBelowOf(holderFlowLines),
     notMeasured: hfNm,
     lines: holderFlowLines.map(({ terms: _terms, ...f }) => f),
   };
@@ -536,7 +650,7 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
   const holdersByBucket = Object.fromEntries(
     BUCKETS.map((bk) => {
       const items = (is.holders ?? []).filter((l) => l.bucket === bk).map((l) => ({ id: l.id, v: useValue(l) }));
-      return [bk, items.length === 0 ? null : { annualized: aggAnnual(agg(items)) }];
+      return [bk, items.length === 0 ? null : { annualized: sectionAnnual(agg(items)) }];
     }),
   ) as Record<IsBucket, { annualized: number | null } | null>;
 
@@ -554,13 +668,32 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
 
   const circ = lv.circulatingSupply ?? null;
   const total = lv.totalSupply;
-  const dilutionUsd = finite(legacy.yields.dilution) && finite(legacy.fdv) ? legacy.yields.dilution * legacy.fdv : null;
+  // Per token: a positive supply only; netOfDilution may be negative, so it is divided directly.
+  const perOf = (x: number | null, n: number | null): number | null => (finite(x) && finite(n) && n > 0 ? x / n : null);
   const per = (n: number | null): PerToken => ({
     revenue: div(revenueAnnual, n),
     grossProfit: div(grossProfit, n),
-    holderFlow: { total: div(holderFlow.net, n), byBucket: { burn: div(bucketNet('burn'), n), hold: div(bucketNet('hold'), n), cash: div(bucketNet('cash'), n) } },
+    holderFlow: {
+      total: div(holderFlow.net, n), netOfDilution: perOf(holderFlow.netOfDilution, n),
+      byBucket: { burn: div(bucketNet('burn'), n), hold: div(bucketNet('hold'), n), cash: div(bucketNet('cash'), n) },
+    },
     dilution: div(dilutionUsd, n),
   });
+
+  // Volume (v1's figure over the same series): the window's sum across the listed series, annualized, and its growth.
+  const volume: IsV2['volume'] = is.volume
+    ? (() => {
+        const s = windowSum(daily, is.volume, day, W);
+        return { metrics: is.volume, annualized: s === null ? null : (s * DAYS_PER_YEAR) / W, growth: growthOf(daily, is.volume, day, W) };
+      })()
+    : null;
+
+  // Tokens a year added (v1's dilution numerator): emissions plus the reporting.dilution releases (null when one is unread).
+  const releases = legacy.yields.dilutionLines ?? [];
+  const tokensPerYear =
+    legacy.yields.dilution === null || !finite(lv.emissionRateAnnual) || releases.some((r) => !finite(r.tokensPerYear))
+      ? null
+      : releases.reduce((s, r) => s + r.tokensPerYear!, lv.emissionRateAnnual);
 
   const priceDef = metricDef(STD_METRICS.price);
 
@@ -572,6 +705,9 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     const s = sumOrNull(ls.map((l) => l.annualized));
     return s === null ? null : s / revenueAnnual;
   };
+  // A line is listed as `<section>.<id>` when a series it reads is on a third-party source, `<section>.<id>.cross_check`
+  // for a disclosed line's cross-check series, and `<section>.<id>.cross_checks` when a series it reads is cross-checked
+  // against a third-party source (a metric-level `cross_checks` entry, e.g. DefiLlama holders revenue).
   const thirdParty: string[] = [];
   const tp = (name: string, types: SourceType[]) => {
     if (types.includes('third_party')) thirdParty.push(name);
@@ -579,11 +715,19 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
   for (const r of is.revenue) {
     tp(`revenue.${r.id}`, revenueTypes(r));
     if (r.cross_check !== undefined) tp(`revenue.${r.id}.cross_check`, typesOf([r.cross_check]));
+    tp(`revenue.${r.id}.cross_checks`, crossTypesOf([...revenueMetrics(r), r.cross_check]));
   }
   for (const [name, lines] of [['cost_of_revenue', is.cost_of_revenue], ['holders', is.holders], ['protocol', is.protocol], ['operating_costs', is.operating_costs]] as const) {
-    for (const l of (lines ?? []) as (IsUseLine | IsHolderLine)[]) tp(`${name}.${l.id}`, uniq([...useTypes(l), ...typesOf([(l as IsHolderLine).paid_metric])]));
+    for (const l of (lines ?? []) as (IsUseLine | IsHolderLine)[]) {
+      const own = [...useMetrics(l), l.share_metric, (l as IsHolderLine).paid_metric];
+      tp(`${name}.${l.id}`, uniq([...useTypes(l), ...typesOf([(l as IsHolderLine).paid_metric])]));
+      tp(`${name}.${l.id}.cross_checks`, crossTypesOf(own));
+    }
   }
-  for (const b of is.below_line ?? []) tp(`below_line.${b.id}`, typesOf([b.metric, b.run_rate]));
+  for (const b of is.below_line ?? []) {
+    tp(`below_line.${b.id}`, typesOf([b.metric, b.run_rate]));
+    tp(`below_line.${b.id}.cross_checks`, crossTypesOf([b.metric, b.run_rate]));
+  }
   const statementMetrics = uniq([
     ...is.revenue.flatMap((r) => [r.metric, r.derived?.from, r.derived?.share_metric, r.disclosed, r.cross_check]),
     ...[...(is.cost_of_revenue ?? []), ...(is.holders ?? []), ...(is.protocol ?? []), ...(is.operating_costs ?? [])].flatMap((l) => [l.metric, l.share_metric, (l as IsHolderLine).paid_metric]),
@@ -597,7 +741,11 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
   const useNm = [...holderItems, ...protocolItems, ...opexItems].filter((x) => x.v.kind === 'nm').map((x) => x.id);
   if (useNm.length > 0) flags.push(`not measured: ${useNm.join(', ')}`);
   if (belowNm.length > 0) flags.push(`below the line not measured: ${belowNm.join(', ')}`);
-  if (!gpMeasured) flags.push('payout ratio on revenue: cost of revenue not measured');
+  if (holdersAgg.nm.length > 0) flags.push(`payout ratio n/a: holders not measured: ${holdersAgg.nm.join(', ')}`);
+  else if (!gpMeasured && costAgg.nm.length > 0) flags.push('payout ratio on revenue: cost of revenue not measured');
+  // A data gap (a measured line missing a day) is not a line nobody measures: say which.
+  else if (!gpMeasured && revenueAnnual !== null) flags.push('payout ratio on revenue: cost of revenue has a missing day');
+  for (const r of revLines) for (const f of r.disclosedGrowth?.flags ?? []) flags.push(`disclosed revenue: ${f}`);
   if (thirdParty.length > 0) flags.push(`third_party: ${thirdParty.join(', ')}`);
 
   return {
@@ -611,19 +759,23 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
       lines: (is.cost_of_revenue ?? []).map((l) => ({ ...useLine(l), to: l.to })),
     },
     grossProfit: { annualized: grossProfit, growth: grossProfitGrowth },
-    holders: { annualized: holdersAnnual, growth: aggGrowth(holdersAgg, 'a disclosed level: no daily series'), remainder: false, lines: holderLines, byBucket: holdersByBucket },
+    holders: {
+      annualized: holdersAnnual, growth: sectionGrowth(holdersAgg, 'a disclosed level: no daily series'), remainder: false, notMeasured: holdersAgg.nm, lines: holderLines,
+      byBucket: holdersByBucket,
+    },
     protocol,
     operatingCosts,
     unreconciled: { annualized: unreconciledAnnual, pct: div(unreconciledAnnual, base), basis: gpMeasured ? 'grossProfit' : 'revenue' },
     belowLine: { toHolders: measuredBelow('holders'), toProtocol: measuredBelow('protocol'), notMeasured: belowNm, lines: belowLines },
     holderFlow,
-    dilution: { pct: legacy.yields.dilution, emissionsPerYear: lv.emissionRateAnnual, releases: legacy.yields.dilutionLines ?? [], supply: legacy.supply },
+    volume,
+    dilution: { pct: legacy.yields.dilution, tokensPerYear, emissionsPerYear: lv.emissionRateAnnual, releases, supply: legacy.supply },
     ratios: { takeRate: div(grossProfit, revenueAnnual), payoutRatio, payoutRatioBasis: gpMeasured ? 'grossProfit' : 'revenue' },
     multiples,
     yields: legacy.yields,
     perToken: { ...per(circ), circulatingSupply: circ, totalSupply: total, supplyAsOf: lv.asOf ?? null, perTokenFdv: per(total) },
     priceBasis: {
-      price, metric: STD_METRICS.price, sourceType: priceDef ? sourceTypeOf(priceDef) : null, source: priceDef ? sourceLabelOf(priceDef) : null,
+      price, metric: STD_METRICS.price, sourceType: priceDef ? sourceTypeOf(priceDef, asset.metrics) : null, source: priceDef ? sourceLabelOf(priceDef) : null,
       day, asOf: lv.asOf ?? null, flows: "each flow day's USD at that day's price (the stored value)",
     },
     checks: [],
@@ -648,7 +800,7 @@ export function listingBar(asset: AssetConfig): { ok: boolean; failing: { line: 
     }
     for (const m of ms) {
       const def = asset.metrics[m];
-      const t = def ? sourceTypeOf(def) : null;
+      const t = def ? sourceTypeOf(def, asset.metrics) : null;
       if (t === null || !LISTING_RUNGS.has(t)) {
         failing.push({ line, sourceType: t });
         return;
@@ -671,117 +823,3 @@ export function listingBar(asset: AssetConfig): { ok: boolean; failing: { line: 
   }
   return { ok: failing.length === 0, failing };
 }
-
-/** One step of a parity path, as tools/phase2-proof/compare.py reads it: `key` or `key[field=value]`. */
-const SELECT = /^([^[\]]+)\[([A-Za-z_][A-Za-z0-9_]*)=([^[\]]+)\]$/;
-
-/** The value at a dotted path (compare.py's get_path); undefined when a step is absent or a selector is not unique. */
-export function getPath(obj: unknown, dotted: string): unknown {
-  let node: unknown = obj;
-  for (const step of dotted.split('.')) {
-    const m = SELECT.exec(step);
-    const key = m ? m[1] : step;
-    if (node === null || typeof node !== 'object' || Array.isArray(node) || !(key in (node as object))) return undefined;
-    node = (node as Record<string, unknown>)[key];
-    if (m) {
-      if (!Array.isArray(node)) return undefined;
-      const found = node.filter((x) => x !== null && typeof x === 'object' && (x as Record<string, unknown>)[m[2]] === m[3]);
-      if (found.length !== 1) return undefined;
-      node = found[0];
-    }
-  }
-  return node;
-}
-
-type PathPair = [label: string, v2: string, v1: string];
-
-const IS = 'incomeStatement';
-const YIELD_KEYS = ['cash', 'buyback', 'shareholder', 'dilution', 'netShareholder', 'multiple', 'pegTrailing'] as const;
-
-/** The pairs every unchanged asset shares: totals, ratios, yields, dilution, and its one holder-flow bucket. */
-function commonPairs(bucket: Bucket): PathPair[] {
-  return [
-    ['revenue', `${IS}.revenue.annualized`, 'income.revenue.annualized'],
-    ['revenue growth', `${IS}.revenue.growth.annualized`, 'income.revenue.growth.annualized'],
-    ['holders', `${IS}.holders.annualized`, 'income.holders.annualized'],
-    ['holders growth', `${IS}.holders.growth.annualized`, 'income.holders.growth.annualized'],
-    ['protocol', `${IS}.protocol.annualized`, 'income.protocol.annualized'],
-    ['operating costs = v1 costs', `${IS}.operatingCosts.annualized`, 'income.costs.annualized'],
-    ['payout ratio', `${IS}.ratios.payoutRatio`, 'income.payoutRatio'],
-    ['holder flow total', `${IS}.holderFlow.gross`, `buckets.${bucket}.gross`],
-    ['holder flow total net', `${IS}.holderFlow.net`, `buckets.${bucket}.net`],
-    [`holder flow ${bucket}`, `${IS}.holderFlow.byBucket.${bucket}.gross`, `buckets.${bucket}.gross`],
-    [`holder flow ${bucket} net`, `${IS}.holderFlow.byBucket.${bucket}.net`, `buckets.${bucket}.net`],
-    [`holder flow ${bucket} yield`, `${IS}.holderFlow.byBucket.${bucket}.yield`, `buckets.${bucket}.yield`],
-    ['holder flow growth', `${IS}.holderFlow.growth.annualized`, 'holderFlowGrowth.annualized'],
-    ...YIELD_KEYS.map((k): PathPair => [`yield ${k}`, `${IS}.yields.${k}`, `yields.${k}`]),
-    ['dilution pct', `${IS}.dilution.pct`, 'yields.dilution'],
-  ];
-}
-
-/** A v2 revenue line against a v1 income line (assets whose v1 revenue is the income statement's total). */
-const revIncome = (v2: string, v1: string): PathPair => [`revenue line ${v2}`, `${IS}.revenue.lines[id=${v2}].annualized`, `income.lines[id=${v1}].annualized`];
-/** A v2 revenue line against a v1 revenue stream. */
-const revStream = (id: string): PathPair => [`revenue line ${id}`, `${IS}.revenue.lines[id=${id}].annualized`, `revenue.streams[id=${id}].annualized`];
-/** A v2 holders line (statement) against a v1 income line. */
-const holderIncome = (v2: string, v1: string): PathPair => [`holders line ${v2}`, `${IS}.holders.lines[id=${v2}].annualized`, `income.lines[id=${v1}].annualized`];
-/** A v2 holder-flow line against a v1 flow. */
-const flowPair = (v2: string, v1: string): PathPair => [`holder flow line ${v2}`, `${IS}.holderFlow.lines[id=${v2}].gross`, `flows[id=${v1}].gross`];
-const protocolIncome = (v2: string, v1: string): PathPair => [`protocol line ${v2}`, `${IS}.protocol.lines[id=${v2}].annualized`, `income.lines[id=${v1}].annualized`];
-
-/**
- * The parity map (ruling R7): for each of the 10 assets whose figures v2 leaves unchanged, [label, v2 path in the report
- * JSON, v1 path in today's report JSON]. Every path names one stored number. tools/phase2-proof/parity.json is this
- * object as JSON (tools/phase2-proof/write-parity.ts writes it; tests/report/parity.test.ts asserts they agree).
- */
-export const PARITY_PATHS: Record<string, PathPair[]> = {
-  aero: [...commonPairs('cash'), revIncome('fees', 'voter_fees'), holderIncome('voter_fees', 'voter_fees'), flowPair('voter_fees', 'fees')],
-  cake: [
-    ...commonPairs('burn'), revIncome('burn_rev', 'burn'), revIncome('treasury_rev', 'treasury'), holderIncome('burn', 'burn'), protocolIncome('treasury', 'treasury'),
-    flowPair('burn', 'burn'),
-  ],
-  crv: [
-    ...commonPairs('cash'), revIncome('fees', 'vecrv_fees'), revIncome('treasury_rev', 'treasury'), holderIncome('vecrv_fees', 'vecrv_fees'), protocolIncome('treasury', 'treasury'),
-    flowPair('vecrv_fees', 'fees'), flowPair('vote_incentives', 'vote_incentives'),
-    ['below line to holders = v1 vote incentives', `${IS}.belowLine.toHolders`, 'flows[id=vote_incentives].gross'],
-  ],
-  cvxcrv: [
-    ...commonPairs('cash'), revIncome('vecrv_fees_rev', 'vecrv_fees'), revIncome('platform_cvxcrv', 'crv_lock_incentive'), revIncome('platform_cvx', 'cvx_stakers'),
-    revIncome('platform_treasury', 'treasury'), revIncome('callers_fee', 'callers'),
-    holderIncome('vecrv_fees', 'vecrv_fees'), holderIncome('crv', 'crv_lock_incentive'), protocolIncome('cvx_stakers', 'cvx_stakers'), protocolIncome('treasury', 'treasury'),
-    ['operating cost line callers', `${IS}.operatingCosts.lines[id=callers].annualized`, 'income.lines[id=callers].annualized'],
-    flowPair('vecrv_fees', 'fees'), flowPair('crv', 'crv'), flowPair('cvx_rewards', 'cvx'),
-    ['below line to holders = v1 outside revenue', `${IS}.belowLine.toHolders`, 'income.outsideRevenue[id=cvx_rewards].annualized'],
-  ],
-  hype: [
-    ...commonPairs('burn'), revStream('trading'), revStream('reserve_yield'), holderIncome('af_buyback', 'af_buyback'), holderIncome('reserve_yield_paid', 'reserve_yield'),
-    flowPair('af_buyback', 'af_buyback'), flowPair('reserve_yield_paid', 'reserve_yield'),
-  ],
-  link: [...commonPairs('hold'), revStream('onchain_fees'), holderIncome('reserve', 'reserve'), flowPair('reserve', 'reserve')],
-  pump: [...commonPairs('burn'), revStream('protocol'), holderIncome('buyback', 'buyback'), flowPair('buyback', 'buyback')],
-  // SKY's v1 protocol income is a remainder of the very series its holders lines read (revenue streams less the same
-  // streams), so it is 0 only up to rounding (-1e-10 on synthetic data); v2 lists no protocol section and reports an
-  // exact 0. A relative tolerance cannot compare a rounding residue with 0, so that one pair is left out.
-  sky: [
-    ...commonPairs('cash').filter(([label]) => label !== 'protocol'), revStream('surplus_usds'), revStream('surplus_buyback'), holderIncome('stakers', 'stakers'), holderIncome('buyback', 'buyback'),
-    flowPair('stakers', 'stakers'), flowPair('buyback', 'buyback'),
-  ],
-  uni: [...commonPairs('burn'), revStream('protocol_fees'), holderIncome('burn', 'burn'), flowPair('burn', 'burn')],
-  vvv: [...commonPairs('burn'), revStream('business'), holderIncome('burn', 'burn'), flowPair('burn', 'burn')],
-};
-
-/** PARITY[a](v2, v1): each pair's two values, read from the same paths compare.py reads in the report JSON. */
-export const PARITY: Record<string, (v2: IsV2, v1: HolderYieldReport) => [label: string, a: number | null, b: number | null][]> = Object.fromEntries(
-  Object.entries(PARITY_PATHS).map(([a, pairs]) => [
-    a,
-    (v2: IsV2, v1: HolderYieldReport) => {
-      const newSide = { [IS]: v2 };
-      const num = (x: unknown, where: string): number | null => {
-        if (x === null) return null;
-        if (typeof x !== 'number') throw new Error(`parity ${a}: ${where} is ${x === undefined ? 'missing' : JSON.stringify(x)}`);
-        return x;
-      };
-      return pairs.map(([label, p2, p1]) => [label, num(getPath(newSide, p2), p2), num(getPath(v1, p1), p1)] as [string, number | null, number | null]);
-    },
-  ]),
-);

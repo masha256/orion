@@ -7,7 +7,7 @@ import { insertObservation } from '../../src/db/observations.js';
 import { addDays } from '../../src/ingest/time.js';
 import { holderYieldReport } from '../../src/report/holderYield.js';
 import { lastCompleteReportDay, loadHolderYieldReport, yieldReport } from '../../src/report/load.js';
-import { MINI_REPORT_YAML, seedMiniReport } from '../helpers/assets.js';
+import { MINI_ASSET_YAML, MINI_REPORT_YAML, seedMiniReport } from '../helpers/assets.js';
 import { useTestDb } from '../helpers/db.js';
 import { ALL_ASSETS, repoAsset, syntheticInput } from '../helpers/syntheticReport.js';
 
@@ -106,5 +106,56 @@ describe('legacyReport on the 13 repo assets (synthetic series)', () => {
     delete legacy.incomeStatement;
     expect(JSON.stringify(legacy)).toBe(v1);
     expect(Object.keys(yieldReport(input))).toEqual(['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'incomeStatement', 'notes']);
+  });
+});
+
+describe('the statement reads its own disclosed metric (fix round 1, M8)', () => {
+  /** MINI disclosing revenue through `revenue_run_rate_usd` (v1) while its income statement names `disclosed_b`. */
+  const yamlOf = (statementMetric: string) => `${MINI_ASSET_YAML.replace('metrics:\n', 'metrics:\n  disclosed_b: { type: level, unit: usd, staleness_days: 60 }\n')}reporting:
+  window_days: 10
+  haircuts: { fees: 0 }
+  revenue_disclosed: revenue_run_rate_usd
+  revenue:
+    - { id: business, disclosed: revenue_run_rate_usd }
+  income:
+    lines:
+      - { id: fees, to: holders, metric: flow_usd.fees }
+income_statement:
+  category: ai_platform
+  scope: complete
+  window_days: 10
+  revenue:
+    - { id: business, disclosed: ${statementMetric} }
+  holders:
+    - { id: fees_paid, metric: flow_usd.fees, bucket: cash, haircut: 0, recipient_base: all, capture_rule: contractual }
+  remainder: protocol
+`;
+
+  async function seedDisclosures(db: Db) {
+    await seedMiniReport(db, '2026-10-10');
+    const at = (d: string) => `${d}T00:00:00.000Z`;
+    for (const [key, value, day] of [['revenue_run_rate_usd', 1000, '2026-06-01'], ['revenue_run_rate_usd', 2000, '2026-10-01'], ['disclosed_b', 50_000, '2026-05-01'], ['disclosed_b', 60_000, '2026-09-01']] as const) {
+      await insertObservation(db, { assetId: 'mini', metricKey: key, observedAt: at(day), value, source: 'manual', fetchedAt: at(day) });
+    }
+  }
+
+  it('an income statement disclosed key that differs from v1 revenue_disclosed is read on its own (v1 unchanged)', async () => {
+    const asset = parseAssetYaml(yamlOf('disclosed_b')).config;
+    const db = testDb();
+    await seedDisclosures(db);
+    const r = await loadHolderYieldReport(db, asset, '2026-10-10', { legacy: true });
+    expect(r.revenue!.annualized).toBe(2000);
+    expect(r.revenueDisclosed!.latest).toBe(2000);
+    expect(r.incomeStatement!.revenue.annualized).toBe(60_000);
+    expect(r.incomeStatement!.revenue.lines[0].growth.prior).toBe(50_000);
+  });
+
+  it('the same key: the statement reads the v1 disclosures', async () => {
+    const asset = parseAssetYaml(yamlOf('revenue_run_rate_usd')).config;
+    const db = testDb();
+    await seedDisclosures(db);
+    const r = await loadHolderYieldReport(db, asset, '2026-10-10', { legacy: true });
+    expect(r.incomeStatement!.revenue.annualized).toBe(2000);
+    expect(r.incomeStatement!.revenue.growth).toEqual(r.revenue!.growth);
   });
 });

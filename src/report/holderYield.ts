@@ -32,6 +32,11 @@ export interface ReportLevels {
   dilution?: Record<string, { rate: number | null; cap: number | null }>;
   /** Disclosed revenue levels (oldest first), for `revenue_disclosed`. */
   disclosed: { observedAt: string; value: number }[];
+  /**
+   * The income statement v2 disclosed line's levels (oldest first), read from the metric its `disclosed` key names: the
+   * same array as `disclosed` when that is v1's metric too. Absent in fixtures, where v2 reads `disclosed`.
+   */
+  statementDisclosed?: { observedAt: string; value: number }[];
   /** The as-of the levels were read at (income statement v2's priceBasis and supplyAsOf); absent in fixtures. */
   asOf?: string;
 }
@@ -504,6 +509,32 @@ const daysFrom = (a: string, b: string) => Math.round((Date.parse(b.length === 1
 export const DISCLOSURE_GAP_DAYS = 90;
 
 /**
+ * A disclosed revenue level's growth between the two latest disclosures (oldest first in `d`), and its flags: under
+ * DISCLOSURE_GAP_DAYS apart, or the latest older than that on the report day. v1's disclosed stream and the income
+ * statement v2's disclosed line both read it, so the two figures are one computation.
+ */
+export function disclosedGrowthOf(
+  d: { observedAt: string; value: number }[],
+  day: string,
+): { latest: { observedAt: string; value: number } | null; growth: Growth; disclosedGrowth: NonNullable<RevenueReport['disclosedGrowth']> } {
+  const endIso = `${addDays(day, 1)}T00:00:00.000Z`;
+  const latest = d.at(-1) ?? null;
+  const prev = d.length > 1 ? d[d.length - 2] : null;
+  const gapDays = latest && prev ? daysFrom(prev.observedAt, latest.observedAt) : null;
+  const latestAgeDays = latest ? daysFrom(latest.observedAt, endIso) : null;
+  const annualized = latest && prev && prev.value > 0 && latest.value > 0 && gapDays! > 0 ? (latest.value / prev.value) ** (DAYS_PER_YEAR / gapDays!) - 1 : null;
+  const flags: string[] = [];
+  if (!prev) flags.push('one disclosure so far: no growth');
+  if (gapDays !== null && gapDays < DISCLOSURE_GAP_DAYS) flags.push(`the two latest disclosures are ${gapDays} days apart (< ${DISCLOSURE_GAP_DAYS}): a noisy rate`);
+  if (latestAgeDays !== null && latestAgeDays > DISCLOSURE_GAP_DAYS) flags.push(`the latest disclosure is ${latestAgeDays} days old (> ${DISCLOSURE_GAP_DAYS})`);
+  return {
+    latest,
+    growth: { current: latest?.value ?? null, prior: prev?.value ?? null, change: latest && prev && prev.value > 0 ? latest.value / prev.value - 1 : null, annualized, note: 'between the two latest disclosures' },
+    disclosedGrowth: { annualized, gapDays, latestAgeDays, flags },
+  };
+}
+
+/**
  * Revenue (Mike, 2026-10-12): the sum of reporting.revenue's streams. Without the list, the income statement's total, as
  * before. A disclosed stream (the company's own figure) is the whole revenue; its growth is between the two latest
  * disclosures, flagged when they are under 90 days apart or the latest is over 90 days old.
@@ -520,7 +551,6 @@ function revenueReport(
 ): RevenueReport | null {
   const r = asset.reporting!;
   if (!r.revenue) return null;
-  const endIso = `${addDays(day, 1)}T00:00:00.000Z`;
   const streams: RevenueStreamLine[] = [];
   // A stream with a share reads a scaled copy of its series, keyed by stream id: the shared daily map stays gross for
   // every other reader of the metric (income lines, holder flows, volume).
@@ -534,24 +564,15 @@ function revenueReport(
   let crossCheck: RevenueReport['crossCheck'];
   for (const s of r.revenue) {
     if (s.disclosed !== undefined) {
-      const d = lv.disclosed;
-      const latest = d.at(-1) ?? null;
-      const prev = d.length > 1 ? d[d.length - 2] : null;
-      const gapDays = latest && prev ? daysFrom(prev.observedAt, latest.observedAt) : null;
-      const latestAgeDays = latest ? daysFrom(latest.observedAt, endIso) : null;
-      const annualized = latest && prev && prev.value > 0 && latest.value > 0 && gapDays! > 0 ? (latest.value / prev.value) ** (DAYS_PER_YEAR / gapDays!) - 1 : null;
-      const flags: string[] = [];
-      if (!prev) flags.push('one disclosure so far: no growth');
-      if (gapDays !== null && gapDays < DISCLOSURE_GAP_DAYS) flags.push(`the two latest disclosures are ${gapDays} days apart (< ${DISCLOSURE_GAP_DAYS}): a noisy rate`);
-      if (latestAgeDays !== null && latestAgeDays > DISCLOSURE_GAP_DAYS) flags.push(`the latest disclosure is ${latestAgeDays} days old (> ${DISCLOSURE_GAP_DAYS})`);
-      disclosedGrowth = { annualized, gapDays, latestAgeDays, flags };
+      const g = disclosedGrowthOf(lv.disclosed, day);
+      disclosedGrowth = g.disclosedGrowth;
       if (s.cross_check !== undefined) {
         const sum = windowSum(daily, [s.cross_check], day, W);
         crossCheck = { metric: s.cross_check, annualized: sum === null ? null : (sum * DAYS_PER_YEAR) / W };
       }
       streams.push({
-        id: s.id, label: s.label ?? null, basis: 'disclosed', metric: s.disclosed, annualized: latest?.value ?? null, daysInWindow: null, provisionalDays: 0,
-        started: s.started ?? null, isNew: false, growth: { current: latest?.value ?? null, prior: prev?.value ?? null, change: latest && prev && prev.value > 0 ? latest.value / prev.value - 1 : null, annualized, note: 'between the two latest disclosures' },
+        id: s.id, label: s.label ?? null, basis: 'disclosed', metric: s.disclosed, annualized: g.latest?.value ?? null, daysInWindow: null, provisionalDays: 0,
+        started: s.started ?? null, isNew: false, growth: g.growth,
         holderFlow: null,
       });
       continue;

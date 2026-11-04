@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { holderYieldReport, type HolderYieldReport } from '../../src/report/holderYield.js';
-import { getPath, incomeStatementV2, PARITY, PARITY_PATHS, type IsV2 } from '../../src/report/incomeStatement.js';
+import { incomeStatementV2, type IsV2 } from '../../src/report/incomeStatement.js';
+import { getPath, PARITY, PARITY_PATHS } from '../../src/report/parity.js';
 import { ALL_ASSETS, repoAsset, syntheticInput } from '../helpers/syntheticReport.js';
 
 const PARITY_ASSETS = ['aero', 'cake', 'crv', 'cvxcrv', 'hype', 'link', 'pump', 'sky', 'uni', 'vvv'];
@@ -58,6 +59,53 @@ describe('parity map (ruling R7)', () => {
       }
       for (const r of asset.income_statement!.revenue) expect(v2Paths, `${id} revenue ${r.id}`).toContain(`incomeStatement.revenue.lines[id=${r.id}].annualized`);
     }
+  });
+
+  it('covers what v1 publishes and v2 restates (fix round 1, M1): per-flow net/yield/growth, protocol growth, line growth, price, volume', () => {
+    for (const id of PARITY_ASSETS) {
+      const asset = repoAsset(id);
+      const pairs = PARITY_PATHS[id];
+      const v2Paths = pairs.map((p) => p[1]);
+      const v1Of = new Map(pairs.map((p) => [p[1], p[2]]));
+      expect(v1Of.get('incomeStatement.priceBasis.price'), id).toBe('price');
+      expect(pairs.some((p) => p[1] === 'incomeStatement.revenue.annualized' && p[2] === 'income.revenue.annualized'), id).toBe(true);
+      // The published top-level revenue figures too (VVV's growth is only there).
+      expect(pairs.some((p) => p[1] === 'incomeStatement.revenue.annualized' && p[2] === 'revenue.annualized'), id).toBe(true);
+      expect(pairs.some((p) => p[1] === 'incomeStatement.revenue.growth.annualized' && p[2] === 'revenue.growth.annualized'), id).toBe(true);
+      if (id !== 'sky') expect(v2Paths, id).toContain('incomeStatement.protocol.growth.annualized');
+      for (const h of asset.income_statement!.holders ?? []) {
+        for (const k of ['net', 'yield', 'growth.annualized']) expect(v2Paths, `${id} ${h.id} ${k}`).toContain(`incomeStatement.holderFlow.lines[id=${h.id}].${k}`);
+      }
+      if (asset.reporting!.revenue) {
+        for (const r of asset.income_statement!.revenue) expect(v2Paths, `${id} ${r.id} growth`).toContain(`incomeStatement.revenue.lines[id=${r.id}].growth.annualized`);
+      }
+      if (asset.reporting!.volume) {
+        expect(v1Of.get('incomeStatement.volume.annualized'), id).toBe('volume.annualized');
+        expect(v1Of.get('incomeStatement.volume.growth.annualized'), id).toBe('volume.growth.annualized');
+      }
+    }
+    expect(PARITY_PATHS.hype.map((p) => p[1])).toContain('incomeStatement.revenue.growthExNew.annualized');
+    const vvv = new Map(PARITY_PATHS.vvv.map((p) => [p[1], p[2]]));
+    expect(vvv.get('incomeStatement.revenue.lines[id=business].crossCheck.annualized')).toBe('revenue.crossCheck.annualized');
+    expect(vvv.get('incomeStatement.revenue.lines[id=business].growth.annualized')).toBe('revenue.streams[id=business].growth.annualized');
+    for (const a of ['cake', 'cvxcrv', 'uni']) expect(PARITY_PATHS[a].map((p) => p[1]), a).toContain('incomeStatement.volume.annualized');
+  });
+
+  it('VVV revenue growth is a number on both sides (I1: the null = null pair is gone)', () => {
+    const { v1, v2 } = reports('vvv');
+    const pairs = PARITY.vvv(v2, v1).filter(([l]) => l.includes('growth') && l.includes('revenue'));
+    expect(pairs.length).toBeGreaterThanOrEqual(2);
+    for (const [label, a, b] of pairs) {
+      expect(a, label).toEqual(expect.any(Number));
+      expect(b, label).toEqual(expect.any(Number));
+    }
+  });
+
+  it('a v2 null against a v1 number fails the pair (no null-vs-number pass)', () => {
+    const { v1, v2 } = reports('vvv');
+    v2.revenue.growth.annualized = null;
+    const bad = PARITY.vvv(v2, v1).filter(([, a, b]) => !(rel(a, b) <= REL));
+    expect(bad.map(([l]) => l)).toContain('revenue growth (published)');
   });
 
   it('tools/phase2-proof/parity.json is PARITY_PATHS as written by write-parity.ts', () => {

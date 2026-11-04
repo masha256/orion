@@ -60,7 +60,18 @@ const hostOf = (url: string): string => {
   }
 };
 
-function typeOfSource(s: SourceConfig): SourceType | null {
+/** The flow or level metrics a `derived` source reads (`metric`, `metrics`, `minus`). */
+function derivedInputs(s: Extract<SourceConfig, { type: 'derived' }>): string[] {
+  const p = (s.params ?? {}) as Record<string, unknown>;
+  const names = (x: unknown): string[] => (typeof x === 'string' ? [x] : Array.isArray(x) ? x.filter((m): m is string => typeof m === 'string') : []);
+  return [...names(p.metric), ...names(p.metrics), ...names(p.minus)];
+}
+
+/**
+ * A source's rung. A `derived` source is `derived`, or `third_party` when the asset's metrics are given and any metric
+ * it reads (through derived chains too) sits on a third-party source: a rate computed from DefiLlama is still DefiLlama.
+ */
+export function typeOfSource(s: SourceConfig, metrics?: Readonly<Record<string, MetricDef>>, seen: ReadonlySet<string> = new Set()): SourceType | null {
   switch (s.type) {
     case 'coingecko':
       return 'market_data';
@@ -78,15 +89,30 @@ function typeOfSource(s: SourceConfig): SourceType | null {
       return THIRD_PARTY_HOST.test(hostOf(s.url)) ? 'third_party' : 'first_party_api';
     case 'constant':
       return 'constant';
-    case 'derived':
+    case 'derived': {
+      if (metrics === undefined) return 'derived';
+      for (const m of derivedInputs(s)) {
+        const def = metrics[m];
+        if (def === undefined || seen.has(m)) continue;
+        if (sourceTypeOf(def, metrics, new Set([...seen, m])) === 'third_party') return 'third_party';
+      }
       return 'derived';
+    }
   }
 }
 
-/** A metric's rung, from its primary source; a metric with no source is entered by hand with a citation (disclosure). */
-export function sourceTypeOf(def: MetricDef): SourceType | null {
+/**
+ * A metric's rung, from its primary source; a metric with no source is entered by hand with a citation (disclosure).
+ * Pass the asset's metrics to let a derived metric inherit `third_party` from its inputs.
+ */
+export function sourceTypeOf(def: MetricDef, metrics?: Readonly<Record<string, MetricDef>>, seen?: ReadonlySet<string>): SourceType | null {
   if (def.source === undefined) return def.fetcher === 'manual' ? 'disclosure' : null;
-  return typeOfSource(def.source);
+  return typeOfSource(def.source, metrics, seen);
+}
+
+/** The rungs of a metric's `cross_checks` sources (a DefiLlama cross-check is a third-party dependency too). */
+export function crossCheckTypesOf(def: MetricDef, metrics?: Readonly<Record<string, MetricDef>>): SourceType[] {
+  return (def.cross_checks ?? []).map((c) => typeOfSource(c.source, metrics)).filter((t): t is SourceType => t !== null);
 }
 
 /** `<rung>:<what>` for the provenance list: the adapter name, the API host, or the source type. Never a full URL (keys). */
