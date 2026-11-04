@@ -134,8 +134,9 @@ const present = (line: object, keys: string[]): string[] => keys.filter((k) => (
 /**
  * The validation rules the schema cannot express (spec §6 + correction 6): one value source per line, ids unique across
  * sections (strictly: a use line never reuses its revenue line's id), metric types and references, a
- * disclosed revenue line alone, remainder only on an empty section, burns at haircut 0, and no series read twice (a use of
- * a revenue series goes through `of`). The shared reporting keys are checked in schema.ts. Messages are prefixed.
+ * disclosed revenue line alone, remainder only on an empty section, burns at haircut 0, a capture rule on every measured
+ * below-line line to holders, and no series read twice (a use of a revenue series goes through `of`; a `paid_metric` is
+ * read by no other line). The shared reporting keys are checked in schema.ts. Messages are prefixed.
  */
 export function incomeStatementIssues(asset: { metrics: Record<string, { type: string; unit: string }>; income_statement?: IncomeStatementDef }): string[] {
   const is = asset.income_statement;
@@ -249,14 +250,46 @@ export function incomeStatementIssues(asset: { metrics: Record<string, { type: s
     if (b.run_rate !== undefined) level(b.run_rate, `${w} run_rate`);
     if (b.to === 'holders') {
       const measured = b.metric !== undefined || b.run_rate !== undefined;
-      if (measured && (b.bucket === undefined || b.haircut === undefined || b.recipient_base === undefined)) {
-        issue(`${w} to holders needs bucket, haircut and recipient_base`);
+      // capture_rule too (correction 6, ruling M3): `asset describe` reads it for the holder-flow text. A not_measured line
+      // (AERO bribes) needs none of these.
+      if (measured && (b.bucket === undefined || b.haircut === undefined || b.recipient_base === undefined || b.capture_rule === undefined)) {
+        issue(`${w} to holders needs bucket, haircut, recipient_base and capture_rule`);
       }
     } else if (present(b, ['bucket', 'haircut', 'recipient_base', 'valued_per', 'capture_rule']).length > 0) {
       issue(`${w} to protocol takes no bucket, haircut, recipient_base, valued_per or capture_rule`);
     }
     if (b.bucket === 'burn' && (b.haircut ?? 0) !== 0) issue(`${w} is a burn, whose haircut is 0`);
     if (b.valued_per === 'recipients' && b.recipient_base !== 'staked') issue(`${w} can be valued per recipients only with recipient_base staked`);
+  }
+
+  // paid_metric (ruling M4): holder flow reads it in place of the line's statement source, so a series any other line reads
+  // would count twice in holder flow and yields. The one exception is the revenue series this line passes on (`of`).
+  const readers = new Map<string, string[]>();
+  const reader = (m: string | undefined, where: string) => {
+    if (m !== undefined) readers.set(m, [...(readers.get(m) ?? []), where]);
+  };
+  for (const r of is.revenue) {
+    reader(r.metric, `revenue.${r.id}`);
+    reader(r.derived?.from, `revenue.${r.id}`);
+    reader(r.derived?.share_metric, `revenue.${r.id}`);
+  }
+  for (const section of USE_SECTIONS) {
+    for (const l of (is[section] ?? []) as AnyUseLine[]) {
+      reader(l.metric, `${section}.${l.id}`);
+      reader(l.share_metric, `${section}.${l.id}`);
+      if (section === 'holders') reader((l as IsHolderLine).paid_metric, `${section}.${l.id}`);
+    }
+  }
+  for (const b of is.below_line ?? []) {
+    reader(b.metric, `below_line.${b.id}`);
+    reader(b.run_rate, `below_line.${b.id}`);
+  }
+  for (const h of is.holders ?? []) {
+    if (h.paid_metric === undefined) continue;
+    const w = `holders.${h.id}`;
+    const passedOn = h.of !== undefined ? `revenue.${h.of}` : undefined;
+    const others = [...new Set(readers.get(h.paid_metric) ?? [])].filter((x) => x !== w && x !== passedOn);
+    if (others.length > 0) issue(`${w} paid_metric "${h.paid_metric}" is also read by ${others.join(', ')}`);
   }
 
   if (is.remainder !== undefined && (is[is.remainder] ?? []).length > 0) {

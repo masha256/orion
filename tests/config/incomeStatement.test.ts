@@ -37,7 +37,7 @@ function base(): Record<string, any> {
     ],
     protocol: [{ id: 'treasury', metric: 'flow_usd.treasury' }],
     below_line: [
-      { id: 'vote_incentives', run_rate: 'incentive_run_rate_usd', to: 'holders', bucket: 'cash', haircut: 0.03, recipient_base: 'locked' },
+      { id: 'vote_incentives', run_rate: 'incentive_run_rate_usd', to: 'holders', bucket: 'cash', haircut: 0.03, recipient_base: 'locked', capture_rule: 'programmatic' },
       { id: 'bribes', not_measured: 'voter bribes not scanned', to: 'holders' },
     ],
     checks: [{ id: 'splitter', type: 'sum', total: ['flow_usd.total'], parts: ['buyback', 'treasury'], tolerance_pct: 2 }],
@@ -54,7 +54,7 @@ describe('income_statement schema', () => {
   it('accepts a statement covering every section, parsed exactly as written', () => {
     const is = base();
     const { config } = parse(is);
-    expect(config.income_statement).toEqual(is);
+    expect(config.income_statement).toStrictEqual(is);
   });
 
   it('refuses a line with two value sources', () => {
@@ -108,7 +108,6 @@ describe('income_statement schema', () => {
     const alone = base();
     alone.revenue = [{ id: 'business', disclosed: 'revenue_run_rate_usd', cross_check: 'flow_usd.core' }];
     alone.cost_of_revenue = [{ id: 'compute', to: 'other', not_measured: 'n/m' }];
-    alone.volume = undefined;
     delete alone.volume;
     expect(() => parse(alone)).not.toThrow();
     alone.revenue[0].disclosed = 'flow_usd.core';
@@ -148,7 +147,7 @@ describe('income_statement schema', () => {
 
   it('refuses a below_line metric that is also a revenue metric', () => {
     const is = base();
-    is.below_line[0] = { id: 'vote_incentives', metric: 'flow_usd.core', to: 'holders', bucket: 'cash', haircut: 0.03, recipient_base: 'locked' };
+    is.below_line[0] = { id: 'vote_incentives', metric: 'flow_usd.core', to: 'holders', bucket: 'cash', haircut: 0.03, recipient_base: 'locked', capture_rule: 'programmatic' };
     refused(is, /below_line\.vote_incentives metric "flow_usd\.core" is a revenue metric/);
   });
 
@@ -228,12 +227,12 @@ describe('income_statement schema', () => {
     flow.below_line[0].run_rate = 'flow_usd.bribes';
     refused(flow, /below_line\.vote_incentives run_rate "flow_usd\.bribes" is not a level metric/);
     const lvl = base();
-    lvl.below_line[0] = { id: 'vote_incentives', metric: 'incentive_run_rate_usd', to: 'holders', bucket: 'cash', haircut: 0.03, recipient_base: 'locked' };
+    lvl.below_line[0] = { id: 'vote_incentives', metric: 'incentive_run_rate_usd', to: 'holders', bucket: 'cash', haircut: 0.03, recipient_base: 'locked', capture_rule: 'programmatic' };
     refused(lvl, /below_line\.vote_incentives metric "incentive_run_rate_usd" is not a flow metric/);
     // A measured line paid to holders needs its bucket, haircut and recipient base; to protocol takes none.
     const nb = base();
     delete nb.below_line[0].bucket;
-    refused(nb, /below_line\.vote_incentives to holders needs bucket, haircut and recipient_base/);
+    refused(nb, /below_line\.vote_incentives to holders needs bucket, haircut, recipient_base and capture_rule/);
     const pr = base();
     pr.below_line[0] = { id: 'grants', metric: 'flow_usd.bribes', to: 'protocol', haircut: 0 };
     refused(pr, /below_line\.grants to protocol takes no bucket, haircut, recipient_base, valued_per or capture_rule/);
@@ -263,7 +262,7 @@ describe('income_statement schema', () => {
   it('checks take only the sum type for now', () => {
     const is = base();
     is.checks[0].type = 'parameter';
-    expect(() => parse(is)).toThrow();
+    refused(is, /checks.*expected "sum"/s);
   });
 
   it('unknown keys refused (strict)', () => {
@@ -276,13 +275,136 @@ describe('income_statement schema', () => {
       (is: Record<string, any>) => { is.below_line[0].surprise = 1; },
       (is: Record<string, any>) => { is.checks[0].surprise = 1; },
       (is: Record<string, any>) => { is.dilution[0].surprise = 1; },
-      (is: Record<string, any>) => { is.revenue[1].estimate = { of: 'core', ratio: 0.1, surprise: 1 }; delete is.revenue[1].metric; },
+      // a bare estimate line (no settlement or started left behind), so only the strict estimate node can refuse it
+      (is: Record<string, any>) => { is.revenue[1] = { id: 'partner', estimate: { of: 'core', ratio: 0.1, surprise: 1 } }; is.cost_of_revenue.shift(); },
       (is: Record<string, any>) => { is.holders[0].settlement = 'daily'; },
     ]) {
       const is = base();
       mutate(is);
-      expect(() => parse(is)).toThrow();
+      refused(is, /Unrecognized key/);
     }
+    // the bare estimate line is valid without the stray key
+    const ok = base();
+    ok.revenue[1] = { id: 'partner', estimate: { of: 'core', ratio: 0.1 } };
+    ok.cost_of_revenue.shift();
+    expect(() => parse(ok)).not.toThrow();
+  });
+
+  it('derived revenue: from a flow, read once, registered as revenue; share_metric a level', () => {
+    const d = () => {
+      const is = base();
+      is.revenue[1] = { id: 'partner', derived: { from: 'flow_usd.partner_fees', share: 0.5, share_metric: 'partner_share' } };
+      is.cost_of_revenue.shift();
+      return is;
+    };
+    expect(() => parse(d())).not.toThrow();
+    const fl = d();
+    fl.revenue[1].derived.from = 'partner_share';
+    refused(fl, /revenue\.partner derived from "partner_share" is not a flow metric/);
+    const twice = d();
+    twice.revenue[1].derived.from = 'flow_usd.core';
+    refused(twice, /metric "flow_usd\.core" is read by two lines \(revenue\.core and revenue\.partner\)/);
+    const use = d();
+    use.protocol[0].metric = 'flow_usd.partner_fees';
+    refused(use, /protocol\.treasury metric "flow_usd\.partner_fees" is revenue line partner's metric: use of: partner/);
+    const bl = d();
+    bl.below_line[1] = { id: 'bribes', metric: 'flow_usd.partner_fees', to: 'protocol' };
+    refused(bl, /below_line\.bribes metric "flow_usd\.partner_fees" is a revenue metric/);
+    const sm = d();
+    sm.revenue[1].derived.share_metric = 'flow_usd.total';
+    refused(sm, /revenue\.partner derived share_metric "flow_usd\.total" is not a level metric/);
+  });
+
+  it('settlement and started only on a metric or derived revenue line', () => {
+    for (const extra of [{ settlement: 'daily' }, { started: '2026-06-26' }]) {
+      const is = base();
+      is.revenue[1] = { id: 'partner', estimate: { of: 'core', ratio: 0.1 }, ...extra };
+      is.cost_of_revenue.shift();
+      refused(is, /revenue\.partner takes settlement and started only with a metric or derived/);
+    }
+  });
+
+  it('of must name a measured revenue line, not a not_measured one or a use line', () => {
+    const nm = base();
+    nm.revenue.push({ id: 'unread', not_measured: 'not scanned' });
+    nm.protocol[0] = { id: 'treasury', of: 'unread' };
+    refused(nm, /protocol\.treasury of "unread" is a not_measured revenue line/);
+    const use = base();
+    use.protocol[0] = { id: 'treasury', of: 'buyback' };
+    refused(use, /protocol\.treasury of "buyback" is not a revenue line/);
+  });
+
+  it('a use line metric must be a flow, in every use section', () => {
+    const h = base();
+    h.holders[0].metric = 'partner_share';
+    refused(h, /holders\.buyback metric "partner_share" is not a flow metric/);
+    const p = base();
+    p.protocol[0].metric = 'partner_share';
+    refused(p, /protocol\.treasury metric "partner_share" is not a flow metric/);
+    const c = base();
+    c.cost_of_revenue[1] = { id: 'lp_fees', to: 'lps', metric: 'partner_share' };
+    refused(c, /cost_of_revenue\.lp_fees metric "partner_share" is not a flow metric/);
+  });
+
+  it('a not_measured holder line takes no paid_metric', () => {
+    const is = base();
+    is.holders.push({ id: 'unpaid', not_measured: 'not scanned', paid_metric: 'flow_usd.paid', bucket: 'cash', haircut: 0, recipient_base: 'all', capture_rule: 'contractual' });
+    refused(is, /holders\.unpaid takes no paid_metric when not_measured/);
+  });
+
+  it('paid_metric is read by no other line, except the revenue series it passes on (M4)', () => {
+    const crv = (paid: string) => {
+      const is = base();
+      is.holders.push({ id: 'crv', of: 'core', paid_metric: paid, bucket: 'cash', haircut: 0.01, recipient_base: 'staked', valued_per: 'recipients', capture_rule: 'programmatic' });
+      return is;
+    };
+    expect(() => parse(crv('flow_usd.paid'))).not.toThrow();
+    // the revenue series this line passes on (of: core) may be the series measured at the recipients too
+    expect(() => parse(crv('flow_usd.core'))).not.toThrow();
+    refused(crv('flow_usd.buyback'), /holders\.crv paid_metric "flow_usd\.buyback" is also read by holders\.buyback/);
+    refused(crv('flow_usd.partner_fees'), /holders\.crv paid_metric "flow_usd\.partner_fees" is also read by revenue\.partner/);
+    refused(crv('flow_usd.treasury'), /holders\.crv paid_metric "flow_usd\.treasury" is also read by protocol\.treasury/);
+    const bl = crv('flow_usd.bribes');
+    bl.below_line[1] = { id: 'bribes', metric: 'flow_usd.bribes', to: 'protocol' };
+    refused(bl, /holders\.crv paid_metric "flow_usd\.bribes" is also read by below_line\.bribes/);
+    const two = crv('flow_usd.paid');
+    two.holders.push({ id: 'crv2', of: 'partner', paid_metric: 'flow_usd.paid', bucket: 'cash', haircut: 0.01, recipient_base: 'staked', valued_per: 'recipients', capture_rule: 'programmatic' });
+    refused(two, /holders\.crv paid_metric "flow_usd\.paid" is also read by holders\.crv2/);
+    const der = crv('flow_usd.partner_fees');
+    der.revenue[1] = { id: 'partner', derived: { from: 'flow_usd.partner_fees', share: 0.5 } };
+    der.cost_of_revenue.shift();
+    refused(der, /holders\.crv paid_metric "flow_usd\.partner_fees" is also read by revenue\.partner/);
+  });
+
+  it('a measured below_line line to holders needs capture_rule; a not_measured one does not (M3)', () => {
+    const rr = base();
+    delete rr.below_line[0].capture_rule;
+    refused(rr, /below_line\.vote_incentives to holders needs bucket, haircut, recipient_base and capture_rule/);
+    const m = base();
+    m.below_line[0] = { id: 'vote_incentives', metric: 'flow_usd.bribes', to: 'holders', bucket: 'cash', haircut: 0.03, recipient_base: 'locked' };
+    refused(m, /below_line\.vote_incentives to holders needs bucket, haircut, recipient_base and capture_rule/);
+    m.below_line[0].capture_rule = 'programmatic';
+    expect(() => parse(m)).not.toThrow();
+    // base()'s bribes line is not_measured, to holders, with no capture_rule, and parses
+    expect(base().below_line[1].capture_rule).toBeUndefined();
+    expect(() => parse(base())).not.toThrow();
+  });
+
+  it('below_line valued per recipients needs recipient_base staked', () => {
+    const is = base();
+    is.below_line[0].valued_per = 'recipients';
+    refused(is, /below_line\.vote_incentives can be valued per recipients only with recipient_base staked/);
+    is.below_line[0].recipient_base = 'staked';
+    expect(() => parse(is)).not.toThrow();
+  });
+
+  it('check ids are unique and check totals are flows', () => {
+    const dup = base();
+    dup.checks.push({ id: 'splitter', type: 'sum', total: ['flow_usd.total'], parts: ['buyback'], tolerance_pct: 2 });
+    refused(dup, /check id "splitter" is used twice/);
+    const lvl = base();
+    lvl.checks[0].total = ['partner_share'];
+    refused(lvl, /check splitter total "partner_share" is not a flow metric/);
   });
 
   it('an asset without income_statement keeps its hash', () => {
