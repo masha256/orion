@@ -75,6 +75,20 @@ describe('locks', () => {
     await after!.release();
   });
 
+  it('locks: ping runs SELECT 1 on the lock\'s own connection and throws lock_lost once its backend is gone', async () => {
+    const lock = await db.tryAssetRunLock('aero', 'tick pid 1001');
+    await lock!.ping();
+    const pid = (await other.one<{ pid: number }>("SELECT pid FROM pg_stat_activity WHERE application_name = 'tick pid 1001'"))?.pid;
+    await other.run('SELECT pg_terminate_backend($1)', [pid!]);
+    for (let i = 0; i < 50 && (await other.assetRunLockHolder('aero')); i++) await new Promise((r) => setTimeout(r, 50));
+    await expect(lock!.ping()).rejects.toMatchObject({ code: 'lock_lost' });
+    await lock!.release();
+    // A released lock is not live either.
+    const again = await db.tryAssetRunLock('aero', 'tick pid 1002');
+    await again!.release();
+    await expect(again!.ping()).rejects.toMatchObject({ code: 'lock_lost' });
+  });
+
   it('locks: the same asset in another schema of the database has its own run lock and transaction lock', async () => {
     const elsewhere = await createTestSchema({ migrate: false });
     const there = await openPgDb(elsewhere);

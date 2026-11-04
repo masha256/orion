@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parse as parseYaml } from 'yaml';
+import { parse as parseYaml, YAMLParseError } from 'yaml';
 import { ZodError } from 'zod';
 import { findAdapter } from '../ingest/adapters/registry.js';
 import { OrionError } from '../types.js';
@@ -65,7 +65,17 @@ export function listAssetIds(home: string): string[] {
 export function loadAsset(home: string, id: string): LoadedAsset {
   const path = join(home, 'assets', `${id}.yaml`);
   if (!existsSync(path)) throw new OrionError('asset_not_found', `no asset config at ${path}`);
-  const loaded = parseAssetYaml(readFileSync(path, 'utf8'));
+  let loaded: LoadedAsset;
+  try {
+    loaded = parseAssetYaml(readFileSync(path, 'utf8'));
+  } catch (err) {
+    // A syntax error is a config error like any other: named by file and line, so `asset validate` lists it.
+    if (err instanceof YAMLParseError) {
+      const line = err.linePos?.[0]?.line;
+      throw new OrionError('invalid_asset_config', `${path}: not valid YAML${line === undefined ? '' : ` at line ${line}`}: ${err.message.split('\n')[0]}`);
+    }
+    throw err;
+  }
   if (loaded.config.id !== id) {
     throw new OrionError('invalid_asset_config', `${path}: id "${loaded.config.id}" does not match the file name`);
   }

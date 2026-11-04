@@ -2,6 +2,7 @@ import { inboxLines } from '../app/inbox.js';
 import type { TickHolderYield, TickReport } from '../app/tickReport.js';
 import type { JobStatus } from '../db/jobs.js';
 import type { WatchFiring } from '../types.js';
+import { slackEscape } from './slack.js';
 
 /**
  * The deterministic report text (spec 6, option A): the Phase 1 message rules of `docs/ops/hermes-daily-job.md` STEP 3,
@@ -145,33 +146,59 @@ export function formatAssetBlock(r: AssetRunResult): { lines: string[]; alert: b
 
 // ---- Splitting ------------------------------------------------------------------------------------------------------
 
-/** A line longer than `max` on its own is cut by characters (no line should be, but a post must never exceed `max`). */
+/** The length a text has once posted: `slackEscape` turns `&` into five characters, `<` and `>` into four (M-7). */
+const postedLength = (text: string): number => slackEscape(text).length;
+
+/**
+ * A line whose posted length is over `max` on its own is cut by code points (never inside a surrogate pair), each part
+ * at most `max` once escaped. An `@` is counted as two, for the zero-width space a mention word gets.
+ */
 function cutLine(line: string, max: number): string[] {
   const parts: string[] = [];
-  for (let i = 0; i < line.length; i += max) parts.push(line.slice(i, i + max));
-  return parts.length > 0 ? parts : [''];
+  let part = '';
+  let len = 0;
+  for (const cp of line) {
+    const cost = cp === '@' ? 2 : postedLength(cp);
+    if (part !== '' && len + cost > max) {
+      parts.push(part);
+      part = '';
+      len = 0;
+    }
+    part += cp;
+    len += cost;
+  }
+  if (part !== '' || parts.length === 0) parts.push(part);
+  return parts;
 }
 
 /**
- * Posts of at most `max` characters: blocks joined by a blank line, a new post started only at a block boundary. A
- * block longer than `max` on its own starts a new post and is cut at line boundaries; each later part's first line is
- * `(continued)`. The next block may join the oversize block's last part when it fits.
+ * Posts of at most `max` characters as posted (escaped): blocks joined by a blank line, a new post started only at a
+ * block boundary. A block longer than `max` on its own starts a new post and is cut at line boundaries; each later
+ * part's first line is `(continued)`. The next block may join the oversize block's last part when it fits.
  */
 export function splitForSlack(blocks: string[][], max = SLACK_MAX_CHARS): string[] {
   const posts: string[] = [];
   let cur = '';
+  let curLen = 0;
   const flush = (): void => {
     if (cur !== '') posts.push(cur);
     cur = '';
+    curLen = 0;
   };
   for (const block of blocks) {
     const text = block.join('\n');
-    if (text.length <= max) {
-      if (cur === '') cur = text;
-      else if (cur.length + 2 + text.length <= max) cur = `${cur}\n\n${text}`;
-      else {
+    const textLen = postedLength(text);
+    if (textLen <= max) {
+      if (cur === '') {
+        cur = text;
+        curLen = textLen;
+      } else if (curLen + 2 + textLen <= max) {
+        cur = `${cur}\n\n${text}`;
+        curLen += 2 + textLen;
+      } else {
         flush();
         cur = text;
+        curLen = textLen;
       }
       continue;
     }
@@ -179,18 +206,20 @@ export function splitForSlack(blocks: string[][], max = SLACK_MAX_CHARS): string
     const marker = '(continued)';
     let part: string[] = [];
     let len = 0;
-    for (const line of block.flatMap((l) => cutLine(l, max - marker.length - 1))) {
-      const add = part.length === 0 ? line.length : len + 1 + line.length;
+    for (const line of block.flatMap((l) => (postedLength(l) > max - marker.length - 1 ? cutLine(l, max - marker.length - 1) : [l]))) {
+      const lineLen = postedLength(line);
+      const add = part.length === 0 ? lineLen : len + 1 + lineLen;
       if (part.length > 0 && add > max) {
         posts.push(part.join('\n'));
         part = [marker, line];
-        len = marker.length + 1 + line.length;
+        len = marker.length + 1 + lineLen;
       } else {
         part.push(line);
         len = add;
       }
     }
     cur = part.join('\n');
+    curLen = len;
   }
   flush();
   return posts;

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -129,36 +129,44 @@ describe('orion cli', () => {
     expect(await registryCounts()).toEqual({ rows: 0, events: 0 });
     expect(await orion('asset', 'registry')).toBe('the asset registry is empty');
     // Once seeded, the diff is empty and still writes nothing.
-    await orion('asset', 'registry', 'seed', '--reason', 'cutover', '--by', 'mike');
+    await orion('asset', 'registry', 'seed', '--all', '--reason', 'cutover', '--by', 'mike');
     const counts = await registryCounts();
     expect(await orion('asset', 'registry', 'diff')).toBe('registry matches the YAML');
     expect(await registryCounts()).toEqual(counts);
   });
 
-  it('cli: asset registry seed makes every YAML active once', async () => {
+  it('cli: asset registry seed needs ids or --all, seeds only an empty registry and prints what it activates (I-2)', async () => {
     writeFileSync(join(home, 'assets', 'two.yaml'), MINI_ASSET_YAML.replace('id: mini', 'id: two'));
-    const first = JSON.parse(await orion('asset', 'registry', 'seed', '--reason', 'cutover from SQLite', '--by', 'mike', '--json'));
-    expect(first).toEqual({ seeded: ['mini', 'two'], existing: [] });
-    const second = await orion('asset', 'registry', 'seed', '--reason', 'cutover from SQLite', '--by', 'mike');
-    expect(second).toBe('nothing to seed: every YAML has a registry row (mini, two)');
-    expect(await registryCounts()).toEqual({ rows: 2, events: 2 });
+    const fail = async (...args: string[]): Promise<string> => {
+      const exit: number[] = [];
+      const lines: string[] = [];
+      await buildProgram(testCliContext(home, { stdout: (l) => lines.push(l), setExitCode: (c) => exit.push(c) })).parseAsync(args, { from: 'user' });
+      expect(exit).toEqual([1]);
+      return JSON.parse(lines.join('\n')).error.code;
+    };
+    // Neither ids nor --all; both; --reason missing.
+    expect(await fail('asset', 'registry', 'seed', '--reason', 'cutover', '--by', 'mike', '--json')).toBe('seed_ids_required');
+    expect(await fail('asset', 'registry', 'seed', 'mini', '--all', '--reason', 'cutover', '--by', 'mike', '--json')).toBe('seed_ids_required');
+    expect(await fail('asset', 'registry', 'seed', '--all', '--by', 'mike', '--json')).toBe('reason_required');
+    expect(await registryCounts()).toEqual({ rows: 0, events: 0 });
+    expect(await orion('asset', 'registry', 'seed', 'mini', '--reason', 'cutover from SQLite', '--by', 'mike')).toBe('seeded active: mini');
+    // The registry has a row now: a second seed (even of another id) is refused and two stays out.
+    expect(await fail('asset', 'registry', 'seed', 'two', '--reason', 'again', '--by', 'mike', '--json')).toBe('registry_not_empty');
+    expect(await registryCounts()).toEqual({ rows: 1, events: 1 });
+    await testDb().run('TRUNCATE asset_registry, asset_state_events');
+    expect(JSON.parse(await orion('asset', 'registry', 'seed', '--all', '--reason', 'cutover from SQLite', '--by', 'mike', '--json'))).toEqual({ seeded: ['mini', 'two'] });
     const rows = JSON.parse(await orion('asset', 'registry', '--json'));
     expect(rows.map((r: { assetId: string; state: string; stateBy: string; stateReason: string }) => [r.assetId, r.state, r.stateBy, r.stateReason])).toEqual([
       ['mini', 'active', 'mike', 'cutover from SQLite'],
       ['two', 'active', 'mike', 'cutover from SQLite'],
     ]);
-    // --reason and --by are both required.
-    const exit: number[] = [];
-    const lines: string[] = [];
-    await buildProgram(testCliContext(home, { stdout: (l) => lines.push(l), setExitCode: (c) => exit.push(c) })).parseAsync(['asset', 'registry', 'seed', '--by', 'mike', '--json'], { from: 'user' });
-    expect(JSON.parse(lines.join('\n')).error.code).toBe('reason_required');
-    expect(exit).toEqual([1]);
   });
 
   it('cli: asset pause, resume and activate change the registry and print it', async () => {
-    await orion('asset', 'registry', 'seed', '--reason', 'cutover', '--by', 'mike');
+    await orion('asset', 'registry', 'seed', '--all', '--reason', 'cutover', '--by', 'mike');
     await testDb().run("UPDATE asset_registry SET state = 'inactive'"); // as a new asset from a release
-    expect(await orion('asset', 'activate', 'mini', '--by', 'mike')).toBe('MINI active (was inactive)');
+    // No schedule.yaml in this home: no slot to name, but the way to refresh now.
+    expect(await orion('asset', 'activate', 'mini', '--by', 'mike')).toBe('MINI active (was inactive)\nto refresh now: orion job run-now refresh mini');
     expect(await orion('asset', 'pause', 'mini', '--reason', 'merger rebuild', '--by', 'mike via raymond')).toBe('MINI paused (was active): merger rebuild');
     const listed = await orion('asset', 'registry');
     expect(listed).toMatch(/^mini {2}paused {2}since \d{4}-\d{2}-\d{2} by mike via raymond: merger rebuild {2}last run never$/);
@@ -169,5 +177,15 @@ describe('orion cli', () => {
     await testDb().run("UPDATE asset_registry SET state = 'inactive'");
     await orion('asset', 'pause', 'mini', '--reason', 'hold', '--by', 'mike');
     expect(await orion('asset', 'resume', 'mini', '--by', 'mike')).toBe('MINI inactive (was paused 0 days): asset activate starts it');
+  });
+
+  it('cli: asset activate names the next nightly slot and suggests job run-now (mid-day activation)', async () => {
+    copyFileSync(new URL('../../schedule.yaml', import.meta.url), join(home, 'schedule.yaml'));
+    await orion('asset', 'registry', 'seed', '--all', '--reason', 'cutover', '--by', 'mike');
+    await testDb().run("UPDATE asset_registry SET state = 'inactive'");
+    // AS_OF is 2026-06-30T00:00Z: the next nightly slot is 00:45 that day (dev env: the base entry).
+    expect(await orion('asset', 'activate', 'mini', '--by', 'mike')).toBe(
+      'MINI active (was inactive)\nfirst nightly refresh at 2026-06-30T00:45:00.000Z; to refresh now: orion job run-now refresh mini',
+    );
   });
 });

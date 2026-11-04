@@ -84,6 +84,15 @@ describe('schedule.yaml', () => {
     expect(parseSchedule('levels: { every: 6h }', 'prod')).toEqual([{ key: 'levels', cadence: { every: { hours: 6, minute: 0 } } }]);
   });
 
+  it('schedule: only levels may use every; nightly, disclosure_watch, staging_refresh and retention need at (M-8)', () => {
+    for (const key of ['nightly', 'disclosure_watch', 'staging_refresh', 'retention']) {
+      expect(refusal(`${key}: { every: 1h, minute: 45 }`)).toBe(`${key}: must be daily or weekly (at: "HH:MM", tz: UTC); only levels may use every`);
+    }
+    // The 07:00-08:00 rule cannot be dodged through an override either.
+    expect(refusal('nightly: { at: "00:45", tz: UTC }\nstaging_overrides: { nightly: { every: 1h, minute: 15 } }')).toMatch(/^staging_overrides\.nightly: must be daily or weekly/);
+    expect(parseSchedule('levels: { every: 1h, minute: 15 }', 'prod')).toEqual([{ key: 'levels', cadence: { every: { hours: 1, minute: 15 } } }]);
+  });
+
   describe('loadSchedule', () => {
     let root: string;
     afterEach(() => rmSync(root, { recursive: true, force: true }));
@@ -125,6 +134,11 @@ describe('slot arithmetic', () => {
     expect(nextSlot(NIGHTLY, at('2027-03-14T09:30:00Z')).toISOString()).toBe('2027-03-15T00:45:00.000Z');
     expect(reportDay(newestSlot(NIGHTLY, at('2027-03-15T00:44:00Z')))).toBe('2027-03-13'); // the 03-14 00:45 slot covers 03-13
     expect(reportDay(at('2026-11-02T12:00:00Z'))).toBe('2026-11-02'); // a slot at or after noon labels its own day
+    // Spring-forward (2027-03-14, M-9): the hourly slots on both sides of 10:00 UTC and the nightly newest slot keep their UTC times.
+    expect(newestSlot(LEVELS, at('2027-03-14T09:30:00Z')).toISOString()).toBe('2027-03-14T09:15:00.000Z');
+    expect(newestSlot(LEVELS, at('2027-03-14T10:30:00Z')).toISOString()).toBe('2027-03-14T10:15:00.000Z');
+    expect(newestSlot(NIGHTLY, at('2027-03-14T10:30:00Z')).toISOString()).toBe('2027-03-14T00:45:00.000Z');
+    expect(reportDay(newestSlot(NIGHTLY, at('2027-03-14T10:30:00Z')))).toBe('2027-03-13');
   });
 
   it('schedule: levels every 6h at minute 15 gives 00:15, 06:15, 12:15, 18:15', () => {

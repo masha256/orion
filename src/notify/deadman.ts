@@ -1,3 +1,5 @@
+import { drain } from './slack.js';
+
 /**
  * The dead-man's switch (spec 5.6, plan R5): a GET to a healthchecks-style URL after each successful `levels` job
  * (`ORION_DEADMAN_URL`, prod only) and each delivered `nightly_report` (`ORION_DEADMAN_NIGHTLY_URL`). An unset or blank
@@ -16,6 +18,7 @@ export async function pingDeadman(url: string | undefined, fetchFn: typeof fetch
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const res = await fetchFn(target, { method: 'GET', signal: AbortSignal.timeout(DEADMAN_TIMEOUT_MS) });
+      await drain(res);
       if (res.ok) return true;
     } catch {
       // a timeout or a refused connection: the retry below, then false

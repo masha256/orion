@@ -137,14 +137,23 @@ export async function finishJob(
   if (res.rowCount === 0) throw leaseLost(id, owner);
 }
 
-/** Back to queued after a failed attempt, due at `runAfter`; the attempt counts. */
+/**
+ * Back to queued after a failed attempt, due at `runAfter`; the attempt counts. Refused with `retry_exhausted` when the
+ * job has no attempt left (M-1: the cap holds whatever the caller does), with `job_lease_lost` when `owner` lost it.
+ */
 export async function retryJob(db: Db, id: number, owner: string, runAfter: Date, error: string): Promise<void> {
   const res = await db.run(
     `UPDATE jobs SET status = 'queued', run_after = $3, last_error = $4, lease_owner = NULL, lease_expires_at = NULL
-     WHERE id = $1 AND lease_owner = $2 AND status = 'running'`,
+     WHERE id = $1 AND lease_owner = $2 AND status = 'running' AND attempts < max_attempts`,
     [id, owner, runAfter.toISOString(), error],
   );
-  if (res.rowCount === 0) throw leaseLost(id, owner);
+  if (res.rowCount > 0) return;
+  const row = await db.one<{ attempts: number; max_attempts: number }>(
+    "SELECT attempts, max_attempts FROM jobs WHERE id = $1 AND lease_owner = $2 AND status = 'running'",
+    [id, owner],
+  );
+  if (!row) throw leaseLost(id, owner);
+  throw new OrionError('retry_exhausted', `job ${id} has used ${row.attempts} of ${row.max_attempts} attempts; it cannot be retried`);
 }
 
 /** Back to queued, due at `runAfter`, without using up an attempt (the job could not start yet). */
@@ -176,10 +185,15 @@ async function returnRunning(db: Db, where: string, params: string[], nowIso: st
   });
 }
 
-/** Running jobs whose lease ran out before `now` (their owner died or hung). */
-export async function reapExpired(db: Db, now: Date): Promise<{ requeued: Job[]; failed: Job[] }> {
+/**
+ * Running jobs whose lease ran out before `now` (their owner died or hung). `exceptOwner`: never that owner's jobs: a
+ * daemon does not reap its own running job (I-1): a wall-clock step can make its lease look expired while its handler
+ * is still in flight; its own jobs from before a restart are taken back by `abandonRunning`.
+ */
+export async function reapExpired(db: Db, now: Date, exceptOwner?: string): Promise<{ requeued: Job[]; failed: Job[] }> {
   const nowIso = now.toISOString();
-  return await returnRunning(db, ' AND lease_expires_at < $1', [nowIso], nowIso);
+  if (exceptOwner === undefined) return await returnRunning(db, ' AND lease_expires_at < $1', [nowIso], nowIso);
+  return await returnRunning(db, ' AND lease_expires_at < $1 AND lease_owner IS DISTINCT FROM $2', [nowIso, exceptOwner], nowIso);
 }
 
 /** Every running job, whatever its lease. Start-up only: the daemon singleton means none of them is still running. */

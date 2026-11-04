@@ -47,9 +47,15 @@ function refuse(message: string): never {
   throw new OrionError('invalid_schedule', message);
 }
 
-/** One entry to its cadence; `name` is how a refusal names it (`nightly`, `staging_overrides.nightly`). */
-function cadenceOf(name: string, e: Entry): Cadence {
+/** The only key that may run `every` N hours: the rest are date-labelled jobs, so the 07:00-08:00 rule must hold (M-8). */
+const EVERY_KEYS: readonly ScheduleKey[] = ['levels'];
+
+/** One entry of `key` to its cadence; `name` is how a refusal names it (`nightly`, `staging_overrides.nightly`). */
+function cadenceOf(key: ScheduleKey, name: string, e: Entry): Cadence {
   if (e.tz !== undefined && e.tz !== 'UTC') refuse(`${name}: tz ${e.tz} is not allowed; every slot is tz UTC`);
+  if (e.every !== undefined && !EVERY_KEYS.includes(key)) {
+    refuse(`${name}: must be daily or weekly (at: "HH:MM", tz: UTC); only ${EVERY_KEYS.join(', ')} may use every`);
+  }
   if (e.every !== undefined) {
     if (e.at !== undefined || e.weekly !== undefined) refuse(`${name}: every cannot be combined with at or weekly`);
     const hours = Number(e.every.slice(0, -1));
@@ -88,11 +94,11 @@ export function parseSchedule(text: string, env: OrionEnv): ScheduleEntry[] {
   for (const key of SCHEDULE_KEYS) {
     const base = file[key];
     const over = overrides[key];
-    if (base) cadenceOf(key, base);
-    if (over) cadenceOf(`staging_overrides.${key}`, { ...base, ...over });
+    if (base) cadenceOf(key, key, base);
+    if (over) cadenceOf(key, `staging_overrides.${key}`, { ...base, ...over });
     const entry = env === 'stage' && over ? { ...base, ...over } : base;
     if (!entry || (entry.env !== undefined && entry.env !== env)) continue;
-    out.push({ key, cadence: cadenceOf(key, entry) });
+    out.push({ key, cadence: cadenceOf(key, key, entry) });
   }
   return out;
 }

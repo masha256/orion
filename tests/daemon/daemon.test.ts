@@ -42,7 +42,7 @@ interface World {
   logs: string[];
 }
 
-function daemon(o: { db?: OrionDb; clock: FakeClock; root?: string; id?: string; handlers?: DaemonDeps['handlers'] }): World {
+function daemon(o: { db?: OrionDb; clock: FakeClock; root?: string; id?: string; handlers?: DaemonDeps['handlers']; allowRetire?: boolean }): World {
   const root = o.root ?? configRoot();
   const paths: OrionPaths = { home: root, configRoot: root, envFile: join(root, 'no.env'), release: null };
   const w: World = { posts: [], systemd: [], logs: [], daemon: undefined as unknown as Daemon };
@@ -51,13 +51,13 @@ function daemon(o: { db?: OrionDb; clock: FakeClock; root?: string; id?: string;
     notifier: () => ({ post: async (text) => { w.posts.push(text); return { ok: true, attempts: 1 }; } }),
     systemd: { ready: () => w.systemd.push('READY'), watchdog: () => w.systemd.push('WATCHDOG'), stopping: () => w.systemd.push('STOPPING') },
     log: (line) => w.logs.push(line),
-    activeAssets: activeAssetIds,
+    activeAssets: activeAssetIds, allowRetire: o.allowRetire,
   });
   return w;
 }
 
-async function register(id: string, state: AssetState): Promise<void> {
-  const c = { at: '2026-10-01T00:00:00.000Z', by: 't', reason: null, releaseTag: null };
+async function register(id: string, state: AssetState, since = '2026-10-01T00:00:00.000Z'): Promise<void> {
+  const c = { at: since, by: 't', reason: null, releaseTag: null };
   await insertRegistryRow(db(), id, state === 'paused' ? 'active' : state, 'h', c);
   if (state === 'paused') await setRegistryState(db(), id, 'active', 'paused', c);
 }
@@ -126,6 +126,23 @@ describe('daemon scheduler', () => {
   });
 });
 
+describe('daemon scheduler: activation time', () => {
+  it('daemon: an asset activated after the nightly slot began gets no refresh for that slot, and one the next night', async () => {
+    await register('mini', 'active');
+    await register('other', 'active', '2026-11-03T00:50:00.000Z'); // activated 5 min after the 00:45 slot
+    const clock = new FakeClock('2026-11-03T01:00:00.000Z');
+    const { daemon: d } = daemon({ clock });
+    await d.schedulerTick();
+    expect((await listJobs(db(), { kind: 'refresh' })).map((j) => [j.assetId, j.slot])).toEqual([['mini', '2026-11-03T00:45:00.000Z']]);
+    clock.advance(86_400_000);
+    await d.schedulerTick();
+    expect((await listJobs(db(), { kind: 'refresh', slot: '2026-11-04T00:45:00.000Z' })).map((j) => j.assetId).sort()).toEqual(['mini', 'other']);
+    // Activated exactly at the slot: that slot counts.
+    expect(await activeAssetIds(db(), new Date('2026-11-03T00:50:00.000Z'))).toEqual(['mini', 'other']);
+    expect(await activeAssetIds(db(), new Date('2026-11-03T00:49:59.999Z'))).toEqual(['mini']);
+  });
+});
+
 describe('daemon start-up', () => {
   it('daemon: a running job from a dead daemon is re-queued once and announced', async () => {
     const clock = new FakeClock('2026-11-03T02:00:00.000Z');
@@ -189,6 +206,28 @@ describe('daemon start-up', () => {
     // It let go of the singleton lock on the way out.
     const ok = daemon({ clock, id: 'd2' });
     await ok.daemon.start();
+    ok.daemon.requestStop();
+    await ok.daemon.run();
+  });
+
+  it('daemon: a release that would retire every asset does not start, alerts Slack and writes nothing (I-3)', async () => {
+    await register('mini', 'active');
+    await register('other', 'active');
+    const clock = new FakeClock('2026-11-03T02:00:00.000Z');
+    const root = configRoot();
+    rmSync(join(root, 'assets'), { recursive: true }); // a tarball without assets/
+    const w = daemon({ clock, root });
+    await expect(w.daemon.start()).rejects.toMatchObject({ code: 'reconcile_would_retire' });
+    expect(w.posts).toEqual([
+      'ORION ALERT dev: daemon not started: release (dev checkout) would retire every asset (mini, other); refused (orion daemon --allow-retire to accept)',
+    ]);
+    expect(w.systemd).toEqual([]);
+    expect(await db().all('SELECT * FROM daemon_heartbeat')).toEqual([]);
+    expect((await db().all<{ state: string }>('SELECT state FROM asset_registry ORDER BY asset_id')).map((r) => r.state)).toEqual(['active', 'active']);
+    // --allow-retire: it starts and retires them.
+    const ok = daemon({ clock, root, id: 'd2', allowRetire: true });
+    await ok.daemon.start();
+    expect((await db().all<{ state: string }>('SELECT state FROM asset_registry ORDER BY asset_id')).map((r) => r.state)).toEqual(['missing', 'missing']);
     ok.daemon.requestStop();
     await ok.daemon.run();
   });
@@ -292,6 +331,61 @@ describe('daemon worker', () => {
     expect(w2.logs.some((l) => l.includes('job 1') && l.includes('lease lost') && l.includes('dropped'))).toBe(true);
   });
 
+  it('daemon: the clock jumps 150 s forward mid-job, past the lease: the job is not reaped from its own daemon and runs once (I-1)', async () => {
+    const clock = new FakeClock('2026-11-03T01:00:00.000Z');
+    let calls = 0;
+    const g = gate();
+    const counted: JobHandler = async (j, ctx) => { calls++; return await g.handler(j, ctx); };
+    const w = daemon({ clock, handlers: { levels: counted } });
+    // The same daemon's worker loop, entered again while its job runs (as a stalled loop would be): same owner id.
+    const again = daemon({ clock, handlers: { levels: counted } });
+    await enqueueJob(db(), { kind: 'levels', assetId: null, slot: '2026-11-03T00:15:00.000Z' });
+    const tick = w.daemon.workerTick();
+    await g.started;
+    clock.advance(50_000); // 50 s on the monotonic clock: the 60 s renewal has not fired yet
+    clock.jump(150_000); // the wall clock steps: now 01:03:20, the lease (01:03:00) has run out
+    expect(await again.daemon.workerTick()).toBe(false); // its own expired lease is not reaped
+    expect(await job(1)).toMatchObject({ status: 'running', attempts: 1 });
+    clock.advance(10_000); // the renewal fires and extends the lease from the stepped clock
+    const want = new Date(clock.now().getTime() + 180_000).toISOString();
+    await vi.waitFor(async () => expect((await job(1)).lease_expires_at).toBe(want));
+    g.open();
+    expect(await tick).toBe(true);
+    expect(await job(1)).toMatchObject({ status: 'done', attempts: 1 });
+    expect(await w.daemon.workerTick()).toBe(false);
+    expect(calls).toBe(1);
+    expect(w.logs.some((l) => l.includes('lease lost'))).toBe(false);
+  });
+
+  it('daemon: a renewal that finds the lease gone aborts the handler; its later Slack posts are not sent and its result is dropped (I-1)', async () => {
+    const [, other] = pair();
+    const clock = new FakeClock('2026-11-03T01:00:00.000Z');
+    let started!: () => void;
+    const startedP = new Promise<void>((r) => { started = r; });
+    const seen: { aborted?: boolean; post?: unknown } = {};
+    const handler: JobHandler = async (_j, ctx) => {
+      started();
+      await new Promise<void>((r) => ctx.signal.addEventListener('abort', () => r()));
+      seen.aborted = ctx.signal.aborted;
+      seen.post = await ctx.notify.post('ORION ALERT dev: should never be sent');
+      return { status: 'done', result: 'late' };
+    };
+    const w = daemon({ clock, handlers: { refresh: handler } });
+    await enqueueJob(db(), { kind: 'refresh', assetId: 'mini', slot: '2026-11-03T00:45:00.000Z' });
+    const tick = w.daemon.workerTick();
+    await startedP;
+    // Another daemon reaps the lease (a stall on this one); this daemon's next renewal sees it gone.
+    expect((await reapExpired(other, new Date('2026-11-03T01:04:00.000Z'))).requeued.map((j) => j.id)).toEqual([1]);
+    clock.advance(60_000);
+    expect(await tick).toBe(true);
+    expect(seen.aborted).toBe(true);
+    expect(seen.post).toMatchObject({ ok: false, attempts: 0, error: 'job aborted: lease lost' });
+    expect(w.posts).toEqual([]);
+    // Re-queued, untouched by the aborted run's result.
+    expect(await job(1)).toMatchObject({ status: 'queued', attempts: 1, last_error: 'lease_expired', result_json: null });
+    expect(w.logs.some((l) => l.includes('job 1') && l.includes('aborted') && l.includes('dropped'))).toBe(true);
+  });
+
   it('daemon: drain finishes the current job, claims nothing new, reports drained; undrain resumes', async () => {
     const clock = new FakeClock('2026-11-03T02:00:00.000Z');
     const g = gate();
@@ -352,6 +446,28 @@ describe('daemon run loop', () => {
     expect((await listJobs(db(), { kind: 'levels' }))[0]!.status).toBe('done');
     // Nothing claimed after the stop request.
     expect((await listJobs(db(), { kind: 'retention' }))[0]!.status).toBe('queued');
+  });
+});
+
+describe('daemon lock liveness', () => {
+  it('daemon: a heartbeat finds the singleton lock connection dead: the daemon stops and run fails with daemon_lock_lost', async () => {
+    const clock = new FakeClock('2026-11-03T01:20:00.000Z');
+    const w = daemon({ clock });
+    await w.daemon.start();
+    const pid = (await db().one<{ pid: number }>("SELECT pid FROM pg_stat_activity WHERE application_name = 'orion daemon d1'"))?.pid;
+    expect(pid).toBeTypeOf('number');
+    await db().run('SELECT pg_terminate_backend($1)', [pid!]);
+    for (let i = 0; i < 50 && (await db().assetRunLockHolder('orion:daemon')); i++) await new Promise((r) => setTimeout(r, 50));
+    const run = w.daemon.run().then(() => null, (err: unknown) => err); // settled at once: no unhandled rejection
+    // The heartbeat (a job start, or the 15 min beat from the 30 s watchdog) pings the lock connection.
+    for (let i = 0; i < 31 && w.logs.every((l) => !l.includes('singleton lock lost')); i++) {
+      clock.advance(30_000);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(await run).toMatchObject({ code: 'daemon_lock_lost' });
+    expect(w.systemd).toContain('STOPPING');
+    expect(w.logs.some((l) => l.includes('singleton lock lost'))).toBe(true);
+    expect((await latestHeartbeat(db()))?.state).toBe('stopped');
   });
 });
 

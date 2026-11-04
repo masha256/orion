@@ -2,7 +2,7 @@ import { loadAsset } from '../config/load.js';
 import type { AssetConfig } from '../config/schema.js';
 import type { Db } from '../db/connection.js';
 import {
-  REGISTRY_LOCK, getRegistryRow, insertRegistryRow, lockRegistryRow, setRegistryState, type AssetState, type RegistryRow,
+  REGISTRY_LOCK, getRegistryRow, insertRegistryRow, listRegistry, lockRegistryRow, setRegistryState, type AssetState, type RegistryRow,
 } from '../db/registry.js';
 import { DEFAULT_API_FLOW_BACKFILL_DAYS } from '../ingest/apiFlow.js';
 import { MS_PER_DAY, OrionError } from '../types.js';
@@ -98,26 +98,34 @@ export async function activateAsset(db: Db, id: string, opts: ActionOpts & { rea
 }
 
 /**
- * Cutover (plan R11): a row in `state` for every YAML that has none; rows that exist are left as they are. The YAMLs
- * are loaded (an invalid one refused) before anything is written.
+ * Cutover (plan R11), into an empty registry only (I-2): after cutover a new YAML must arrive `inactive` through the
+ * reconcile, so seed refuses (`registry_not_empty`) once any row exists. Seeds the YAMLs named by `ids` (each must exist;
+ * `'all'` for every YAML) in `state`. The YAMLs are loaded (an invalid one refused) before anything is written.
  */
 export async function seedRegistry(
-  db: Db, configRoot: string, opts: { state: 'active'; by: string; reason: string; now: Date; releaseTag?: string | null },
-): Promise<{ seeded: string[]; existing: string[] }> {
+  db: Db, configRoot: string, opts: { ids: readonly string[] | 'all'; state: 'active'; by: string; reason: string; now: Date; releaseTag?: string | null },
+): Promise<{ seeded: string[] }> {
   const reason = requireReason(opts.reason);
+  if (opts.ids !== 'all' && opts.ids.length === 0) throw new OrionError('seed_ids_required', 'name the assets to seed, or --all');
   const yamls = loadAssetYamls(configRoot);
+  const known = new Set(yamls.map((y) => y.id));
+  if (opts.ids !== 'all') {
+    const unknown = opts.ids.filter((id) => !known.has(id));
+    if (unknown.length > 0) throw new OrionError('asset_not_found', `no asset YAML for ${unknown.join(', ')} in the config root`);
+  }
+  const wanted = opts.ids === 'all' ? yamls : yamls.filter((y) => opts.ids.includes(y.id));
   const releaseTag = opts.releaseTag ?? null;
   return await db.tx(async (tx) => {
-    const seeded: string[] = [];
-    const existing: string[] = [];
-    for (const y of yamls) {
-      if (await lockRegistryRow(tx, y.id)) {
-        existing.push(y.id);
-        continue;
-      }
-      await insertRegistryRow(tx, y.id, opts.state, y.hash, { at: opts.now.toISOString(), by: opts.by, reason, releaseTag });
-      seeded.push(y.id);
+    const rows = await listRegistry(tx);
+    if (rows.length > 0) {
+      throw new OrionError(
+        'registry_not_empty',
+        `the asset registry already has ${rows.length} row${rows.length === 1 ? '' : 's'} (${rows.map((r) => r.assetId).join(', ')}); seed is for cutover into an empty registry only (use asset activate)`,
+      );
     }
-    return { seeded, existing };
+    for (const y of wanted) {
+      await insertRegistryRow(tx, y.id, opts.state, y.hash, { at: opts.now.toISOString(), by: opts.by, reason, releaseTag });
+    }
+    return { seeded: wanted.map((y) => y.id) };
   }, { lockAsset: REGISTRY_LOCK });
 }

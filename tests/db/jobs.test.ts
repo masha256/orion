@@ -146,6 +146,29 @@ describe('jobs store', () => {
     expect((await listJobs(db(), { kind: 'retention' }))[0]!.status).toBe('queued'); // a queued row is left alone
   });
 
+  it('jobs: reapExpired with exceptOwner never reaps that owner\'s own expired lease (I-1)', async () => {
+    await enqueueJob(db(), { kind: 'refresh', assetId: 'aero', slot: SLOT });
+    await enqueueJob(db(), { kind: 'refresh', assetId: 'cake', slot: SLOT });
+    const mine = await claimNextJob(db(), 'me', at(SLOT), null);
+    const theirs = await claimNextJob(db(), 'them', at(SLOT), null);
+    const late = plus(SLOT, LEASE_MS + 1);
+    const out = await reapExpired(db(), late, 'me');
+    expect(out.requeued.map((j) => j.id)).toEqual([theirs!.id]);
+    expect((await listJobs(db(), {})).find((j) => j.id === mine!.id)).toMatchObject({ status: 'running', leaseOwner: 'me' });
+    // Its owner can still renew and finish it.
+    expect(await renewLease(db(), mine!.id, 'me', late)).toBe(true);
+    await finishJob(db(), mine!.id, 'me', { status: 'done', result: null }, late);
+  });
+
+  it('jobs: retryJob refuses a job with no attempts left (retry_exhausted), the row unchanged (M-1)', async () => {
+    await enqueueJob(db(), { kind: 'levels', assetId: null, slot: SLOT }); // max 1
+    const j = await claimNextJob(db(), 'w', at(SLOT), null);
+    await expect(retryJob(db(), j!.id, 'w', plus(SLOT, 600_000), 'boom')).rejects.toMatchObject({ code: 'retry_exhausted' });
+    expect((await listJobs(db(), {}))[0]).toMatchObject({ status: 'running', attempts: 1, leaseOwner: 'w', lastError: null });
+    // Not the owner: still job_lease_lost, not retry_exhausted.
+    await expect(retryJob(db(), j!.id, 'other', plus(SLOT, 600_000), 'boom')).rejects.toMatchObject({ code: 'job_lease_lost' });
+  });
+
   it('jobs: deferJob does not consume an attempt', async () => {
     await enqueueJob(db(), { kind: 'refresh', assetId: 'aero', slot: SLOT });
     const j = await claimNextJob(db(), 'w', at(SLOT), null);

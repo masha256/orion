@@ -1,8 +1,10 @@
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { parseAssetObject, parseAssetYaml } from '../../src/config/load.js';
+import { loadAsset, parseAssetObject, parseAssetYaml } from '../../src/config/load.js';
 import { registerAdapter } from '../../src/ingest/adapters/registry.js';
 import { canonicalJson } from '../../src/util/canonical.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
@@ -38,6 +40,28 @@ describe('parseAssetYaml', () => {
 
   it('rejects unknown top-level keys', () => {
     expect(() => parseAssetYaml(MINI_ASSET_YAML + '\nsurprise: true\n')).toThrow();
+  });
+});
+
+describe('loadAsset', () => {
+  it('load: a YAML syntax error is invalid_asset_config naming the file and the line', () => {
+    const root = mkdtempSync(join(tmpdir(), 'orion-load-'));
+    try {
+      mkdirSync(join(root, 'assets'));
+      writeFileSync(join(root, 'assets', 'bad.yaml'), 'id: bad\nsymbol: BAD\nname: [unclosed\n');
+      let caught: unknown;
+      try {
+        loadAsset(root, 'bad');
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toMatchObject({ code: 'invalid_asset_config' });
+      const msg = (caught as Error).message;
+      expect(msg.startsWith(`${join(root, 'assets', 'bad.yaml')}: not valid YAML at line `)).toBe(true);
+      expect(msg).toMatch(/: not valid YAML at line \d+: /);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

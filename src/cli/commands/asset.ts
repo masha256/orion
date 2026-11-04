@@ -2,11 +2,13 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { listAssetIds, loadAsset } from '../../config/load.js';
-import { loadSchedule } from '../../daemon/schedule.js';
+import { loadSchedule, nextSlot } from '../../daemon/schedule.js';
 import { listRegistry, type RegistryRow } from '../../db/registry.js';
 import { activateAsset, pauseAsset, resumeAsset, seedRegistry } from '../../registry/actions.js';
 import { loadAssetYamls, planReconcile, type RegistryDiff } from '../../registry/reconcile.js';
 import { OrionError } from '../../types.js';
+import { loadEnv } from '../env.js';
+import { orionEnv } from '../paths.js';
 import { guarded, output, withDb, type CliContext } from '../util.js';
 
 /** Who a registry change (or a requested job) is recorded as: `--by`, else the login user. */
@@ -30,6 +32,13 @@ function diffLines(d: RegistryDiff): string[] {
     ...(d.configChanged.length > 0 ? [`config changed: ${d.configChanged.join(', ')}`] : []),
   ];
   return lines.length > 0 ? lines : ['registry matches the YAML'];
+}
+
+/** The next nightly slot from now (ISO), or null when the config root has no schedule.yaml or no nightly entry. */
+function nextNightly(ctx: CliContext): string | null {
+  if (!existsSync(join(ctx.configRoot, 'schedule.yaml'))) return null;
+  const nightly = loadSchedule(ctx.configRoot, orionEnv(loadEnv(ctx.envFile, process.env))).find((e) => e.key === 'nightly');
+  return nightly ? nextSlot(nightly.cadence, ctx.now()).toISOString() : null;
 }
 
 export function registerAsset(program: Command, ctx: CliContext): void {
@@ -122,7 +131,13 @@ export function registerAsset(program: Command, ctx: CliContext): void {
       guarded(ctx, opts.json, async () => {
         const by = byOf(opts.by);
         const r = await withDb(ctx, (db) => activateAsset(db, id, { by, now: ctx.now(), releaseTag: ctx.release?.tag ?? null }));
-        output(ctx, opts.json, r, () => [`${id.toUpperCase()} active (was ${r.from})`]);
+        // A nightly slot that began before the activation has no refresh for this asset (the daemon skips it).
+        const firstRefresh = nextNightly(ctx);
+        const runNow = `orion job run-now refresh ${id}`;
+        output(ctx, opts.json, { ...r, firstRefresh, runNow }, () => [
+          `${id.toUpperCase()} active (was ${r.from})`,
+          firstRefresh ? `first nightly refresh at ${firstRefresh}; to refresh now: ${runNow}` : `to refresh now: ${runNow}`,
+        ]);
       }),
     );
 
@@ -152,24 +167,25 @@ export function registerAsset(program: Command, ctx: CliContext): void {
     });
 
   registry
-    .command('seed')
-    .description('cutover: an active row for every YAML that has no row yet; existing rows are left alone')
+    .command('seed [ids...]')
+    .description('cutover only: an active row for each YAML named (or --all), into an empty registry; refused once any row exists')
+    .option('--all', 'every YAML in the config root')
     .option('--reason <text>', 'why (required)')
     .option('--by <who>', 'who (required)')
     .option('--json', 'JSON output')
-    .action((_opts: unknown, cmd: Command) => {
-      const opts = cmd.optsWithGlobals<{ reason?: string; by?: string; json?: boolean }>();
+    .action((ids: string[], _opts: unknown, cmd: Command) => {
+      const opts = cmd.optsWithGlobals<{ all?: boolean; reason?: string; by?: string; json?: boolean }>();
       return guarded(ctx, opts.json, async () => {
+        if (opts.all === true && ids.length > 0) throw new OrionError('seed_ids_required', 'name the assets to seed or give --all, not both');
+        if (opts.all !== true && ids.length === 0) throw new OrionError('seed_ids_required', 'name the assets to seed, or --all');
         if (!opts.reason?.trim()) throw new OrionError('reason_required', 'a reason is required (--reason <text>)');
         if (!opts.by?.trim()) throw new OrionError('by_required', 'who seeds the registry is required (--by <who>)');
         const r = await withDb(ctx, (db) =>
-          seedRegistry(db, ctx.configRoot, { state: 'active', by: opts.by!.trim(), reason: opts.reason!, now: ctx.now(), releaseTag: ctx.release?.tag ?? null }),
+          seedRegistry(db, ctx.configRoot, {
+            ids: opts.all === true ? 'all' : ids, state: 'active', by: opts.by!.trim(), reason: opts.reason!, now: ctx.now(), releaseTag: ctx.release?.tag ?? null,
+          }),
         );
-        output(ctx, opts.json, r, () =>
-          r.seeded.length > 0
-            ? [`seeded active: ${r.seeded.join(', ')}`, ...(r.existing.length > 0 ? [`already in the registry: ${r.existing.join(', ')}`] : [])]
-            : [`nothing to seed: every YAML has a registry row (${r.existing.join(', ')})`],
-        );
+        output(ctx, opts.json, r, () => [r.seeded.length > 0 ? `seeded active: ${r.seeded.join(', ')}` : 'nothing to seed: the config root has no asset YAML']);
       });
     });
 }

@@ -3,6 +3,7 @@ import type { TickReport } from '../../src/app/tickReport.js';
 import {
   fmtNum, fmtPct, formatAssetBlock, formatWatchCleared, formatWatchPost, slackClean, splitForSlack, SLACK_MAX_CHARS, type AssetRunResult,
 } from '../../src/notify/format.js';
+import { slackEscape } from '../../src/notify/slack.js';
 
 /** A clean, completed tick for MINI: no watch, no failures, empty inbox, a holder-yield block. */
 function cleanReport(): TickReport {
@@ -157,5 +158,23 @@ describe('splitForSlack', () => {
     expect(posts.join('\n').split('\n').filter((l) => l !== '' && l !== '(continued)')).toEqual([...a, ...big, ...b]);
     expect(splitForSlack([])).toEqual([]);
     expect(SLACK_MAX_CHARS).toBe(3900);
+  });
+
+  it('split: the limit counts the text as posted (escaped), and a cut never splits a surrogate pair (M-7)', () => {
+    // 30 raw chars, 150 once escaped: two such blocks are 62 raw but 302 posted, past a 200 limit.
+    const amp = ['&'.repeat(30)];
+    const posts = splitForSlack([amp, amp], 200);
+    expect(posts).toEqual([amp[0], amp[0]]);
+    for (const p of posts) expect(slackEscape(p).length).toBeLessThanOrEqual(200);
+    // An oversize line of `<` is cut so that every escaped part fits.
+    const lt = splitForSlack([['<'.repeat(100)]], 52);
+    for (const p of lt) expect(slackEscape(p).length).toBeLessThanOrEqual(52);
+    expect(lt.join('\n').split('\n').filter((l) => l !== '(continued)').join('')).toBe('<'.repeat(100));
+    // Emoji are two UTF-16 units: a cut lands between them, never inside one.
+    const emoji = splitForSlack([['😀'.repeat(40)]], 31);
+    for (const p of emoji) {
+      expect(slackEscape(p).length).toBeLessThanOrEqual(31);
+      expect(p).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/);
+    }
   });
 });

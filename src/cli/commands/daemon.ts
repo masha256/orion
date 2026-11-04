@@ -50,7 +50,7 @@ function heartbeatLine(h: HeartbeatRow | null): string {
 }
 
 /** Runs the daemon in this process until SIGTERM or SIGINT (the systemd unit's `ExecStart`). */
-async function runDaemon(ctx: CliContext): Promise<void> {
+async function runDaemon(ctx: CliContext, opts: { allowRetire?: boolean }): Promise<void> {
   const env = envOf(ctx);
   const log = daemonLog(ctx.home);
   const db = await openDb(databaseFor(ctx), { max: 4 });
@@ -61,7 +61,7 @@ async function runDaemon(ctx: CliContext): Promise<void> {
     handlers: defaultHandlers(),
     notifier: (vars) => slackNotifier({ webhookUrl: vars.SLACK_WEBHOOK_URL, fetch: globalThis.fetch, sleep: realClock.sleep, log }),
     systemd: systemdNotifier(realSpawn), log, daemonId: `${hostname()}-${process.pid}-${randomBytes(4).toString('hex')}`,
-    activeAssets: activeAssetIds,
+    activeAssets: activeAssetIds, allowRetire: opts.allowRetire === true,
   });
   const stop = (): void => daemon.requestStop();
   process.on('SIGTERM', stop);
@@ -81,7 +81,8 @@ export function registerDaemon(program: Command, ctx: CliContext): void {
   const daemon = program
     .command('daemon')
     .description('run the scheduler and the job worker in the foreground (the orion-daemon systemd unit); see also drain, undrain, status')
-    .action(() => runDaemon(ctx));
+    .option('--allow-retire', 'start even when this release would retire every asset, or more than 2 at once (refused and alerted otherwise)')
+    .action((opts: { allowRetire?: boolean }) => runDaemon(ctx, opts));
 
   daemon
     .command('drain')

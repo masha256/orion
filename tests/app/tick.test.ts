@@ -192,7 +192,7 @@ describe('tickAsset', () => {
         if (prop === 'tryAssetRunLock') {
           return async (assetId: string, holder: string) => {
             const lock = await target.tryAssetRunLock(assetId, holder);
-            return lock && { release: async () => { await lock.release(); throw new Error('simulated: the unlock failed'); } };
+            return lock && { ping: () => lock.ping(), release: async () => { await lock.release(); throw new Error('simulated: the unlock failed'); } };
           };
         }
         const v = Reflect.get(target, prop) as unknown;

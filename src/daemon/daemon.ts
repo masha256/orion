@@ -53,7 +53,13 @@ export interface JobContext {
   paths: OrionPaths;
   /** `loadEnv(paths.envFile, process.env)`, re-read for each job (secrets can change between jobs). */
   envVars: Record<string, string | undefined>;
+  /** Slack, fenced: once `signal` is aborted a post is not sent (it returns `ok: false`). */
   notify: Notifier;
+  /**
+   * Aborted when a lease renewal finds the job gone (re-queued elsewhere, I-1): the handler must stop before any
+   * further side effect (check it before a Slack post, a ping or a write); whatever it returns is dropped.
+   */
+  signal: AbortSignal;
   enqueue(j: NewJob): Promise<Job | null>;
   log(line: string): void;
 }
@@ -71,7 +77,10 @@ export interface DaemonDeps {
   systemd: SystemdNotifier;
   log(line: string): void;
   daemonId: string;
-  activeAssets(db: Db): Promise<string[]>;
+  /** The assets a nightly slot refreshes: active, and active since the slot or earlier. */
+  activeAssets(db: Db, slot: Date): Promise<string[]>;
+  /** `orion daemon --allow-retire`: accept a reconcile that retires every asset or more than 2 at once (I-3). */
+  allowRetire?: boolean;
 }
 
 export const SCHEDULER_INTERVAL_MS = 30_000;
@@ -86,9 +95,13 @@ export const JOB_ERROR_MAX = 300;
 /** The singleton's lock id, in the run-lock key space (schema-scoped; no asset id contains a colon). */
 export const DAEMON_LOCK_ID = 'orion:daemon';
 
-/** The active assets in the registry: the ones the nightly refreshes. */
-export async function activeAssetIds(db: Db): Promise<string[]> {
-  return (await listRegistry(db)).filter((r) => r.state === 'active').map((r) => r.assetId);
+/**
+ * The active assets the nightly slot `slot` refreshes: active since `slot` or earlier. An asset activated (or resumed)
+ * after the slot began gets no refresh for it; its first is the next night's, or `orion job run-now refresh <a>`.
+ */
+export async function activeAssetIds(db: Db, slot: Date): Promise<string[]> {
+  const at = slot.getTime();
+  return (await listRegistry(db)).filter((r) => r.state === 'active' && Date.parse(r.stateSince) <= at).map((r) => r.assetId);
 }
 
 /** A handler for a job kind a later task builds: the job is recorded as skipped, so the queue keeps moving. */
@@ -126,6 +139,8 @@ export class Daemon {
   private currentJobId: number | null = null;
   private lastBeatMs = 0;
   private stopRequested = false;
+  /** Set when the singleton lock's connection is found dead: `run` stops and throws it (the process exits non-zero). */
+  private fatal: OrionError | null = null;
   private wakeStop!: () => void;
   private readonly stopSignal: Promise<void>;
 
@@ -165,13 +180,20 @@ export class Daemon {
       const envVars = this.envVars();
       checkPublishTarget(env, envVars.ORION_PUBLISH);
       const now = clock.now();
-      await reconcileFromDisk(db, paths.configRoot, this.releaseTag, now);
+      try {
+        await reconcileFromDisk(db, paths.configRoot, this.releaseTag, now, { allowRetire: this.d.allowRetire === true });
+      } catch (err) {
+        if (err instanceof OrionError && err.code === 'reconcile_would_retire') {
+          await this.alert(this.d.notifier(envVars), `ORION ALERT ${env}: daemon not started: ${err.message}`);
+        }
+        throw err;
+      }
       await stopStaleHeartbeats(db, daemonId);
       await startHeartbeat(db, { daemonId, pid: process.pid, host: hostname(), releaseTag: this.releaseTag, startedAt: now.toISOString() });
       beating = true;
       this.lastBeatMs = now.getTime();
       const { requeued, failed } = await abandonRunning(db, now);
-      // READY before the posts: a Slack outage retries for 10 min, past systemd's start timeout.
+      // READY before the posts: a Slack outage retries for up to 5 min, which would eat systemd's start timeout.
       this.d.systemd.ready();
       this.d.log(`daemon started: ${daemonId} env ${env} release ${this.releaseTag ?? '(dev checkout)'} database ${db.database} schema ${db.schema}`);
       const notify = this.d.notifier(envVars);
@@ -180,7 +202,7 @@ export class Daemon {
     } catch (err) {
       if (beating) {
         this.state = 'stopped';
-        await this.heartbeat().catch(() => undefined);
+        await this.heartbeat({ checkLock: false }).catch(() => undefined);
       }
       this.lock = null;
       await lock.release().catch(() => undefined);
@@ -214,7 +236,7 @@ export class Daemon {
     for (const e of this.schedule) {
       const slot = newestSlot(e.cadence, now).toISOString();
       if (e.key === 'nightly') {
-        for (const id of await this.d.activeAssets(db)) await add({ kind: 'refresh', assetId: id, slot });
+        for (const id of await this.d.activeAssets(db, new Date(slot))) await add({ kind: 'refresh', assetId: id, slot });
         await add({ kind: 'nightly_report', assetId: null, slot });
       } else {
         await add({ kind: e.key, assetId: null, slot });
@@ -227,10 +249,31 @@ export class Daemon {
     return (await getHeartbeat(this.d.db, this.d.daemonId))?.drainRequestedAt != null;
   }
 
-  private async heartbeat(): Promise<void> {
+  /**
+   * Writes the heartbeat row; first (unless `checkLock: false`) pings the singleton lock's connection. A dead one means
+   * another daemon could start: this one stops and `run` throws `daemon_lock_lost`, so systemd restarts it and the new
+   * process takes the lock again.
+   */
+  private async heartbeat(opts: { checkLock?: boolean } = {}): Promise<void> {
+    if (opts.checkLock !== false) await this.checkLock();
     const now = this.d.clock.now();
     await writeBeat(this.d.db, this.d.daemonId, { currentJobId: this.currentJobId, state: this.state }, now);
     this.lastBeatMs = now.getTime();
+  }
+
+  private async checkLock(): Promise<void> {
+    const lock = this.lock;
+    if (!lock) return;
+    try {
+      await lock.ping();
+    } catch (err) {
+      if (!this.fatal) {
+        this.fatal = new OrionError('daemon_lock_lost', `the daemon's singleton lock is gone (${message(err)}); exiting so that a restart takes it again`);
+        this.d.log(`singleton lock lost: ${message(err)}; stopping`);
+        this.requestStop();
+      }
+      throw this.fatal;
+    }
   }
 
   /**
@@ -254,7 +297,8 @@ export class Daemon {
       this.d.log('drain withdrawn: claiming jobs again');
     }
     const now = clock.now();
-    const reaped = await reapExpired(db, now);
+    // Never this daemon's own jobs (I-1): one is in flight only while its renewal runs; a restart takes them back.
+    const reaped = await reapExpired(db, now, this.d.daemonId);
     for (const j of reaped.requeued) this.d.log(`${label(j)}: lease expired, re-queued`);
     for (const j of reaped.failed) this.d.log(`${label(j)}: lease expired, failed (no attempts left)`);
     const job = await claimNextJob(db, this.d.daemonId, now, this.releaseTag);
@@ -274,11 +318,12 @@ export class Daemon {
     const ended = new Promise<void>((resolve) => {
       finished = resolve;
     });
-    const renewal = this.renewWhileRunning(job, ended);
+    const abort = new AbortController();
+    const renewal = this.renewWhileRunning(job, ended, abort);
     try {
       const envVars = this.envVars();
       const ctx: JobContext = {
-        db, clock, env, paths, envVars, notify: this.d.notifier(envVars),
+        db, clock, env, paths, envVars, notify: this.fenced(this.d.notifier(envVars), abort.signal, name), signal: abort.signal,
         enqueue: async (j) => await enqueueJob(db, { releaseTag: this.releaseTag, ...j }),
         log: (line) => this.d.log(`${name}: ${line}`),
       };
@@ -291,7 +336,8 @@ export class Daemon {
       await renewal;
     }
     try {
-      await this.record(job, outcome);
+      if (abort.signal.aborted) this.d.log(`${name}: aborted (lease lost), result dropped (${outcome.status})`);
+      else await this.record(job, outcome);
     } catch (err) {
       // R-c6: another daemon took the job over (the lease ran out): its run owns the row now. Drop this result.
       if (!(err instanceof OrionError && err.code === 'job_lease_lost')) throw err;
@@ -325,15 +371,32 @@ export class Daemon {
     }
   }
 
-  /** Renews the lease every 60 s until the handler ends; notices a drain request meanwhile (state `draining`). */
-  private async renewWhileRunning(job: Job, ended: Promise<void>): Promise<void> {
+  /** A notifier that sends nothing once `signal` is aborted: an aborted job's late posts never reach Slack. */
+  private fenced(notify: Notifier, signal: AbortSignal, name: string): Notifier {
+    return {
+      post: async (text) => {
+        if (signal.aborted) {
+          this.d.log(`${name}: post not sent, the job was aborted: ${text.split('\n', 1)[0]}`);
+          return { ok: false, attempts: 0, error: 'job aborted: lease lost' };
+        }
+        return await notify.post(text);
+      },
+    };
+  }
+
+  /**
+   * Renews the lease every 60 s on its own timer until the handler ends (a handler awaiting a slow Slack post does not
+   * hold it up); notices a drain request meanwhile (state `draining`). A renewal that finds the job gone aborts it.
+   */
+  private async renewWhileRunning(job: Job, ended: Promise<void>, abort: AbortController): Promise<void> {
     const { db, clock, daemonId } = this.d;
     for (;;) {
       const woke = await Promise.race([clock.sleep(LEASE_RENEW_MS).then(() => 'renew' as const), ended.then(() => 'ended' as const)]);
       if (woke === 'ended') return;
       try {
         if (!(await renewLease(db, job.id, daemonId, clock.now()))) {
-          this.d.log(`${label(job)}: lease lost (re-queued elsewhere); its result will be dropped`);
+          this.d.log(`${label(job)}: lease lost (re-queued elsewhere); aborting it, its result will be dropped`);
+          abort.abort(new OrionError('job_lease_lost', `${label(job)}: lease lost`));
           return;
         }
         if (this.state === 'running' && (await this.drainRequested())) {
@@ -408,10 +471,11 @@ export class Daemon {
     }
     this.state = 'stopped';
     this.currentJobId = null;
-    await this.guard('heartbeat', () => this.heartbeat());
+    await this.guard('heartbeat', () => this.heartbeat({ checkLock: false }));
     this.d.log('daemon stopped');
     const lock = this.lock;
     this.lock = null;
     if (lock) await lock.release().catch((err: unknown) => this.d.log(`releasing the daemon lock failed: ${message(err)}`));
+    if (this.fatal) throw this.fatal;
   }
 }

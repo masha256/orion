@@ -83,11 +83,37 @@ export function loadAssetYamls(configRoot: string): AssetYaml[] {
   });
 }
 
-/** Loads every YAML (refusing an invalid one before any write), then plans and applies under one lock. */
-export async function reconcileFromDisk(db: Db, configRoot: string, releaseTag: string | null, now: Date): Promise<RegistryDiff> {
+/** More rows than this going `missing` in one reconcile is refused (I-3): a partial `assets/` in a release, not a retirement. */
+export const MAX_RETIRE_AT_ONCE = 2;
+
+/**
+ * Refuses (`reconcile_would_retire`) a diff that would move every non-missing row to `missing` (an empty or absent
+ * `assets/`) or more than MAX_RETIRE_AT_ONCE rows at once, unless `allowRetire`. Nothing is written either way here.
+ */
+export function checkRetirements(rows: RegistryRow[], diff: RegistryDiff, releaseTag: string | null, allowRetire = false): void {
+  if (allowRetire || diff.missing.length === 0) return;
+  const live = rows.filter((r) => r.state !== 'missing').length;
+  const how = '; refused (orion daemon --allow-retire to accept)';
+  if (diff.missing.length === live) {
+    throw new OrionError('reconcile_would_retire', `${releaseLabel(releaseTag)} would retire every asset (${diff.missing.join(', ')})${how}`);
+  }
+  if (diff.missing.length > MAX_RETIRE_AT_ONCE) {
+    throw new OrionError('reconcile_would_retire', `${releaseLabel(releaseTag)} would retire ${diff.missing.length} assets at once (${diff.missing.join(', ')})${how}`);
+  }
+}
+
+/**
+ * Loads every YAML (refusing an invalid one before any write), then plans and applies under one lock. A diff that
+ * retires every asset or more than MAX_RETIRE_AT_ONCE is refused before any write unless `opts.allowRetire`.
+ */
+export async function reconcileFromDisk(
+  db: Db, configRoot: string, releaseTag: string | null, now: Date, opts: { allowRetire?: boolean } = {},
+): Promise<RegistryDiff> {
   const yamls = loadAssetYamls(configRoot);
   return await db.tx(async (tx) => {
-    const diff = planReconcile(await listRegistry(tx), yamls);
+    const rows = await listRegistry(tx);
+    const diff = planReconcile(rows, yamls);
+    checkRetirements(rows, diff, releaseTag, opts.allowRetire);
     await applyReconcile(tx, diff, yamls, releaseTag, now);
     return diff;
   }, { lockAsset: REGISTRY_LOCK });

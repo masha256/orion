@@ -2,9 +2,15 @@ import pg from 'pg';
 import { OrionError } from '../../types.js';
 import { assetLockKey, checkSchemaName, type DatabaseConfig, type DbCore, type RunResult, type SqlParam, type TxOptions } from '../connection.js';
 
-/** Releases a run lock: unlocks and closes its connection. Idempotent. */
+/** A held run lock. */
 export interface AssetRunLock {
+  /** Unlocks and closes its connection. Idempotent. */
   release(): Promise<void>;
+  /**
+   * `SELECT 1` on the lock's own connection: throws `lock_lost` when that connection (and so the session lock) is gone,
+   * or the lock was released. A long holder (the daemon singleton) calls it to know it still holds the lock.
+   */
+  ping(): Promise<void>;
 }
 
 /** The Postgres `Db`. A tx handle is the same type; only the root handle may be closed. */
@@ -243,7 +249,18 @@ class PgDbImpl implements PgDb {
     if (!ok) return null;
     const runLocks = this.shared.runLocks;
     let released = false;
+    const lost = (why: string): OrionError => new OrionError('lock_lost', `the run lock on ${assetId} (${holder}) is gone: ${why}`);
     const lock: AssetRunLock = {
+      async ping() {
+        if (released) throw lost('released');
+        if (dead) throw lost('its connection ended');
+        try {
+          await client.query('SELECT 1');
+        } catch (err) {
+          throw lost(err instanceof Error ? err.message : String(err));
+        }
+        if (dead) throw lost('its connection ended');
+      },
       async release() {
         if (released) return;
         released = true;

@@ -74,7 +74,7 @@ describe('registry reconcile', () => {
     await reconcileFromDisk(db(), root, 'r1', T0);
     await db().run("UPDATE asset_registry SET state = 'active'");
     rmSync(join(root, 'assets', 'aero.yaml'));
-    await reconcileFromDisk(db(), root, 'r2', T0);
+    await reconcileFromDisk(db(), root, 'r2', T0, { allowRetire: true }); // the only asset: retiring it needs the override
     writeAsset(root, 'aero');
     const diff = await reconcileFromDisk(db(), root, null, T1);
     expect(diff).toEqual({ added: [], missing: [], returned: ['aero'], configChanged: [] });
@@ -110,6 +110,44 @@ describe('registry reconcile', () => {
     expect(await reconcileFromDisk(db(), root, 'r2', T1)).toEqual({ added: [], missing: [], returned: [], configChanged: [] });
     expect(await listRegistry(db())).toEqual(rows);
     expect(await eventCount()).toBe(events);
+  });
+
+  it('reconcile: refuses to retire every asset, or more than 2 at once, writing nothing, unless allowRetire (I-3)', async () => {
+    // An empty assets/ (or none at all) against live rows: every asset would go missing.
+    const root = configRoot(['aero', 'cake', 'crv', 'link']);
+    await reconcileFromDisk(db(), root, 'r1', T0);
+    const rows = await listRegistry(db());
+    const events = await eventCount();
+    const empty = configRoot([]);
+    await expect(reconcileFromDisk(db(), empty, 'r2', T1)).rejects.toMatchObject({
+      code: 'reconcile_would_retire', message: 'release r2 would retire every asset (aero, cake, crv, link); refused (orion daemon --allow-retire to accept)',
+    });
+    rmSync(join(empty, 'assets'), { recursive: true });
+    await expect(reconcileFromDisk(db(), empty, 'r2', T1)).rejects.toMatchObject({ code: 'reconcile_would_retire' });
+    // Three at once (one YAML left) is refused too, and a new YAML in the same release is not added either.
+    for (const id of ['cake', 'crv', 'link']) rmSync(join(root, 'assets', `${id}.yaml`));
+    writeAsset(root, 'new');
+    await expect(reconcileFromDisk(db(), root, 'r2', T1)).rejects.toMatchObject({
+      code: 'reconcile_would_retire', message: 'release r2 would retire 3 assets at once (cake, crv, link); refused (orion daemon --allow-retire to accept)',
+    });
+    expect(await listRegistry(db())).toEqual(rows);
+    expect(await eventCount()).toBe(events);
+    // With allowRetire it goes through.
+    expect(await reconcileFromDisk(db(), root, 'r2', T1, { allowRetire: true })).toEqual({ added: ['new'], missing: ['cake', 'crv', 'link'], returned: [], configChanged: [] });
+  });
+
+  it('reconcile: two assets retired at once, or the last of several already missing, are not refused (I-3)', async () => {
+    const root = configRoot(['aero', 'cake', 'crv']);
+    await reconcileFromDisk(db(), root, 'r1', T0);
+    rmSync(join(root, 'assets', 'cake.yaml'));
+    rmSync(join(root, 'assets', 'crv.yaml'));
+    expect((await reconcileFromDisk(db(), root, 'r2', T1)).missing).toEqual(['cake', 'crv']);
+    // The only non-missing row going is "every asset": refused.
+    rmSync(join(root, 'assets', 'aero.yaml'));
+    await expect(reconcileFromDisk(db(), root, 'r3', T1)).rejects.toMatchObject({ code: 'reconcile_would_retire' });
+    // An empty registry and an empty assets/: nothing to retire, nothing refused.
+    await db().run('TRUNCATE asset_registry, asset_state_events');
+    expect(await reconcileFromDisk(db(), configRoot([]), 'r4', T1)).toEqual({ added: [], missing: [], returned: [], configChanged: [] });
   });
 
   it('reconcile: an invalid YAML throws invalid_asset_config before anything is written', async () => {

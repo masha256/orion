@@ -31,10 +31,10 @@ function releaseRoot(): string {
 describe('paths', () => {
   it('paths: a release root is the config root', () => {
     const root = releaseRoot();
-    const p = resolvePaths({ ORION_HOME: '/h' }, join(root, 'dist', 'cli'));
+    const p = resolvePaths({ ORION_HOME: '/h', ORION_ENV_FILE: '/s/.env' }, join(root, 'dist', 'cli'));
     expect(p.configRoot).toBe(root);
     expect(p.home).toBe('/h');
-    expect(p.envFile).toBe(join('/h', '.env'));
+    expect(p.envFile).toBe('/s/.env');
     expect(p.release).toEqual({ tag: 'orion-2026.11.02.1', commit: RELEASE.commit, schema: 1, builtAt: '2026-11-02T10:00:00.000Z' });
     expect(p.release?.tag).toBe('orion-2026.11.02.1');
   });
@@ -56,7 +56,7 @@ describe('paths', () => {
     const p = resolvePaths({ ORION_HOME: '/h', ORION_CONFIG_ROOT: elsewhere, ORION_ENV_FILE: '/s/.env' }, join(root, 'dist', 'cli'));
     expect(p).toEqual({ home: '/h', configRoot: elsewhere, envFile: '/s/.env', release: null });
     // A config root that is a release carries its release info.
-    expect(resolvePaths({ ORION_HOME: '/h', ORION_CONFIG_ROOT: root }, '/nowhere/dist/cli').release?.tag).toBe('orion-2026.11.02.1');
+    expect(resolvePaths({ ORION_HOME: '/h', ORION_CONFIG_ROOT: root, ORION_ENV_FILE: '/s/.env' }, '/nowhere/dist/cli').release?.tag).toBe('orion-2026.11.02.1');
   });
 
   it('paths: a RELEASE file that is not the release record is refused, not ignored', () => {
@@ -66,6 +66,33 @@ describe('paths', () => {
     writeFileSync(join(root, 'RELEASE'), 'not json\n');
     expect(() => readRelease(root)).toThrow(expect.objectContaining({ code: 'invalid_release' }));
     expect(readRelease(scratch('orion-norelease-'))).toBeNull();
+  });
+
+  it('paths: stage or prod without a RELEASE beside dist/ refuses, never reading config from ORION_HOME (I-3)', () => {
+    const tarball = scratch('orion-norelease-'); // a release unpacked without its RELEASE file
+    mkdirSync(join(tarball, 'dist', 'cli'), { recursive: true });
+    for (const env of ['stage', 'prod']) {
+      expect(() => resolvePaths({ ORION_ENV: env, ORION_HOME: '/h', ORION_ENV_FILE: '/s/.env' }, join(tarball, 'dist', 'cli'))).toThrow(
+        expect.objectContaining({ code: 'release_missing', message: `ORION_ENV=${env} but ${tarball} has no RELEASE file; a release never reads its config from ORION_HOME (/h)` }),
+      );
+    }
+    // With the RELEASE file it resolves; dev without one is a checkout, as before.
+    const root = releaseRoot();
+    expect(resolvePaths({ ORION_ENV: 'prod', ORION_HOME: '/h', ORION_ENV_FILE: '/s/.env' }, join(root, 'dist', 'cli')).configRoot).toBe(root);
+    expect(resolvePaths({ ORION_ENV: 'dev', ORION_HOME: '/h' }, join(tarball, 'dist', 'cli')).configRoot).toBe('/h');
+  });
+
+  it('paths: a release run needs ORION_HOME and ORION_ENV_FILE set, no cwd or <home>/.env default (M-3)', () => {
+    const root = releaseRoot();
+    const cli = join(root, 'dist', 'cli');
+    expect(() => resolvePaths({ ORION_ENV_FILE: '/s/.env' }, cli)).toThrow(
+      expect.objectContaining({ code: 'release_env_required', message: 'a release needs ORION_HOME and ORION_ENV_FILE set (the orion-daemon unit and orion-remote set both); not set: ORION_HOME' }),
+    );
+    expect(() => resolvePaths({ ORION_HOME: '/h' }, cli)).toThrow(expect.objectContaining({ code: 'release_env_required', message: expect.stringMatching(/not set: ORION_ENV_FILE$/) }));
+    expect(() => resolvePaths({}, cli)).toThrow(expect.objectContaining({ message: expect.stringMatching(/not set: ORION_HOME, ORION_ENV_FILE$/) }));
+    // stage/prod count as a release even when the config root is overridden.
+    expect(() => resolvePaths({ ORION_ENV: 'stage', ORION_CONFIG_ROOT: root }, '/nowhere/src/cli')).toThrow(expect.objectContaining({ code: 'release_env_required' }));
+    expect(resolvePaths({ ORION_HOME: '/h', ORION_ENV_FILE: '/s/.env' }, cli)).toMatchObject({ home: '/h', envFile: '/s/.env', configRoot: root });
   });
 
   it('paths: ORION_ENV is dev, stage or prod, default dev', () => {

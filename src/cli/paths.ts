@@ -61,12 +61,32 @@ export function readRelease(root: string): ReleaseInfo | null {
  * The paths for this process. `cliDir` is the directory of the running entry point (`<release>/dist/cli` when built,
  * `<checkout>/src/cli` from source): its release root is two levels up, and is the config root when it holds a
  * `RELEASE` file. `ORION_CONFIG_ROOT` and `ORION_ENV_FILE` override; `ORION_HOME` defaults to the working directory.
+ *
+ * A release run (a `RELEASE` beside `dist/`, a release config root, or `ORION_ENV` stage or prod, which only servers
+ * run) gets no defaults: `ORION_HOME` and `ORION_ENV_FILE` must be set (`release_env_required`, M-3; the orion-daemon
+ * unit and orion-remote set both), and a stage or prod run whose `RELEASE` is missing is refused (`release_missing`,
+ * I-3) instead of reading its config from `ORION_HOME`.
  */
 export function resolvePaths(env: Record<string, string | undefined>, cliDir: string): OrionPaths {
   const home = env.ORION_HOME ?? process.cwd();
   const releaseRoot = resolve(cliDir, '..', '..');
-  const configRoot = env.ORION_CONFIG_ROOT ?? (readRelease(releaseRoot) ? releaseRoot : home);
-  return { home, configRoot, envFile: env.ORION_ENV_FILE ?? join(home, '.env'), release: readRelease(configRoot) };
+  const shipped = readRelease(releaseRoot);
+  const server = env.ORION_ENV === 'stage' || env.ORION_ENV === 'prod';
+  const configRoot = env.ORION_CONFIG_ROOT ?? (shipped ? releaseRoot : home);
+  const release = readRelease(configRoot);
+  if (shipped || release || server) {
+    const unset = (['ORION_HOME', 'ORION_ENV_FILE'] as const).filter((k) => (env[k] ?? '').trim() === '');
+    if (unset.length > 0) {
+      throw new OrionError(
+        'release_env_required',
+        `a release needs ORION_HOME and ORION_ENV_FILE set (the orion-daemon unit and orion-remote set both); not set: ${unset.join(', ')}`,
+      );
+    }
+  }
+  if (server && env.ORION_CONFIG_ROOT === undefined && !shipped) {
+    throw new OrionError('release_missing', `ORION_ENV=${env.ORION_ENV} but ${releaseRoot} has no RELEASE file; a release never reads its config from ORION_HOME (${home})`);
+  }
+  return { home, configRoot, envFile: env.ORION_ENV_FILE ?? join(home, '.env'), release };
 }
 
 /** `ORION_ENV`: `dev` (the default), `stage` or `prod`. Anything else is refused rather than guessed at. */

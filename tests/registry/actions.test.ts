@@ -103,12 +103,24 @@ describe('registry actions', () => {
     expect((await getRegistryRow(db(), 'mini'))!.state).toBe('paused');
   });
 
-  it('actions: seed activates only YAMLs without a row', async () => {
-    await db().run("DELETE FROM asset_registry WHERE asset_id = 'apis'");
-    const out = await seedRegistry(db(), root, { state: 'active', by: 'mike', reason: 'cutover from SQLite', now: at(1) });
-    expect(out).toEqual({ seeded: ['apis'], existing: ['mini'] });
-    expect((await listRegistry(db())).map((r) => [r.assetId, r.state])).toEqual([['apis', 'active'], ['mini', 'inactive']]);
-    expect((await listStateEvents(db(), 'apis', 10))[0]).toMatchObject({ fromState: null, toState: 'active', by: 'mike', reason: 'cutover from SQLite' });
-    await expect(seedRegistry(db(), root, { state: 'active', by: 'mike', reason: ' ', now: at(1) })).rejects.toMatchObject({ code: 'reason_required' });
+  it('actions: seed refuses unless the registry is empty, and seeds only the ids named (or all) (I-2)', async () => {
+    const seed = (ids: string[] | 'all', reason = 'cutover from SQLite') => seedRegistry(db(), root, { ids, state: 'active', by: 'mike', reason, now: at(1) });
+    // After a reconcile the registry has rows: seed is refused and changes nothing; the new asset stays inactive.
+    await expect(seed('all')).rejects.toMatchObject({
+      code: 'registry_not_empty', message: 'the asset registry already has 2 rows (apis, mini); seed is for cutover into an empty registry only (use asset activate)',
+    });
+    expect((await listRegistry(db())).map((r) => [r.assetId, r.state])).toEqual([['apis', 'inactive'], ['mini', 'inactive']]);
+    // Empty: the ids named, and only those.
+    await db().run('TRUNCATE asset_registry, asset_state_events');
+    await expect(seed(['mini', 'nope'])).rejects.toMatchObject({ code: 'asset_not_found', message: 'no asset YAML for nope in the config root' });
+    await expect(seed([])).rejects.toMatchObject({ code: 'seed_ids_required' });
+    await expect(seed(['mini'], ' ')).rejects.toMatchObject({ code: 'reason_required' });
+    expect(await listRegistry(db())).toEqual([]);
+    expect(await seed(['mini'])).toEqual({ seeded: ['mini'] });
+    expect((await listRegistry(db())).map((r) => [r.assetId, r.state])).toEqual([['mini', 'active']]);
+    expect((await listStateEvents(db(), 'mini', 10))[0]).toMatchObject({ fromState: null, toState: 'active', by: 'mike', reason: 'cutover from SQLite' });
+    // all: every YAML.
+    await db().run('TRUNCATE asset_registry, asset_state_events');
+    expect(await seed('all')).toEqual({ seeded: ['apis', 'mini'] });
   });
 });

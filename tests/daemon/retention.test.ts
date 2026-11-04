@@ -26,7 +26,8 @@ function ctx(): JobContext {
   writeFileSync(join(root, 'assets', 'other.yaml'), MINI_ASSET_YAML.replace(/^id: mini$/m, 'id: other'));
   return {
     db: db(), clock: new FakeClock(NOW), env: 'dev', paths: { home: root, configRoot: root, envFile: join(root, 'no.env'), release: null },
-    envVars: {}, notify: { post: async () => ({ ok: true, attempts: 1 }) }, enqueue: async (j) => await enqueueJob(db(), j), log: () => undefined,
+    envVars: {}, notify: { post: async () => ({ ok: true, attempts: 1 }) }, signal: new AbortController().signal,
+    enqueue: async (j) => await enqueueJob(db(), j), log: () => undefined,
   };
 }
 

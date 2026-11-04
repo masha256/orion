@@ -79,6 +79,7 @@ describe('withRunLock', () => {
             return async (assetId: string, holder: string) => {
               const lock = await target.tryAssetRunLock(assetId, holder);
               return lock && {
+                ping: () => lock.ping(),
                 release: async () => {
                   await lock.release();
                   throw new Error('simulated: the unlock failed');

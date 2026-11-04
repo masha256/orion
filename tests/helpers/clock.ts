@@ -30,6 +30,15 @@ export class FakeClock implements Clock {
     for (const s of due) s.wake();
   }
 
+  /**
+   * A wall-clock step (an NTP correction): `now()` moves by `ms`, but no sleeper wakes and every pending sleep keeps
+   * its remaining time, as timers run on the monotonic clock.
+   */
+  jump(ms: number): void {
+    this.t += ms;
+    for (const s of this.sleepers) s.at += ms;
+  }
+
   /** How many sleeps are waiting. */
   get pending(): number {
     return this.sleepers.length;
