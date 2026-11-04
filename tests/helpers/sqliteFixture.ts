@@ -74,6 +74,9 @@ export function buildSqliteFixture(opts: { schema?: number; seed?: boolean; muta
   const path = join(dir, 'orion.db');
   const db = new Database(path);
   try {
+    // A test file needs no durability, and this host's fsync is slow: neither setting is stored in the file.
+    db.pragma('journal_mode = MEMORY');
+    db.pragma('synchronous = OFF');
     migrate(db, opts.schema ?? 8);
     if ((opts.seed ?? true) && (opts.schema ?? 8) === 8) seed(db);
     opts.mutate?.(db);
