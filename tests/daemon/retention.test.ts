@@ -6,6 +6,8 @@ import type { JobContext } from '../../src/daemon/daemon.js';
 import { RETENTION_JOB_DAYS, retentionHandler } from '../../src/daemon/jobs/retention.js';
 import { claimNextJob, enqueueJob, finishJob, listJobs, type Job } from '../../src/db/jobs.js';
 import { insertRegistryRow, setRegistryState } from '../../src/db/registry.js';
+import { insertSnapshot, pruneSnapshots } from '../../src/db/snapshotsOut.js';
+import { buildEnvelope } from '../../src/push/envelope.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
 import { FakeClock } from '../helpers/clock.js';
 import { useTestDb } from '../helpers/db.js';
@@ -49,7 +51,7 @@ describe('retention', () => {
     await ended('2026-11-02T00:15:00.000Z', '2026-11-02T00:16:00.000Z'); // yesterday: kept
     await enqueueJob(db(), { kind: 'refresh', assetId: 'mini', slot: '2026-07-01T00:45:00.000Z' }); // old but queued: kept
     const out = await retentionHandler(self, ctx());
-    expect(out).toEqual({ status: 'done', result: { jobs: 2, latestLevels: 0, watchState: 0 } });
+    expect(out).toEqual({ status: 'done', result: { jobs: 2, latestLevels: 0, watchState: 0, snapshots: 0 } });
     expect((await listJobs(db(), {})).map((j) => j.slot).sort()).toEqual([
       '2026-07-01T00:45:00.000Z', '2026-08-04T03:15:00.000Z', '2026-11-02T00:15:00.000Z',
     ]);
@@ -73,10 +75,37 @@ describe('retention', () => {
     await watch('mini', 'old_metric');
     await watch('gone', 'total_supply');
     const out = await retentionHandler(self, ctx());
-    expect(out).toEqual({ status: 'done', result: { jobs: 0, latestLevels: 3, watchState: 2 } });
+    expect(out).toEqual({ status: 'done', result: { jobs: 0, latestLevels: 3, watchState: 2, snapshots: 0 } });
     expect(await db().all('SELECT asset_id, metric_key FROM latest_levels ORDER BY asset_id, metric_key')).toEqual([
       { asset_id: 'mini', metric_key: 'price_usd' }, { asset_id: 'other', metric_key: 'price_usd' },
     ]);
     expect(await db().all('SELECT asset_id, metric_key FROM watch_state')).toEqual([{ asset_id: 'mini', metric_key: 'total_supply' }]);
+  });
+  it('retention: snapshots older than 30 days are pruned but the newest 7 full stay', async () => {
+    const day = (n: number): Date => new Date(Date.parse(NOW) - n * 86_400_000);
+    const put = async (kind: 'full' | 'levels', ageDays: number): Promise<void> => {
+      const d = day(ageDays);
+      await insertSnapshot(db(), { kind, day: kind === 'full' ? d.toISOString().slice(0, 10) : null, envelope: buildEnvelope(kind, { ageDays }, { seq: 0, env: 'dev', releaseTag: null, now: d }) });
+    };
+    // Fulls aged 60..40 days (10 rows, all past 30 days): the newest 7 stay. Levels: 45, 35 and 31 days (pruned), 5 days (kept).
+    for (let age = 60; age >= 42; age -= 2) await put('full', age);
+    await put('levels', 45);
+    await put('levels', 35);
+    await put('levels', 31);
+    await put('levels', 5);
+    const out = await retentionHandler(self, ctx());
+    expect(out).toEqual({ status: 'done', result: { jobs: 0, latestLevels: 0, watchState: 0, snapshots: 6 } });
+    const left = await db().all<{ kind: string; body: string }>('SELECT kind, body FROM snapshots_out ORDER BY kind, seq');
+    expect(left.map((r) => `${r.kind} ${(JSON.parse(r.body) as { body: { ageDays: number } }).body.ageDays}`)).toEqual([
+      'full 54', 'full 52', 'full 50', 'full 48', 'full 46', 'full 44', 'full 42', 'levels 5',
+    ]);
+    expect(await pruneSnapshots(db(), new Date(NOW))).toBe(0);
+  });
+
+  it('retention: the newest levels snapshot is kept however old, so the published file set stays whole', async () => {
+    await insertSnapshot(db(), { kind: 'levels', day: null, envelope: buildEnvelope('levels', {}, { seq: 0, env: 'dev', releaseTag: null, now: new Date('2026-08-01T00:00:00.000Z') }) });
+    await insertSnapshot(db(), { kind: 'levels', day: null, envelope: buildEnvelope('levels', {}, { seq: 0, env: 'dev', releaseTag: null, now: new Date('2026-08-02T00:00:00.000Z') }) });
+    expect(await pruneSnapshots(db(), new Date(NOW))).toBe(1);
+    expect(await db().all('SELECT kind, seq FROM snapshots_out')).toEqual([{ kind: 'levels', seq: 2 }]);
   });
 });

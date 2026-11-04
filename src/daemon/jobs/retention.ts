@@ -1,6 +1,7 @@
 import { loadAsset } from '../../config/load.js';
 import type { Db } from '../../db/connection.js';
 import { listRegistry } from '../../db/registry.js';
+import { pruneSnapshots } from '../../db/snapshotsOut.js';
 import { MS_PER_DAY, OrionError } from '../../types.js';
 import type { JobHandler } from '../daemon.js';
 
@@ -10,7 +11,8 @@ export const RETENTION_JOB_DAYS = 90;
 /**
  * The daily `retention` job: deletes finished jobs (done, failed, skipped) that ended more than 90 days ago, and the
  * `latest_levels` / `watch_state` rows of an asset that is `missing` (or has no YAML at all) or of a metric its YAML no
- * longer declares. An asset whose YAML does not load is left alone. (Task 9 adds the snapshot outbox prune.)
+ * longer declares. An asset whose YAML does not load is left alone. Prunes the snapshot outbox (older than 30 days,
+ * except the newest 7 `full` and the newest `levels`).
  */
 export const retentionHandler: JobHandler = async (_job, ctx) => {
   const { db } = ctx;
@@ -38,7 +40,8 @@ export const retentionHandler: JobHandler = async (_job, ctx) => {
     latestLevels += (await db.run('DELETE FROM latest_levels WHERE asset_id = $1 AND NOT (metric_key = ANY($2::text[]))', [assetId, keep])).rowCount;
     watchState += (await db.run('DELETE FROM watch_state WHERE asset_id = $1 AND NOT (metric_key = ANY($2::text[]))', [assetId, keep])).rowCount;
   }
-  return { status: 'done', result: { jobs, latestLevels, watchState } };
+  const snapshots = await pruneSnapshots(db, ctx.clock.now());
+  return { status: 'done', result: { jobs, latestLevels, watchState, snapshots } };
 };
 
 async function assetsWithRows(db: Db): Promise<string[]> {

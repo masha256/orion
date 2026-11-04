@@ -10,13 +10,14 @@ import { pingDeadman } from '../../notify/deadman.js';
 import { formatWatchCleared, formatWatchPost } from '../../notify/format.js';
 import type { WatchRule } from '../../types.js';
 import type { JobContext, JobHandler, JobOutcome } from '../daemon.js';
+import { levelsSnapshot } from './snapshotPush.js';
 
 export interface LevelsHandlerOptions {
   /** The transports for this job's fetches. Default: the real ones, on the job's re-read env. */
   fetchDeps?: (ctx: JobContext) => FetchDeps;
   /** For the dead-man ping. Default: the global fetch. */
   fetch?: typeof fetch;
-  /** After the read, before the dead-man ping: Task 9 inserts the `levels` snapshot here; a snapshot_push for the job's slot follows. */
+  /** After the read, before the dead-man ping (the daemon's handler: the `levels` snapshot); a snapshot_push for the job's slot follows. */
   onLevels?: (ctx: JobContext, job: Job, result: LevelsResult) => Promise<void>;
 }
 
@@ -109,4 +110,5 @@ export function makeLevelsHandler(o: LevelsHandlerOptions = {}): JobHandler {
   };
 }
 
-export const levelsHandler: JobHandler = makeLevelsHandler();
+/** The daemon's levels job: each run that read something stores a `levels` snapshot and queues its push. */
+export const levelsHandler: JobHandler = makeLevelsHandler({ onLevels: levelsSnapshot });

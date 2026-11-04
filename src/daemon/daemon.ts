@@ -11,9 +11,11 @@ import { migrationStatus } from '../db/pg/migrate.js';
 import { listRegistry } from '../db/registry.js';
 import type { Notifier } from '../notify/slack.js';
 import { loadAssetYamls, reconcileFromDisk } from '../registry/reconcile.js';
+import { checkPublishTarget } from '../push/publisher.js';
 import { OrionError } from '../types.js';
 import { levelsHandler } from './jobs/levels.js';
 import { retentionHandler } from './jobs/retention.js';
+import { snapshotPushHandler } from './jobs/snapshotPush.js';
 import { loadSchedule, newestSlot, type ScheduleEntry } from './schedule.js';
 import type { SystemdNotifier } from './systemd.js';
 
@@ -116,19 +118,15 @@ export function defaultHandlers(): Partial<Record<JobKind, JobHandler>> {
     refresh: notBuiltYet('Task 10'),
     nightly_report: notBuiltYet('Task 10'),
     levels: levelsHandler,
-    snapshot_push: notBuiltYet('Task 9'),
+    snapshot_push: snapshotPushHandler,
     disclosure_watch: notBuiltYet('Task 11'),
     staging_refresh: notBuiltYet('Task 12'),
     retention: retentionHandler,
   };
 }
 
-/** Staging must never publish to the prod snapshot repo (N11): `ORION_PUBLISH` naming `orion-data(.git)` is refused. */
-export function checkPublishTarget(env: OrionEnv, publish: string | undefined): void {
-  if (env === 'stage' && publish && /(^|[/:])orion-data(\.git)?(#|\/?$)/.test(publish.trim())) {
-    throw new OrionError('publish_repo_is_prod', 'ORION_ENV=stage but ORION_PUBLISH names the prod snapshot repo orion-data');
-  }
-}
+/** Staging never publishes to the prod snapshot repo, nor prod to staging's (N11); lives with the publisher. */
+export { checkPublishTarget };
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 const label = (j: Job): string => `job ${j.id} ${j.kind}${j.assetId ? ` ${j.assetId}` : ''}`;
