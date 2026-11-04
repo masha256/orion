@@ -51,6 +51,23 @@ lib_case "run executes and prints do:" '
 lib_case "dry run: write_file and run change nothing" '
   DRY_RUN=1; printf "z\n" | write_file "$T/f" 640 "$ME" >/dev/null; [[ $(cat "$T/f") == $(printf "a\nc") ]]
   run touch "$T/never" >/dev/null; [[ ! -e $T/never ]]'
+mkdir -p "$tmp/lib/fakedf"
+cat >"$tmp/lib/fakedf/df" <<'EOF_DF'
+#!/bin/bash
+# fake df -Pk: $ROOT_KIB for /, $DATA_KIB for anything else
+echo 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+if [[ ${!#} == / ]]; then echo "/dev/sda2 1 1 $ROOT_KIB 1% /"; else echo "/dev/sda3 1 1 $DATA_KIB 1% /home"; fi
+EOF_DF
+chmod +x "$tmp/lib/fakedf/df"
+lib_case "check_free_space: ok line with both figures" '
+  out=$(PATH=$T/fakedf:$PATH ROOT_KIB=4089446 DATA_KIB=95420416 check_free_space /home/postgres/18/main 2>&1)
+  [[ $out == "ok: free space: / 3.9 GiB, /home/postgres/18/main (on /home) 91.0 GiB (warn below 2 GiB on / or 20 GiB for the data directory)" ]]'
+lib_case "check_free_space: warns (exit 0) under 2 GiB on the root fs" '
+  out=$(PATH=$T/fakedf:$PATH ROOT_KIB=1048576 DATA_KIB=95420416 check_free_space /home/x 2>&1)
+  [[ $out == "warn: free space: / 1.0 GiB, /home/x (on /home) 91.0 GiB"* ]]'
+lib_case "check_free_space: warns (exit 0) under 20 GiB for the data directory" '
+  out=$(PATH=$T/fakedf:$PATH ROOT_KIB=4089446 DATA_KIB=10485760 check_free_space /home/x 2>&1)
+  [[ $out == "warn: free space: / 3.9 GiB, /home/x (on /home) 10.0 GiB"* ]]'
 lib_case "selfcheck counts and summary fails on FAIL" '
   selfcheck yes true >/dev/null; selfcheck no false >/dev/null; selfcheck refused expect_fail false >/dev/null
   [[ $SELFCHECK_PASSES == 2 && $SELFCHECK_FAILS == 1 ]]; ! selfcheck_summary >/dev/null'

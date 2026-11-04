@@ -18,7 +18,10 @@ SELFCHECK_PASSES=0
 SELFCHECK_FAILS=0
 PG_MAJOR=18
 PG_CLUSTER=main
-PG_ETC=/etc/postgresql/$PG_MAJOR/$PG_CLUSTER
+# test hook (test/run.sh): another config directory, so a dry run on a host that has a cluster sees a fresh box; never
+# set it on a server
+PG_ETC=${ORION_PROVISION_PG_ETC:-/etc/postgresql/$PG_MAJOR/$PG_CLUSTER}
+PG_DEFAULT_DATADIR=/var/lib/postgresql/$PG_MAJOR/$PG_CLUSTER
 PG_SERVICE=postgresql@$PG_MAJOR-$PG_CLUSTER
 PGDG_KEY_URL=https://www.postgresql.org/media/keys/ACCC4CF8.asc
 PGDG_KEY_FPR=B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8
@@ -293,18 +296,155 @@ pg_conf_dropin() {
   return 0
 }
 
-# pg_ensure_cluster: the 18/main cluster exists (the PGDG package creates it on install) and conf.d is included.
+# pg_check_include: the cluster's postgresql.conf includes conf.d (Debian's default; the drop-ins depend on it).
+pg_check_include() {
+  grep -Eq "^[[:space:]]*include_dir[[:space:]]*=[[:space:]]*'conf\.d'" "$PG_ETC/postgresql.conf" ||
+    die "$PG_ETC/postgresql.conf has no include_dir = 'conf.d'"
+}
+
+# pg_cluster_datadir: the data directory pg_lsclusters lists for 18/main; nothing when there is no such cluster.
+pg_cluster_datadir() {
+  command -v pg_lsclusters >/dev/null 2>&1 || return 0
+  pg_lsclusters -h 2>/dev/null | awk -v v="$PG_MAJOR" -v c="$PG_CLUSTER" '$1 == v && $2 == c { print $6; exit }'
+}
+
+# pg_extra_databases: the cluster's databases other than postgres, template0 and template1, one per line (none for a
+# fresh cluster). Fails when it cannot ask: the cluster is down, or a non-root dry run may not connect.
+pg_extra_databases() {
+  local sql="select datname from pg_database where datname not in ('postgres', 'template0', 'template1') order by 1"
+  if is_root; then
+    psql_as_postgres "$sql"
+  else
+    (cd / && psql -X -w -qAt -v ON_ERROR_STOP=1 -d postgres -c "$sql") 2>/dev/null
+  fi
+}
+
+# pg_plan_datadir <dir>: how cluster 18/main gets its data directory to <dir>; sets PG_DATADIR_PLAN to
+#   ok      the cluster exists and its data directory is <dir>
+#   create  the package is installed but there is no cluster: pg_createcluster -d <dir>
+#   later   the package is not installed yet (dry run): it creates a fresh cluster at the package default, then "move"
+#   move    the cluster is at the package default and fresh: pg_dropcluster --stop, pg_createcluster -d <dir>, start
+# Dies, changing nothing, when the cluster is anywhere else, is at the package default but holds a database of its own,
+# cannot be checked (real run), or <dir> is not absent/empty. Prints no would:/do: line: it is also the preflight check.
+pg_plan_datadir() {
+  local want=$1 have extra parent
+  have=$(pg_cluster_datadir)
+  if [[ -n $have ]]; then
+    if [[ $have == "$want" ]]; then
+      PG_DATADIR_PLAN=ok
+      return 0
+    fi
+    [[ $have == "$PG_DEFAULT_DATADIR" ]] ||
+      die "cluster $PG_MAJOR/$PG_CLUSTER keeps its data in $have, which is neither --pg-datadir $want nor the package default $PG_DEFAULT_DATADIR; refusing to touch it (move it by hand, or pass --pg-datadir $have)"
+    if extra=$(pg_extra_databases); then
+      [[ -z $extra ]] ||
+        die "cluster $PG_MAJOR/$PG_CLUSTER in $have is not fresh: it holds database(s) ${extra//$'\n'/, }; refusing to drop it for --pg-datadir $want (move its data by hand after a pg_dump, or run without --pg-datadir)"
+    elif ((DRY_RUN)); then
+      log_note "cannot list the databases of cluster $PG_MAJOR/$PG_CLUSTER without root; the real run drops it only if it holds nothing but postgres, template0 and template1"
+    else
+      die "cannot list the databases of cluster $PG_MAJOR/$PG_CLUSTER in $have (is it running? systemctl start $PG_SERVICE); refusing to drop it unchecked"
+    fi
+    PG_DATADIR_PLAN=move
+  elif pkg_installed "postgresql-$PG_MAJOR"; then
+    PG_DATADIR_PLAN=create
+  else
+    PG_DATADIR_PLAN=later
+  fi
+  # pg_createcluster -d needs a missing or empty directory; never a symlink
+  if [[ -L $want ]]; then die "--pg-datadir $want is a symlink; give the real directory"; fi
+  if [[ $(path_state "$want") == exists ]]; then
+    [[ -d $want ]] || die "--pg-datadir $want exists and is not a directory"
+    if [[ -r $want && -x $want ]]; then
+      [[ -z $(ls -A "$want") ]] || die "--pg-datadir $want is not empty; refusing to touch its contents (pg_createcluster needs a missing or empty directory)"
+    elif ! ((DRY_RUN)); then
+      die "cannot read $want"
+    fi
+  fi
+  # its parent becomes postgres:postgres 700: created if missing, refused (not taken over) if it belongs to someone else
+  parent=$(dirname "$want")
+  if [[ $(path_state "$parent") == exists ]]; then
+    [[ -d $parent && ! -L $parent ]] || die "$parent (parent of --pg-datadir) is not a plain directory"
+    [[ $(stat -c %U "$parent") == postgres ]] ||
+      die "$parent (parent of --pg-datadir) exists and is owned by $(stat -c %U:%G "$parent"), not postgres; refusing to take it over (pick a data directory whose parent is new or postgres's)"
+  fi
+  return 0
+}
+
+# pg_ensure_datadir_parent <dir>: <dir> (the data directory's parent; pg_plan_datadir has vetted it) is
+# postgres:postgres 700. Missing ancestors are created postgres:postgres 700 too; existing ancestors are not touched.
+pg_ensure_datadir_parent() {
+  local dir=$1 d missing=()
+  d=$dir
+  while [[ $(path_state "$d") != exists ]]; do
+    missing=("$d" "${missing[@]}")
+    d=$(dirname "$d")
+  done
+  ((${#missing[@]})) || missing=("$dir")
+  for d in "${missing[@]}"; do
+    ensure_dir "$d" 700 postgres:postgres
+  done
+  return 0
+}
+
+# pg_ensure_cluster [data dir]: the 18/main cluster exists (the PGDG package creates it on install) and conf.d is
+# included. With a data dir: the cluster's data lives there (pg_plan_datadir decides; a fresh package-default cluster
+# is dropped and re-created there, never symlinked). Without one: wherever the package put it (unchanged behaviour).
 pg_ensure_cluster() {
-  if ((DRY_RUN)) && ! pkg_installed "postgresql-$PG_MAJOR"; then
+  local want=${1:-}
+  if [[ -n $want ]]; then
+    pg_plan_datadir "$want"
+    if [[ $PG_DATADIR_PLAN == ok ]]; then
+      log_ok "cluster $PG_MAJOR/$PG_CLUSTER in $want"
+      [[ -f $PG_ETC/postgresql.conf ]] && pg_check_include
+    else
+      pg_ensure_datadir_parent "$(dirname "$want")"
+      case $PG_DATADIR_PLAN in
+        later)
+          ((DRY_RUN)) || die "postgresql-$PG_MAJOR is still not installed"
+          log_note "the postgresql-$PG_MAJOR package creates cluster $PG_MAJOR/$PG_CLUSTER in $PG_DEFAULT_DATADIR; the real run then checks it holds no database of its own and moves it:"
+          run pg_dropcluster --stop "$PG_MAJOR" "$PG_CLUSTER"
+          ;;
+        move)
+          log_note "cluster $PG_MAJOR/$PG_CLUSTER is at the package default $PG_DEFAULT_DATADIR with no database of its own; re-creating it (empty) in $want"
+          run pg_dropcluster --stop "$PG_MAJOR" "$PG_CLUSTER"
+          ;;
+      esac
+      run pg_createcluster -d "$want" "$PG_MAJOR" "$PG_CLUSTER"
+      run systemctl start "$PG_SERVICE"
+      if ! ((DRY_RUN)); then
+        [[ $(pg_cluster_datadir) == "$want" ]] || die "cluster $PG_MAJOR/$PG_CLUSTER is not in $want after pg_createcluster"
+        pg_check_include
+      fi
+    fi
+  elif ((DRY_RUN)) && ! pkg_installed "postgresql-$PG_MAJOR"; then
     log_do "cluster $PG_MAJOR/$PG_CLUSTER (created by the postgresql-$PG_MAJOR package; pg_createcluster $PG_MAJOR $PG_CLUSTER only if it is missing after that)"
   elif [[ -f $PG_ETC/postgresql.conf ]]; then
     log_ok "cluster $PG_MAJOR/$PG_CLUSTER"
-    grep -Eq "^[[:space:]]*include_dir[[:space:]]*=[[:space:]]*'conf\.d'" "$PG_ETC/postgresql.conf" ||
-      die "$PG_ETC/postgresql.conf has no include_dir = 'conf.d'"
+    pg_check_include
   else
     run pg_createcluster "$PG_MAJOR" "$PG_CLUSTER"
   fi
   ensure_dir "$PG_ETC/conf.d" 755 postgres:postgres
+}
+
+# free_kib <path>: available KiB, and the mount point, of the filesystem holding <path> (or its nearest existing
+# ancestor, so it works before the path is created), as "<kib> <mount>".
+free_kib() {
+  local p=$1
+  while [[ ! -e $p ]]; do p=$(dirname "$p"); done
+  df -Pk -- "$p" | awk 'NR == 2 { print $4, $6 }'
+}
+
+# check_free_space <data dir>: one line with both figures; a warning (never a failure) when / has under 2 GiB free
+# or the filesystem holding the data directory under 20 GiB.
+check_free_space() {
+  local dir=$1 root='' data='' data_mnt='' msg
+  read -r root _ < <(free_kib /) || true
+  read -r data data_mnt < <(free_kib "$dir") || true
+  [[ $root =~ ^[0-9]+$ && $data =~ ^[0-9]+$ ]] || { log_warn "free space: df gave no figures for / or $dir"; return 0; }
+  msg=$(awk -v r="$root" -v d="$data" -v dir="$dir" -v m="$data_mnt" 'BEGIN {
+    printf "free space: / %.1f GiB, %s (on %s) %.1f GiB (warn below 2 GiB on / or 20 GiB for the data directory)", r / 1048576, dir, m, d / 1048576 }')
+  if ((root < 2 * 1048576 || data < 20 * 1048576)); then log_warn "$msg"; else log_ok "$msg"; fi
 }
 
 # pg_apply: restart if a conf.d drop-in changed, reload if only hba/ident changed, start if stopped.

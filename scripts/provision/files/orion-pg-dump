@@ -3,9 +3,10 @@
 # Installed by scripts/provision/orion-host.sh --enable-backups as /usr/local/sbin/orion-pg-dump (root:root 755).
 #
 # For each of orion_prod and orion_stage: pg_dump -Fc, encrypted with age to the public key in /etc/orion/dump-recipient
-# (its private half is kept off the server by Mike), written to /var/backups/orion/dumps/<env>/YYYY/MM/DD.dump.age and
+# (its private half is kept off the server by Mike), written to /home/orion-backups/dumps/<env>/YYYY/MM/DD.dump.age and
 # uploaded to the Spaces bucket of /etc/pgbackrest/pgbackrest.conf under dumps/<env>/YYYY/MM/DD.dump.age.
-# The prod dump is also kept unencrypted at /srv/orion-refresh/latest.dump for the staging refresh (spec §8.5).
+# The prod dump is also kept unencrypted at /home/orion-refresh/latest.dump for the staging refresh (spec §8.5).
+# Both live on /home, not the root filesystem (venus: / is 10G).
 # Local encrypted copies older than 35 days are deleted; retention in Spaces is the bucket's lifecycle rule.
 # No secret is ever put on a command line: the Spaces keys reach curl through its config on stdin.
 set -euo pipefail
@@ -13,8 +14,8 @@ umask 077
 
 recipient_file=/etc/orion/dump-recipient
 conf=${PGBACKREST_CONF:-/etc/pgbackrest/pgbackrest.conf}
-out=/var/backups/orion/dumps
-refresh=/srv/orion-refresh
+out=/home/orion-backups/dumps
+refresh=/home/orion-refresh
 day=$(date -u +%Y/%m/%d)
 
 recipient=$(tr -d '[:space:]' <"$recipient_file")

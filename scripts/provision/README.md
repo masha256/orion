@@ -55,6 +55,49 @@ Afterwards, as `hermes`: `psql -U orion_dev -d orion_dev` (or
 Before: the OS is installed, the hostname is set (`hostnamectl set-hostname <h>`), the box has its fixed LAN address,
 and you are logged in with your admin account.
 
+### The server: venus
+
+`venus` (192.168.0.12, Ubuntu 26.04) has **one physical disk** `sda`: `/` is `sda2`, 9.8G (3.9G free), and `/home` is
+`sda3`, 870G (91G free). So everything that is big or grows goes on `/home`, not on the root filesystem:
+
+| what | where on venus |
+|---|---|
+| Postgres 18/main data directory (tables, indexes, WAL) | `/home/postgres/18/main` (`--pg-datadir`; `/home/postgres` and `/home/postgres/18` are `postgres:postgres` 700) |
+| nightly encrypted dumps (local copies) | `/home/orion-backups/dumps/<env>/YYYY/MM/DD.dump.age` (`postgres` 700) |
+| prod → staging refresh drop (spec §8.5) | `/home/orion-refresh/latest.dump` (`postgres:postgres` 750) |
+| the two Orion users' homes (releases, data, logs) | `/home/orion-prod`, `/home/orion-stage` |
+
+Small things stay where the packages put them: `/etc/postgresql/18/main` (config), `/var/log/postgresql`,
+pgBackRest's spool and log directories. The UPS is attached to another server, so leave `--nut` off for now (NUT over
+the network can be added later).
+
+The exact command on venus (preview first with `--dry-run`, no sudo):
+
+```
+cd ~/provision
+./orion-host.sh --dry-run --hostname venus --pg-datadir /home/postgres/18/main \
+     --ssh-from 192.168.0.201 --ssh-from 100.109.70.114 --ssh-from <your machine's address>
+sudo ./orion-host.sh --hostname venus --pg-datadir /home/postgres/18/main \
+     --ssh-from 192.168.0.201 --ssh-from 100.109.70.114 --ssh-from <your machine's address>
+```
+
+Add `--deploy-key-stage orion-stage_ed25519.pub --deploy-key-prod orion-prod_ed25519.pub` on a later run, once the deploy
+keys exist (same command otherwise). Pass `--pg-datadir /home/postgres/18/main` on **every** run, including the
+`--enable-backups` step (section 3); without it the script assumes the package default and its checks fail.
+
+What `--pg-datadir` does: installing `postgresql-18` creates cluster 18/main in `/var/lib/postgresql/18/main`. The
+script then checks, as `postgres`, that the cluster holds no database but `postgres`, `template0`, `template1`, and only
+then runs `pg_dropcluster --stop 18 main`, `pg_createcluster -d /home/postgres/18/main 18 main` and starts it, before
+it writes any `conf.d` drop-in, `pg_hba.conf`/`pg_ident.conf` or role. No symlink is involved: the cluster's
+`data_directory` is the `/home` path (the self-check prints `PASS: data_directory is /home/postgres/18/main`). It
+refuses, changing nothing, when the cluster holds a database of its own, lives in a third place, or the target is not
+empty. A re-run finds the cluster already there and prints `ok:`.
+
+The self-check also prints one `free space:` line with the free space on `/` and on the filesystem holding the data
+directory; it is a `warn:` (never a failure) below 2 GiB on `/` or below 20 GiB for the data directory.
+
+### Any server
+
 1. Copy the directory to the server (from this host):
    `scp -r scripts/provision <you>@<server>:provision`
 2. If you want the forced-command deploy keys installed now, copy their **public** halves too (Raymond creates the key
@@ -64,7 +107,7 @@ and you are logged in with your admin account.
 ```
 cd ~/provision
 ./orion-host.sh --dry-run --hostname <h> --ssh-from 192.168.0.201 --ssh-from 100.109.70.114 --ssh-from <your machine>
-sudo ./orion-host.sh --hostname <h> \
+sudo ./orion-host.sh --hostname <h> [--pg-datadir <dir>] \
      --ssh-from 192.168.0.201 --ssh-from 100.109.70.114 --ssh-from <your machine's address> \
      [--deploy-key-stage orion-stage_ed25519.pub --deploy-key-prod orion-prod_ed25519.pub] \
      [--backup-disk /mnt/<second disk>] [--nut]
@@ -78,8 +121,13 @@ sudo ./orion-host.sh --hostname <h> \
 - `--deploy-key-*`: each file must hold one OpenSSH public key; it is written as
   `restrict,command="/usr/local/bin/orion-remote" <key>` into that user's `~/.ssh/authorized_keys` (which the script
   then owns: re-running with another key replaces the line). Without the flags that step is skipped with a note.
+- `--pg-datadir <dir>`: the cluster's data directory (absolute, at least three levels deep). Default: the package's
+  `/var/lib/postgresql/18/main`, unchanged. See "The server: venus" above.
 - `--backup-disk <dir>`: adds a local pgBackRest repo 2 under `<dir>/pgbackrest` (only when `pgbackrest.conf` is first
-  created). `--nut`: installs `nut-client` (configuring NUT is not part of this script).
+  created). **Off by default and not recommended on venus:** with one physical disk, a local repo 2 sits on the same
+  disk as the cluster and gives no protection against disk failure (it only costs space on `/home`). The offsite
+  Spaces repo 1 and the encrypted dumps in Spaces are what protect venus. Use it only on a box with a real second disk.
+- `--nut`: installs `nut-client` (configuring NUT is not part of this script).
 
 What it does: PGDG apt + `postgresql-18`, `postgresql-client-18`, `pgbackrest`, `python3-venv`, `ffmpeg`, `ufw`, `age`;
 Node v26.13.0 (official tarball, sha256-checked) in `/opt/node-v26.13.0` with `/opt/node-v26` pointing at it; users
@@ -89,13 +137,15 @@ Node v26.13.0 (official tarball, sha256-checked) in `/opt/node-v26.13.0` with `/
 overwritten); `/usr/local/bin/orion-remote` (root 755); Postgres conf (`listen_addresses = ''`, UTC,
 `shared_buffers = 2GB`), `pg_hba.conf`/`pg_ident.conf` of spec §9.3, roles `orion_prod`, `orion_stage`,
 `orion_prod_ro`, databases `orion_prod`/`orion_stage` with schema `orion`, CONNECT revoked from PUBLIC;
-`/etc/pgbackrest/pgbackrest.conf` from the template (root:postgres 640, `REPLACE_ME` placeholders); ufw.
+`/etc/pgbackrest/pgbackrest.conf` from the template (root:postgres 640, `REPLACE_ME` placeholders, `pg1-path` = the
+data directory); ufw.
 
 **Paste back:**
 - the `pubkey:` lines. For each env: the `publish` key goes into that env's snapshot repo as a deploy key **with write
   access** (`masha256/orion-data` for prod, `masha256/orion-data-staging` for staging; N11/N12); the `snapshot-sign`
   key is what the site will use to verify `manifest.json.sig`.
-- the `PASS:`/`FAIL:` lines and `SELF-CHECK: ...`. They prove: PGDG build, socket only, UTC, 2GB, Node version,
+- the `free space:` line, the `PASS:`/`FAIL:` lines and `SELF-CHECK: ...`. They prove: PGDG build, socket only, UTC,
+  2GB, the data directory, Node version,
   `orion-remote` ownership, no sudo + linger + key/`.env` modes per user, each env user connects to its own database,
   `orion-stage` → `orion_prod` refused as each of the three roles, `orion-prod` → `orion_stage` refused, CONNECT revoked
   for both databases, `SET ROLE orion_prod` as `orion_stage` refused, `orion_prod_ro` read-only and unable to write,
@@ -120,16 +170,28 @@ sudo ./orion-host.sh --hostname <h> --ssh-from ... (same as before) \
      --enable-backups --dump-recipient age1...
 ```
 
-It refuses while any `REPLACE_ME` remains. Then: stores the recipient in `/etc/orion/dump-recipient`,
+On venus:
+
+```
+sudo ./orion-host.sh --hostname venus --pg-datadir /home/postgres/18/main \
+     --ssh-from 192.168.0.201 --ssh-from 100.109.70.114 --ssh-from <your machine's address> \
+     --enable-backups --dump-recipient age1...
+```
+
+It refuses while any `REPLACE_ME` remains, or while `pg1-path` in `pgbackrest.conf` is not the cluster's data
+directory. Then: stores the recipient in `/etc/orion/dump-recipient`,
 `pgbackrest stanza-create`, `conf.d/orion-backup.conf` (`archive_mode = on`,
 `archive_command = 'pgbackrest --stanza=orion archive-push %p'`, `archive_timeout = 300`), restarts Postgres, installs
 `/usr/local/sbin/orion-pg-dump` and three root systemd timers (all times UTC):
 
 | timer | when | what (as `postgres`) |
 |---|---|---|
-| `orion-pg-dump.timer` | daily 08:30 | `pg_dump -Fc` of `orion_prod` and `orion_stage`, `age`-encrypted, to `/var/backups/orion/dumps/<env>/YYYY/MM/DD.dump.age` and Spaces `dumps/<env>/YYYY/MM/DD.dump.age`; prod also unencrypted at `/srv/orion-refresh/latest.dump` |
+| `orion-pg-dump.timer` | daily 08:30 | `pg_dump -Fc` of `orion_prod` and `orion_stage`, `age`-encrypted, to `/home/orion-backups/dumps/<env>/YYYY/MM/DD.dump.age` (35 days kept) and Spaces `dumps/<env>/YYYY/MM/DD.dump.age`; prod also unencrypted at `/home/orion-refresh/latest.dump` |
 | `orion-backup-full.timer` | Sun 09:00 | `pgbackrest --type=full backup`, then `pgbackrest check` |
 | `orion-backup-diff.timer` | Mon-Sat 09:00 | `pgbackrest --type=diff backup`, then `pgbackrest check` |
+
+Each unit has `RequiresMountsFor=` on the paths it writes (the data directory; `/home/orion-backups`,
+`/home/orion-refresh`).
 
 **Paste back:** the `PASS:`/`FAIL:` lines, now including `archive_mode is on`, `pgbackrest check` and the three timers.
 Then set the Spaces lifecycle rule for `dumps/` (30 days) yourself; the 12 monthlies of spec §10.1 are not automated
@@ -149,6 +211,8 @@ SHELLCHECK=/path/to/shellcheck scripts/provision/test/run.sh
 SHELLCHECK=... PG_BINDIR=/usr/lib/postgresql/18/bin scripts/provision/test/run.sh   # + SQL files and hba/ident against a throwaway cluster
 ```
 
-The harness never runs a script without `--dry-run`. What it cannot prove (only a real run on the box can): package
+The harness never runs a script without `--dry-run`. Its dry runs see a fresh box even on a host that has Postgres
+itself: fake `dpkg-query`, `pg_lsclusters` and `psql` on `PATH` and an empty config directory
+(`ORION_PROVISION_PG_ETC`, a test hook like `ORION_PROVISION_PGBACKREST_CONF`; never set either on a server). What it cannot prove (only a real run on the box can): package
 installation, the PGDG pin, Node download/unpack, user creation, linger, ufw, systemd timers, pgBackRest against Spaces,
 and peer authentication with the real `orion-prod`/`orion-stage` users (it simulates each by mapping the test user).

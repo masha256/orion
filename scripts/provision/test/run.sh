@@ -83,15 +83,48 @@ fi
 # shellcheck source=SCRIPTDIR/lib-test.sh
 source "$here/lib-test.sh"
 
+# --- fake host state for the dry runs ------------------------------------------------------------------------------
+# The dry runs read the host's real state, and this host has Postgres 18 itself. So every dry run below sees a fresh
+# box through: a dpkg-query that knows only $FAKE_INSTALLED, a pg_lsclusters that lists 18/main only when
+# $FAKE_CLUSTER_DIR is set, a psql that prints $FAKE_DBS (fails with FAKE_PSQL_FAIL=1), and an empty config directory
+# (ORION_PROVISION_PG_ETC). None of them is ever the real tool.
+pgfake=$tmp/pgfake
+mkdir -p "$pgfake"
+cat >"$pgfake/dpkg-query" <<'EOF_FAKE'
+#!/bin/bash
+pkg=${!#}
+for p in ${FAKE_INSTALLED:-}; do
+  if [[ $p == "$pkg" ]]; then
+    case $* in *Status*) printf 'install ok installed' ;; *) printf '1.0-fake' ;; esac
+    exit 0
+  fi
+done
+exit 1
+EOF_FAKE
+cat >"$pgfake/pg_lsclusters" <<'EOF_FAKE'
+#!/bin/bash
+[[ -n ${FAKE_CLUSTER_DIR:-} ]] && printf '18  main    5432 online postgres %s /var/log/postgresql/postgresql-18-main.log\n' "$FAKE_CLUSTER_DIR"
+exit 0
+EOF_FAKE
+cat >"$pgfake/psql" <<'EOF_FAKE'
+#!/bin/bash
+[[ ${FAKE_PSQL_FAIL:-0} == 1 ]] && { echo 'psql: fake connection refused' >&2; exit 2; }
+[[ -n ${FAKE_DBS:-} ]] && printf '%s\n' $FAKE_DBS
+exit 0
+EOF_FAKE
+chmod +x "$pgfake"/*
+PG_ETC_FAKE=$tmp/fakeroot/etc/postgresql/18/main # never created: the dry runs see no configuration yet
+F=(PATH="$pgfake:$PATH" ORION_PROVISION_PG_ETC="$PG_ETC_FAKE")
+
 # --- dev-postgres.sh ----------------------------------------------------------------------------------------------
 dev=$prov/dev-postgres.sh
 me=$(id -un)
-run_case dev 0 env -u SUDO_USER "$dev" --dry-run --force-os --os-user "$me"
+run_case dev 0 env -u SUDO_USER "${F[@]}" "$dev" --dry-run --force-os --os-user "$me"
 for re in \
   '/etc/apt/keyrings/pgdg\.asc' \
   'ACCC4CF8' \
   '/etc/apt/sources\.list\.d/pgdg\.sources' \
-  'Suites: [a-z]+-pgdg' \
+  'Suites: [a-z]+-pgdg|^ok: /etc/apt/sources\.list\.d/pgdg\.sources$' \
   '/etc/apt/preferences\.d/pgdg\.pref' \
   'postgresql-18' \
   'postgresql-client-18' \
@@ -117,9 +150,9 @@ done
 expect_not dev '^do: '
 expect_not dev 'node-v26'
 
-run_case dev-no-user nonzero env -u SUDO_USER "$dev" --dry-run --force-os --os-user no-such-user-orion-test
+run_case dev-no-user nonzero env -u SUDO_USER "${F[@]}" "$dev" --dry-run --force-os --os-user no-such-user-orion-test
 expect dev-no-user 'no-such-user-orion-test'
-run_case dev-bad-flag nonzero "$dev" --dry-run --force-os --no-such-flag
+run_case dev-bad-flag nonzero env "${F[@]}" "$dev" --dry-run --force-os --no-such-flag
 
 # --- orion-host.sh ------------------------------------------------------------------------------------------------
 host=$prov/orion-host.sh
@@ -127,10 +160,10 @@ hn=$(uname -n)
 ssh-keygen -q -t ed25519 -N '' -C test-stage -f "$tmp/stage_key" && ssh-keygen -q -t ed25519 -N '' -C test-prod -f "$tmp/prod_key"
 recipient=age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq # syntactically valid; not anyone's key
 printf '[global]\nrepo1-s3-key=REPLACE_ME\n' >"$tmp/pgbr-placeholder.conf"
-printf '[global]\nrepo1-s3-key=filled\n' >"$tmp/pgbr-filled.conf"
-H=(env -u SSH_CONNECTION SSH_CLIENT="192.168.0.201 50000 22" "$host" --dry-run --force-os --hostname "$hn")
+printf '[global]\nrepo1-s3-key=filled\n[orion]\npg1-path=/var/lib/postgresql/18/main\n' >"$tmp/pgbr-filled.conf"
+H=(env -u SSH_CONNECTION "${F[@]}" SSH_CLIENT="192.168.0.201 50000 22" "$host" --dry-run --force-os --hostname "$hn")
 
-run_case host-os nonzero env -u SSH_CLIENT "$host" --dry-run --hostname "$hn" --ssh-from 192.168.0.201
+run_case host-os nonzero env -u SSH_CLIENT "${F[@]}" "$host" --dry-run --hostname "$hn" --ssh-from 192.168.0.201
 expect host-os "resolute"
 expect_not host-os '^would: '
 
@@ -192,29 +225,32 @@ for re in \
   expect host "$re"
 done
 expect_not host '^do: '
+expect_not host 'pg_dropcluster|pg_createcluster -d'
+expect host '^(ok|warn): free space: / [0-9]+\.[0-9] GiB, /var/lib/postgresql/18/main \(on [^)]+\) [0-9]+\.[0-9] GiB'
+expect host 'cluster 18/main \(created by the postgresql-18 package'
 expect_not host 'BEGIN OPENSSH PRIVATE KEY|PRIVATE KEY'
 expect_before host 'ufw allow from 100\.109' 'ufw --force enable'
 
-run_case host-noufw 0 env -u SSH_CLIENT "$host" --dry-run --force-os --hostname "$hn"
+run_case host-noufw 0 env -u SSH_CLIENT "${F[@]}" "$host" --dry-run --force-os --hostname "$hn"
 expect host-noufw 'ufw step skipped'
 expect host-noufw 'no --deploy-key-stage'
 expect_not host-noufw '(would|do): ufw '
 
 # R3: an SSH caller outside --ssh-from is refused before any change (no would: line at all)
-run_case host-lockout nonzero env SSH_CLIENT="10.9.9.9 50000 22" "$host" --dry-run --force-os --hostname "$hn" \
+run_case host-lockout nonzero env "${F[@]}" SSH_CLIENT="10.9.9.9 50000 22" "$host" --dry-run --force-os --hostname "$hn" \
   --ssh-from 192.168.0.201 --ssh-from 100.109.70.114
 expect host-lockout 'refusing to enable ufw.*10\.9\.9\.9'
 expect_not host-lockout '^(would|do): '
-run_case host-cidr 0 env SSH_CLIENT="192.168.0.77 50000 22" "$host" --dry-run --force-os --hostname "$hn" \
+run_case host-cidr 0 env "${F[@]}" SSH_CLIENT="192.168.0.77 50000 22" "$host" --dry-run --force-os --hostname "$hn" \
   --ssh-from 192.168.0.0/24
 expect host-cidr 'ufw allow from 192\.168\.0\.0/24 to any port 22'
-run_case host-v6mapped 0 env SSH_CLIENT="::ffff:192.168.0.201 50000 22" "$host" --dry-run --force-os \
+run_case host-v6mapped 0 env "${F[@]}" SSH_CLIENT="::ffff:192.168.0.201 50000 22" "$host" --dry-run --force-os \
   --hostname "$hn" --ssh-from 192.168.0.201
 run_case host-bad-cidr nonzero "${H[@]}" --ssh-from 192.168.0.300
 expect_not host-bad-cidr '^(would|do): '
 run_case host-wrong-hostname nonzero "${H[@]}" --hostname not-this-host-x --ssh-from 192.168.0.201
 expect host-wrong-hostname 'not-this-host-x'
-run_case host-no-hostname nonzero env -u SSH_CLIENT "$host" --dry-run --force-os
+run_case host-no-hostname nonzero env -u SSH_CLIENT "${F[@]}" "$host" --dry-run --force-os
 run_case host-private-key nonzero "${H[@]}" --deploy-key-prod "$tmp/prod_key"
 expect_not host-private-key '^(would|do): '
 
@@ -249,9 +285,103 @@ for re in \
   'enable --now orion-backup-diff\.timer' \
   'enable --now orion-pg-dump\.timer' \
   'systemctl daemon-reload' \
+  'install -d -m 700 -o postgres -g postgres /home/orion-backups$' \
+  'install -d -m 700 -o postgres -g postgres /home/orion-backups/dumps$' \
+  'install -d -m 750 -o postgres -g postgres /home/orion-refresh$' \
+  '^ *\+ RequiresMountsFor=/home/orion-backups /home/orion-refresh$' \
+  '^ *\+ RequiresMountsFor=/var/lib/postgresql/18/main$' \
   'SKIP: pgbackrest check'; do
   expect host-backups "$re"
 done
+expect_not host-backups '/srv/|/var/backups'
+if grep -REn '/srv/|/var/backups' "$prov/orion-host.sh" "$prov/lib.sh" "$prov/files" >"$tmp/oldpaths.out"; then
+  bad "no /srv or /var/backups path left in orion-host.sh, lib.sh, files/" "$(head -n 3 "$tmp/oldpaths.out" | tr '\n' '|')"
+else
+  ok "no /srv or /var/backups path left in orion-host.sh, lib.sh, files/"
+fi
+for re in 'out=/home/orion-backups/dumps$' 'refresh=/home/orion-refresh$'; do
+  if grep -Eq -- "$re" "$prov/files/orion-pg-dump"; then ok "orion-pg-dump has /$re/"; else bad "orion-pg-dump has /$re/"; fi
+done
+if grep -Fxq 'pg1-path=@PG1PATH@' "$prov/files/pgbackrest.conf.tmpl"; then ok "pgbackrest.conf.tmpl takes pg1-path from the data directory"; else bad "pgbackrest.conf.tmpl takes pg1-path from the data directory"; fi
+
+# --pg-datadir (spec §2.4: venus has a 10G root, so the cluster lives on /home). A fresh box: the package creates
+# 18/main at the default, then the script drops and re-creates it in the new place, before any drop-in, hba or role.
+dd=$tmp/pgroot/18/main
+run_case host-datadir 0 "${H[@]}" --ssh-from 192.168.0.201 --pg-datadir "$dd"
+for re in \
+  "ok: --pg-datadir $dd \\(plan: later\\)" \
+  "install -d -m 700 -o postgres -g postgres $tmp/pgroot\$" \
+  "install -d -m 700 -o postgres -g postgres $tmp/pgroot/18\$" \
+  'the postgresql-18 package creates cluster 18/main in /var/lib/postgresql/18/main' \
+  '^would: pg_dropcluster --stop 18 main$' \
+  "^would: pg_createcluster -d $dd 18 main\$" \
+  '^would: systemctl start postgresql@18-main$' \
+  "^(ok|warn): free space: / .* GiB, $dd \\(on [^)]+\\) .* GiB"; do
+  expect host-datadir "$re"
+done
+expect_not host-datadir 'ln -s.*(pgroot|18/main)'
+expect_before host-datadir 'apt-get install .*postgresql-18' 'pg_dropcluster'
+expect_before host-datadir "install -d .* $tmp/pgroot/18\$" 'pg_dropcluster'
+expect_before host-datadir 'pg_dropcluster' 'pg_createcluster -d'
+expect_before host-datadir 'pg_createcluster -d' 'conf\.d/orion\.conf'
+expect_before host-datadir 'pg_createcluster -d' 'pg_hba\.conf'
+expect_before host-datadir 'pg_createcluster -d' 'pg_ident\.conf'
+expect_before host-datadir 'pg_createcluster -d' 'host-roles\.sql'
+# installed, fresh cluster at the package default: dropped and re-created
+run_case host-datadir-move 0 env FAKE_INSTALLED=postgresql-18 FAKE_CLUSTER_DIR=/var/lib/postgresql/18/main FAKE_DBS= \
+  "${H[@]}" --pg-datadir "$dd"
+expect host-datadir-move 'plan: move'
+expect host-datadir-move 'cluster 18/main is at the package default /var/lib/postgresql/18/main with no database of its own'
+expect host-datadir-move '^would: pg_dropcluster --stop 18 main$'
+expect host-datadir-move "^would: pg_createcluster -d $dd 18 main\$"
+# a dry run that cannot ask (non-root on the real box): lists the move, says the real run checks first
+run_case host-datadir-unprobed 0 env FAKE_INSTALLED=postgresql-18 FAKE_CLUSTER_DIR=/var/lib/postgresql/18/main \
+  FAKE_PSQL_FAIL=1 "${H[@]}" --pg-datadir "$dd"
+expect host-datadir-unprobed 'cannot list the databases .*the real run drops it only if'
+expect host-datadir-unprobed '^would: pg_dropcluster --stop 18 main$'
+# installed, no cluster: created in place
+run_case host-datadir-create 0 env FAKE_INSTALLED=postgresql-18 "${H[@]}" --pg-datadir "$dd"
+expect host-datadir-create 'plan: create'
+expect host-datadir-create "^would: pg_createcluster -d $dd 18 main\$"
+expect_not host-datadir-create 'pg_dropcluster'
+# already there: nothing to do
+run_case host-datadir-ok 0 env FAKE_INSTALLED=postgresql-18 FAKE_CLUSTER_DIR="$dd" "${H[@]}" --pg-datadir "$dd"
+expect host-datadir-ok "ok: cluster 18/main in $dd"
+expect_not host-datadir-ok 'pg_dropcluster|pg_createcluster'
+# refusals: before any change (no would: line at all)
+run_case host-datadir-nonfresh nonzero env FAKE_INSTALLED=postgresql-18 FAKE_CLUSTER_DIR=/var/lib/postgresql/18/main \
+  FAKE_DBS='orion_prod orion_stage' "${H[@]}" --pg-datadir "$dd"
+expect host-datadir-nonfresh 'is not fresh: it holds database\(s\) orion_prod, orion_stage; refusing to drop it'
+expect_not host-datadir-nonfresh '^(would|do): '
+run_case host-datadir-elsewhere nonzero env FAKE_INSTALLED=postgresql-18 FAKE_CLUSTER_DIR=/srv/pg/18/main FAKE_DBS= \
+  "${H[@]}" --pg-datadir "$dd"
+expect host-datadir-elsewhere 'keeps its data in /srv/pg/18/main, which is neither --pg-datadir .* nor the package default'
+expect_not host-datadir-elsewhere '^(would|do): '
+run_case host-datadir-relative nonzero "${H[@]}" --pg-datadir home/postgres/18/main
+expect host-datadir-relative 'must be an absolute'
+run_case host-datadir-dotdot nonzero "${H[@]}" --pg-datadir /home/postgres/../main
+mkdir -p "$tmp/full/18/main" && touch "$tmp/full/18/main/PG_VERSION"
+run_case host-datadir-nonempty nonzero "${H[@]}" --pg-datadir "$tmp/full/18/main"
+expect host-datadir-nonempty 'is not empty'
+expect_not host-datadir-nonempty '^(would|do): '
+mkdir -p "$tmp/mine/18"
+run_case host-datadir-foreign-parent nonzero "${H[@]}" --pg-datadir "$tmp/mine/18/main"
+expect host-datadir-foreign-parent "owned by $me:.*not postgres; refusing to take it over"
+expect_not host-datadir-foreign-parent '^(would|do): '
+printf '[global]\nrepo1-s3-key=filled\n[orion]\npg1-path=%s\n' "$dd" >"$tmp/pgbr-datadir.conf"
+# --enable-backups refuses a pgbackrest.conf whose pg1-path is not the data directory
+run_case host-backups-pg1path nonzero env FAKE_INSTALLED=postgresql-18 FAKE_CLUSTER_DIR="$dd" \
+  ORION_PROVISION_PGBACKREST_CONF="$tmp/pgbr-filled.conf" "${H[@]}" --pg-datadir "$dd" \
+  --enable-backups --dump-recipient "$recipient"
+expect host-backups-pg1path "pg1-path=/var/lib/postgresql/18/main, but the cluster's data directory is $dd"
+expect_not host-backups-pg1path '^(would|do): '
+run_case host-backups-datadir 0 env FAKE_INSTALLED=postgresql-18 FAKE_CLUSTER_DIR="$dd" \
+  ORION_PROVISION_PGBACKREST_CONF="$tmp/pgbr-datadir.conf" "${H[@]}" --pg-datadir "$dd" \
+  --enable-backups --dump-recipient "$recipient"
+expect host-backups-datadir "^ *\\+ RequiresMountsFor=$dd\$"
+# --backup-disk is documented as no protection on a one-disk box; the run says so too
+run_case host-backup-disk 0 "${H[@]}" --backup-disk "$tmp"
+expect host-backup-disk 'repo 2 protects against nothing if .* is on the same physical disk'
 expect_before host-backups 'stanza-create' 'orion-backup\.conf'
 
 # --- orion-remote (R1): only "status" runs; caller text never reaches a shell --------------------------------------

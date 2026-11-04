@@ -26,7 +26,7 @@ sql_pg_start() {
 }
 sql_pg_stop() { "$PG_BINDIR/pg_ctl" -D "$tmp/pgdata" -m immediate stop >/dev/null 2>&1 || true; }
 
-PG_ETC_T=/etc/postgresql/18/main
+PG_ETC_T=${PG_ETC_FAKE:?} # the dry runs write their config there (test/run.sh)
 # sql_conf_from_dryrun <case> <path> <out name>: the "    + " lines a dry run printed for <path>; prints the file name.
 sql_conf_from_dryrun() {
   awk -v hdr="would: create $2 " '

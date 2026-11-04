@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 # orion-host.sh: set up the Orion server (Ubuntu 26.04 resolute) for the prod and staging environments.
 # Spec §2.4 item 2, plan 1.5a Task 2 (rulings R1-R7). Mike runs it from a copy of scripts/provision:
-#   sudo ./orion-host.sh --hostname <h> --ssh-from <ip|cidr> [--ssh-from ...] \
+#   sudo ./orion-host.sh --hostname <h> [--pg-datadir <dir>] --ssh-from <ip|cidr> [--ssh-from ...] \
 #        [--deploy-key-stage <pubkey file>] [--deploy-key-prod <pubkey file>] [--backup-disk <dir>] [--nut]
 # then, once /etc/pgbackrest/pgbackrest.conf has no REPLACE_ME left:
 #   sudo ./orion-host.sh --hostname <h> --ssh-from ... --enable-backups --dump-recipient <age public key>
 #
 #   --hostname <h>          this server's hostname; the script refuses to run on a host with another name
+#   --pg-datadir <dir>      the 18/main cluster's data directory (absolute; default: the package's
+#                           /var/lib/postgresql/18/main). A fresh package-default cluster is dropped and re-created
+#                           there (never a symlink); a cluster holding databases, or elsewhere, is refused.
+#                           Pass the same value on every run.
 #   --ssh-from <ip|cidr>    allow SSH (22/tcp) from here; repeatable; required to enable ufw (without it ufw is skipped)
 #   --deploy-key-stage <f>  public key for orion-stage's authorized_keys (forced command /usr/local/bin/orion-remote)
 #   --deploy-key-prod <f>   same for orion-prod
-#   --backup-disk <dir>     second disk: a local pgBackRest repo 2 under <dir>/pgbackrest (only when the conf is created)
+#   --backup-disk <dir>     second disk: a local pgBackRest repo 2 under <dir>/pgbackrest (only when the conf is created;
+#                           off by default; on a one-disk box it gives no protection against disk failure)
 #   --nut                   install nut-client (UPS signalling)
 #   --enable-backups        step 2: stanza-create, WAL archiving on, pgbackrest check, root backup/dump timers
 #   --dump-recipient <age1...>  age public key the nightly pg_dump is encrypted to (kept in /etc/orion/dump-recipient)
@@ -37,12 +42,13 @@ PGBR_CONF=${ORION_PROVISION_PGBACKREST_CONF:-/etc/pgbackrest/pgbackrest.conf}
 RECIPIENT_FILE=/etc/orion/dump-recipient
 SYSTEMD_DIR=/etc/systemd/system
 
-usage() { sed -n '2,23s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; }
+usage() { sed -n '2,/^set -euo/{/^#/s/^# \{0,1\}//p}' "${BASH_SOURCE[0]}"; }
 
 HOST_NAME=''
 SSH_FROM=()
 declare -A DEPLOY_KEY_FILE=() DEPLOY_KEY=()
 BACKUP_DISK=''
+PG_DATADIR=''
 NUT=0
 ENABLE_BACKUPS=0
 DUMP_RECIPIENT=''
@@ -54,6 +60,7 @@ while (($#)); do
     --deploy-key-stage) need_arg "$@"; DEPLOY_KEY_FILE[stage]=$2; shift ;;
     --deploy-key-prod) need_arg "$@"; DEPLOY_KEY_FILE[prod]=$2; shift ;;
     --backup-disk) need_arg "$@"; BACKUP_DISK=$2; shift ;;
+    --pg-datadir) need_arg "$@"; PG_DATADIR=$2; shift ;;
     --nut) NUT=1 ;;
     --enable-backups) ENABLE_BACKUPS=1 ;;
     --dump-recipient) need_arg "$@"; DUMP_RECIPIENT=$2; shift ;;
@@ -142,6 +149,15 @@ if [[ -n $BACKUP_DISK ]]; then
   [[ $BACKUP_DISK == /* && -d $BACKUP_DISK ]] || die "--backup-disk $BACKUP_DISK is not an existing absolute directory"
 fi
 
+# --pg-datadir: checked (and refused) here, before any change; pg_ensure_cluster checks again just before acting
+if [[ -n $PG_DATADIR ]]; then
+  [[ $PG_DATADIR =~ ^(/[A-Za-z0-9._-]+){3,}$ && /$PG_DATADIR/ != */./* && /$PG_DATADIR/ != */../* ]] ||
+    die "--pg-datadir $PG_DATADIR must be an absolute, normalised path at least three levels deep (e.g. /home/postgres/18/main)"
+  pg_plan_datadir "$PG_DATADIR"
+  log_ok "--pg-datadir $PG_DATADIR (plan: $PG_DATADIR_PLAN)"
+fi
+DATADIR=${PG_DATADIR:-$PG_DEFAULT_DATADIR}
+
 if [[ -n $DUMP_RECIPIENT && ! $DUMP_RECIPIENT =~ ^age1[0-9a-z]{58}$ ]]; then
   die "--dump-recipient must be an age public key (age1 followed by 58 characters)"
 fi
@@ -155,6 +171,9 @@ if ((ENABLE_BACKUPS)); then
       die "--enable-backups: $PGBR_CONF still has $(grep -c REPLACE_ME "$PGBR_CONF") REPLACE_ME value(s); fill them in first"
     fi
     log_ok "$PGBR_CONF has no REPLACE_ME left"
+    pg1=$(sed -n 's/^pg1-path=//p' "$PGBR_CONF" | head -n 1)
+    [[ $pg1 == "$DATADIR" ]] ||
+      die "--enable-backups: $PGBR_CONF has pg1-path=$pg1, but the cluster's data directory is $DATADIR; fix pg1-path first"
   elif [[ -e $PGBR_CONF ]]; then
     ((DRY_RUN)) || die "cannot read $PGBR_CONF"
     log_note "$PGBR_CONF is not readable without root; the real run refuses if any REPLACE_ME remains"
@@ -279,7 +298,8 @@ write_file "$ORION_REMOTE" 755 root:root quiet <"$here/files/orion-remote"
 
 # ================================================================== Postgres
 echo "== Postgres $PG_MAJOR/$PG_CLUSTER"
-pg_ensure_cluster
+# before any conf.d drop-in, hba/ident or role: moving the data directory re-creates the cluster's configuration
+pg_ensure_cluster "$PG_DATADIR"
 pg_conf_dropin orion.conf <<'EOF'
 # Orion server settings (scripts/provision/orion-host.sh). Unix socket only; nothing on the network reaches it.
 listen_addresses = ''
@@ -318,6 +338,7 @@ echo "== pgBackRest"
 ensure_dir "$(dirname "$PGBR_CONF")" 750 root:postgres
 repo2=''
 if [[ -n $BACKUP_DISK ]]; then
+  log_note "--backup-disk: repo 2 protects against nothing if $BACKUP_DISK is on the same physical disk as the cluster"
   ensure_dir "$BACKUP_DISK/pgbackrest" 750 postgres:postgres
   repo2="# repo 2: local directory on the second disk (fast restores)
 repo2-type=posix
@@ -326,9 +347,15 @@ repo2-retention-full-type=count
 repo2-retention-full=2"
 fi
 tmpl=$(<"$here/files/pgbackrest.conf.tmpl")
+tmpl=${tmpl//@PG1PATH@/$DATADIR}
 printf '%s\n' "${tmpl//@REPO2@/$repo2}" | write_file_once "$PGBR_CONF" 640 root:postgres quiet
-if [[ -n $BACKUP_DISK ]] && [[ $CHANGED == 0 ]]; then
-  log_note "--backup-disk: $PGBR_CONF already existed and is never rewritten; add repo2-* to it by hand if it lacks them"
+if [[ $CHANGED == 0 ]]; then
+  if [[ -n $BACKUP_DISK ]]; then
+    log_note "--backup-disk: $PGBR_CONF already existed and is never rewritten; add repo2-* to it by hand if it lacks them"
+  fi
+  if [[ -r $PGBR_CONF ]] && ! grep -Fxq "pg1-path=$DATADIR" "$PGBR_CONF"; then
+    log_warn "$PGBR_CONF already existed and is never rewritten, and its pg1-path is not $DATADIR; set pg1-path=$DATADIR by hand (--enable-backups refuses until then)"
+  fi
 fi
 
 if ((ENABLE_BACKUPS)); then
@@ -361,16 +388,18 @@ EOF
   pg_apply
 
   write_file /usr/local/sbin/orion-pg-dump 755 root:root quiet <"$here/files/orion-pg-dump"
-  ensure_dir /var/backups/orion 700 postgres:postgres
-  ensure_dir /var/backups/orion/dumps 700 postgres:postgres
-  ensure_dir /srv/orion-refresh 750 postgres:postgres
+  # on /home, not the root filesystem (venus: / is 10G, /home 870G)
+  ensure_dir /home/orion-backups 700 postgres:postgres
+  ensure_dir /home/orion-backups/dumps 700 postgres:postgres
+  ensure_dir /home/orion-refresh 750 postgres:postgres
 
   units_changed=0
-  # unit <name> <description> <OnCalendar> <ExecStart> [ExecStartPost]
+  # unit <name> <description> <OnCalendar> <paths it needs mounted> <ExecStart> [ExecStartPost]
   unit() {
-    local name=$1 desc=$2 cal=$3 exec=$4 post=${5:-}
+    local name=$1 desc=$2 cal=$3 mounts=$4 exec=$5 post=${6:-}
     {
-      printf '[Unit]\nDescription=%s (Orion, spec §10.1)\nAfter=%s.service\n\n' "$desc" "$PG_SERVICE"
+      printf '[Unit]\nDescription=%s (Orion, spec §10.1)\nAfter=%s.service\nRequiresMountsFor=%s\n\n' \
+        "$desc" "$PG_SERVICE" "$mounts"
       printf '[Service]\nType=oneshot\nUser=postgres\nGroup=postgres\nExecStart=%s\n' "$exec"
       [[ -n $post ]] && printf 'ExecStartPost=%s\n' "$post"
       true
@@ -381,12 +410,12 @@ EOF
     ((CHANGED)) && units_changed=1
     return 0
   }
-  unit orion-backup-full "pgBackRest full backup" "Sun *-*-* 09:00:00 UTC" \
+  unit orion-backup-full "pgBackRest full backup" "Sun *-*-* 09:00:00 UTC" "$DATADIR" \
     "/usr/bin/pgbackrest --stanza=orion --type=full backup" "/usr/bin/pgbackrest --stanza=orion check"
-  unit orion-backup-diff "pgBackRest differential backup" "Mon..Sat *-*-* 09:00:00 UTC" \
+  unit orion-backup-diff "pgBackRest differential backup" "Mon..Sat *-*-* 09:00:00 UTC" "$DATADIR" \
     "/usr/bin/pgbackrest --stanza=orion --type=diff backup" "/usr/bin/pgbackrest --stanza=orion check"
   unit orion-pg-dump "encrypted pg_dump of orion_prod and orion_stage" "*-*-* 08:30:00 UTC" \
-    "/usr/local/sbin/orion-pg-dump"
+    "/home/orion-backups /home/orion-refresh" "/usr/local/sbin/orion-pg-dump"
   ((units_changed)) && run systemctl daemon-reload
   for t in orion-backup-full orion-backup-diff orion-pg-dump; do
     if [[ $(systemctl is-enabled "$t.timer" 2>/dev/null) == enabled ]] && systemctl is-active --quiet "$t.timer" 2>/dev/null; then
@@ -421,6 +450,7 @@ fi
 
 # ================================================================== self-check
 echo "== self-check"
+check_free_space "$DATADIR"
 as() { local u=$1; shift; (cd / && runuser -u "$u" -- "$@"); }
 q() { as "$1" psql -X -qAt -v ON_ERROR_STOP=1 -U "$2" -d "$3" -c "$4"; }
 check_pgdg() { dpkg-query -W -f='${Version}' "postgresql-$PG_MAJOR" | grep -q pgdg; }
@@ -435,6 +465,7 @@ selfcheck "postgresql-$PG_MAJOR is the PGDG build" check_pgdg
 selfcheck "listen_addresses is empty (socket only)" check_eq '' psql_as_postgres 'show listen_addresses'
 selfcheck "timezone is UTC" check_eq UTC psql_as_postgres 'show timezone'
 selfcheck "shared_buffers is 2GB" check_eq 2GB psql_as_postgres 'show shared_buffers'
+selfcheck "data_directory is $DATADIR" check_eq "$DATADIR" psql_as_postgres 'show data_directory'
 selfcheck "node $NODE_VERSION at $NODE_LINK" check_node
 selfcheck "$ORION_REMOTE is root:root 755" check_mode "$ORION_REMOTE" "755 root:root"
 for env in "${ENVS[@]}"; do
