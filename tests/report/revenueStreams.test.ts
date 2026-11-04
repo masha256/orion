@@ -306,7 +306,7 @@ describe('revenue streams: periodic settlement', () => {
     // Started 01-25: one payment for 01-25 .. 02-01 (8 days, 80), unpaid since: 4 provisional days to 02-05.
     await insertObservation(db, { assetId: 'hype', metricKey: 'flow_usd.reserve', observedAt: '2026-02-02T00:00:00.000Z', periodDays: 8, value: 80, source: 'api', fetchedAt: '2026-02-06T00:00:00.000Z' });
     expect(await lastCompleteReportDay(db, asset)).toBe('2026-02-05');
-    const r = await loadHolderYieldReport(db, asset);
+    const r = await loadHolderYieldReport(db, asset, undefined, { legacy: true });
     const v = r.revenue!;
     expect(v.basis).toBe('streams');
     expect(v.streams.map((s) => [s.id, s.basis, s.daysInWindow, s.provisionalDays, s.isNew])).toEqual([

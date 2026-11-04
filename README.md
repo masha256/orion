@@ -41,7 +41,7 @@ orion data reject <obs_id>                # retire an observation; the row is ke
 orion data anomalies [asset] [--all]
 orion data ack <id> --note "..."          # understood and accepted; stays acknowledged when seen again
 orion data resolve <id> --note "..."      # the cause is fixed; a recurrence opens a new anomaly
-orion report yield [asset] [--day <yyyy-mm-dd>]
+orion report yield [asset] [--day <yyyy-mm-dd>] [--json] [--legacy]
 orion inbox vvv                           # provisional rows to confirm, pending proposals, open anomalies
 orion proposals list [asset] | show <id> | approve <id> [--note "..."] | reject <id> --note "..."
 orion doc add lit --url <post url> --file call.txt --kind machine_transcript   # append-only
@@ -69,7 +69,7 @@ Metrics with a `source:` in `assets/<id>.yaml` are fetched; the rest are entered
 
 ## The report
 
-`orion report yield <a>` covers the asset's `reporting.window_days` (91) up to its latest complete day: price, market cap (price x circulating supply), FDV (price x total supply), protocol revenue (the sum of the `reporting.revenue` streams) and its growth, holder flows by bucket (burn, hold, cash) with their yields on price, dilution, the payout ratio and the revenue multiple. Nothing in it is a forecast.
+`orion report yield <a>` covers the asset's `reporting.window_days` (91) up to its latest complete day: price, market cap (price x circulating supply), FDV (price x total supply), protocol revenue (the sum of the `reporting.revenue` streams) and its growth, holder flows by bucket (burn, hold, cash) with their yields on price, dilution, the payout ratio and the revenue multiple. Nothing in it is a forecast. Its JSON is the income statement v2 (`incomeStatement`: revenue, cost of revenue, gross profit, holders, protocol, below the line, holder flow by bucket, ratios, multiples, per-token figures, flags) with the price, market cap and FDV; `--legacy` adds the v1 keys (`flows`, `buckets`, `yields`, `income`, `revenue`, ...) in their v1 order, for one release.
 
 ## Development
 

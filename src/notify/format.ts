@@ -88,8 +88,29 @@ export interface AssetRunResult {
 /** Fetch lines that carry these are quoted when the block is an alert (STEP 3: "the relevant stderr lines"). */
 const ALERT_LINE = /OUTSIDE|conflict|unlisted sender/;
 
+const multipleOf = (x: number | null): string => (x === null ? 'n/a' : `${fmtNum(x)}x`);
+
+/**
+ * The holder-yield block. With the income statement v2 fields (spec 7): revenue, gross profit, holder flow by bucket, net
+ * holder yield, multiples, scope and the statement's flags (`third_party`, not measured). A `refresh` row of the previous
+ * release has none of them and prints the v1 block.
+ */
 function holderYieldLines(sym: string, h: TickHolderYield): string[] {
   const y = h.yields;
+  if (h.scope !== undefined) {
+    const byBucket = h.holder_flow_by_bucket ?? { burn: null, hold: null, cash: null };
+    const buckets = (['burn', 'hold', 'cash'] as const).filter((b) => byBucket[b] !== null).map((b) => `${b} ${fmtNum(byBucket[b])}`);
+    const lines = [
+      `HOLDER YIELD ${sym}  ${h.day} (${h.window_days}d window, scope ${h.scope})`,
+      `price ${fmtNum(h.price)} | mcap ${fmtNum(h.market_cap)} | FDV ${fmtNum(h.fdv)}`,
+      `revenue ${fmtNum(h.statement_revenue ?? null)}/yr (growth ${fmtPct(h.statement_revenue_growth ?? null)}/yr) | gross profit ${h.gross_profit == null ? 'n/a' : `${fmtNum(h.gross_profit)}/yr`} | payout ratio ${fmtPct(h.statement_payout_ratio ?? null)}${h.payout_ratio_basis === 'revenue' ? ' of revenue' : ''}`,
+      `holder flow/yr: ${buckets.length > 0 ? buckets.join(' | ') : 'n/a'}`,
+      `yields: cash ${fmtPct(y.cash)} | buyback ${fmtPct(y.buyback)} | shareholder ${fmtPct(y.shareholder)} | dilution ${fmtPct(y.dilution)} | net holder yield ${fmtPct(h.net_holder_yield ?? null)}`,
+      `multiples: mcap/revenue ${multipleOf(h.mcap_to_revenue ?? null)} | mcap/holder flow ${multipleOf(h.mcap_to_holder_flow ?? null)} | holder-flow growth ${fmtPct(h.holder_flow_growth_annualized)}/yr`,
+    ];
+    if (h.flags && h.flags.length > 0) lines.push(`flags: ${h.flags.join('; ')}`);
+    return lines;
+  }
   return [
     `HOLDER YIELD ${sym}  ${h.day} (${h.window_days}d window)`,
     `price ${fmtNum(h.price)} | mcap ${fmtNum(h.market_cap)} | FDV ${fmtNum(h.fdv)}`,

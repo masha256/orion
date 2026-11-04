@@ -45,7 +45,7 @@ const agentRuns = async (): Promise<number> => (await h.db.one<{ n: number }>('S
 beforeEach(() => world());
 
 describe('tickAsset', () => {
-  it('tick: fetch ok -> exit 0, holder_yield equals summarizeHolderYield(loadHolderYieldReport(db, asset))', async () => {
+  it('tick: fetch ok -> exit 0, holder_yield equals summarizeHolderYield(loadHolderYieldReport(db, asset, { legacy: true }))', async () => {
     await seedFees('2026-09-15', 12, 2);
     const { report, exitCode } = await tick();
     expect(exitCode).toBe(0);
@@ -54,7 +54,7 @@ describe('tickAsset', () => {
       ingest: { outcome: 'ok', sources_failed: [], anomalies_raised: [] },
     });
     expect(report.ingest!.fetch_run_id).toBeGreaterThan(0);
-    expect(report.holder_yield).toEqual(summarizeHolderYield(await loadHolderYieldReport(h.db, h.loaded.config)));
+    expect(report.holder_yield).toEqual(summarizeHolderYield(await loadHolderYieldReport(h.db, h.loaded.config, undefined, { legacy: true })));
     expect(report.holder_yield).toMatchObject({ day: '2026-09-18', window_days: 7, price: 10, market_cap: 600, fdv: 1000 });
     expect(report.holder_yield!.flows).toEqual([{ id: 'fees', bucket: 'cash', net: expect.any(Number), yield: expect.any(Number) }]);
     expect(TickReportSchema.parse(report)).toEqual(report);
@@ -102,7 +102,7 @@ describe('tickAsset', () => {
     const { report, exitCode } = await tick();
     expect(exitCode).toBe(2);
     expect(report).toMatchObject({ outcome: 'completed', error: null, ingest: { outcome: 'ok' }, report_error: { code: 'report_stale' } });
-    expect(report.holder_yield).toEqual(summarizeHolderYield(await loadHolderYieldReport(h.db, h.loaded.config)));
+    expect(report.holder_yield).toEqual(summarizeHolderYield(await loadHolderYieldReport(h.db, h.loaded.config, undefined, { legacy: true })));
     expect(report.holder_yield!.day).toBe('2026-09-13');
     expect(report.report_error!.message).toBe('holder-yield report day 2026-09-13 is 6 days behind the tick (2026-09-19); a report flow has stopped');
     expect(progress).toContain(`report stale: ${report.report_error!.message}`);

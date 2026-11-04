@@ -155,7 +155,10 @@ never in a subagent: the snapshot holds production data, and the fetch leg needs
 
 5. Reports, old release vs new (exit 0 iff `ok`; 13 assets give 15 files: `report yield` per asset, `data anomalies`,
    `proposals list`). The old home is `assets/` (etc.) plus a fresh snapshot copy as `orion.db`. The new home is `<P>/new`.
-   The old CLI is the SQLite release built in a detached `.worktrees/` checkout of `dcc2c48` (`npm ci && npm run build`):
+   The old CLI is the SQLite release built in a detached `.worktrees/` checkout of `dcc2c48` (`npm ci && npm run build`).
+   When the new CLI's `report yield --help` lists `--legacy` (Phase 2, D9), its reports run with `--legacy` and are
+   compared without `incomeStatement` (the printed output is kept as `report-yield-<a>.unstripped.json`; the result
+   says `"legacy": true`):
 
    ```
    npx tsx tools/import-sqlite/cli.ts reports \

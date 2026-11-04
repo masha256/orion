@@ -1,8 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { TickReport } from '../../src/app/tickReport.js';
+import { summarizeHolderYield, type TickHolderYield, type TickReport } from '../../src/app/tickReport.js';
 import {
-  fmtNum, fmtPct, formatAssetBlock, formatWatchCleared, formatWatchPost, slackClean, splitForSlack, SLACK_MAX_CHARS, type AssetRunResult,
+  fmtNum, fmtPct, formatAssetBlock, formatNightly, formatWatchCleared, formatWatchPost, slackClean, splitForSlack, SLACK_MAX_CHARS, type AssetRunResult,
 } from '../../src/notify/format.js';
+import { holderYieldReport } from '../../src/report/holderYield.js';
+import { incomeStatementV2 } from '../../src/report/incomeStatement.js';
+import { ALL_ASSETS, repoAsset, syntheticInput } from '../helpers/syntheticReport.js';
 import { slackEscape } from '../../src/notify/slack.js';
 
 /** A clean, completed tick for MINI: no watch, no failures, empty inbox, a holder-yield block. */
@@ -137,6 +141,84 @@ describe('slack text cleaning', () => {
     expect(slackClean('x'.repeat(500), 10)).toBe('xxxxxxxxx…');
     // Cap last: the length counts the cleaned text, not the raw one.
     expect(slackClean('\u200b'.repeat(400) + 'short')).toBe('short');
+  });
+});
+
+/** cleanReport's holder_yield with the v2 fields (Task 4): cost of revenue not measured, so no gross profit. */
+function v2HolderYield(): TickHolderYield {
+  return {
+    ...cleanReport().holder_yield!,
+    statement_revenue: 15_000_000, statement_revenue_growth: 0.3, gross_profit: null, statement_payout_ratio: 0.4, payout_ratio_basis: 'revenue',
+    holder_flow_by_bucket: { burn: 6_000_000, hold: null, cash: 0 }, net_holder_yield: 0.0245, mcap_to_revenue: 8.2304526, mcap_to_holder_flow: 20.576131,
+    scope: 'protocol_share_only',
+    flags: ['cost of revenue not measured: hlp, builders', 'payout ratio on revenue: cost of revenue not measured', 'third_party: revenue.trading'],
+  };
+}
+
+describe('holder-yield block v2 (spec 7, Task 4)', () => {
+  it("nightly block prints gross profit and 'not measured' flags", () => {
+    const report = { ...cleanReport(), holder_yield: v2HolderYield() };
+    expect(formatAssetBlock(run({}, report)).lines).toEqual([
+      'DECISIONS', 'nothing to decide',
+      'HOLDER YIELD MINI  2026-11-02 (30d window, scope protocol_share_only)',
+      'price 1.23 | mcap 123.46M | FDV 2.50B',
+      'revenue 15.00M/yr (growth 30.00%/yr) | gross profit n/a | payout ratio 40.00% of revenue',
+      'holder flow/yr: burn 6.00M | cash 0',
+      'yields: cash 3.45% | buyback n/a | shareholder 3.45% | dilution -1.00% | net holder yield 2.45%',
+      'multiples: mcap/revenue 8.23x | mcap/holder flow 20.58x | holder-flow growth n/a/yr',
+      'flags: cost of revenue not measured: hlp, builders; payout ratio on revenue: cost of revenue not measured; third_party: revenue.trading',
+    ]);
+    // A measured gross profit, a payout ratio on it, no flags, every bucket n/a.
+    const measured: TickHolderYield = {
+      ...v2HolderYield(), gross_profit: 12_000_000, payout_ratio_basis: 'grossProfit', scope: 'complete', flags: [],
+      holder_flow_by_bucket: { burn: null, hold: null, cash: null }, mcap_to_revenue: null, mcap_to_holder_flow: null,
+    };
+    expect(formatAssetBlock(run({}, { ...cleanReport(), holder_yield: measured })).lines.slice(2)).toEqual([
+      'HOLDER YIELD MINI  2026-11-02 (30d window, scope complete)',
+      'price 1.23 | mcap 123.46M | FDV 2.50B',
+      'revenue 15.00M/yr (growth 30.00%/yr) | gross profit 12.00M/yr | payout ratio 40.00%',
+      'holder flow/yr: n/a',
+      'yields: cash 3.45% | buyback n/a | shareholder 3.45% | dilution -1.00% | net holder yield 2.45%',
+      'multiples: mcap/revenue n/a | mcap/holder flow n/a | holder-flow growth n/a/yr',
+    ]);
+  });
+
+  it('a v1 job row (no v2 fields) still prints the v1 block', () => {
+    const row = JSON.parse(readFileSync(new URL('../fixtures/daemon/refresh-result-v1.json', import.meta.url), 'utf8')) as { report: TickReport };
+    expect(formatAssetBlock(run({ symbol: 'LIT' }, row.report)).lines).toEqual([
+      'DECISIONS', 'nothing to decide',
+      'HOLDER YIELD LIT  2026-11-01 (91d window)',
+      'price 0.4123 | mcap 103.09M | FDV 404.89M',
+      'revenue 42.89M/yr (growth 31.42%/yr) | payout ratio 79.43%',
+      'yields: cash 0.00% | buyback 8.41% | shareholder 8.41% | dilution 13.52% | net -5.11%',
+      'multiple 11.89x | holder-flow growth 27.18%/yr',
+    ]);
+  });
+
+  it('nightly block stays under SLACK_MAX_CHARS for 13 assets', () => {
+    // Every repo asset's real-shaped block (its own config's flags, scope and buckets; synthetic series), symbol CVXCRV.
+    const blocks = ALL_ASSETS.map((id) => {
+      const input = syntheticInput(repoAsset(id));
+      const v1 = holderYieldReport(input);
+      const holder_yield = summarizeHolderYield({ ...v1, incomeStatement: incomeStatementV2(input, v1) });
+      return { id, holder_yield, lines: formatAssetBlock(run({ symbol: 'CVXCRV' }, { ...cleanReport(), holder_yield })).lines };
+    });
+    const longest = blocks.reduce((a, b) => (b.lines.join('\n').length > a.lines.join('\n').length ? b : a));
+    const results = Array.from({ length: 13 }, (_, i) => ({
+      ...run({ symbol: 'CVXCRV' }, { ...cleanReport(), holder_yield: longest.holder_yield }), assetId: `a${String(i).padStart(2, '0')}`,
+    }));
+    const posts = formatNightly({
+      env: 'stage', day: '2026-11-02', releaseTag: 'orion-2026.11.04.2', results, notRun: [], symbols: {}, configChanged: [], resumedShort: [],
+      firingWatches: [], refreshesMissing: [], slot: '2026-11-03T00:45:00.000Z',
+    });
+    for (const p of posts) expect(p.length).toBeLessThanOrEqual(SLACK_MAX_CHARS);
+    // No asset block is cut: each post holds whole blocks, and all 13 are there.
+    expect(posts.join('\n')).not.toContain('(continued)');
+    expect(posts.join('\n').split('\n').filter((l) => l === '== CVXCRV ==')).toHaveLength(13);
+    expect(posts.length).toBeLessThanOrEqual(3);
+    // The block reads like the real one: v2 lines, its flags line when the config has any.
+    expect(longest.lines.join('\n')).toContain('gross profit');
+    expect(longest.lines.at(-1)).toMatch(/^flags: /);
   });
 });
 

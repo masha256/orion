@@ -133,7 +133,7 @@ worktree at the release's commit with `dist/` built, `CLI` = `node $WT/dist/cli/
    npx tsx tools/import-sqlite/cli.ts proof --from "$P/snap.db" --to "$U" --schema orion --assets $WT/assets \
      --manifest "$P"/import-*.json                                   # ok: true
    for a in aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv; do
-     ORION_HOME="$P/new" $CLI report yield $a --day <D> --json > "$P/ref/$a.json"; done   # D = yesterday UTC
+     ORION_HOME="$P/new" $CLI report yield $a --day <D> --json > "$P/ref/$a.json"; done   # D = yesterday UTC; no --legacy (below)
    /usr/lib/postgresql/18/bin/pg_dump -Fc -n orion -f "$P/latest.dump" "$U"
    $ST refresh-staging --stdin "$(sha256sum "$P/latest.dump" | cut -d' ' -f1)" < "$P/latest.dump"
    ```
@@ -148,6 +148,11 @@ worktree at the release's commit with `dist/` built, `CLI` = `node $WT/dist/cli/
    for a in <the 13 ids>; do $ST report yield $a --day <D> | cmp - "$P/ref/$a.json"; done     # all identical
    ```
    and compare `$ST data anomalies --all` / `$ST proposals list --all` with `$CLI ... --json` on `$P/new`.
+   Both sides are the same release, so the bytes match either way, but they must print the same shape: from Phase 2 on
+   (D9) `report yield --json` is the income statement v2 object and the v1 keys need `--legacy`, which `orion-remote`
+   does not pass. So the reference runs without `--legacy` too. A byte comparison of the v1 keys across two releases
+   (the cutover proof, `tools/import-sqlite/cli.ts reports`; the Phase 2 proof, `tools/phase2-proof/reports.sh`) runs
+   the new side with `--legacy` when its `report yield --help` lists it, and compares it without `incomeStatement`.
 3. **Activate.** `for a in aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv; do $ST asset activate $a --for
    mike; done`, then `$ST asset registry` (13 active). Optionally `$ST job run-now refresh <a>` per asset for data now;
    otherwise the first refreshes come with the nightly (an asset activated after a slot began gets none for that slot).

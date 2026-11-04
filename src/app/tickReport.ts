@@ -1,6 +1,7 @@
 import { appendFileSync } from 'node:fs';
 import { z } from 'zod';
 import type { HolderYieldReport } from '../report/holderYield.js';
+import type { IsV2 } from '../report/incomeStatement.js';
 import { WATCH_RULES } from '../types.js';
 import { InboxSchema } from './inbox.js';
 
@@ -21,6 +22,26 @@ export const TickHolderYieldSchema = z.strictObject({
   yields: z.strictObject({ cash: num, buyback: num, shareholder: num, dilution: num, net_shareholder: num }),
   multiple: num,
   holder_flow_growth_annualized: num,
+  // Income statement v2 (spec 7, Task 4): copied from the report's `incomeStatement`. Optional, so a `refresh` job row the
+  // previous release wrote (v1, none of these) still parses; absent for an asset with no income_statement block.
+  /** Revenue under v2 (gross user-paid fees, LIT's Robinhood gross included; sdCRV's bribes below the line). */
+  statement_revenue: num.optional(),
+  statement_revenue_growth: num.optional(),
+  /** Revenue less cost of revenue; null when any cost line is not measured (never zero-filled). */
+  gross_profit: num.optional(),
+  statement_payout_ratio: num.optional(),
+  /** What the v2 payout ratio divides by: gross profit, or revenue when gross profit is not measured (correction 14). */
+  payout_ratio_basis: z.enum(['grossProfit', 'revenue']).optional(),
+  /** Net holder flow (USD a year) per bucket; null for a bucket the asset does not have. */
+  holder_flow_by_bucket: z.strictObject({ burn: num, hold: num, cash: num }).optional(),
+  /** Holder yield net of dilution (the statement's `yields.netShareholder`). */
+  net_holder_yield: num.optional(),
+  mcap_to_revenue: num.optional(),
+  /** Market cap over total net holder flow. */
+  mcap_to_holder_flow: num.optional(),
+  scope: z.enum(['complete', 'protocol_share_only', 'partial']).optional(),
+  /** The statement's display flags: not-measured lines, third-party lines, the payout ratio basis. */
+  flags: z.array(z.string()).optional(),
 });
 
 export type TickHolderYield = z.infer<typeof TickHolderYieldSchema>;
@@ -40,6 +61,25 @@ export function summarizeHolderYield(r: HolderYieldReport): TickHolderYield {
     yields: { cash: r.yields.cash, buyback: r.yields.buyback, shareholder: r.yields.shareholder, dilution: r.yields.dilution, net_shareholder: r.yields.netShareholder },
     multiple: r.yields.multiple,
     holder_flow_growth_annualized: r.holderFlowGrowth.annualized,
+    ...(r.incomeStatement ? statementFields(r.incomeStatement) : {}),
+  };
+}
+
+/** The v2 fields of the tick's holder-yield block, copied from the statement, never rounded or recomputed. */
+function statementFields(is: IsV2): Partial<TickHolderYield> {
+  const bucket = (b: 'burn' | 'hold' | 'cash') => is.holderFlow.byBucket[b]?.net ?? null;
+  return {
+    statement_revenue: is.revenue.annualized,
+    statement_revenue_growth: is.revenue.growth.annualized,
+    gross_profit: is.grossProfit.annualized,
+    statement_payout_ratio: is.ratios.payoutRatio,
+    payout_ratio_basis: is.ratios.payoutRatioBasis,
+    holder_flow_by_bucket: { burn: bucket('burn'), hold: bucket('hold'), cash: bucket('cash') },
+    net_holder_yield: is.yields.netShareholder,
+    mcap_to_revenue: is.multiples.mcapToRevenue,
+    mcap_to_holder_flow: is.multiples.mcapToHolderFlow.total,
+    scope: is.scope,
+    flags: [...is.flags],
   };
 }
 

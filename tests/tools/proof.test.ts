@@ -151,6 +151,7 @@ describe('reports', () => {
       `const out = ${JSON.stringify(out)};
 const args = process.argv.slice(2);
 const key = args.join(' ');
+if (key === 'report yield --help') { console.log(out[key] ?? 'Usage: orion report yield [options] [asset]\\n  --day <yyyy-mm-dd>\\n  --json'); process.exit(0); }
 if (!(key in out)) { console.error('unknown: ' + key); process.exit(2); }
 const v = out[key];
 console.log(JSON.stringify(v === 'ENV' ? { home: process.env.ORION_HOME === process.cwd(), url: process.env.ORION_DATABASE_URL ?? null } : v, null, 2));
@@ -185,7 +186,7 @@ console.log(JSON.stringify(v === 'ENV' ? { home: process.env.ORION_HOME === proc
       const out = join(dir, 'out');
       const r = await compareReports({ oldCli, oldHome, newCli, newHome, day: '2026-10-30', manifest, out });
       expect(r).toEqual({
-        ok: true,
+        ok: true, legacy: false,
         files: ['report-yield-beta.json', 'report-yield-mini.json', 'anomalies.json', 'proposals.json'].map((name) => ({ name, identical: true, old_exit: 0, new_exit: 0 })),
       });
       expect(JSON.parse(readFileSync(join(out, 'new', 'report-yield-mini.json'), 'utf8'))).toEqual({ home: true, url: null });
@@ -220,5 +221,39 @@ console.log(JSON.stringify(v === 'ENV' ? { home: process.env.ORION_HOME === proc
       if (saved === undefined) delete process.env.ORION_DATABASE_URL;
       else process.env.ORION_DATABASE_URL = saved;
     }
+  });
+
+  it('reports: a new release whose report yield --help lists --legacy runs with it, compared without its incomeStatement (D9)', async () => {
+    const dir = tempDir('orion-reports-legacy-');
+    const beta = { asset: 'beta', yield: 1.5 };
+    const v2Outputs = (yieldValue: number) => ({
+      'report yield --help': 'Usage: orion report yield [options] [asset]\n  --day <yyyy-mm-dd>\n  --json\n  --legacy  also the v1 keys',
+      'report yield mini --day 2026-10-30 --json --legacy': { home: true, url: null, incomeStatement: { schema: 2, revenue: 7 } },
+      'report yield beta --day 2026-10-30 --json --legacy': { ...beta, yield: yieldValue, incomeStatement: { schema: 2, revenue: 9 } },
+      // Without --legacy the release drops the v1 keys: a run without the flag would differ.
+      'report yield beta --day 2026-10-30 --json': { asset: 'beta', incomeStatement: { schema: 2 } },
+      'report yield mini --day 2026-10-30 --json': { incomeStatement: { schema: 2 } },
+      'data anomalies --all --json': [{ id: 1, kind: 'cross_check_mismatch' }],
+      'proposals list --all --json': [{ id: 3, kind: 'config' }, { id: 1, kind: 'config' }],
+    });
+    const oldCli = stubCli(dir, 'old', { ...outputs(1.5, [{ id: 3, kind: 'config' }, { id: 2, kind: 'assumption_value' }, { id: 1, kind: 'config' }]), 'report yield mini --day 2026-10-30 --json': { home: true, url: null } });
+    const newCli = stubCli(dir, 'new', v2Outputs(1.5));
+    const out = join(dir, 'out');
+    const r = await compareReports({ oldCli, oldHome: home(dir, 'old-home'), newCli, newHome: home(dir, 'new-home'), day: '2026-10-30', manifest, out });
+    expect(r).toEqual({
+      ok: true, legacy: true,
+      files: ['report-yield-beta.json', 'report-yield-mini.json', 'anomalies.json', 'proposals.json'].map((name) => ({ name, identical: true, old_exit: 0, new_exit: 0 })),
+    });
+    // The compared file is the CLI's own serialisation less incomeStatement; the printed output is kept beside it.
+    expect(readFileSync(join(out, 'new', 'report-yield-beta.json'), 'utf8')).toBe(`${JSON.stringify(beta, null, 2)}\n`);
+    expect(JSON.parse(readFileSync(join(out, 'new', 'report-yield-beta.unstripped.json'), 'utf8'))).toEqual({ ...beta, incomeStatement: { schema: 2, revenue: 9 } });
+    // A legacy byte that differs still fails.
+    const bad = await compareReports({ oldCli, oldHome: home(dir, 'old-home2'), newCli: stubCli(dir, 'bad', v2Outputs(1.6)), newHome: home(dir, 'new-home2'), day: '2026-10-30', manifest, out: join(dir, 'out2') });
+    expect(bad.files.filter((x) => !x.identical).map((x) => x.name)).toEqual(['report-yield-beta.json']);
+    // A new CLI whose --help fails runs without the flag, so the comparison fails closed (never a silent pass).
+    const missing = join(dir, 'missing.mjs');
+    const r3 = await compareReports({ oldCli, oldHome: home(dir, 'old-home3'), newCli: missing, newHome: home(dir, 'new-home3'), day: '2026-10-30', manifest, out: join(dir, 'out3') });
+    expect(r3).toMatchObject({ ok: false, legacy: false });
+    expect(readFileSync(join(dir, 'out3', 'new', 'report-yield-help.txt.stderr'), 'utf8')).toContain('Cannot find module');
   });
 });

@@ -1,0 +1,32 @@
+{
+  "report": {
+    "schema_version": 2,
+    "tick_id": "tick_lit_20261103T004500Z",
+    "asset": "lit",
+    "started_at": "2026-11-03T00:45:00.000Z",
+    "ended_at": "2026-11-03T00:46:12.000Z",
+    "outcome": "completed",
+    "lock": null,
+    "ingest": { "fetch_run_id": 4123, "outcome": "ok", "sources_failed": [], "anomalies_raised": [] },
+    "holder_yield": {
+      "day": "2026-11-01",
+      "window_days": 91,
+      "price": 0.4123456789,
+      "market_cap": 103086419.725,
+      "fdv": 404889116.3,
+      "revenue_annualized": 42886123.456789,
+      "revenue_growth_annualized": 0.3141592653,
+      "payout_ratio": 0.7943210987,
+      "flows": [{ "id": "buyback", "bucket": "burn", "net": 34065432.1, "yield": 0.0841348 }],
+      "yields": { "cash": 0, "buyback": 0.0841348, "shareholder": 0.0841348, "dilution": 0.1352, "net_shareholder": -0.0510652 },
+      "multiple": 11.88566,
+      "holder_flow_growth_annualized": 0.2718281828
+    },
+    "report_error": null,
+    "inbox": { "observations": [], "proposals": [], "anomalies": [] },
+    "error": null
+  },
+  "fetchLines": ["lit: 14 metrics, 0 anomalies"],
+  "alertFlags": [],
+  "levels": 9
+}

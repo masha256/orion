@@ -267,6 +267,26 @@ describe('nightly_report job', () => {
     expect(run.posts.slice(1).every((p) => p.startsWith('== A'))).toBe(true);
   });
 
+  it('nightly_report: a v1 refresh row (the previous release) and a v2 one in one night both print (Review Focus 1)', async () => {
+    const w = await world(['a00', 'a01']);
+    const v1 = JSON.parse(readFileSync(fileURLToPath(new URL('../fixtures/daemon/refresh-result-v1.json', import.meta.url)), 'utf8')) as { report: TickReport };
+    await refresh('a00', 'done', v1);
+    const v2 = cleanReport('a01');
+    v2.holder_yield = {
+      ...v2.holder_yield!, statement_revenue: 120, statement_revenue_growth: 0.2, gross_profit: 90, statement_payout_ratio: 0.5, payout_ratio_basis: 'grossProfit',
+      holder_flow_by_bucket: { burn: 45, hold: null, cash: null }, net_holder_yield: 0.01, mcap_to_revenue: 5, mcap_to_holder_flow: 13.33, scope: 'complete', flags: [],
+    };
+    await refresh('a01', 'done', { report: v2, fetchLines: [], alertFlags: [], levels: 0 });
+    const run = nightly(w.root, 30 * 60_000);
+    await handler(run)(await reportJob(), run.ctx);
+    const lines = run.posts.join('\n').split('\n');
+    expect(lines[0]).toBe('ORION NIGHTLY dev 2026-11-02: 2 assets ok');
+    expect(lines).toContain('HOLDER YIELD A00  2026-11-01 (91d window)');
+    expect(lines).toContain('multiple 11.89x | holder-flow growth 27.18%/yr');
+    expect(lines).toContain('HOLDER YIELD A01  2026-11-02 (30d window, scope complete)');
+    expect(lines).toContain('revenue 120.00/yr (growth 20.00%/yr) | gross profit 90.00/yr | payout ratio 50.00%');
+  });
+
   it('nightly_report: an unset webhook is not delivered, so the dead-man is not pinged (I-1)', async () => {
     const w = await world(['mini']);
     await refresh('mini', 'done');

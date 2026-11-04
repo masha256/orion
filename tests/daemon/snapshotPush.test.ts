@@ -11,7 +11,7 @@ import { insertSnapshot, pendingSnapshots } from '../../src/db/snapshotsOut.js';
 import { assetsFile, fullBody, levelsBody } from '../../src/push/body.js';
 import { buildEnvelope, type SnapshotEnvelope } from '../../src/push/envelope.js';
 import { OrionError } from '../../src/types.js';
-import { MINI_ASSET_YAML } from '../helpers/assets.js';
+import { MINI_ASSET_YAML, MINI_REPORT_YAML, seedMiniReport } from '../helpers/assets.js';
 import { useTestDb } from '../helpers/db.js';
 import { pushContext, pushJob } from '../helpers/pushWorld.js';
 
@@ -180,6 +180,22 @@ describe('snapshot bodies', () => {
         paws: { state: 'paused', state_since: '2026-10-20T00:00:00.000Z', state_reason: 'r', report_day: null, lag_days: null, report: null, report_error: 'no reporting block' },
       },
     });
+  });
+
+  it('full snapshot body carries incomeStatement and the legacy keys', async () => {
+    const h = home();
+    writeFileSync(join(h.root, 'assets', 'mini.yaml'), MINI_REPORT_YAML);
+    await insertRegistryRow(db(), 'mini', 'active', 'h', change('2026-09-01T00:00:00.000Z'));
+    await seedMiniReport(db(), '2026-11-02');
+    const body = (await fullBody(db(), h.root, await listRegistry(db()), '2026-11-02')) as { assets: Record<string, { report: Record<string, unknown>; report_day: string; report_error: string | null }> };
+    const mini = body.assets.mini!;
+    expect(mini).toMatchObject({ report_day: '2026-11-02', report_error: null });
+    // P2: the --legacy object, v1 keys in v1 order, incomeStatement last.
+    expect(Object.keys(mini.report)).toEqual([
+      'asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'flows', 'buckets', 'yields', 'holderFlowGrowth', 'supply', 'income', 'revenue',
+      'volume', 'revenueDisclosed', 'notes', 'incomeStatement',
+    ]);
+    expect(mini.report.incomeStatement).toMatchObject({ schema: 2, day: '2026-11-02', revenue: { annualized: expect.any(Number) } });
   });
 
   it('snapshot bodies: the levels hook writes a levels snapshot and recordSnapshot a full one', async () => {

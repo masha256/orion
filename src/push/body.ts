@@ -6,7 +6,7 @@ import { lastCompleteReportDay, loadHolderYieldReport } from '../report/load.js'
 import { MS_PER_DAY } from '../types.js';
 
 /**
- * The Phase 1.5 snapshot bodies (spec 9.1, minimal): per asset the `report yield --json` object (full) or the
+ * The Phase 1.5 snapshot bodies (spec 9.1, minimal): per asset the `report yield --json --legacy` object (full) or the
  * `latest_levels` rows (levels), plus the registry state. Phase 5 defines the full body. Active and paused assets are
  * published; a paused asset is marked by its state (with since and reason) and keeps its last report.
  */
@@ -68,8 +68,8 @@ export async function fullBody(db: Db, configRoot: string, registry: RegistryRow
           reportDay = used.day;
           lagDays = used.lagDays;
         }
-        // The --json object exactly: what JSON.stringify keeps of it.
-        report = JSON.parse(JSON.stringify(await loadHolderYieldReport(db, asset, used?.day))) as unknown;
+        // The `--json --legacy` object exactly (P2: v2 and the legacy keys during the legacy release): what JSON.stringify keeps of it.
+        report = JSON.parse(JSON.stringify(await loadHolderYieldReport(db, asset, used?.day, { legacy: true }))) as unknown;
         if (reportDay === null) reportDay = (report as { day?: string }).day ?? null;
       }
     } catch (err) {

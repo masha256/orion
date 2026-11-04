@@ -173,7 +173,7 @@ describe('assets/link.yaml', () => {
   it('reports the Reserve as a hold with the 5 percent haircut, and the releases as dilution', async () => {
     const w = world();
     await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps, { backfillDays: 370 });
-    const rep = await loadHolderYieldReport(w.db, config);
+    const rep = await loadHolderYieldReport(w.db, config, undefined, { legacy: true });
     expect(rep.day).toBe('2026-10-15');
     const gross = (13 * 100_000 * PRICE * 365) / 91;
     expect(rep.flows).toEqual([expect.objectContaining({ id: 'reserve', bucket: 'hold', haircut: 0.05, gross: expect.closeTo(gross, 0), net: expect.closeTo(gross * 0.95, 0) })]);

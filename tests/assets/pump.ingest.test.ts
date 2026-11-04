@@ -142,7 +142,7 @@ describe('assets/pump.yaml', () => {
     expect(last7.every((o) => o.source === 'api')).toBe(true);
     expect((await rows('burn_wallet_a_pump')).at(-1)!.value).toBe(0);
 
-    const rep = await loadHolderYieldReport(w.db, config);
+    const rep = await loadHolderYieldReport(w.db, config, undefined, { legacy: true });
     expect(rep.flows).toEqual([expect.objectContaining({ id: 'buyback', bucket: 'burn', haircut: 0 })]);
     expect(rep.yields.dilutionLines).toEqual([{ id: 'unlocks', tokensPerYear: expect.closeTo(82.5e9, -6), yield: expect.closeTo(82.5e9 / supplyNow, 6) }]);
   });

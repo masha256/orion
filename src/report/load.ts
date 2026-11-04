@@ -4,7 +4,8 @@ import { listActiveObservations } from '../db/observations.js';
 import { latestLevel } from '../observations/select.js';
 import { addDays, utcDay } from '../ingest/time.js';
 import { MS_PER_DAY, STD_METRICS } from '../types.js';
-import { holderYieldReport, type HolderYieldReport, type ReportLevels } from './holderYield.js';
+import { holderYieldReport, type HolderYieldReport, type ReportInput, type ReportLevels } from './holderYield.js';
+import { incomeStatementV2, type IsV2 } from './incomeStatement.js';
 
 /**
  * Every flow metric the report reads: the holder flows, plus revenue and volume, then the income statement v2's (which
@@ -103,7 +104,45 @@ export async function lastCompleteReportDay(db: Db, asset: AssetConfig): Promise
   return last;
 }
 
-export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: string): Promise<HolderYieldReport> {
+/**
+ * `report yield --json` (D9): the income statement v2 with the figures it shares with the header. The v1 keys (`flows`,
+ * `buckets`, `yields`, `holderFlowGrowth`, `supply`, `income`, `revenue`, `volume`, `revenueDisclosed`) stay one release
+ * behind `--legacy`. `incomeStatement` is absent for an asset with no `income_statement` block.
+ */
+export interface YieldReport {
+  asset: string;
+  day: string;
+  windowDays: number;
+  price: number | null;
+  marketCap: number | null;
+  fdv: number | null;
+  incomeStatement?: IsV2;
+  notes: string[];
+}
+
+export interface ReportOptions {
+  /** The v1 object in v1 key order, `incomeStatement` appended last (deleting it gives v1 byte for byte). */
+  legacy?: boolean;
+}
+
+/** The report object for one input: v1 then v2, from the same input (pure). */
+export function yieldReport(input: ReportInput, opts: { legacy: true }): HolderYieldReport;
+export function yieldReport(input: ReportInput, opts?: ReportOptions): YieldReport | HolderYieldReport;
+export function yieldReport(input: ReportInput, opts: ReportOptions = {}): YieldReport | HolderYieldReport {
+  const v1 = holderYieldReport(input);
+  const is = input.asset.income_statement ? incomeStatementV2(input, v1) : undefined;
+  const withIs = is ? { incomeStatement: is } : {};
+  if (opts.legacy) return { ...v1, ...withIs };
+  return { asset: v1.asset, day: v1.day, windowDays: v1.windowDays, price: v1.price, marketCap: v1.marketCap, fdv: v1.fdv, ...withIs, notes: v1.notes };
+}
+
+/**
+ * The asset's report for `day` (default: its last complete report day). Without `legacy`, the D9 shape; with it, the v1
+ * object plus `incomeStatement` (the tick's summary and the snapshot body read the v1 keys).
+ */
+export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day: string | undefined, opts: { legacy: true }): Promise<HolderYieldReport>;
+export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: string, opts?: ReportOptions): Promise<YieldReport | HolderYieldReport>;
+export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: string, opts: ReportOptions = {}): Promise<YieldReport | HolderYieldReport> {
   const r = asset.reporting;
   if (!r) throw new Error(`assets/${asset.id}.yaml has no reporting block`);
   const target = day ?? (await lastCompleteReportDay(db, asset));
@@ -155,5 +194,5 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
     provisional.set(m, p.provisional);
     daily.set(m, p.days);
   }
-  return holderYieldReport({ asset, day: target, daily, provisional, levels });
+  return yieldReport({ asset, day: target, daily, provisional, levels }, opts);
 }

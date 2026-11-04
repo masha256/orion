@@ -282,7 +282,7 @@ describe('assets/lit.yaml', () => {
   it('reports the buys as the payout, the unlocks as dilution, and the market cap on circulating supply', async () => {
     const w = world();
     await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
-    const rep = await loadHolderYieldReport(w.db, config);
+    const rep = await loadHolderYieldReport(w.db, config, undefined, { legacy: true });
     expect(rep.day).toBe('2026-10-15');
     expect(rep.marketCap).toBeCloseTo(PRICE * 250_000_000, 0);
     expect(rep.fdv).toBeCloseTo(PRICE * 981_909_280, 0);
@@ -305,7 +305,7 @@ describe('assets/lit.yaml', () => {
     expect(rep.supply!.netPerYear).toBeGreaterThan(0);
   });
 
-  it('orion report yield lit --json carries the same streams, shares and totals (what the coinrevs feed reads)', async () => {
+  it('orion report yield lit --json --legacy carries the same streams, shares and totals (what the coinrevs feed reads)', async () => {
     const home = mkdtempSync(join(tmpdir(), 'orion-lit-report-'));
     const lines: string[] = [];
     const ctx = testCliContext(home, { stdout: (l) => lines.push(l), now: () => NOW, stderr: () => undefined });
@@ -316,7 +316,14 @@ describe('assets/lit.yaml', () => {
     await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     lines.length = 0;
     await orion('report', 'yield', 'lit', '--json');
+    // D9: the default object is the v2 statement; the v1 keys the coinrevs feed reads are behind --legacy for one release.
+    const slim = JSON.parse(lines.join('\n'));
+    expect(slim).not.toHaveProperty('revenue');
+    expect(slim.incomeStatement.revenue.lines.map((l: { id: string }) => l.id)).toEqual(['core', 'robinhood']);
+    lines.length = 0;
+    await orion('report', 'yield', 'lit', '--json', '--legacy');
     const out = JSON.parse(lines.join('\n'));
+    expect(out.incomeStatement).toEqual(slim.incomeStatement);
     expect(out.day).toBe('2026-10-15');
     expect(out.revenue.basis).toBe('streams');
     expect(out.revenue.streams.map((s: Record<string, unknown>) => [s.id, s.share ?? null, 'share' in s])).toEqual([['core', null, false], ['robinhood', 0.5, true]]);

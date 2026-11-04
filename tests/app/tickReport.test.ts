@@ -5,6 +5,9 @@ import { describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
 import { emitTickReport, summarizeHolderYield, tickId, TickReportSchema, type TickReport } from '../../src/app/tickReport.js';
 import type { Growth, HolderYieldReport, IncomeStatement, RevenueReport } from '../../src/report/holderYield.js';
+import { holderYieldReport as computeReport } from '../../src/report/holderYield.js';
+import { incomeStatementV2, type IsV2 } from '../../src/report/incomeStatement.js';
+import { repoAsset, syntheticInput } from '../helpers/syntheticReport.js';
 
 /** A minimal but schema-valid report: `run_in_progress`, lock set, everything else at its empty/absent value. */
 function minimalReport(): TickReport {
@@ -105,6 +108,39 @@ describe('summarizeHolderYield', () => {
     const both = summarizeHolderYield(holderYieldReport({ income: income(5000.5, 0.25, 0.75), revenue: revenue(7000, 0.1) }));
     expect(both).toMatchObject({ revenue_annualized: 7000, revenue_growth_annualized: 0.1, payout_ratio: 0.75 });
     expect(summarizeHolderYield(holderYieldReport())).toMatchObject({ revenue_annualized: null, revenue_growth_annualized: null, payout_ratio: null });
+  });
+});
+
+describe('summarizeHolderYield: income statement v2 (Task 4)', () => {
+  const V1_FIELDS = ['day', 'window_days', 'price', 'market_cap', 'fdv', 'revenue_annualized', 'revenue_growth_annualized', 'payout_ratio', 'flows', 'yields', 'multiple', 'holder_flow_growth_annualized'];
+
+  it('adds the v2 fields after the v1 ones, copied from incomeStatement; the v1 fields do not move', () => {
+    const input = syntheticInput(repoAsset('lit'));
+    const v1 = computeReport(input);
+    const is: IsV2 = incomeStatementV2(input, v1);
+    const before = summarizeHolderYield(v1);
+    const after = summarizeHolderYield({ ...v1, incomeStatement: is });
+    expect(Object.keys(before)).toEqual(V1_FIELDS);
+    expect(Object.keys(after)).toEqual([
+      ...V1_FIELDS, 'statement_revenue', 'statement_revenue_growth', 'gross_profit', 'statement_payout_ratio', 'payout_ratio_basis',
+      'holder_flow_by_bucket', 'net_holder_yield', 'mcap_to_revenue', 'mcap_to_holder_flow', 'scope', 'flags',
+    ]);
+    for (const k of V1_FIELDS) expect(after[k as keyof typeof after]).toEqual(before[k as keyof typeof before]);
+    expect(after).toMatchObject({
+      statement_revenue: is.revenue.annualized, statement_revenue_growth: is.revenue.growth.annualized, gross_profit: is.grossProfit.annualized,
+      statement_payout_ratio: is.ratios.payoutRatio, payout_ratio_basis: is.ratios.payoutRatioBasis,
+      holder_flow_by_bucket: { burn: is.holderFlow.byBucket.burn!.net, hold: null, cash: null },
+      net_holder_yield: is.yields.netShareholder, mcap_to_revenue: is.multiples.mcapToRevenue, mcap_to_holder_flow: is.multiples.mcapToHolderFlow.total,
+      scope: is.scope, flags: is.flags,
+    });
+    expect(after.gross_profit).toEqual(expect.any(Number));
+    expect(TickReportSchema.parse({ ...minimalReport(), outcome: 'completed', lock: null, holder_yield: after }).holder_yield).toEqual(after);
+  });
+
+  it('tick holder_yield from a v1 job row still parses', () => {
+    const row = JSON.parse(readFileSync(new URL('../fixtures/daemon/refresh-result-v1.json', import.meta.url), 'utf8')) as { report: TickReport };
+    expect(row.report.holder_yield).not.toHaveProperty('gross_profit');
+    expect(TickReportSchema.parse(row.report)).toEqual(row.report);
   });
 });
 

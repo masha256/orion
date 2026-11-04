@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildProgram } from '../../src/cli/program.js';
-import { MINI_ASSET_YAML } from '../helpers/assets.js';
+import { MINI_ASSET_YAML, MINI_REPORT_YAML, seedMiniReport } from '../helpers/assets.js';
 import { devPaths, testCliContext, useTestDb } from '../helpers/db.js';
 import { AS_OF } from '../helpers/obs.js';
 
@@ -86,6 +86,43 @@ describe('orion cli', () => {
     expect(JSON.parse(await orion('asset', 'validate', 'hype', '--json'))).toEqual([
       { id: 'hype', errors: [], listingBar: { ok: false, failing: [{ line: 'revenue.trading', sourceType: 'third_party' }, { line: 'holders.af_buyback', sourceType: 'third_party' }] } },
     ]);
+  });
+
+  it('cli: report yield --json omits legacy keys; --legacy keeps them in v1 order, incomeStatement last (D9)', async () => {
+    writeFileSync(join(home, 'assets', 'mini.yaml'), MINI_REPORT_YAML);
+    await seedMiniReport(testDb(), '2026-06-28');
+    const slim = JSON.parse(await orion('report', 'yield', 'mini', '--day', '2026-06-28', '--json')) as Record<string, unknown>;
+    expect(Object.keys(slim)).toEqual(['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'incomeStatement', 'notes']);
+    const legacy = JSON.parse(await orion('report', 'yield', 'mini', '--day', '2026-06-28', '--json', '--legacy')) as Record<string, unknown>;
+    expect(Object.keys(legacy)).toEqual([
+      'asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'flows', 'buckets', 'yields', 'holderFlowGrowth', 'supply', 'income', 'revenue',
+      'volume', 'revenueDisclosed', 'notes', 'incomeStatement',
+    ]);
+    expect(legacy.incomeStatement).toEqual(slim.incomeStatement);
+    // Every asset (no asset given) takes the flag too.
+    const all = JSON.parse(await orion('report', 'yield', '--day', '2026-06-28', '--json', '--legacy')) as Record<string, unknown>[];
+    expect(all.map((r) => Object.keys(r).at(-1))).toEqual(['incomeStatement']);
+    // The proof harness (tools/phase2-proof/reports.sh) finds the flag in --help.
+    const help: string[] = [];
+    const program = buildProgram(testCliContext(home, { stdout: (l) => help.push(l), now: () => new Date(AS_OF) }));
+    program.exitOverride().configureOutput({ writeOut: (t) => help.push(t), writeErr: (t) => help.push(t) });
+    await expect(program.parseAsync(['report', 'yield', '--help'], { from: 'user' })).rejects.toMatchObject({ code: 'commander.helpDisplayed' });
+    expect(help.join('')).toMatch(/--legacy/);
+  });
+
+  it('cli: report yield text prints the v2 statement block first, the v1 lines only with --legacy', async () => {
+    writeFileSync(join(home, 'assets', 'mini.yaml'), MINI_REPORT_YAML);
+    await seedMiniReport(testDb(), '2026-06-28');
+    const text = (await orion('report', 'yield', 'mini', '--day', '2026-06-28')).split('\n');
+    expect(text[0]).toBe('mini  day 2026-06-28  window 10d  price 2  mcap n/a  fdv $2.00M');
+    expect(text[1]).toBe('  income statement v2 (annualized, 10d; scope complete, category dex):');
+    expect(text).toContain('    gross profit     n/a (cost of revenue not measured)');
+    expect(text).toContain('  flags: cost of revenue not measured: lps; payout ratio on revenue: cost of revenue not measured');
+    expect(text.some((l) => l.startsWith('  yields: '))).toBe(false);
+    const legacy = (await orion('report', 'yield', 'mini', '--day', '2026-06-28', '--legacy')).split('\n');
+    expect(legacy.slice(0, text.length)).toEqual(text.filter((l) => !l.startsWith('  note: ')));
+    expect(legacy.some((l) => l.startsWith('  yields: cash'))).toBe(true);
+    expect(legacy.indexOf('  income statement (annualized, 10d):')).toBeGreaterThan(legacy.indexOf('  income statement v2 (annualized, 10d; scope complete, category dex):'));
   });
 
   it('rejects data for a metric the asset does not define', async () => {

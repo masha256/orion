@@ -133,6 +133,7 @@ logs [n]                 # the last n lines of ~/home/daemon.log (default 200, a
 jobs [--since <iso>]     # the job list (JSON)
 dev-queue [n]            # the watcher's dev queue (~/home/disclosure/dev-queue.md)
 report yield [<a>] [--day <d>] | data anomalies [<a>] [--all] | data sources <a> | data show <a> [<metric>]
+                         # report yield prints `report yield --json`: from Phase 2 the v2 object, without the v1 keys (no --legacy here)
 proposals list [<a>] [--all] | agent runs list [<a>] | inbox <a>
 confirm|reject <id> | approve <id> [note] | decline|ack|resolve <id> <note>
 job run-now <kind> [asset] [--slot <iso>]   # enqueues; nightly_report needs --slot (the slot to report again)

@@ -1,6 +1,7 @@
 import type { AssetConfig, FlowKind, RecipientBase } from '../config/schema.js';
 import { addDays } from '../ingest/time.js';
 import { DAYS_PER_YEAR } from '../types.js';
+import type { IsV2 } from './incomeStatement.js';
 
 /**
  * Report-only holder yield and growth (no driver, no grade, no signal). Everything here is computed from stored daily
@@ -164,6 +165,11 @@ export interface HolderYieldReport {
   volume: { annualized: number | null; growth: Growth; metrics: string[] } | null;
   revenueDisclosed: { latest: number | null; latestAt: string | null; previous: number | null; previousAt: string | null; annualizedGrowth: number | null } | null;
   notes: string[];
+  /**
+   * Income statement v2 (`loadHolderYieldReport` with `legacy`): appended after every v1 key, so deleting it gives the
+   * v1 object byte for byte. Absent for an asset with no `income_statement` block, and from `holderYieldReport` itself.
+   */
+  incomeStatement?: IsV2;
 }
 
 /** One line of the income statement, annualized over the window. */

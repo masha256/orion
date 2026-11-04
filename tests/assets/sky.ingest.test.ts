@@ -182,7 +182,7 @@ describe('assets/sky.yaml', () => {
   it('reports both halves as cash to stakers, and the treasury net payout as dilution', async () => {
     const w = world();
     await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps, { backfillDays: 362 });
-    const rep = await loadHolderYieldReport(w.db, config);
+    const rep = await loadHolderYieldReport(w.db, config, undefined, { legacy: true });
     expect(rep.day).toBe('2026-10-15');
     const ann = (x: number) => (x * 365) / 91;
     expect(rep.flows).toEqual([
