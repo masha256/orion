@@ -78,12 +78,26 @@ describe('income_statement schema', () => {
     refused(rev, /line id "core" is used twice/);
   });
 
-  it('lets a use line share the id of the revenue line it passes on in full (of, share 1)', () => {
+  it('refuses a use line reusing the id of the revenue line it passes on, in full or in part (ruling R8)', () => {
     const is = base();
     is.holders.push({ id: 'core', of: 'core', bucket: 'cash', haircut: 0, recipient_base: 'all', capture_rule: 'contractual' });
-    expect(() => parse(is)).not.toThrow();
+    refused(is, /line id "core" is used twice/);
     is.holders[1].share = 0.5;
     refused(is, /line id "core" is used twice/);
+    // the Task 2 convention: the revenue line takes the suffix _rev, the use line keeps the name
+    const renamed = base();
+    renamed.revenue[0].id = 'core_rev';
+    renamed.holders.push({ id: 'core', of: 'core_rev', bucket: 'cash', haircut: 0, recipient_base: 'all', capture_rule: 'contractual' });
+    expect(() => parse(renamed)).not.toThrow();
+  });
+
+  it('refuses a below_line id that a revenue or use line already has', () => {
+    const rev = base();
+    rev.below_line[1].id = 'core';
+    refused(rev, /line id "core" is used twice/);
+    const use = base();
+    use.below_line[1].id = 'treasury';
+    refused(use, /line id "treasury" is used twice/);
   });
 
   it('refuses a disclosed revenue line next to another revenue line', () => {

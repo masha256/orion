@@ -133,7 +133,7 @@ const present = (line: object, keys: string[]): string[] => keys.filter((k) => (
 
 /**
  * The validation rules the schema cannot express (spec §6 + correction 6): one value source per line, ids unique across
- * sections (a use line may reuse the id of the revenue line it passes on in full), metric types and references, a
+ * sections (strictly: a use line never reuses its revenue line's id), metric types and references, a
  * disclosed revenue line alone, remainder only on an empty section, burns at haircut 0, and no series read twice (a use of
  * a revenue series goes through `of`). The shared reporting keys are checked in schema.ts. Messages are prefixed.
  */
@@ -157,13 +157,12 @@ export function incomeStatementIssues(asset: { metrics: Record<string, { type: s
     if (!measuredRevenue(of)) issue(`${where} estimate of "${of}" is not a measured revenue line (one with a metric or derived)`);
   };
 
-  // Line ids, unique across sections. A use line `of` a revenue line in full (no share) may carry that line's id.
+  // Line ids, unique across all sections with no exception (spec §6, ruling R8), so a check part names exactly one line.
+  // A use line passing on a revenue line takes its own id (Task 2: the revenue line is `<name>_rev`).
   const ids = new Set<string>();
-  const passedOn = new Set<string>();
-  const addId = (id: string, passOf?: string) => {
-    if (!ids.has(id)) return void ids.add(id);
-    if (passOf === id && revById.get(id) !== undefined && !passedOn.has(id)) return void passedOn.add(id);
-    issue(`line id "${id}" is used twice`);
+  const addId = (id: string) => {
+    if (ids.has(id)) issue(`line id "${id}" is used twice`);
+    else ids.add(id);
   };
 
   // Which line reads each series: revenue first, so a use or below_line reading a revenue series gets its own message.
@@ -210,8 +209,7 @@ export function incomeStatementIssues(asset: { metrics: Record<string, { type: s
   for (const section of USE_SECTIONS) {
     for (const l of (is[section] ?? []) as AnyUseLine[]) {
       const w = `${section}.${l.id}`;
-      const fullPassOn = l.of !== undefined && l.share === undefined && l.share_metric === undefined ? l.of : undefined;
-      addId(l.id, fullPassOn);
+      addId(l.id);
       if (present(l, ['metric', 'of', 'estimate', 'not_measured']).length !== 1) issue(`${w} takes exactly one of metric, of, estimate or not_measured`);
       if (l.metric !== undefined) {
         flow(l.metric, `${w} metric`);
