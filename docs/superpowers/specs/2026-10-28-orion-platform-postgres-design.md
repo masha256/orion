@@ -843,3 +843,57 @@ by Mike's git-repo/bucket direction) and N3 (accepted with his no-DST-shift rule
 | N11 | Prod snapshot repo | private `masha256/orion-data`, created by Mike; the server's prod deploy key (write) on it; the site later gets its own read-only key |
 | N12 | Staging snapshot target | a separate private repo `masha256/orion-data-staging` with the staging key only, so staging can never write prod's data |
 | N13 | Container testing of the provisioning scripts | add `hermes` to the `docker` group (`sudo usermod -aG docker hermes`) so both scripts run for real in `ubuntu:24.04` / `ubuntu:26.04` before Mike runs them; alternative: Mike runs the container test, or skip it (shellcheck + dry run only). Note the docker group is root-equivalent on this host |
+
+## Amendments made during execution (Phase 1.5c)
+
+Plan `docs/superpowers/plans/2026-10-29-orion-phase1.5c-daemon-deploy.md` (branch `feat/daemon`). The plan's own
+"Spec gaps and rulings" R1-R21 stand as written there (e.g. R1 `UNIQUE NULLS NOT DISTINCT`, R2 no `scp`, R5 two dead-man
+URLs, R6 `COINGECKO_PLAN=pro`, R10 `0002_daemon`). The rulings below were made by the controller during execution
+(ledger `.superpowers/sdd/2026-10-29-orion-phase1.5c-daemon-deploy/ledger.md`); where they differ from the text above,
+they win.
+
+| Ruling | Amends | What changed |
+|---|---|---|
+| R-c1 | §3.2 step 1 | Pre-cutover staging deploys come from a tag on `feat/daemon`: `deploy.sh stage <tag> --branch <name>` accepts a commit reachable from `origin/<name>`. Prod still requires `origin/main` and refuses `--branch`. |
+| R-c2 | §2.4, §3.4 (D4) | Anything needing root on venus (full `orion-remote`, the user unit, the watcher venv) is done by Mike re-running `orion-host.sh`; Raymond stops at a ready-to-run command instead of working around it. |
+| R-c3 | §3.1 | `/RELEASE` is git-ignored and `resolvePaths` ignores a `RELEASE` at a git checkout root (`.git` dir or worktree file): a checkout is never a release. |
+| R-c4 | §3.1, D6 | A malformed `RELEASE` is refused (`invalid_release`); D6's `config_needs_release` is checked before the stale-hash check. |
+| R-c5 | §5.3 (N4) | `asset resume` returns an asset to the state it was paused from (`paused_from`): a paused inactive asset resumes inactive; only `asset activate` makes an asset active. |
+| R-c6 | §5.2 | A job whose lease is lost (`job_lease_lost` on finish, retry or defer) is aborted and its result dropped, never re-written. |
+| R-c7 | §5.3 (resume backfill) | `asset resume` computes `backfillDays` from the asset's DefiLlama sources' `backfill_days` (default 90); accepted until DefiLlama leaves (Phase 3), followup. |
+| R-c8 | §3.3, R10 | `0002_daemon.sql` was edited in place before any release (only test schemas had applied it); from the first staging release on, migrations are append-only. |
+| R-c9 | §5.4, §6 | Stage overrides in `schedule.yaml` merge field by field (staging levels every 6 h at :15). Every Slack post escapes `&`, `<`, `>` (no link syntax). |
+| R-c10 | §3.4 | New `orion-remote` verb `reconcile --allow-retire [--yes]` (prints the registry diff first; `--yes` applies), for a release that would retire every asset or more than 2 at once (start-up refuses those, review I-3). |
+| R-c11 | §5.6 | The hourly levels dead-man ping is withheld when any asset's fetch throws or a watch post is undelivered (silence = broken). `watch_state` is saved before the post; undelivered text is kept in the job result. |
+| R-c12 | §2.4, §9.2 | `orion-host.sh` installs GitHub's published SSH host keys into each Orion user's `known_hosts`; the publisher uses `StrictHostKeyChecking=yes`. |
+| R-c13 | §9.2 (file layout) | `manifest.json` gains `assets: {path, sha256}` for `assets.json`, so the signature covers every published file. |
+| R-c14 | §3.2 step 2, §6 | The soak is the newest scheduler-made `done` nightly report on the running tag (existence is what `deploy.sh` checks); a refresh with no ingest shows as `<asset>:*` in `failed_sources`; each asset block of the combined nightly is headed `== <SYM> ==`. |
+| R-c15 | §5.4, §5.6 | When the nightly refresh clears a level watch that `watch_state` shows firing, it posts the same `cleared` line as the hourly job (no silent drop). |
+| R-c16 | §12 (work order) | Order change: Tasks 13-15 (release build, full `orion-remote`, deploy.sh + unit + `orion-host.sh`) ran before 11 and 12, so staging could go up early; until 11/12 landed, the staging daemon skipped `disclosure_watch` and `staging_refresh` with one log line. |
+| R-c17 | §3.1, §3.2 step 4 | The tarball is `<tag>.tgz` (the tag already starts `orion-`); `RELEASE.built_at` is the commit time (reproducible packs); `switch` appends to `deploys.log` right after the repoint, before the restart, so a failed restart can still be rolled back. |
+| R-c18 | §2.4, D11 | The watcher venv's pins are the live watcher's real ones (`tools/disclosure-watcher/requirements.txt`; `orion-host.sh` carries an identical copy); `--with-watcher` stayed off until then. |
+| R-c19 | §2.4, §5.1 (N2) | Provisioning enables the user unit but never starts it; `ConditionPathExists=%h/current/RELEASE` keeps a boot before the first deploy quiet. The first `switch` starts it. |
+| R-c20 | §3.2 step 2 | The soak (review I-3) counts a slot's refreshes as finished when done, failed or skipped on the tag (a failed one appears in `failed_sources`, which the prod gate compares). |
+| R-c21 | §12 step 4 | The 48 h dev soak is replaced by the staging soak (staging is real venus, real chains, real webhooks); Task 16 is docs and followups only. |
+
+Paths (amend §2.1, §8.5, §10.1): venus's root filesystem is 10 GB, so the prod → staging dump is
+`/home/orion-refresh/latest.dump` (not `/srv/orion-refresh`): the directory is `postgres:orion-refresh` 2750 (setgid),
+the file 640, group `orion-refresh` = both Orion users (plan R19). The nightly encrypted dumps' local copies are
+`/home/orion-backups/dumps/<env>/YYYY/MM/DD.dump.age` (`postgres` 700), uploaded to Spaces `dumps/<env>/...`.
+
+§8.5 as built (Task 12): `staging_refresh` restores with `pg_restore --clean --if-exists --no-owner --no-privileges
+--role=orion_stage --single-transaction` from a filtered TOC that keeps staging's own `jobs`, `asset_registry`,
+`asset_state_events`, `latest_levels`, `watch_state`, `snapshots_out`, `daemon_heartbeat`, `day_blocks` and
+`schema_migrations` (and every entry depending on them); it refuses unless the dump's migrations (ids and checksums)
+equal staging's, never runs outside `ORION_ENV=stage`, and with no dump file yet ends `skipped` quietly. Grants are not
+restored (prod's `orion_prod_ro` grant must not reach staging).
+
+Review rulings that change the text above (fix waves 1 and 2, same ledger): `sql-ro` never goes through psql but
+`orion db query-ro` (node + pg as `orion_prod_ro`, one statement, no backslash; §3.4, §9.3, C-1); stage/prod refuse to
+start without `SLACK_WEBHOOK_URL`, `ORION_DEADMAN_NIGHTLY_URL` or `ORION_PUBLISH` (`off` allowed and printed every night)
+and an unset webhook is never "delivered" (§4, §5.6, I-1, I-2); `install` writes `<release>/.installed` last and
+`switch`/`rollback` refuse a release without it, and rollback refuses to cross a `breaking=1` switch (§3.2, §3.3, I-5);
+the published `full` snapshot uses each asset's last complete report day with `lag_days` (§9.1, I-7); `deploy.sh` fetches
+GitHub over HTTPS with `GH_PAT` (§3.2, I-8); `job run-now nightly_report` needs `--slot` (§3.4, M-2); a deploy that died
+between drain and restart is recovered by the next `orion-remote` call (§3.2, M-11); a release that would retire every
+asset or more than 2 at once is refused at start-up (§5.3, I-3 of review 1).

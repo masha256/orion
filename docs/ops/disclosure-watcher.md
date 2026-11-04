@@ -1,39 +1,92 @@
-# Disclosure watcher (Hermes side, LIT pilot)
+# Disclosure watcher (LIT pilot; the daemon's `disclosure_watch` job)
 
 When an issuer publishes something material (in v1: Lighter's quarterly investor-call recording on X), the watcher finds it, transcribes it, stores it in Orion, and has Orion's analyst read it in a `disclosure` run. What the analyst finds comes back as Orion proposals (the inbox), dev-queue entries (code and data-source work) and dated catalysts in the journal. It makes no direct assumption change: value changes are proposals, and every figure it records waits for the user (a proposal where the metric takes provisional data, an inert row otherwise, whatever it cites). Design: `docs/superpowers/specs/2026-10-23-orion-disclosure-watcher-design.md`, sections 8 to 10.
 
-Status: built and live (LIT pilot). The Orion side (`orion doc`, the `disclosure` run type) is in this repo; the script lives in the Hermes profile, not in git (versioned only by the profile's hourly backup), so watcher changes are recorded in this page and the followups notes. Since Phase 1 the `disclosure` run is the only analyst run type, and a proposal's effect is always null: the digest prints `no target effect`.
+Status: built; live on the Hermes host until cutover, then on the server. Since Phase 1.5c (D11) the watcher lives in
+this repo, `tools/disclosure-watcher/`, ships in every release (`~/current/tools/disclosure-watcher/`, without its
+tests) and runs as the daemon's daily `disclosure_watch` job. Its paths come from the environment, not from the Hermes
+profile. Since Phase 1 the `disclosure` run is the only analyst run type, and a proposal's effect is always null: the
+digest prints `no target effect`. Until cutover the Hermes cron job below keeps running the profile copy; at cutover
+its state moves to the server (below) and the cron job is removed.
 
 ## How it runs
 
-1. A deterministic script on the Hermes host (no LLM call anywhere in it) runs once a day from cron. On a scan day it makes one keyless DuckDuckGo HTML search per asset, extracts X post ids, skips every id already in its state file, and classifies each new one by its public `tweet-result` JSON: the author must be the configured `user.id_str` (never the handle, which can change), the post at most 120 days old. A post with a video of at least `min_video_minutes` whose text matches `match_text` is a recording (`queued`); a post matching `announce_text` with no video is an `announcement` (logged only); anything else is `irrelevant`.
-2. It processes at most one `queued` post per run, oldest first: download the audio, decode it to 16 kHz mono WAV, transcribe it with faster-whisper, write `[mm:ss] text` per segment, delete the audio.
-3. It stores the transcript in Orion (`orion doc add ... --kind machine_transcript`) and checks that Orion's sha256 equals its own.
-4. It starts the analyst: `orion agent run <asset> --type disclosure --doc <id> --out <ORION_HOME>/signals.jsonl --json`. Since Phase 1 (2026-10-28) Orion accepts and ignores `--out` (no run writes a signal) and a disclosure run needs no assumption set; the watcher still passes `--out` until its cleanup (open item in `docs/superpowers/notes/2026-10-28-orion-phase1-followups.md`). The tick never starts a `disclosure` run; only the watcher (or you, by hand) does.
-5. The post-run step appends each new dev finding to the dev queue (deduped by fingerprint) and prints a digest, which is the Slack message.
+1. The daemon's `disclosure_watch` job (16:40 UTC daily: 08:40 PST / 09:40 PDT) runs the script's `scan` with the
+   watcher venv's Python. The script is deterministic (no LLM call anywhere in it). On a scan day it makes one keyless
+   DuckDuckGo HTML search per asset, extracts X post ids, skips every id already in its state file, and classifies each
+   new one by its public `tweet-result` JSON: the author must be the configured `user.id_str` (never the handle, which
+   can change), the post at most 120 days old. A post with a video of at least `min_video_minutes` whose text matches
+   `match_text` is a recording (`queued`); a post matching `announce_text` with no video is an `announcement` (logged
+   only); anything else is `irrelevant`.
+2. It processes at most one `queued` post per run, oldest first: download the audio, decode it to 16 kHz mono WAV,
+   transcribe it with faster-whisper, write `[mm:ss] text` per segment, delete the audio.
+3. It stores the transcript in Orion (`orion doc add ... --kind machine_transcript`) and checks that Orion's sha256
+   equals its own.
+4. It starts the analyst: `orion agent run <asset> --type disclosure --doc <id> --json` (no `--out` since 1.5c). The
+   daemon never starts a `disclosure` run itself; only the watcher (or you, by hand) does.
+5. The post-run step appends each new dev finding to the dev queue (deduped by fingerprint) and prints a digest. The
+   job posts the digest to the env's Slack channel (alert lines first); a non-zero exit fails the job with
+   `ORION ALERT <env> disclosure_watch exit <code>: <last stderr line>`, a scan past 2 h is killed (`exit timeout`).
 
-Scan days: daily from the day after a quarter ends to quarter end plus `after_quarter_end_days` (35 for LIT); outside that window, Mondays only. On a day that is not a scan day the script exits 0 and prints nothing.
+Scan days: daily from the day after a quarter ends to quarter end plus `after_quarter_end_days` (35 for LIT); outside
+that window, Mondays only. On a day that is not a scan day the script exits 0 and prints nothing, and nothing is posted.
+
+## The daemon job (`src/daemon/jobs/disclosureWatch.ts`)
+
+```
+<venv>/bin/python ~/current/tools/disclosure-watcher/bin/disclosure_watch.py scan --orion-home ~/home \
+    [--dry-run --queue-file ~/home/disclosure/dev-queue.dry.md] [--dry-state ~/home/disclosure/state/dry-seen.json]
+```
+
+- Python: `$ORION_WATCHER_VENV/bin/python` (the unit sets `~/watcher-venv`, installed by `orion-host.sh --with-watcher`
+  from `requirements.txt`: PyYAML, faster-whisper, numpy, yt-dlp pinned); `python3` from PATH when the venv has none.
+- Environment: the job's env (the unit's variables over `~/shared/.env`) plus `ORION_DW_BASE_DIR=~/home/disclosure`,
+  `ORION_DW_REPO=~/current` (the release root the Orion CLI runs from), `ORION_NODE` (the daemon's node) and
+  `ORION_HOME=~/home`. The dev queue is `$ORION_DW_QUEUE`, default `<base>/dev-queue.md`; the audio cache
+  `$ORION_DW_CACHE`, default `<base>/cache`. `watch.yaml` is always the one beside `bin/` (it ships in the release).
+- yt-dlp: X changes its player often, so before the scan the job runs `<venv>/bin/pip install --upgrade yt-dlp` when
+  `<venv>/.ytdlp-upgraded` is missing or a week old (the stamp is touched only after a good upgrade; a failed one is a
+  warning and the scan runs with the installed one). The pin in `requirements.txt` is the install-time floor; a re-run
+  of `orion-host.sh --with-watcher` after a pin change resets yt-dlp to it.
+- **Prod** runs for real: with `ANTHROPIC_API_KEY` in the `.env` a new call costs one analyst run (about $1 to $3).
+  Without a key it runs dry and the digest starts with `ORION ALERT prod disclosure_watch: no Anthropic credentials
+  (ANTHROPIC_API_KEY) in the env file: the scan ran dry, nothing was filed`.
+- **Staging** always runs dry (`--dry-run`): the Anthropic variables are removed from the watcher's environment whatever
+  the `.env` holds, so it can never start a paid run. Findings go to `~/home/disclosure/dev-queue.dry.md`, and the posts
+  a dry scan processed are remembered in `--dry-state` (`state/dry-seen.json`), so each is reported once, not every scan
+  day. The real state file is never written by a dry run. A dry run still runs `doc add` against staging's own database
+  (documents are append-only and deduped by sha256).
 
 ## Files and state
 
-All under `~/.hermes/profiles/raymond/`:
+On the server, per Orion user (`orion-prod`; staging's copy is separate and dry):
 
-| Path | What | Backed up |
-|---|---|---|
-| `workspace/orion/disclosure-watcher/bin/disclosure_watch.py` | the script (Hermes tools Python: stdlib, `yt-dlp`, `faster_whisper`, `numpy`) | yes (hourly to retrobot-raymond) |
-| `workspace/orion/disclosure-watcher/watch.yaml` | per-asset config | yes |
-| `workspace/orion/disclosure-watcher/state/<asset>.json` | dedupe and progress state | yes |
-| `workspace/orion/disclosure-watcher/transcripts/<asset>/<post_id>.txt` + `.meta.json` | transcripts, as handed to `doc add` | yes |
-| `workspace/orion/disclosure-watcher/log/<asset>.jsonl` | one line per run: candidates, decisions, errors | yes |
-| `cache/disclosure-watch/` | audio and WAV while transcribing; deleted after the transcript is written | no |
-| `scripts/orion-disclosure-watch.sh` | cron wrapper: loads Orion's `.env` (never printed), runs the script | no (as the tick wrappers) |
-| `workspace/orion/dev-queue-revenue.md` | the dev queue the post-run step appends to | yes |
+| Path | What |
+|---|---|
+| `~/current/tools/disclosure-watcher/bin/disclosure_watch.py` | the script (`scan`, `ingest`, `status`); `bin/check_acceptance.py` the acceptance checker |
+| `~/current/tools/disclosure-watcher/watch.yaml` | per-asset config (changes ship as a release) |
+| `~/home/disclosure/state/<asset>.json` | dedupe and progress state |
+| `~/home/disclosure/transcripts/<asset>/<post_id>.txt` + `.meta.json` (+ `.run.json`) | transcripts as handed to `doc add`, run results |
+| `~/home/disclosure/log/<asset>.jsonl` | one line per run: candidates, decisions, errors |
+| `~/home/disclosure/cache/` | audio and WAV while transcribing; deleted after the transcript is written |
+| `~/home/disclosure/dev-queue.md` | the dev queue (prod); read it with `orion-remote dev-queue [n]` |
+| `~/home/disclosure/dev-queue.dry.md`, `state/dry-seen.json` | staging's dry queue and dry-seen posts |
+| `~/watcher-venv/` | the Python venv (`.ytdlp-upgraded` stamp) |
 
-State files are written to a temp file and renamed. Per post id the state holds `{ status, kind, first_seen_at, updated_at, attempts, doc_id, doc_sha256, run_id, run_outcome, error }`, where `status` is one of `irrelevant`, `announcement`, `seeded`, `queued`, `transcribed`, `doc_added`, `run_done`, `run_failed`, `failed`. Plus `search: { last_ok_at, consecutive_failures }` and `windows: { "<YYYY>Q<n>": { found_post_id | null, closed_reported } }`. A known id is skipped whatever its status.
+In a dev checkout the defaults are the watcher's own directory (`state/`, `log/`, `transcripts/`, `cache/`,
+`dev-queue*.md` are git-ignored: never commit them). The Hermes-profile copy
+(`~/.hermes/profiles/raymond/workspace/orion/disclosure-watcher/`, dev queue `workspace/orion/dev-queue-revenue.md`)
+runs until cutover.
+
+State files are written to a temp file and renamed. Per post id the state holds `{ status, kind, first_seen_at,
+updated_at, attempts, doc_id, doc_sha256, run_id, run_outcome, error }`, where `status` is one of `irrelevant`,
+`announcement`, `seeded`, `queued`, `transcribed`, `doc_added`, `run_done`, `run_failed`, `failed`. Plus `search: {
+last_ok_at, consecutive_failures }` and `windows: { "<YYYY>Q<n>": { found_post_id | null, closed_reported } }`. A known
+id is skipped whatever its status.
 
 ## Commands
 
-The scan (what cron runs):
+The scan (what the daemon job runs; set `ORION_DW_REPO` to a release root or checkout to run it by hand):
 
 ```
 disclosure_watch.py scan
@@ -46,10 +99,10 @@ disclosure_watch.py ingest --asset lit --url <x post url> [--dry-run] [--orion-h
                            [--transcript <file>] [--force]
 ```
 
-- `--orion-home`: run the Orion commands against a scratch home (default: the live repo root).
-- `--queue-file`: write dev findings to another file (default: the live queue).
+- `--orion-home`: run the Orion commands against a scratch home (default: `$ORION_HOME`).
+- `--queue-file`: write dev findings to another file (default: `$ORION_DW_QUEUE`, else `<base>/dev-queue.md`).
 - `--transcript <file>`: hand this transcript to `doc add` and skip download and ASR (tests, re-runs).
-- `--dry-run`: pass `--dry-run` to `agent run`; the post-run step then writes only to an explicit `--queue-file` and prints the digest without the cron delivering it.
+- `--dry-run`: pass `--dry-run` to `agent run`, write no state; needs an explicit `--queue-file` and `--orion-home`. `scan --dry-run --dry-state <file>` remembers the posts processed (staging).
 - `--force`: re-run the analyst on an id already processed (on the stored document; the transcript is reused when its file exists). This is also how a `run_failed` post is retried.
 
 A post with a video becomes a `machine_transcript` document; a post with no video becomes a `post` document from its text.
@@ -64,7 +117,7 @@ ffmpeg -i <audio> -ac 1 -ar 16000 -f wav <id>.wav
 node dist/cli/index.js doc add <asset> --url <post url> --file <txt> --kind machine_transcript --source-id x:<id> \
   --published-at <created_at> --title "<asset> investor update <YYYY>Q<n>" --meta asr_model=... --meta audio_sha256=... \
   --meta duration_s=... --meta transcribed_at=... --json
-node dist/cli/index.js agent run <asset> --type disclosure --doc <doc_id> --out <ORION_HOME>/signals.jsonl --json   # a dry run: --dry-run, no --out
+node dist/cli/index.js agent run <asset> --type disclosure --doc <doc_id> --json      # a dry run adds --dry-run
 node dist/cli/index.js agent runs show <run_id> --json                                # estimated_cost_usd for the digest
 node dist/cli/index.js inbox <asset> --json                                           # the filed proposals' kinds (effect is null since Phase 1)
 ```
@@ -79,7 +132,7 @@ orion doc add <asset> --url <source url> --file <path> --kind <kind> [--publishe
                       [--source-id <platform:id>] [--meta <key=value>]... [--json]
 orion doc list [asset] [--json]                 # a re-transcription of the same URL is a new row; the older one shows superseded_by_newer
 orion doc show <id> [--text] [--json]           # metadata and the kind's label; --text adds the stored text
-orion agent run <asset> --type disclosure --doc <id> [--dry-run] [--out <file>, accepted and ignored] [--json]
+orion agent run <asset> --type disclosure --doc <id> [--dry-run] [--json]
 orion agent runs show <id>                      # outcome, dev findings with their citation labels, estimated cost
 ```
 
@@ -87,19 +140,19 @@ Kinds: `machine_transcript | transcript | post | filing | article`. Documents ar
 
 ## The digest and the dev queue
 
-The digest is stdout, so it is the Slack message (#orion-ops):
+The digest is stdout, which the daemon job posts (prod: #orion-ops; staging: #orion-staging):
 
 ```
 ORION DISCLOSURE lit | LIT investor update 2026Q3 | posted 2026-10-22 | doc #<id> machine transcript, 41.5 min | <post url>
 analyst disclosure run #<n> completed | <requests> requests, <input>k input | est $<cost>
 proposals: #<id> config (no target effect) | decide from the next orion-lit DECISIONS block
-dev findings (2, added to dev-queue-revenue.md): [holder_flow] <title> | [revenue] <title>
+dev findings (2, added to dev-queue.md): [holder_flow] <title> | [revenue] <title>
 catalysts: 2026-11-01..2027-05-29 <event> | by 2026-12-31 <event> | by 2026-12-31 <event>
 ```
 
 A run that did not complete prints `analyst disclosure run #<n> ended <outcome>: nothing filed; doc #<id> is stored; retry: ingest --force`. Replying to the digest does nothing: proposals are decided from the asset's daily DECISIONS block, which accepts only ids from its own latest inbox.
 
-Each new dev finding is appended to `workspace/orion/dev-queue-revenue.md` under a heading `## LIT — <title> (disclosure watcher, <YYYY-MM-DD>, run #<n>, doc #<id>)` with a `<!-- dw:fp=<fingerprint> -->` marker; a fingerprint already in the file is skipped, so a re-run of the same document adds nothing. Entries marked "disclosure watcher" are machine-written leads: verify before building. Every model-written string is cleaned again on the Hermes side (control characters, length caps, Slack sequences `<@`, `<!`, `<#`, bare URLs).
+Each new dev finding is appended to the dev queue (on the server `~/home/disclosure/dev-queue.md`, `orion-remote dev-queue [n]` reads it) under a heading `## LIT — <title> (disclosure watcher, <YYYY-MM-DD>, run #<n>, doc #<id>)` with a `<!-- dw:fp=<fingerprint> -->` marker; a fingerprint already in the file is skipped, so a re-run of the same document adds nothing. Entries marked "disclosure watcher" are machine-written leads: verify before building. Every model-written string is cleaned again on the watcher side (control characters, length caps, Slack sequences `<@`, `<!`, `<#`, bare URLs).
 
 ## Alert lines
 
@@ -120,19 +173,31 @@ date; default `<ASSET> post <date>`), not by the call `title`. The raw run resul
 
 A search answered with HTTP 202 or an anomaly page is retried once after 60 seconds, then counts as a failed search day, never as "nothing found".
 
-## The cron job
+## Until cutover: the Hermes cron job
 
-Job `orion-disclosure-watch`, created paused after merge; enabled on the owner's go:
+Job `orion-disclosure-watch` runs the profile copy:
 
 ```
-40 9 * * *    scripts/orion-disclosure-watch.sh     # 09:40 PT, clear of the 05:05-06:05 tick window and its locks
+40 9 * * *    scripts/orion-disclosure-watch.sh     # 09:40 PT
 ```
 
-`no_agent: true` (stdout goes to #orion-ops verbatim, `slack:C0CB7325YFK`), timeout 45 minutes. One run processes at most one post, so it stays inside the timeout. By design this job may start a paid analyst run, once per new call.
+`no_agent: true` (stdout goes to #orion-ops verbatim, `slack:C0CB7325YFK`), timeout 45 minutes. It still passes
+`--out` (accepted and ignored). At cutover (plan Rollout checklist step 6) it is paused, the profile's `state/lit.json`,
+`transcripts/` and `log/` are copied into `~orion-prod/home/disclosure/` and the dev queue to
+`~orion-prod/home/disclosure/dev-queue.md`, so the server's watcher does not re-review a call the Hermes one covered;
+then the cron job and `orion-disclosure-watch.sh` are removed.
 
 ## Seeding
 
-Before the first live scan, `state/lit.json` is seeded with the four known post ids as `seeded`: the Q1, Q2 and Q3 recordings and the Q3 announcement. The live watcher therefore does not re-review a call the manual review already covered. Acceptance runs use `ingest` on a scratch `--orion-home` and a scratch `--queue-file`, so the seed does not affect them.
+Before the first live scan, `state/lit.json` was seeded with the four known post ids as `seeded`: the Q1, Q2 and Q3
+recordings and the Q3 announcement. The server inherits that state by the cutover copy above. Acceptance runs use
+`ingest` on a scratch `--orion-home` and a scratch `--queue-file`, so the seed does not affect them.
+
+## Tests
+
+`python3 -m unittest discover -s tools/disclosure-watcher/tests` (a Python with PyYAML; no network: http, the Orion
+driver, yt-dlp, ffmpeg and ASR are fakes). The vitest suite runs them too (`tests/tools/disclosureWatcher.test.ts`;
+`ORION_WATCHER_PYTHON` picks the interpreter), and `tests/daemon/disclosureWatch.test.ts` covers the job.
 
 ## Adding an asset
 
@@ -160,8 +225,8 @@ assets:
 
 To add an asset:
 
-1. Add an entry: the author's numeric user id, a search phrase, the match and announcement patterns, a transcription glossary.
-2. Seed its state file with the post ids already reviewed, as `seeded`.
+1. Add an entry to `tools/disclosure-watcher/watch.yaml` (a release ships it): the author's numeric user id, a search phrase, the match and announcement patterns, a transcription glossary.
+2. Seed its state file (`~/home/disclosure/state/<asset>.json` on prod) with the post ids already reviewed, as `seeded`.
 3. On the Orion side, nothing but an issuer-disclosure paragraph in the asset's persona if it lacks one: the run type, the document store and the tools are asset-agnostic.
 
 Assets that disclose in text rather than video need new `source` types in a later plan (`x_post`, `rss`, `page_watch`). Each is a small fetcher returning `(source_id, url, published_at, text | media_url)`; the dedupe, the store, the run and the post-run step do not change. The search engine is the shared weak point: a second keyless search source can be added as another `search` entry once one proves reliable, and the paste-a-link path always works.

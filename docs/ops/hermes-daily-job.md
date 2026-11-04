@@ -1,5 +1,11 @@
 # Daily run from an agent scheduler (Hermes)
 
+> **Superseded by the daemon at cutover (Phase 1.5c).** On the server, `orion daemon` runs the nightly refreshes and
+> report, the hourly levels and the disclosure watcher and posts to Slack itself (`docs/ops/daemon.md`,
+> `docs/ops/deploy.md`). At cutover the 13 `orion-<asset>` jobs and their wrapper scripts are removed. This page is kept
+> for the fallback week: if the prod daemon has to be stopped, the Hermes jobs are re-enabled on the archived SQLite copy
+> exactly as described here.
+
 The scheduled agent runs `run-daily.sh`, reads the tick report it prints, and messages the owner. It operates Orion only as the owner's hands: on an explicit reply from the owner, one decision command per reply, for an id the message itself listed. Everything else (entering a figure, editing the asset file) stays with the owner. The tick is data only: lock, ingest (anomaly checks, watch rules), the asset's holder-yield report for its latest complete day, unlock. It never starts an analyst run; the only analyst runs left are the disclosure watcher's (`docs/ops/disclosure-watcher.md`).
 
 > **Interim (Phase 1).** The job prompt below is a bridge for the 13 per-asset `orion-<asset>` jobs until Phase 1.5

@@ -84,7 +84,54 @@ npm run lint:promises
 
 Each test file gets its own schema `t_<hex>` in `orion_test`, which is dropped afterwards. No test mocks the database.
 
+## The daemon and releases (Phase 1.5c)
+
+On the server (venus) each environment, `prod` and `stage`, runs one `orion daemon` as a systemd user unit of its Unix
+user (`orion-prod`, `orion-stage`). The daemon schedules and runs everything: the nightly refreshes and report (00:45
+UTC; staging 02:45), the hourly levels and watch alerts (staging every 6 h), snapshot publishing to the env's
+`orion-data` repo, the disclosure watcher (16:40 UTC), retention (03:30 UTC) and, on staging, a weekly restore of prod's
+nightly dump (Sun 10:30 UTC). It posts to Slack itself and pings external dead-man checks. Which assets run is the
+per-environment asset registry (`orion asset activate | pause | resume | registry`); a YAML new in a release arrives
+inactive. Runbooks: `docs/ops/daemon.md` (jobs, slots, registry, logs, every Slack line), `docs/ops/deploy.md` (build,
+deploy, soak, rollback), `docs/ops/disclosure-watcher.md`.
+
+A release is an annotated tag `orion-YYYY.MM.DD.N` built by `scripts/release/build.sh` into `~/orion-releases/<tag>.tgz`
+and installed by `scripts/release/deploy.sh <stage|prod> <tag>` through the forced-command `orion-remote` (no shell on
+the server). Layout per server user:
+
+```
+~/releases/<tag>/   dist/ assets/ personas/ skills/ schedule.yaml tools/disclosure-watcher/ scripts/provision/ RELEASE .installed
+~/current           -> releases/<tag>   (the config root: a release's YAML is read-only; config changes ship as releases)
+~/home/             data home (ORION_HOME): daemon.log, publish/, disclosure/
+~/shared/.env       secrets (ORION_ENV_FILE), re-read at every job
+```
+
+`RELEASE` (JSON: tag, commit, schema, built_at) marks a release root; a git checkout is never one (a stray `RELEASE` at a
+checkout root is ignored). Commands: `orion daemon [--allow-retire]`, `orion daemon status | drain [--wait 30m] |
+undrain`, `orion job run-now <kind> [asset] [--slot <iso>]`, `orion job list [--since <iso>] [--kind <k>]`,
+`orion asset registry [diff | reconcile [--allow-retire] | seed ...]`, `orion db query-ro <sql>` (read-only diagnostics).
+
+Environment variables of the platform (the process environment wins over the `.env` file; a blank process value never
+overrides it):
+
+| Variable | Meaning |
+|---|---|
+| `ORION_ENV` | `dev` (default), `stage` or `prod`. The unit sets it. stage/prod refuse to run without a `RELEASE` and require `ORION_HOME` and `ORION_ENV_FILE`. |
+| `ORION_HOME` | the data home (logs, publish clone, watcher state). Dev: also the config root and the `.env` directory. |
+| `ORION_CONFIG_ROOT` | where `assets/`, `personas/`, `skills/` and `schedule.yaml` are read from. Default: the release root when the running `dist/` has a `RELEASE` beside it, else `ORION_HOME`. |
+| `ORION_ENV_FILE` | the `.env` file. Default `<ORION_HOME>/.env`; the server uses `~/shared/.env`. |
+| `ORION_DATABASE_URL` | Postgres URL; it must name the role: `postgresql://orion_<env>@/orion_<env>?host=/var/run/postgresql`. `ORION_DB_SCHEMA` defaults to `orion`. |
+| `SLACK_WEBHOOK_URL` | the env's channel (prod #orion-ops, staging #orion-staging; must differ). Required on stage/prod; unset in dev = log only. |
+| `ORION_PUBLISH` | snapshot target: `git:<ssh url>#<branch>` of the env's own repo (`masha256/orion-data` / `orion-data-staging`), or `off` (every nightly says `PUBLISH OFF`). Required on stage/prod. With `ORION_SIGN_KEY_FILE`, `ORION_PUBLISH_SSH_KEY`, `ORION_PUBLISH_DIR` (the unit sets them). |
+| `ORION_DEADMAN_URL` | prod's hourly dead-man check, pinged after each `levels` job that read every asset and delivered every post. |
+| `ORION_DEADMAN_NIGHTLY_URL` | the nightly report's dead-man check (prod and staging each have one). Required on stage/prod. |
+| `COINGECKO_API_KEY`, `COINGECKO_PLAN` | the key, and its plan: unset or `demo` = the public API with the demo header; `pro` = `pro-api.coingecko.com` (the Basic plan). Prod sets `pro` with the Basic key before launch. |
+| `ORION_WATCHER_VENV` | the disclosure watcher's venv (default `~/watcher-venv`). |
+| `ORION_REFRESH_DUMP` | staging refresh: prod's dump (default `/home/orion-refresh/latest.dump`). |
+
 ## Daily operation
+
+Until cutover the live install still runs from Hermes, as below; on the server the daemon replaces it.
 
 `orion tick <asset>` is what a scheduler calls. In one process: take the asset's run lock, ingest, build the holder-yield report for the latest complete day, release the lock, build the inbox; then print the tick report (one JSON line, `schema_version: 2`) and append it to `<ORION_HOME>/ticks.jsonl`. It never starts an agent run and writes no `signals.jsonl`. Exit codes: `0` fetched and reported (or `run_in_progress`: another run holds the lock), `1` nothing fetched (the ingest threw), `2` fetched but the report is missing (`report_unavailable`) or more than 3 days behind the tick (`report_stale`).
 

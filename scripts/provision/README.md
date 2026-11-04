@@ -67,7 +67,7 @@ and you are logged in with your admin account.
 |---|---|
 | Postgres 18/main data directory (tables, indexes, WAL) | `/home/postgres/18/main` (`--pg-datadir`; `/home/postgres` and `/home/postgres/18` are `postgres:postgres` 700) |
 | nightly encrypted dumps (local copies) | `/home/orion-backups/dumps/<env>/YYYY/MM/DD.dump.age` (`postgres` 700) |
-| prod → staging refresh drop (spec §8.5) | `/home/orion-refresh/latest.dump` (`postgres:postgres` 750) |
+| prod → staging refresh drop (spec §8.5) | `/home/orion-refresh/latest.dump` (640; the directory is `postgres:orion-refresh` 2750, setgid, so both Orion users can read it) |
 | the two Orion users' homes (releases, data, logs) | `/home/orion-prod`, `/home/orion-stage` |
 
 Small things stay where the packages put them: `/etc/postgresql/18/main` (config), `/var/log/postgresql`,

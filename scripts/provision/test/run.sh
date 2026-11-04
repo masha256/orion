@@ -501,6 +501,18 @@ else
   bad "orion-remote: one line per call, no control characters and no argument text in the log"
 fi
 
+# --- env.template: the example database URL names the env's role ---------------------------------------------------
+# A role-less URL connects as the Unix user's name (orion-<env>, with a dash), which is no Postgres role; the peer map
+# lets orion-<env> in only as orion_<env>. Rendered with orion-host.sh's own substitution.
+# shellcheck disable=SC2016 # the text orion-host.sh holds, unexpanded
+render='sed -e "s/@ENV@/$env/g" -e "s/@DB@/orion_$env/g" "$here/files/env.template"'
+if grep -qF -- "$render" "$prov/orion-host.sh"; then ok "env.template: orion-host.sh renders it with @ENV@ and @DB@"; else bad "env.template: orion-host.sh renders it with @ENV@ and @DB@"; fi
+for e in prod stage; do
+  sed -e "s/@ENV@/$e/g" -e "s/@DB@/orion_$e/g" "$prov/files/env.template" >"$tmp/env-$e.out"
+  expect "env-$e" "^#ORION_DATABASE_URL=postgresql://orion_$e@/orion_$e\\?host=/var/run/postgresql\$"
+  expect_not "env-$e" '@(ENV|DB)@'
+done
+
 # --- optional: the SQL files against a throwaway cluster ----------------------------------------------------------
 if [[ -n ${PG_BINDIR:-} ]]; then
   # shellcheck source=SCRIPTDIR/sql.sh
