@@ -185,7 +185,58 @@ describe('orion daemon status: soak', () => {
   });
 });
 
+describe('orion daemon status: soak needs refreshes run on the tag (I-3)', () => {
+  const TAG = 'orion-2026.11.03.1';
+  const OLD = 'orion-2026.10.30.1';
+  const S = '2026-11-03T02:45:00.000Z';
+  async function finished(kind: 'refresh' | 'nightly_report', assetId: string | null, slot: string, tag: string, status = 'done') {
+    const j = (await enqueueJob(db(), { kind, assetId, slot, releaseTag: tag }))!;
+    await db().run('UPDATE jobs SET status = $2, result_json = $3, attempts = 1 WHERE id = $1', [j.id, status, JSON.stringify({ report: { ingest: { sources_failed: [] } } })]);
+  }
+  async function soak(): Promise<unknown> {
+    const lines: string[] = [];
+    await buildProgram(testCliContext(home(), { stdout: (l) => lines.push(l), now: () => new Date(NOW), release: { tag: TAG, commit: 'c', schema: 2, builtAt: 'b' } }))
+      .parseAsync(['daemon', 'status', '--json'], { from: 'user' });
+    return JSON.parse(lines.join('\n')).soak;
+  }
+
+  it('soak: a nightly deferred across the switch, whose refreshes ran on the previous release, is not a soak', async () => {
+    await finished('refresh', 'mini', S, OLD);
+    await finished('refresh', 'other', S, OLD);
+    await finished('nightly_report', null, S, TAG); // claimed (and stamped) by the new daemon
+    expect(await soak()).toBeNull();
+  });
+
+  it('soak: one refresh of the slot on the old release, or one still running, is not a soak', async () => {
+    await finished('refresh', 'mini', S, TAG);
+    await finished('refresh', 'other', S, OLD);
+    await finished('nightly_report', null, S, TAG);
+    expect(await soak()).toBeNull();
+    await db().run("UPDATE jobs SET release_tag = $1 WHERE kind = 'refresh'", [TAG]);
+    await db().run("UPDATE jobs SET status = 'running' WHERE kind = 'refresh' AND asset_id = 'other'");
+    expect(await soak()).toBeNull();
+    await db().run("UPDATE jobs SET status = 'done' WHERE kind = 'refresh' AND asset_id = 'other'");
+    expect(await soak()).toMatchObject({ tag: TAG, nightly_slot: S });
+  });
+
+  it('soak: a slot with no refresh at all is not a soak', async () => {
+    await finished('nightly_report', null, S, TAG);
+    expect(await soak()).toBeNull();
+  });
+});
+
 describe('orion job', () => {
+  it('cli: job run-now nightly_report needs an explicit --slot (M-2)', async () => {
+    const h = home();
+    const r = await orion(h, 'job', 'run-now', 'nightly_report', '--by', 'mike', '--json');
+    expect(r.exit).toEqual([1]);
+    expect(JSON.parse(r.out).error.code).toBe('slot_required');
+    const bad = await orion(h, 'job', 'run-now', 'nightly_report', '--slot', 'yesterday', '--json');
+    expect(JSON.parse(bad.out).error.code).toBe('invalid_date');
+    const ok = await orion(h, 'job', 'run-now', 'nightly_report', '--slot', '2026-11-03T00:45:00Z', '--by', 'mike', '--json');
+    expect(JSON.parse(ok.out)).toMatchObject({ kind: 'nightly_report', slot: '2026-11-03T00:45:00.000Z', requestedBy: 'run-now:mike' });
+  });
+
   it('cli: job run-now queues a job at now; refresh needs an active asset unless --force', async () => {
     const h = home();
     const refused = await orion(h, 'job', 'run-now', 'refresh', 'mini', '--by', 'mike', '--json');

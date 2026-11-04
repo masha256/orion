@@ -8,7 +8,7 @@ import {
 import { assetsFile, levelsBody } from '../../push/body.js';
 import { buildEnvelope, buildFileSet, type SnapshotKind } from '../../push/envelope.js';
 import { runGit, type GitRun } from '../../push/gitPublisher.js';
-import { checkPublishTarget, publisherFromEnv, type Publisher } from '../../push/publisher.js';
+import { checkPublishTarget, publisherFromEnv, PUBLISH_OFF, type Publisher } from '../../push/publisher.js';
 import { OrionError } from '../../types.js';
 import type { JobContext, JobHandler, JobOutcome } from '../daemon.js';
 
@@ -69,8 +69,9 @@ export function makeSnapshotPushHandler(o: SnapshotPushOptions = {}): JobHandler
     if (ctx.signal.aborted) return aborted;
     const { db, envVars } = ctx;
     const pending = await pendingSnapshots(db);
-    if ((envVars.ORION_PUBLISH ?? '').trim() === '') {
-      return { status: 'skipped', result: { reason: 'publishing off (ORION_PUBLISH unset)', pending: pending.length } };
+    const target = (envVars.ORION_PUBLISH ?? '').trim();
+    if (target === '' || target === PUBLISH_OFF) {
+      return { status: 'skipped', result: { reason: `publishing off (ORION_PUBLISH ${target === '' ? 'unset' : 'off'})`, pending: pending.length } };
     }
     if (pending.length === 0) return { status: 'done', result: { pushed: 0 } };
     const now = ctx.clock.now();

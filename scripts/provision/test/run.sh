@@ -255,7 +255,9 @@ for re in \
   'SKIP: orion-remote is the full version for orion-prod' \
   'SKIP: orion-daemon\.service passes systemd-analyze --user verify for orion-stage' \
   'SKIP: orion-daemon\.service is enabled for orion-prod' \
-  'SKIP: orion-stage is in group orion-refresh'; do
+  'SKIP: orion-stage is in group orion-refresh' \
+  'SKIP: prod and stage SLACK_WEBHOOK_URL differ' \
+  'SKIP: prod and stage ORION_PUBLISH differ'; do
   expect host "$re"
 done
 expect_not host 'systemctl --user (start|restart)|enable --now orion-daemon'

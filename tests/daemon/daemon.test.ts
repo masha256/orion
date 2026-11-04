@@ -235,7 +235,7 @@ describe('daemon start-up', () => {
   it('daemon: staging refuses to publish to the prod snapshot repo', async () => {
     const clock = new FakeClock('2026-11-03T02:00:00.000Z');
     const root = configRoot();
-    writeFileSync(join(root, 'no.env'), 'ORION_PUBLISH=git:git@github.com:masha256/orion-data.git#main\n');
+    writeFileSync(join(root, 'no.env'), `${STAGE_ENV}ORION_PUBLISH=git:git@github.com:masha256/Orion-Data.git#main\n`); // M-5: any case
     const paths: OrionPaths = { home: root, configRoot: root, envFile: join(root, 'no.env'), release: null };
     const ready: string[] = [];
     const d = new Daemon({
@@ -249,7 +249,87 @@ describe('daemon start-up', () => {
   });
 });
 
+const STAGE_ENV = 'SLACK_WEBHOOK_URL=https://hooks.slack.test/services/stage\nORION_DEADMAN_NIGHTLY_URL=https://hc.example/ping/stage\n';
+
+/** A stage daemon over `envText` as its .env; its posts and log lines. */
+function stageDaemon(envText: string, clock: FakeClock, root = configRoot()): { d: Daemon; posts: string[]; logs: string[]; ready: string[]; root: string } {
+  writeFileSync(join(root, 'no.env'), envText);
+  const paths: OrionPaths = { home: root, configRoot: root, envFile: join(root, 'no.env'), release: null };
+  const out = { posts: [] as string[], logs: [] as string[], ready: [] as string[], root, d: undefined as unknown as Daemon };
+  out.d = new Daemon({
+    db: db(), clock, env: 'stage', paths, handlers: {}, daemonId: 'd1', log: (l) => out.logs.push(l), activeAssets: activeAssetIds,
+    notifier: () => ({ post: async (text) => (out.posts.push(text), { ok: true, attempts: 1 }) }),
+    systemd: { ready: () => out.ready.push('READY'), watchdog: () => undefined, stopping: () => undefined },
+  });
+  return out;
+}
+
+describe('daemon start-up checks (review wave 2)', () => {
+  it('daemon: stage/prod refuse to start without SLACK_WEBHOOK_URL, ORION_DEADMAN_NIGHTLY_URL or ORION_PUBLISH; ORION_PUBLISH=off is allowed (I-1, I-2)', async () => {
+    const clock = new FakeClock('2026-11-03T02:00:00.000Z');
+    const publishOff = 'ORION_PUBLISH=off\n';
+    for (const [text, code] of [
+      [`ORION_DEADMAN_NIGHTLY_URL=https://hc.example/x\n${publishOff}`, 'slack_webhook_missing'],
+      [`SLACK_WEBHOOK_URL=  \nORION_DEADMAN_NIGHTLY_URL=https://hc.example/x\n${publishOff}`, 'slack_webhook_missing'],
+      [`SLACK_WEBHOOK_URL=https://hooks.slack.test/x\n${publishOff}`, 'deadman_url_missing'],
+      [STAGE_ENV, 'publish_unset'],
+    ] as const) {
+      const w = stageDaemon(text, clock);
+      await expect(w.d.start(), text).rejects.toMatchObject({ code });
+      expect(w.ready).toEqual([]);
+      expect(await db().all('SELECT * FROM daemon_heartbeat')).toEqual([]);
+    }
+    const ok = stageDaemon(`${STAGE_ENV}${publishOff}`, clock);
+    await ok.d.start();
+    expect(ok.ready).toEqual(['READY']);
+    ok.d.requestStop();
+    await ok.d.run();
+  });
+
+  it('daemon: a start-up failure posts one ALERT; the same failure on the next restart posts nothing; a good start forgets it (M-1)', async () => {
+    const clock = new FakeClock('2026-11-03T02:00:00.000Z');
+    const root = configRoot({ badYaml: true });
+    const first = stageDaemon(`${STAGE_ENV}ORION_PUBLISH=off\n`, clock, root);
+    await expect(first.d.start()).rejects.toMatchObject({ code: 'invalid_asset_config' });
+    expect(first.posts).toHaveLength(1);
+    expect(first.posts[0]).toMatch(/^ORION ALERT stage: daemon not started: /);
+    const again = stageDaemon(`${STAGE_ENV}ORION_PUBLISH=off\n`, clock, root);
+    await expect(again.d.start()).rejects.toMatchObject({ code: 'invalid_asset_config' });
+    expect(again.posts).toEqual([]);
+    expect(again.logs.some((l) => l.includes('not posted again'))).toBe(true);
+    // another failure is posted
+    const other = stageDaemon('ORION_PUBLISH=off\n', clock, root);
+    await expect(other.d.start()).rejects.toMatchObject({ code: 'slack_webhook_missing' });
+    expect(other.posts).toHaveLength(1);
+    writeFileSync(join(root, 'assets', 'other.yaml'), MINI_ASSET_YAML.replace(/^id: mini$/m, 'id: other'));
+    const good = stageDaemon(`${STAGE_ENV}ORION_PUBLISH=off\n`, clock, root);
+    await good.d.start();
+    good.d.requestStop();
+    await good.d.run();
+    const bad = configRoot({ badYaml: true });
+    writeFileSync(join(root, 'assets', 'other.yaml'), readFileSync(join(bad, 'assets', 'other.yaml'), 'utf8'));
+    const later = stageDaemon(`${STAGE_ENV}ORION_PUBLISH=off\n`, clock, root);
+    await expect(later.d.start()).rejects.toMatchObject({ code: 'invalid_asset_config' });
+    expect(later.posts).toHaveLength(1); // posted again: the good start cleared the memory
+  });
+});
+
 describe('daemon worker', () => {
+  it('daemon: recording a result fails with a database error: the job is re-queued, not left running under this daemon (M-3)', async () => {
+    const clock = new FakeClock('2026-11-03T01:00:00.000Z');
+    await enqueueJob(db(), { kind: 'levels', assetId: null, slot: '2026-11-03T00:15:00.000Z' });
+    let calls = 0;
+    const w = daemon({ clock, handlers: { levels: async () => (calls++, { status: 'done', result: { bad: 1n } as unknown as Record<string, unknown> }) } });
+    await w.daemon.start();
+    expect(await w.daemon.workerTick()).toBe(true);
+    expect(calls).toBe(1);
+    const row = await job(1);
+    expect(row).toMatchObject({ status: 'queued', lease_expires_at: null });
+    expect(w.logs.some((l) => /could not record .*re-queued/.test(l))).toBe(true);
+    w.daemon.requestStop();
+    await w.daemon.run();
+  });
+
   it('daemon: a failed refresh is retried once no sooner than 10 minutes later, then stays failed', async () => {
     const clock = new FakeClock('2026-11-03T01:00:00.000Z');
     let calls = 0;

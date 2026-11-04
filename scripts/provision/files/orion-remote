@@ -30,7 +30,7 @@ undrains and restarts the daemon, logs `recovered ...` to deploys.log and prints
   proposals list [<a>] [--all] | agent runs list [<a>] | inbox <a>
   confirm <id> | reject <id> | approve <id> [note] | decline <id> <note> | ack <id> <note> | resolve <id> <note>
   asset pause <a> --reason <text> [--for <who>] | asset resume|activate <a> [--for <who>] | asset registry [diff]
-  job run-now <kind> [asset] | sql-ro <query> (prod: orion db query-ro as orion_prod_ro, never psql) | refresh-staging (stage) | reconcile --allow-retire [--yes]
+  job run-now <kind> [asset] [--slot <iso>] | sql-ro <query> (prod: orion db query-ro as orion_prod_ro, never psql) | refresh-staging (stage) | reconcile --allow-retire [--yes]
 
 Test hooks (scripts/provision/test/test_orion_remote.py): only when ORION_REMOTE_TEST=1 and the uid is not 0,
 ORION_REMOTE_TEST_USER (the Unix user), ORION_REMOTE_TEST_BIN (a directory with fake node, npm, pg_dump, pg_isready,
@@ -437,8 +437,8 @@ def v_job(env, args):
     if args[:1] != ['run-now']:
         raise Refused('job: only "job run-now <kind> [asset]" (the job list is "jobs")')
     o = parse(args[1:], [('kind', pattern(re.compile('^(' + '|'.join(JOB_KINDS) + ')$'), 'job kind'), True), ('asset', ASSET, False)],
-              usage='job run-now <kind> [asset]')
-    return passthrough(env, ['job', 'run-now', o['kind']] + ([o['asset']] if 'asset' in o else []) + ['--by', 'raymond', '--json'])
+              {'--slot': pattern(ISO_RE, 'ISO instant')}, usage='job run-now <kind> [asset] [--slot <iso>] (nightly_report needs --slot)')
+    return passthrough(env, ['job', 'run-now', o['kind']] + ([o['asset']] if 'asset' in o else []) + opt(o, 'slot', '--slot') + ['--by', 'raymond', '--json'])
 
 
 def v_refresh_staging(env, args):

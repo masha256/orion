@@ -1,4 +1,6 @@
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
+import { join } from 'node:path';
 import { loadEnv } from '../cli/env.js';
 import type { OrionEnv, OrionPaths } from '../cli/paths.js';
 import type { Db, OrionDb } from '../db/connection.js';
@@ -11,7 +13,7 @@ import { migrationStatus } from '../db/pg/migrate.js';
 import { listRegistry } from '../db/registry.js';
 import type { Notifier } from '../notify/slack.js';
 import { loadAssetYamls, reconcileFromDisk } from '../registry/reconcile.js';
-import { checkPublishTarget } from '../push/publisher.js';
+import { checkPublishTarget, PUBLISH_OFF } from '../push/publisher.js';
 import { OrionError } from '../types.js';
 import { disclosureWatchHandler } from './jobs/disclosureWatch.js';
 import { levelsHandler } from './jobs/levels.js';
@@ -146,6 +148,32 @@ export function defaultHandlers(): Partial<Record<JobKind, JobHandler>> {
 export { checkPublishTarget };
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** M-1: the last start-up failure posted, in the data home. */
+export const START_FAILURE_FILE = 'start-failure.json';
+
+function forgetStartFailure(home: string): void {
+  try {
+    unlinkSync(join(home, START_FAILURE_FILE));
+  } catch {
+    // nothing remembered
+  }
+}
+
+/**
+ * I-1, I-2: stage and prod deliver or they do not run. A blank `SLACK_WEBHOOK_URL` would post nothing while the
+ * dead-man stays green, a blank `ORION_DEADMAN_NIGHTLY_URL` would leave a dead daemon unnoticed, and an unset
+ * `ORION_PUBLISH` would stop publishing without a word (`off` says so on purpose, and every nightly prints it).
+ */
+export function requireDeliveryVars(env: OrionEnv, vars: Record<string, string | undefined>): void {
+  if (env === 'dev') return;
+  const blank = (k: string): boolean => (vars[k] ?? '').trim() === '';
+  if (blank('SLACK_WEBHOOK_URL')) throw new OrionError('slack_webhook_missing', `ORION_ENV=${env} needs SLACK_WEBHOOK_URL in the .env (nothing would be posted)`);
+  if (blank('ORION_DEADMAN_NIGHTLY_URL')) throw new OrionError('deadman_url_missing', `ORION_ENV=${env} needs ORION_DEADMAN_NIGHTLY_URL in the .env`);
+  if (blank('ORION_PUBLISH')) {
+    throw new OrionError('publish_unset', `ORION_ENV=${env} needs ORION_PUBLISH in the .env: git:<url>#<branch>, or ${PUBLISH_OFF} to run without publishing`);
+  }
+}
 const label = (j: Job): string => `job ${j.id} ${j.kind}${j.assetId ? ` ${j.assetId}` : ''}`;
 
 export class Daemon {
@@ -204,19 +232,13 @@ export class Daemon {
       if (status.pending.length > 0) {
         throw new OrionError('schema_behind', `database schema ${db.schema} is at ${status.dbAt}, this build needs ${status.codeRequires}: run orion db migrate`);
       }
+      const envVars = this.envVars();
+      requireDeliveryVars(env, envVars);
       loadAssetYamls(paths.configRoot);
       this.schedule = loadSchedule(paths.configRoot, env);
-      const envVars = this.envVars();
       checkPublishTarget(env, envVars.ORION_PUBLISH);
       const now = clock.now();
-      try {
-        await reconcileFromDisk(db, paths.configRoot, this.releaseTag, now, { allowRetire: this.d.allowRetire === true });
-      } catch (err) {
-        if (err instanceof OrionError && err.code === 'reconcile_would_retire') {
-          await this.alert(this.d.notifier(envVars), `ORION ALERT ${env}: daemon not started: ${err.message}`);
-        }
-        throw err;
-      }
+      await reconcileFromDisk(db, paths.configRoot, this.releaseTag, now, { allowRetire: this.d.allowRetire === true });
       await stopStaleHeartbeats(db, daemonId);
       await startHeartbeat(db, { daemonId, pid: process.pid, host: hostname(), releaseTag: this.releaseTag, startedAt: now.toISOString() });
       beating = true;
@@ -228,6 +250,7 @@ export class Daemon {
       const notify = this.d.notifier(envVars);
       for (const j of requeued) await this.alert(notify, `ORION RESTARTED ${env} after unclean exit, job ${j.id} re-queued`);
       for (const j of failed) await this.alert(notify, `ORION RESTARTED ${env} after unclean exit, job ${j.id} failed (lease_expired)`);
+      forgetStartFailure(paths.home);
     } catch (err) {
       if (beating) {
         this.state = 'stopped';
@@ -235,7 +258,42 @@ export class Daemon {
       }
       this.lock = null;
       await lock.release().catch(() => undefined);
+      await this.alertStartFailure(err).catch(() => undefined);
       throw err;
+    }
+  }
+
+  /**
+   * M-1: one ALERT per distinct start-up failure (best effort: an unset webhook only logs), so a unit restarting every
+   * 30 s posts once, not 2,900 times a day. The last one posted is kept in `<home>/start-failure.json` until a start
+   * succeeds.
+   */
+  private async alertStartFailure(err: unknown): Promise<void> {
+    const code = err instanceof OrionError ? err.code : 'error';
+    const text = `ORION ALERT ${this.d.env}: daemon not started: ${message(err).split('\n', 1)[0]}`;
+    const file = join(this.d.paths.home, START_FAILURE_FILE);
+    let last: { code?: string; text?: string } = {};
+    try {
+      last = JSON.parse(readFileSync(file, 'utf8')) as typeof last;
+    } catch {
+      // none yet
+    }
+    if (last.code === code && last.text === text) {
+      this.d.log(`${text} (not posted again: same as the last failed start)`);
+      return;
+    }
+    let notify: Notifier;
+    try {
+      notify = this.d.notifier(this.envVars());
+    } catch (e) {
+      this.d.log(`${text} (not posted: ${message(e)})`);
+      return;
+    }
+    await this.alert(notify, text);
+    try {
+      writeFileSync(file, `${JSON.stringify({ code, text, at: this.d.clock.now().toISOString() })}\n`);
+    } catch (e) {
+      this.d.log(`cannot remember the start failure in ${file}: ${message(e)}`);
     }
   }
 
@@ -369,12 +427,27 @@ export class Daemon {
       if (abort.signal.aborted) this.d.log(`${name}: aborted (lease lost), result dropped (${outcome.status})`);
       else await this.record(job, outcome);
     } catch (err) {
-      // R-c6: another daemon took the job over (the lease ran out): its run owns the row now. Drop this result.
-      if (!(err instanceof OrionError && err.code === 'job_lease_lost')) throw err;
-      this.d.log(`${name}: lease lost, result dropped (${outcome.status})`);
+      if (err instanceof OrionError && err.code === 'job_lease_lost') {
+        // R-c6: another daemon took the job over (the lease ran out): its run owns the row now. Drop this result.
+        this.d.log(`${name}: lease lost, result dropped (${outcome.status})`);
+      } else {
+        // M-3: never leave the row running under this daemon (only a restart would reap it): give the lease back.
+        await this.requeueUnrecorded(job, err);
+      }
     } finally {
       this.currentJobId = null;
       await this.heartbeat();
+    }
+  }
+
+  private async requeueUnrecorded(job: Job, err: unknown): Promise<void> {
+    const name = label(job);
+    const at = new Date(this.d.clock.now().getTime() + RESTART_RETRY_MS);
+    try {
+      await deferJob(this.d.db, job.id, this.d.daemonId, at);
+      this.d.log(`${name}: could not record its result (${message(err)}); re-queued for ${at.toISOString()}`);
+    } catch (again) {
+      this.d.log(`${name}: could not record its result (${message(err)}) nor re-queue it (${message(again)}); a restart re-queues it`);
     }
   }
 

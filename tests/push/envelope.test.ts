@@ -142,6 +142,12 @@ describe('publisher', () => {
     expect(() => checkPublishTarget('stage', 'git:ssh://git@github.com/masha256/orion-data#main')).toThrow(expect.objectContaining({ code: 'publish_repo_is_prod' }));
     expect(() => checkPublishTarget('prod', stageRepo)).toThrow(expect.objectContaining({ code: 'publish_repo_is_stage' }));
     expect(() => checkPublishTarget('prod', 'git:https://github.com/masha256/orion-data-staging')).toThrow(expect.objectContaining({ code: 'publish_repo_is_stage' }));
+    // M-5: GitHub repo names ignore case
+    expect(() => checkPublishTarget('stage', 'git:git@github.com:masha256/Orion-Data.git#main')).toThrow(expect.objectContaining({ code: 'publish_repo_is_prod' }));
+    expect(() => checkPublishTarget('prod', 'git:git@github.com:Masha256/ORION-DATA-STAGING#main')).toThrow(expect.objectContaining({ code: 'publish_repo_is_stage' }));
+    // I-2: off is publishing off on purpose
+    expect(parsePublishTarget('off')).toBeNull();
+    expect(() => checkPublishTarget('prod', 'off')).not.toThrow();
     expect(() => checkPublishTarget('stage', stageRepo)).not.toThrow();
     expect(() => checkPublishTarget('prod', prodRepo)).not.toThrow();
     expect(() => checkPublishTarget('stage', undefined)).not.toThrow();

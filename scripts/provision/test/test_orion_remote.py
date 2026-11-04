@@ -670,6 +670,7 @@ class VerbTests(RemoteCase):
             'inbox aero': ['inbox', 'aero', '--json'],
             'job run-now refresh aero': ['job', 'run-now', 'refresh', 'aero', '--by', 'raymond', '--json'],
             'job run-now levels': ['job', 'run-now', 'levels', '--by', 'raymond', '--json'],
+            'job run-now nightly_report --slot 2026-11-03T00:45:00Z': ['job', 'run-now', 'nightly_report', '--slot', '2026-11-03T00:45:00Z', '--by', 'raymond', '--json'],
         }
         for cmd, argv in cases.items():
             self.assertEqual(self.last(cmd), argv, cmd)

@@ -20,17 +20,24 @@ export function registerJob(program: Command, ctx: CliContext): void {
 
   job
     .command('run-now <kind> [asset]')
-    .description('queue a job for the daemon at slot = now (refresh needs an active asset unless --force)')
+    .description('queue a job for the daemon at slot = now (refresh needs an active asset unless --force; nightly_report needs --slot)')
     .option('--by <who>', 'who (default $USER)')
+    .option('--slot <iso>', 'the slot (nightly_report: required, the scheduled slot to report again, e.g. 2026-11-03T00:45:00Z)')
     .option('--force', 'refresh an asset that is not active')
     .option('--json', 'JSON output')
-    .action((kindText: string, asset: string | undefined, opts: { by?: string; force?: boolean; json?: boolean }) =>
+    .action((kindText: string, asset: string | undefined, opts: { by?: string; force?: boolean; slot?: string; json?: boolean }) =>
       guarded(ctx, opts.json, async () => {
         const kind = jobKind(kindText);
         const by = byOf(opts.by);
         if (kind === 'refresh' && !asset) throw new OrionError('asset_required', 'job run-now refresh needs an asset');
         if (kind !== 'refresh' && asset) throw new OrionError('asset_not_allowed', `a ${kind} job is not per asset; leave out "${asset}"`);
-        const slot = ctx.now().toISOString();
+        // M-2: a nightly at slot = now reports the wrong day, before that day's refreshes, and pings the dead-man off
+        // schedule; name the scheduled slot to report again.
+        if (kind === 'nightly_report' && opts.slot === undefined) {
+          throw new OrionError('slot_required', 'job run-now nightly_report needs --slot <iso> (the scheduled slot to report again, e.g. 2026-11-03T00:45:00Z)');
+        }
+        if (opts.slot !== undefined && Number.isNaN(Date.parse(opts.slot))) throw new OrionError('invalid_date', `--slot must be an ISO instant, got "${opts.slot}"`);
+        const slot = opts.slot === undefined ? ctx.now().toISOString() : new Date(opts.slot).toISOString();
         const queued = await withDb(ctx, async (db) => {
           if (kind === 'refresh' && !opts.force) {
             const row = await getRegistryRow(db, asset!);

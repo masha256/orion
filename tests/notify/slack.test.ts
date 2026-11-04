@@ -93,10 +93,10 @@ describe('slack notifier', () => {
     expect(SLACK_MAX_TOTAL_MS).toBe(300_000);
   });
 
-  it('slack: unset webhook posts nothing and logs one line', async () => {
+  it('slack: unset webhook posts nothing, logs one line and is undelivered, never ok (I-1: no dead-man ping follows)', async () => {
     for (const url of [undefined, '', '  ']) {
       const h = harness([200], url);
-      expect(await h.notifier.post('ORION nightly dev\nsecond line')).toEqual({ ok: true, attempts: 0 });
+      expect(await h.notifier.post('ORION nightly dev\nsecond line')).toEqual({ ok: false, attempts: 0, error: 'webhook unset' });
       expect(h.calls).toEqual([]);
       expect(h.logs).toEqual(['slack disabled: ORION nightly dev']);
     }

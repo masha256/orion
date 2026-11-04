@@ -603,6 +603,11 @@ selfcheck "orion_prod has no CONNECT on orion_stage (PUBLIC revoked)" check_eq f
 selfcheck "SET ROLE orion_prod as orion_stage is refused" expect_fail q orion-stage orion_stage orion_stage 'set role orion_prod'
 selfcheck "orion_prod_ro connects (read-only session)" check_ro_reads
 selfcheck "orion_prod_ro cannot write" expect_fail q orion-prod orion_prod_ro orion_prod 'create table orion.selfcheck_ro_write (x int)'
+if [[ " ${ENVS[*]} " == *" prod "* && " ${ENVS[*]} " == *" stage "* ]]; then
+  for k in SLACK_WEBHOOK_URL ORION_PUBLISH; do # M-5: hashed, never printed
+    selfcheck "prod and stage $k differ" env_values_differ /home/orion-prod/shared/.env /home/orion-stage/shared/.env "$k"
+  done
+fi
 if ((${#SSH_FROM[@]})); then
   selfcheck "ufw is active" eval "ufw status | grep -q '^Status: active'"
 fi

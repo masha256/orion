@@ -175,9 +175,9 @@ describe('snapshot bodies', () => {
     expect(body).toEqual({
       day: '2026-11-02',
       assets: {
-        gone: { state: 'active', state_since: '2026-09-01T00:00:00.000Z', state_reason: null, report: null, report_error: expect.stringContaining('gone') },
-        mini: { state: 'active', state_since: '2026-09-01T00:00:00.000Z', state_reason: null, report: null, report_error: 'no reporting block' },
-        paws: { state: 'paused', state_since: '2026-10-20T00:00:00.000Z', state_reason: 'r', report: null, report_error: 'no reporting block' },
+        gone: { state: 'active', state_since: '2026-09-01T00:00:00.000Z', state_reason: null, report_day: null, lag_days: null, report: null, report_error: expect.stringContaining('gone') },
+        mini: { state: 'active', state_since: '2026-09-01T00:00:00.000Z', state_reason: null, report_day: null, lag_days: null, report: null, report_error: 'no reporting block' },
+        paws: { state: 'paused', state_since: '2026-10-20T00:00:00.000Z', state_reason: 'r', report_day: null, lag_days: null, report: null, report_error: 'no reporting block' },
       },
     });
   });

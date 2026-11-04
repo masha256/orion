@@ -1,4 +1,10 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { insertObservation } from '../../src/db/observations.js';
+import { addDays } from '../../src/ingest/time.js';
+import { buildEnvelope } from '../../src/push/envelope.js';
+import { insertSnapshot } from '../../src/db/snapshotsOut.js';
 import type { TickReport } from '../../src/app/tickReport.js';
 import { defaultHandlers, type JobContext } from '../../src/daemon/daemon.js';
 import { makeNightlyReportHandler, nightlyReportHandler, NIGHTLY_WAIT_MS, NIGHTLY_DEFER_MS } from '../../src/daemon/jobs/nightlyReport.js';
@@ -259,6 +265,73 @@ describe('nightly_report job', () => {
     expect(run.posts.every((p) => p.length <= 3900)).toBe(true);
     expect(firstLines(run.posts)[0]).toBe('ORION ALERT dev nightly 2026-11-02: 1 alert(s)');
     expect(run.posts.slice(1).every((p) => p.startsWith('== A'))).toBe(true);
+  });
+
+  it('nightly_report: an unset webhook is not delivered, so the dead-man is not pinged (I-1)', async () => {
+    const w = await world(['mini']);
+    await refresh('mini', 'done');
+    const notify = slackNotifier({ webhookUrl: undefined, fetch: (async () => new Response('x')) as typeof fetch, sleep: async () => undefined, log: () => undefined });
+    const run = nightly(w.root, 30 * 60_000, { notify });
+    const out = await handler(run)(await reportJob(), run.ctx);
+    expect(out).toMatchObject({ status: 'done', result: { delivered: false, deadman: false, undelivered: 1 } });
+    expect(run.pings).toEqual([]);
+  });
+
+  it('nightly_report: PUBLISH OFF when ORION_PUBLISH is off; PUBLISH PENDING (an alert) for unpushed snapshots over 1 h old (I-2)', async () => {
+    const w = await world(['mini']);
+    await refresh('mini', 'done');
+    const off = nightly(w.root, 30 * 60_000);
+    off.ctx = { ...off.ctx, envVars: { ...off.ctx.envVars, ORION_PUBLISH: 'off' } };
+    await handler(off)(await reportJob(), off.ctx);
+    const offLines = off.posts.join('\n').split('\n');
+    expect(offLines).toContain('PUBLISH OFF');
+    expect(offLines.some((l) => l.startsWith('PUBLISH PENDING'))).toBe(false);
+
+    // Two snapshots stuck since the day before, and the full one the run above stored; one 20 min old does not count yet.
+    const env = { env: 'dev' as const, seq: 0, releaseTag: null };
+    for (const [kind, ms] of [['full', -24 * 3_600_000], ['levels', -23 * 3_600_000], ['levels', 24 * 3_600_000 + 10 * 60_000]] as const) {
+      await insertSnapshot(testDb(), { kind, day: null, envelope: buildEnvelope(kind, { assets: {} }, { ...env, now: new Date(SLOT_MS + ms) }) });
+    }
+    const next = '2026-11-04T00:45:00.000Z';
+    await refresh('mini', 'done', undefined, next);
+    const run = nightly(w.root, 24 * 3_600_000 + 30 * 60_000);
+    run.ctx = { ...run.ctx, envVars: { ...run.ctx.envVars, ORION_PUBLISH: 'git:git@github.com:masha256/orion-data-staging.git#main' } };
+    const out = await handler(run)(await reportJob(next), run.ctx);
+    const lines = run.posts.join('\n').split('\n');
+    expect(lines).toContain(`PUBLISH PENDING 3 snapshot(s), oldest ${new Date(SLOT_MS - 24 * 3_600_000).toISOString()}`);
+    expect(lines).not.toContain('PUBLISH OFF');
+    expect(lines[0]).toBe('ORION ALERT dev nightly 2026-11-03: 1 alert(s)');
+    expect(out).toMatchObject({ result: { alerts: 1 } });
+  });
+
+  it('nightly_report: an asset whose flows lag the report day is published at its last complete day, with LAG in Slack (I-7)', async () => {
+    const hype = `${readFileSync(fileURLToPath(new URL('../fixtures/hype.yaml', import.meta.url)), 'utf8')}
+reporting:
+  window_days: 10
+  haircuts: { buyback: 0 }
+  income:
+    lines:
+      - { id: buyback, to: holders, metric: flow_usd.buyback }
+`;
+    const w = await world(['mini', 'hype'], ['mini', 'hype'], { hype });
+    for (let i = 0; i < 20; i++) {
+      const day = addDays('2026-10-30', -i); // 3 days behind the 2026-11-02 report day
+      await insertObservation(testDb(), {
+        assetId: 'hype', metricKey: 'flow_usd.buyback', observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value: 2, source: 'api', fetchedAt: at(0),
+      });
+    }
+    await refresh('mini', 'done');
+    await refresh('hype', 'done', { report: cleanReport('hype'), fetchLines: [], alertFlags: [], levels: 0 });
+    const run = nightly(w.root, 30 * 60_000);
+    await handler(run)(await reportJob(), run.ctx);
+    const lines = run.posts.join('\n').split('\n');
+    expect(lines).toContain('LAG HYPE 3d');
+    expect(lines.some((l) => l.startsWith('LAG MINI'))).toBe(false);
+    const full = (await pendingSnapshots(testDb())).find((r) => r.kind === 'full')!;
+    const body = (JSON.parse(full.body) as { body: { day: string; assets: Record<string, { report_day: string | null; lag_days: number | null; report: { day: string } | null }> } }).body;
+    expect(body.day).toBe('2026-11-02');
+    expect(body.assets.hype).toMatchObject({ report_day: '2026-10-30', lag_days: 3 });
+    expect(body.assets.hype!.report!.day).toBe('2026-10-30');
   });
 
   it('nightly_report: the daemon runs the nightly_report handler', () => {

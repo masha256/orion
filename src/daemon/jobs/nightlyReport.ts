@@ -5,7 +5,9 @@ import { listRegistry, listStateEvents, type RegistryRow } from '../../db/regist
 import { listWatchStates } from '../../db/watchState.js';
 import { pingDeadman } from '../../notify/deadman.js';
 import { formatNightly, nightlyAlerts, slackClean, type NightlyInput } from '../../notify/format.js';
-import { fullBody } from '../../push/body.js';
+import { fullBody, reportLags } from '../../push/body.js';
+import { PUBLISH_OFF } from '../../push/publisher.js';
+import { pendingSnapshots } from '../../db/snapshotsOut.js';
 import { apiBackfillDays } from '../../registry/actions.js';
 import { MS_PER_DAY } from '../../types.js';
 import type { JobContext, JobHandler, JobOutcome } from '../daemon.js';
@@ -84,6 +86,17 @@ async function resumedShort(db: Db, registry: RegistryRow[], loaded: Map<string,
   return out;
 }
 
+/** Unpushed snapshots older than this are listed (PUBLISH PENDING). */
+export const PUBLISH_PENDING_AFTER_MS = 3_600_000;
+
+async function publishState(ctx: JobContext): Promise<NonNullable<NightlyInput['publish']>> {
+  const target = (ctx.envVars.ORION_PUBLISH ?? '').trim();
+  if (target === '' || target === PUBLISH_OFF) return { off: true, pending: 0, oldest: null };
+  const cut = ctx.clock.now().getTime() - PUBLISH_PENDING_AFTER_MS;
+  const old = (await pendingSnapshots(ctx.db)).filter((r) => Date.parse(r.createdAt) <= cut);
+  return { off: false, pending: old.length, oldest: old[0]?.createdAt ?? null };
+}
+
 async function buildInput(ctx: JobContext, job: Job, refreshes: Job[], day: string): Promise<{ input: NightlyInput; configHashes: Record<string, string> }> {
   const slotMs = Date.parse(job.slot);
   const registry = await listRegistry(ctx.db);
@@ -117,6 +130,8 @@ async function buildInput(ctx: JobContext, job: Job, refreshes: Job[], day: stri
     resumedShort: await resumedShort(ctx.db, registry, loaded, slotMs),
     firingWatches: (await listWatchStates(ctx.db)).filter((w) => w.firing),
     refreshesMissing,
+    publish: await publishState(ctx),
+    lags: await reportLags(ctx.db, ctx.paths.configRoot, registry, day),
   };
   return { input, configHashes };
 }
@@ -197,20 +212,25 @@ export interface NightlyStatus {
 }
 
 /**
- * The newest scheduler-made `nightly_report` that is `done`, with `release_tag` = `tag` when `tag` is given (the soak
- * of that release), any release otherwise (`last_nightly`). Run-now reports do not count. Null when there is none.
+ * The newest scheduler-made `nightly_report` that is `done`: with `tag` (the soak of that release, I-3) it must also
+ * have run on `tag`, and its slot must have at least one refresh, every one finished (done, failed or skipped) and run
+ * on `tag` too, so a nightly deferred across a switch that only reports the previous release's refreshes is no soak.
+ * Without `tag`: any release (`last_nightly`). Run-now reports do not count. Null when there is none.
  */
 export async function nightlyStatus(db: Db, tag?: string): Promise<NightlyStatus | null> {
-  const job = (await listJobs(db, { kind: 'nightly_report', limit: 1000 }))
-    .find((j) => j.status === 'done' && j.requestedBy === 'scheduler' && (tag === undefined || j.releaseTag === tag));
-  if (!job) return null;
-  const failed = new Set<string>();
-  for (const j of await listJobs(db, { kind: 'refresh', slot: job.slot, limit: 100_000 })) {
-    if (j.assetId === null) continue;
-    const r = j.result as Partial<RefreshJobResult> | null;
-    const sources = r?.report?.ingest?.sources_failed;
-    if (sources) for (const s of sources) failed.add(`${j.assetId}:${s}`);
-    else if (j.status === 'failed') failed.add(`${j.assetId}:*`);
+  const candidates = (await listJobs(db, { kind: 'nightly_report', limit: 1000 }))
+    .filter((j) => j.status === 'done' && j.requestedBy === 'scheduler' && (tag === undefined || j.releaseTag === tag));
+  for (const job of candidates) {
+    const refreshes = (await listJobs(db, { kind: 'refresh', slot: job.slot, limit: 100_000 })).filter((j) => j.assetId !== null);
+    if (tag !== undefined && (refreshes.length === 0 || refreshes.some((j) => !terminal(j.status) || j.releaseTag !== tag))) continue;
+    const failed = new Set<string>();
+    for (const j of refreshes) {
+      const r = j.result as Partial<RefreshJobResult> | null;
+      const sources = r?.report?.ingest?.sources_failed;
+      if (sources) for (const s of sources) failed.add(`${j.assetId}:${s}`);
+      else if (j.status === 'failed') failed.add(`${j.assetId}:*`);
+    }
+    return { tag: job.releaseTag, nightly_slot: job.slot, status: job.status, failed_sources: [...failed].sort() };
   }
-  return { tag: job.releaseTag, nightly_slot: job.slot, status: job.status, failed_sources: [...failed].sort() };
+  return null;
 }

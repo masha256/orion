@@ -250,13 +250,22 @@ export interface NightlyInput {
   refreshesMissing: string[];
   /** The slot, for the REFRESH MISSING line. */
   slot: string;
+  /** I-2: publishing off (`ORION_PUBLISH` off or unset), and unpushed snapshots over 1 h old (an alert). */
+  publish?: { off: boolean; pending: number; oldest: string | null };
+  /** I-7: active assets whose report lags the day; a LAG line for 2 days or more. */
+  lags?: { assetId: string; lagDays: number }[];
 }
+
+/** The lag from which an asset gets a LAG line (LIT runs one day behind by design). */
+export const LAG_LINE_DAYS = 2;
+
+const publishPending = (input: NightlyInput): number => (input.publish && !input.publish.off && input.publish.pending > 0 ? 1 : 0);
 
 export const NIGHTLY_REPLY_LINE = 'reply to Raymond: confirm <id> | reject <id> | approve <id> [note] | decline <id> <note> | ack <id> <note> | resolve <id> <note>';
 
 /** How many alerts the report carries: each alerting asset block, and each refresh missing at the cut. */
 export function nightlyAlerts(input: NightlyInput): number {
-  return input.results.filter((r) => formatAssetBlock(r).alert).length + input.refreshesMissing.length;
+  return input.results.filter((r) => formatAssetBlock(r).alert).length + input.refreshesMissing.length + publishPending(input);
 }
 
 /**
@@ -269,7 +278,7 @@ export function formatNightly(input: NightlyInput): string[] {
   const sym = (id: string): string => input.symbols[id] ?? id.toUpperCase();
   const results = [...input.results].sort((a, b) => (a.assetId < b.assetId ? -1 : a.assetId > b.assetId ? 1 : 0));
   const blocks = results.map((r) => formatAssetBlock(r));
-  const alerts = blocks.filter((b) => b.alert).length + input.refreshesMissing.length;
+  const alerts = blocks.filter((b) => b.alert).length + input.refreshesMissing.length + publishPending(input);
   const head = [
     alerts > 0 ? `ORION ALERT ${input.env} nightly ${input.day}: ${alerts} alert(s)` : `ORION NIGHTLY ${input.env} ${input.day}: ${results.length} assets ok`,
     `release ${input.releaseTag ?? '(dev checkout)'}`,
@@ -288,6 +297,11 @@ export function formatNightly(input: NightlyInput): string[] {
     head.push(`WATCH FIRING ${sym(w.assetId)}: ${w.metricKey} ${w.rule} ${w.lastValue === null ? 'n/a' : exact(w.lastValue)} since ${w.since.slice(0, 10)}`);
   }
   for (const id of [...input.refreshesMissing].sort()) head.push(`REFRESH MISSING ${sym(id)}: no finished refresh 3 h after the ${input.slot} slot`);
+  for (const l of [...(input.lags ?? [])].sort((a, b) => (a.assetId < b.assetId ? -1 : 1))) {
+    if (l.lagDays >= LAG_LINE_DAYS) head.push(`LAG ${sym(l.assetId)} ${l.lagDays}d`);
+  }
+  if (input.publish?.off) head.push('PUBLISH OFF');
+  else if (publishPending(input) > 0) head.push(`PUBLISH PENDING ${input.publish!.pending} snapshot(s), oldest ${input.publish!.oldest}`);
   const assetBlocks = results.map((r, i) => [`== ${r.symbol} ==`, ...blocks[i]!.lines]);
   return splitForSlack([head, ...assetBlocks, [NIGHTLY_REPLY_LINE]]);
 }

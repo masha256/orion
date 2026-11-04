@@ -502,6 +502,20 @@ psql_file_as_postgres() {
 }
 
 # selfcheck <name> <cmd...>: PASS when the command exits 0. Output of a failing check is shown (first lines).
+# env_values_differ <file a> <file b> <KEY>: fails when both files set KEY to the same non-blank value (M-5: prod and
+# stage must never share a Slack webhook or a publish target). Values are compared by hash and never printed; a file
+# that is missing, or a KEY that is absent or blank in either, passes (not filled in yet); so does `off` in both.
+env_values_differ() {
+  local a b
+  a=$(grep -m1 "^$3=" "$1" 2>/dev/null | cut -d= -f2-) || a=''
+  b=$(grep -m1 "^$3=" "$2" 2>/dev/null | cut -d= -f2-) || b=''
+  [[ -z ${a// /} || -z ${b// /} || $a == off ]] && return 0 # ORION_PUBLISH=off in both is fine
+  [[ $(printf '%s' "$a" | sha256sum) != $(printf '%s' "$b" | sha256sum) ]] || {
+    printf '%s is the same in both files\n' "$3"
+    return 1
+  }
+}
+
 selfcheck() {
   local name=$1 out
   shift

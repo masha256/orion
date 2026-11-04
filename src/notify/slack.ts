@@ -77,8 +77,9 @@ export function slackNotifier(o: SlackNotifierOptions): Notifier {
   return {
     async post(text: string): Promise<PostResult> {
       if (url === '') {
+        // I-1: never 'delivered' (a dead-man ping must not follow a post nobody received). stage/prod refuse to start.
         o.log(`slack disabled: ${text.split('\n', 1)[0]}`);
-        return { ok: true, attempts: 0 };
+        return { ok: false, attempts: 0, error: 'webhook unset' };
       }
       const body = JSON.stringify({ text: slackEscape(text) });
       const tries = SLACK_RETRY_DELAYS_MS.length + 1;

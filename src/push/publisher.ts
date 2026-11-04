@@ -6,12 +6,15 @@ import { gitPublisher, type GitRun } from './gitPublisher.js';
 
 /**
  * Where snapshots go (spec 9.2). `ORION_PUBLISH` picks the driver per environment: `git:<url>#<branch>` (now),
- * `s3:...` (later; refused until built), unset = publishing off (snapshots still go to the outbox).
+ * `s3:...` (later; refused until built), `off` (or unset, dev only) = publishing off (snapshots still go to the outbox).
  */
 export interface Publisher {
   /** Writes `files` (path -> exact text) and makes them visible to the site; `message` describes the publish. */
   publish(files: Record<string, string>, message: string): Promise<{ ref: string }>;
 }
+
+/** `ORION_PUBLISH=off`: publishing off on purpose. stage/prod refuse to start with the variable unset (I-2). */
+export const PUBLISH_OFF = 'off';
 
 export type PublishTarget = { driver: 'git'; url: string; branch: string } | { driver: 's3' };
 
@@ -20,7 +23,7 @@ const BRANCH = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*\.lock$)[A-Za-z0-9._/-]+(?<![./])
 
 export function parsePublishTarget(v: string | undefined): PublishTarget | null {
   const text = (v ?? '').trim();
-  if (text === '') return null;
+  if (text === '' || text === PUBLISH_OFF) return null;
   if (text.startsWith('s3:')) return { driver: 's3' };
   const m = /^git:([^#\s]+)(?:#(.*))?$/.exec(text);
   const branch = m?.[2] ?? 'main';
@@ -30,8 +33,9 @@ export function parsePublishTarget(v: string | undefined): PublishTarget | null 
   return { driver: 'git', url: m[1], branch };
 }
 
-const PROD_REPO = /(^|[/:])orion-data(\.git)?(#|\/?$)/;
-const STAGE_REPO = /(^|[/:])orion-data-staging(\.git)?(#|\/?$)/;
+// GitHub repo names are case-insensitive (M-5): masha256/Orion-Data is the prod repo too.
+const PROD_REPO = /(^|[/:])orion-data(\.git)?(#|\/?$)/i;
+const STAGE_REPO = /(^|[/:])orion-data-staging(\.git)?(#|\/?$)/i;
 
 /**
  * Refuses a publish target the environment must never use (N11): staging naming the prod repo `orion-data`, prod

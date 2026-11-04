@@ -93,6 +93,18 @@ lib_case "orion_user_files: a changed unit alone sets ORION_UNIT_CHANGED (not lo
   orion_user_files "$u" "$ME" stage "'"$prov"'/files" >/dev/null; [[ $ORION_UNIT_CHANGED == 0 ]]'
 lib_case "orion-host.sh sets lastpipe (CHANGED after cmd | write_file is the write_file one)" '
   grep -qx "shopt -s lastpipe" "'"$prov"'/orion-host.sh"'
+lib_case "env_values_differ (M-5): equal non-blank values fail, never printed; blank or absent passes" '
+  printf "SLACK_WEBHOOK_URL=https://hooks.example/SAME-SECRET\nORION_PUBLISH=git:a#main\n" >"$T/p.env"
+  printf "# c\nSLACK_WEBHOOK_URL=https://hooks.example/SAME-SECRET\nORION_PUBLISH=git:b#main\n" >"$T/s.env"
+  printf "SLACK_WEBHOOK_URL=\n" >"$T/blank.env"
+  ! out=$(env_values_differ "$T/p.env" "$T/s.env" SLACK_WEBHOOK_URL 2>&1) || exit 1
+  [[ $out != *SAME-SECRET* ]]
+  env_values_differ "$T/p.env" "$T/s.env" ORION_PUBLISH
+  env_values_differ "$T/p.env" "$T/blank.env" SLACK_WEBHOOK_URL
+  env_values_differ "$T/p.env" "$T/blank.env" ORION_PUBLISH
+  env_values_differ "$T/p.env" "$T/nonexistent.env" SLACK_WEBHOOK_URL
+  printf "ORION_PUBLISH=off\n" >"$T/off1.env"; printf "ORION_PUBLISH=off\n" >"$T/off2.env"
+  env_values_differ "$T/off1.env" "$T/off2.env" ORION_PUBLISH'
 lib_case "selfcheck counts and summary fails on FAIL" '
   selfcheck yes true >/dev/null; selfcheck no false >/dev/null; selfcheck refused expect_fail false >/dev/null
   [[ $SELFCHECK_PASSES == 2 && $SELFCHECK_FAILS == 1 ]]; ! selfcheck_summary >/dev/null'
