@@ -101,3 +101,39 @@ For Mike at G1 (table notes):
   less the measured costs (PUMP 365.05, VVV 89.78 "before costs"); below-line `toHolders` sums the measured lines and
   lists the rest; revenue is null when a revenue line is not measured; `priceBasis.asOf`/`supplyAsOf` are the levels'
   read as-of (end of D+1), not each observation's time.
+
+## Gate G1: v2 income statement table (controller, 2026-11-04)
+
+Cross-release proof on c7eed0e (old side: release orion-2026.11.04.2 @ f5f36fa; live `.backup` imported into
+`p2proof_20261104t214336z`; report day D = 2026-11-02, 91-day windows, $M a year): legacy JSON 13/13 byte-identical,
+361 parity pairs (10 assets) and 3 reclassification assets PASS; anomalies and proposals identical. Suite at c7eed0e:
+117 files / 1375 tests, typecheck and lint:promises clean (controller rerun).
+
+| asset | scope | revenue | cost of rev | gross profit | holders (bucket) | protocol | opex | below line to holders | unreconciled | payout (basis) | third-party lines | cost not measured |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| aero | protocol_share_only | 79.81 | — | — | cash:79.81 | 0.00 | 0.00 | — | 0.00 | 1.00 (revenue) | revenue.fees,holders.voter_fees | lp_fees |
+| cake | protocol_share_only | 79.74 | — | — | burn:58.37 | 21.37 | 0.00 | 0.00 | 0.00 | 0.73 (revenue) | – | lp_fees |
+| crv | protocol_share_only | 5.84 | — | — | cash:5.26 | 0.58 | 0.00 | 7.12 | 0.00 | 0.90 (revenue) | below_line.vote_incentives,below_line.vote_incentives.cross_checks | lp_fees |
+| cvxcrv | complete | 6.11 | 0.00 | 6.11 | cash:4.70 | 1.31 | 0.10 | 0.41 | 0.00 | 0.77 (grossProfit) | – | – |
+| hype | protocol_share_only | 1012.28 | — | — | burn:1012.28 | -0.00 | 0.00 | 0.00 | 0.00 | 1.00 (revenue) | revenue.trading,holders.af_buyback | hlp,builders,deployers,referrers |
+| link | protocol_share_only | 57.17 | — | — | hold:57.17 | 0.00 | 0.00 | 0.00 | 0.00 | 1.00 (revenue) | – | node_operators |
+| lit | complete | 51.89 | 9.01 | 42.89 | burn:37.81 | 5.08 | 0.00 | 0.00 | 0.00 | 0.88 (grossProfit) | holders.buyback.cross_checks | – |
+| pump | protocol_share_only | 687.60 | — | — | burn:317.71 | 369.89 | 0.00 | 0.00 | 0.00 | 0.46 (revenue) | revenue.protocol | creators,lps |
+| sdcrv | complete | 1.91 | 0.00 | 1.91 | cash:0.90 | 0.90 | 0.12 | 1.70 | 0.00 | 0.47 (grossProfit) | – | – |
+| sky | protocol_share_only | 54.65 | — | — | cash:54.65 | 0.00 | 0.00 | 0.00 | 0.00 | 1.00 (revenue) | – | savers |
+| uni | protocol_share_only | 142.04 | — | — | burn:142.04 | 0.00 | 0.00 | 0.00 | 0.00 | 1.00 (revenue) | – | lps |
+| vvv | complete | 150.00 | — | — | burn:10.53 | 139.47 | 0.00 | 0.00 | 0.00 | 0.07 (revenue) | revenue.business.cross_check,holders.burn.cross_checks | compute |
+| ycrv | complete | 2.25 | 0.00 | 2.25 | cash:1.62 | 0.63 | 0.00 | 0.00 | -0.00 | 0.72 (grossProfit) | – | – |
+
+Reclassifications vs v1 (D = 2026-11-02): sdCRV revenue 3.62 -> 1.91 (bribes 1.70 below the line), payout 0.72 -> 0.47;
+yCRV revenue 2.35 -> 2.25 (st-yCRV fee out, R6); LIT revenue 42.89 -> 51.89 (Robinhood gross, 9.01 partner cost), gross
+profit 42.89. Every holder-flow, yield, supply and dilution figure is unchanged for all 13.
+
+Open for Mike at G1:
+- yCRV vote incentives (Task 2 review M2): the splitter's crvUSD over 93 days to 2026-11-04 was $560,940, of which the
+  voter (veCRV fees) sent $140,085 (25%) and Yearn's FeeBurner (auctioned third-party vote incentives) $420,855 (75%).
+  sdCRV's bribes are below the line under rule 3; yCRV's are inside revenue. Consistent treatment: yCRV revenue
+  ~0.56, ~1.69 below the line (needs a per-sender split of the splitter inflow and of the YBS payout: a model change).
+- Listing bar (M7): checks revenue + holders + supply (D6); counting below-line-to-holders lines would also fail CRV
+  (llama.box vote incentives). AERO, HYPE, PUMP fail the bar today (third-party revenue), reported, not blocked.
+- Implementer choices where the spec is silent (Task 3 review, "Open for Mike" 1-6 above in this note).
