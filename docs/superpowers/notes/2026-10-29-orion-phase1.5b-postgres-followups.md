@@ -111,9 +111,8 @@ entry, imported from the archived file.
 
 ## Rulings (binding during the build) and what each costs if wrong
 
-The rebuilt ledger holds R-b3 to R-b5 and R-b7 to R-b12. **R-b1, R-b2 and R-b6 were in the pruned original ledger and
-could not be recovered.** They are not reconstructed here from memory. If they matter, the Task 1-5 review threads are
-the only remaining source.
+The rebuilt ledger held R-b3 to R-b5 and R-b7 to R-b12. The controller restored R-b1, R-b2 and R-b6 from its own
+dispatch record (the Slack thread and the controller session), below the table.
 
 | Ruling | What it says | Cost if wrong |
 |---|---|---|
@@ -127,6 +126,14 @@ the only remaining source.
 | R-b11 | The test globalSetup sets `ALTER DATABASE … SET synchronous_commit = off` only on a database whose name ends in `_test`, and refuses any other, before setting anything | If the guard were absent, a mis-set `ORION_TEST_DATABASE_URL` pointing at prod would turn off durable commits there. The cost of the ruling: tests can't run on a database not named `*_test` |
 | R-b12 | Dead `assumption_value` code paths in `src` are removed if trivial (done in Task 9: the union member, the `proposal_kind_retired` branch, the CLI formatter, `SCENARIOS`) | None while the CHECK refuses the kind. If a valuation layer returns, the kind comes back as new code and a migration, not by reviving these paths |
 
+Restored from the controller's record:
+- **R-b1:** P1 (`config_versions`) was open while Tasks 1-6 ran; none depended on it. Mike decided 2026-11-04: not
+  carried. Cost if wrong: 70 historical config-hash rows are only in the archived SQLite file.
+- **R-b2:** Tasks 7-11 were blocked until Mike ran `dev-postgres.sh` (done 2026-11-04). Cost: none; ordering only.
+- **R-b6:** Tasks 3-5 (same-shape store moves) went to one implementer, one commit each, one review over the range.
+  Cost if wrong: a cross-task mistake is reviewed later than a per-task review would have caught it; the range review
+  found none.
+
 Carry items handed from the Task 1-5 review into Tasks 7-9 (all done; details in the task reports):
 - (a) A nested `lockAsset` on another asset is refused (`tx_asset_mismatch`, in the pool).
 - (b) `evidenceLookup` reads only shown ids and refuses more than 200.
@@ -139,8 +146,15 @@ Carry items handed from the Task 1-5 review into Tasks 7-9 (all done; details in
 
 ## Review minors (deferred)
 
-- The Task 1-5 review counted 6 minors. Their text was in the pruned ledger and is not recoverable. The four named
-  risks (floating promises, tx-handle misuse, SQL/order drift, error semantics) were reviewed CLEAN.
+- The Task 1-5 review (four named risks, all CLEAN) had 6 minors, restored from the controller's record:
+  1. Unawaited `close()` in 7 test files: fixed in Task 6.
+  2. `tests/meta/awaits.test.ts` was line-based and top-level only: made recursive in Task 8 (carry g), plus the
+     type-aware `lint:promises` check.
+  3. Nested `lockAsset` on another asset in `app/proposals.ts` / `agent/ledger.ts` (pg deadlock, cross-asset approve):
+     fixed in Task 8 (`tx_asset_mismatch`, carry a).
+  4. `acquireRunLock` read-then-upsert raced without a lock on pg: gone in Task 8 (advisory run lock).
+  5. `evidenceLookup` read every cited id with no cap: fixed in Task 8 (shown ids only, max 200; carry b).
+  6. `fetchRuns.recentSourceStatuses` loaded every fetch run: replaced by SQL in Task 8.
 - A `connectionString` that carries its own `options=` would override the pool's `search_path`/`TimeZone` options. That
   is not an issue for the documented URLs (Task 7).
 - `application_name` is truncated at 63 bytes, so run-lock holder strings must stay short (Task 7).
@@ -176,6 +190,11 @@ Carry items handed from the Task 1-5 review into Tasks 7-9 (all done; details in
    names a non-test database `*_test`, the setting lands there. Decide in 1.5c whether to also require that the
    database owner is `orion_dev`, or to move the setting to `SET synchronous_commit` per test session, which persists
    nothing.
-4. R-b1, R-b2, R-b6 and the six Task 1-5 review minors are lost with the pruned ledger (above).
+4. (Closed) R-b1, R-b2, R-b6 and the six review minors are restored above.
 5. The plan named this note `…-phase1.5b-followups.md`. The file is `…-phase1.5b-postgres-followups.md`, and the plan's
    file list now points here.
+
+## Counts that moved since earlier measurements (checked 2026-11-04, live DB read-only)
+- agent_runs 64 (was 49 at the spec survey): weekly/triage/bootstrap runs kept running on live until Phase 1 merged.
+  Run types: weekly 40, bootstrap 12, triage 7, deep 4, disclosure 1. So 63 non-disclosure transcripts are excluded (D8).
+- The 2 retired_kind proposals are #1 (vvv, assumption_value, rejected) and #4 (cake, assumption_value, rejected).
