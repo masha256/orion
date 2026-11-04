@@ -380,5 +380,58 @@ class CleanupTest(unittest.TestCase):
         self.assertTrue(p.exists())
 
 
+# A dist whose CLI, like a release's (src/cli/paths.ts resolvePaths), exits 1 unless ORION_HOME is set and, here,
+# ORION_ENV_FILE is exactly <ORION_HOME>/.env; otherwise it prints JSON (and a --legacy-free help text).
+STRICT_CLI = r"""
+const home = process.env.ORION_HOME || '';
+const envFile = process.env.ORION_ENV_FILE || '';
+if (home.trim() === '' || envFile !== home + '/.env') {
+  process.stderr.write('error: a release needs ORION_HOME and ORION_ENV_FILE set; got ORION_HOME=' + home + ' ORION_ENV_FILE=' + envFile + '\n');
+  process.exit(1);
+}
+const args = process.argv.slice(2);
+if (args.includes('--help')) { process.stdout.write('Usage: orion report yield <asset> [--day <d>] [--json]\n'); process.exit(0); }
+process.stdout.write(JSON.stringify({ args }, null, 2) + '\n');
+"""
+
+
+class ReportsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def release(self, name):
+        """An extracted release: <name>/RELEASE beside <name>/dist/cli/index.js."""
+        rel = self.root / name
+        (rel / "dist" / "cli").mkdir(parents=True)
+        (rel / "RELEASE").write_text(json.dumps({"tag": name, "commit": "x", "schema": 1, "built_at": "2026-11-04"}))
+        (rel / "dist" / "cli" / "index.js").write_text(STRICT_CLI)
+        return rel / "dist"
+
+    def home(self, name):
+        h = self.root / name
+        (h / "assets").mkdir(parents=True)
+        for a in ASSETS:
+            (h / "assets" / f"{a}.yaml").write_text(f"id: {a}\n")
+        (h / ".env").write_text("ORION_DATABASE_URL=postgresql://nobody@/none\nORION_DB_SCHEMA=p2proof_20261104t000000z\n")
+        return h
+
+    def test_reports_sh_passes_orion_env_file_for_a_release_on_both_sides(self):
+        old, new = self.release("orion-old"), self.release("orion-new")
+        h_old, h_new, out = self.home("old"), self.home("new"), self.root / "out"
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ORION_")}
+        r = subprocess.run(
+            ["bash", str(HERE / "reports.sh"), str(old), str(new), str(h_old), str(h_new), "2026-10-27", str(out)],
+            capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rows = [l.split("\t") for l in (out / "status.tsv").read_text().splitlines()]
+        self.assertEqual(len(rows), 2 * (len(ASSETS) + 2))
+        self.assertTrue(all(row[2] == "0" for row in rows), rows)
+
+
 if __name__ == "__main__":
     unittest.main()

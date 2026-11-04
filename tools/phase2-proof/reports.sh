@@ -48,6 +48,8 @@ for y in "${yamls[@]}"; do assets+=("$(basename "$y" .yaml)"); done
 mkdir -p "$OUT/old" "$OUT/new" || die "cannot create $OUT"
 
 # Only the home's .env decides the database: no ORION_* variable of the caller is passed on.
+# Each run gets ORION_HOME=<home> and ORION_ENV_FILE=<home>/.env: a release (a RELEASE beside its dist/) refuses to
+# run without both (src/cli/paths.ts resolvePaths, release_env_required).
 for v in $(compgen -e); do case "$v" in ORION_*) unset "$v" ;; esac; done
 
 : >"$OUT/status.tsv"
@@ -56,7 +58,7 @@ failures=0
 run() {
   local side="$1" cli="$2" home="$3" name="$4" code=0
   shift 4
-  (cd "$home" && ORION_HOME="$home" node "$cli" "$@") >"$OUT/$side/$name" 2>"$OUT/$side/$name.stderr" || code=$?
+  (cd "$home" && ORION_HOME="$home" ORION_ENV_FILE="$home/.env" node "$cli" "$@") >"$OUT/$side/$name" 2>"$OUT/$side/$name.stderr" || code=$?
   printf '%s\t%s\t%s\n' "$side" "$name" "$code" >>"$OUT/status.tsv"
   if [ "$code" -ne 0 ]; then
     failures=$((failures + 1))
@@ -65,7 +67,7 @@ run() {
 }
 
 # Does the new CLI have --legacy (Task 4 adds it)?
-(cd "$HOME_NEW" && ORION_HOME="$HOME_NEW" node "$NEW_CLI" report yield --help) >"$OUT/new-report-yield-help.txt" 2>&1 \
+(cd "$HOME_NEW" && ORION_HOME="$HOME_NEW" ORION_ENV_FILE="$HOME_NEW/.env" node "$NEW_CLI" report yield --help) >"$OUT/new-report-yield-help.txt" 2>&1 \
   || die "the new CLI's report yield --help failed (see $OUT/new-report-yield-help.txt)"
 [ -s "$OUT/new-report-yield-help.txt" ] || die "the new CLI's report yield --help printed nothing"
 legacy=()

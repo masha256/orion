@@ -17,6 +17,13 @@ Env overrides for `snapshot.sh`: `P2_NEW_DIST` (default `<worktree>/dist`), `P2_
 `orion.db`, only ever opened `mode=ro`), `P2_OLD_CONFIG` (source of the old home's `assets/ personas/ skills/`;
 default the worktree).
 
+Every `reports.sh` run, both sides and the `--help` probe, gets `ORION_HOME=<home>` and `ORION_ENV_FILE=<home>/.env`:
+a release refuses to run without both. When the old side is an extracted release (a directory holding `RELEASE` beside
+`dist/`, e.g. `orion-2026.11.04.2/dist`), its config root is the release directory itself (`src/cli/paths.ts`
+`resolvePaths`), so it reads its own `assets/`, `personas/` and `skills/`, not the copy in the old home: the old home
+then supplies only the `.env` (the database) and the data home, and `P2_OLD_CONFIG` only matters for an old dist that
+is not a release.
+
 ## Run (controller)
 
 ```bash
