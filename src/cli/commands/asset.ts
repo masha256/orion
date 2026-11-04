@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { Command } from 'commander';
 import { listAssetIds, loadAsset } from '../../config/load.js';
 import { loadSchedule, nextSlot } from '../../daemon/schedule.js';
+import { migrationStatus } from '../../db/pg/migrate.js';
 import { listRegistry, type RegistryRow } from '../../db/registry.js';
 import { activateAsset, pauseAsset, resumeAsset, seedRegistry } from '../../registry/actions.js';
 import { loadAssetYamls, planReconcile, reconcileFromDisk, type RegistryDiff } from '../../registry/reconcile.js';
@@ -161,8 +162,20 @@ export function registerAsset(program: Command, ctx: CliContext): void {
       const opts = cmd.optsWithGlobals<{ json?: boolean }>();
       return guarded(ctx, opts.json, async () => {
         const yamls = loadAssetYamls(ctx.configRoot);
-        const diff = planReconcile(await withDb(ctx, (db) => listRegistry(db)), yamls);
-        output(ctx, opts.json, diff, () => diffLines(diff));
+        // Read-only, so a schema behind this build is fine (I-6): orion-remote install runs the diff of a release whose
+        // migrations switch has not applied yet. The registry table may not exist at all yet: then it is empty.
+        const { rows, pending } = await withDb(
+          ctx,
+          async (db) => {
+            const status = await migrationStatus(db);
+            const has = await db.one("SELECT 1 AS x FROM pg_tables WHERE schemaname = $1 AND tablename = 'asset_registry'", [db.schema]);
+            return { rows: has ? await listRegistry(db) : [], pending: status.pending.map((p) => p.id) };
+          },
+          { checkSchema: false },
+        );
+        const diff = planReconcile(rows, yamls);
+        const shown = pending.length > 0 ? { ...diff, schemaPending: pending } : diff;
+        output(ctx, opts.json, shown, () => [...diffLines(diff), ...(pending.length > 0 ? [`(schema behind this build: migration(s) ${pending.join(', ')} pending)`] : [])]);
       });
     });
 

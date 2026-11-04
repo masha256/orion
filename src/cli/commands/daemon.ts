@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { hostname } from 'node:os';
 import type { Command } from 'commander';
-import { activeAssetIds, Daemon, defaultHandlers, realClock } from '../../daemon/daemon.js';
+import { activeAssetIds, Daemon, defaultHandlers, HEARTBEAT_INTERVAL_MS, realClock } from '../../daemon/daemon.js';
 import { nightlyStatus, type NightlyStatus } from '../../daemon/jobs/nightlyReport.js';
 import { daemonLog } from '../../daemon/log.js';
 import { loadSchedule, nextSlot, type ScheduleEntry } from '../../daemon/schedule.js';
@@ -107,6 +107,11 @@ export function registerDaemon(program: Command, ctx: CliContext): void {
           for (;;) {
             const h = await getHeartbeat(db, id);
             if (!h || h.state === 'drained' || h.state === 'stopped') return { daemonId: id, state: h?.state ?? 'gone' };
+            // I-4: a daemon writes its row at least every HEARTBEAT_INTERVAL_MS; twice that without a beat means the
+            // process is dead (killed, OOM, crash loop), so there is nothing to wait for.
+            if (ctx.now().getTime() - Date.parse(h.beatAt) > 2 * HEARTBEAT_INTERVAL_MS) {
+              return { daemonId: id, state: 'gone', reason: `heartbeat ${h.beatAt} is older than ${(2 * HEARTBEAT_INTERVAL_MS) / 60_000} min` };
+            }
             const left = deadline - Date.now();
             if (left <= 0) {
               const job = h.currentJobId === null ? null : await getJob(db, h.currentJobId);

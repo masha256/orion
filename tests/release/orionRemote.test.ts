@@ -14,7 +14,11 @@ const PYTHON = process.env.ORION_REMOTE_PYTHON ?? '/usr/bin/python3';
 describe('orion-remote', () => {
   it('orion-remote: the Python unit tests pass (injection, install, switch, rollback, verbs)', () => {
     const r = spawnSync(PYTHON, ['-B', '-m', 'unittest', 'discover', '-s', TESTS, '-p', 'test_orion_remote.py'], {
-      encoding: 'utf8', timeout: 240_000, env: { PATH: '/usr/bin:/bin', HOME: process.env.HOME ?? '/nonexistent', TMPDIR: process.env.TMPDIR ?? '/tmp' },
+      encoding: 'utf8', timeout: 240_000, env: {
+        PATH: '/usr/bin:/bin', HOME: process.env.HOME ?? '/nonexistent', TMPDIR: process.env.TMPDIR ?? '/tmp',
+        // the C-1 reproduction runs the real psql against the test database
+        ...(process.env.ORION_TEST_DATABASE_URL ? { ORION_TEST_DATABASE_URL: process.env.ORION_TEST_DATABASE_URL } : {}),
+      },
     });
     expect(r.error).toBeUndefined();
     expect(r.stderr).toMatch(/\nOK\n?$/);

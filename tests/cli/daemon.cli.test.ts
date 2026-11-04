@@ -79,6 +79,7 @@ async function runningDaemon(): Promise<void> {
 describe('orion daemon drain / undrain / status', () => {
   it('cli: daemon drain --wait 1s times out naming the running job', async () => {
     await runningDaemon();
+    await beat(db(), 'other-daemon', { currentJobId: 1, state: 'running' }, new Date()); // the subprocess runs on the real clock: a fresh beat
     const h = home();
     const r = await orionProcess(processEnv(h), 'daemon', 'drain', '--wait', '1s');
     expect(r.exit).toBe(1);
@@ -97,6 +98,19 @@ describe('orion daemon drain / undrain / status', () => {
     const u = await orion(h, 'daemon', 'undrain');
     expect(u.out).toContain('drain request cleared');
     expect((await latestHeartbeat(db()))?.drainRequestedAt).toBeNull();
+  });
+
+  it('cli: daemon drain (I-4) treats a heartbeat older than 2x the beat interval as a dead daemon: state gone, no wait', async () => {
+    await runningDaemon();
+    await beat(db(), 'other-daemon', { currentJobId: 1, state: 'running' }, new Date(Date.parse(NOW) - 31 * 60_000));
+    const started = Date.now();
+    const r = await orion(home(), 'daemon', 'drain', '--wait', '30m', '--json');
+    expect(r.exit).toEqual([]);
+    expect(JSON.parse(r.out)).toEqual({ daemonId: 'other-daemon', state: 'gone', reason: 'heartbeat 2026-11-03T01:29:00.000Z is older than 30 min' });
+    expect(Date.now() - started).toBeLessThan(10_000);
+    // 29 min old: alive, so drain waits (and times out here)
+    await beat(db(), 'other-daemon', { currentJobId: 1, state: 'running' }, new Date(Date.parse(NOW) - 29 * 60_000));
+    expect(JSON.parse((await orion(home(), 'daemon', 'drain', '--wait', '1s', '--json')).out).error.code).toBe('drain_timeout');
   });
 
   it('cli: daemon drain with no daemon fails with no_daemon', async () => {

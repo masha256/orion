@@ -1,6 +1,9 @@
 import type { Command } from 'commander';
+import { openDb } from '../../db/connection.js';
 import { applyMigrations, migrationStatus, type MigrationStatus } from '../../db/pg/migrate.js';
-import { guarded, output, withDb, type CliContext } from '../util.js';
+import { checkSingleStatement, queryReadOnly, urlForRole } from '../../db/queryRo.js';
+import { OrionError } from '../../types.js';
+import { databaseFor, guarded, output, withDb, type CliContext } from '../util.js';
 
 function statusLines(s: MigrationStatus): string[] {
   const lines = [`schema ${s.schema}: ${s.state} (database at ${s.dbAt}, this build needs ${s.codeRequires})`];
@@ -40,6 +43,29 @@ export function registerDb(program: Command, ctx: CliContext): void {
           result.applied.length === 0 ? 'nothing to apply' : `applied ${result.applied.join(', ')}`,
           ...statusLines(result.status),
         ]);
+      }),
+    );
+
+  db.command('query-ro')
+    .description('one read-only SQL statement (READ ONLY transaction, 30 s timeout), rows as JSON; no backslash, no second statement')
+    .argument('<sql>', 'the statement')
+    .option('--role <name>', 'sign in as this role instead of the URL\'s user (orion-remote passes orion_prod_ro)')
+    .option('--json', 'accepted; the output is always JSON')
+    .action((sql: string, opts: { role?: string }) =>
+      guarded(ctx, true, async () => {
+        checkSingleStatement(sql);
+        const base = databaseFor(ctx);
+        const config = opts.role === undefined ? base : { ...base, url: urlForRole(base.url, opts.role) };
+        const db = await openDb(config, { max: 1, checkSchema: false });
+        try {
+          const rows = await queryReadOnly(db, sql).catch((err: unknown) => {
+            if (err instanceof OrionError) throw err;
+            throw new OrionError('query_failed', err instanceof Error ? err.message : String(err));
+          });
+          ctx.stdout(JSON.stringify({ rows, rowCount: rows.length }, null, 2));
+        } finally {
+          await db.close();
+        }
       }),
     );
 }

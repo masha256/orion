@@ -116,6 +116,64 @@ describe('orion db', () => {
     expect(await tables(absent)).toEqual([]);
   });
 
+  it('db query-ro (C-1): one statement in a READ ONLY transaction, as --role, JSON rows; backslashes and a second statement are refused', async () => {
+    const s = await schema({ migrate: true });
+    const h = home();
+    const ok = await orion({ home: h, database: s }, 'db', 'query-ro', "select 1 as one, 'a;b' as \"semi;colon\", current_setting('statement_timeout') as t, current_setting('transaction_read_only') as ro");
+    expect(ok.exit).toEqual([]);
+    expect(JSON.parse(ok.out)).toEqual({ rows: [{ one: 1, 'semi;colon': 'a;b', t: '30s', ro: 'on' }], rowCount: 1 });
+    // a write is refused by the transaction, not by the caller's goodwill
+    const write = await orion({ home: h, database: s }, 'db', 'query-ro', "insert into coverage (asset_id) values ('x')");
+    expect(write.exit).toEqual([1]);
+    expect(JSON.parse(write.out).error.message).toMatch(/read-only transaction/);
+    // the role named is the one that signs in (the test database's own role here; orion_prod_ro on venus)
+    const role = /^postgres(?:ql)?:\/\/([^@:/?#]+)[@:]/.exec(requireTestDatabaseUrl())?.[1] ?? 'orion_dev';
+    expect(JSON.parse((await orion({ home: h, database: s }, 'db', 'query-ro', '--role', role, 'select current_user as u')).out).rows).toEqual([{ u: role }]);
+    for (const [q, code] of [
+      ['\\! cat ~/shared/.env', 'query_backslash'],
+      ["select E'\\x41'", 'query_backslash'],
+      ['select 1; select 2', 'query_multiple'],
+      ['commit; set transaction read write', 'query_multiple'],
+      ['select 1;', 'query_multiple'],
+      ["select 'open", 'query_unclosed_quote'],
+      ['   ', 'query_empty'],
+    ] as const) {
+      const r = await orion({ home: h, database: s }, 'db', 'query-ro', q, '--json');
+      expect(JSON.parse(r.out).error.code, q).toBe(code);
+      expect(r.exit, q).toEqual([1]);
+    }
+    expect(JSON.parse((await orion({ home: h, database: s }, 'db', 'query-ro', '--role', 'Bad-Role', 'select 1')).out).error.code).toBe('invalid_role');
+    expect(JSON.parse((await orion({ home: h, database: s }, 'db', 'query-ro', 'select count(*)::int as n from coverage')).out).rows).toEqual([{ n: 0 }]);
+  });
+
+  it('db query-ro: urlForRole swaps only the user (and drops a password)', async () => {
+    const { urlForRole } = await import('../../src/db/queryRo.js');
+    expect(urlForRole('postgresql://orion_prod@/orion_prod?host=/var/run/postgresql', 'orion_prod_ro')).toBe('postgresql://orion_prod_ro@/orion_prod?host=/var/run/postgresql');
+    expect(urlForRole('postgres://u:pw@db:5432/x', 'r')).toBe('postgres://r@db:5432/x');
+    expect(urlForRole('postgresql:///x?host=/run', 'r')).toBe('postgresql://r@/x?host=/run');
+  });
+
+  it('asset registry diff (I-6) reads the registry on a schema one migration behind (a release that brings a migration), and on an absent schema', async () => {
+    const s = await schema({ migrate: true });
+    const db = await openDb(s, { checkSchema: false });
+    try {
+      await db.run('DELETE FROM schema_migrations WHERE id = 2'); // the tables exist, the newest migration is pending
+    } finally {
+      await db.close();
+    }
+    const h = home();
+    const r = await orion({ home: h, database: s }, 'asset', 'registry', 'diff', '--json');
+    expect(r.exit).toEqual([]);
+    expect(JSON.parse(r.out)).toMatchObject({ added: ['mini'], missing: [], schemaPending: [2] });
+    // other commands still refuse the schema behind
+    expect(JSON.parse((await orion({ home: h, database: s }, 'asset', 'registry', '--json')).out).error.code).toBe('schema_behind');
+    const absent = await schema({ migrate: false });
+    const a = await orion({ home: h, database: absent }, 'asset', 'registry', 'diff', '--json');
+    expect(a.exit).toEqual([]);
+    expect(JSON.parse(a.out)).toMatchObject({ added: ['mini'], schemaPending: [1, 2] });
+    expect(await tables(absent)).toEqual([]);
+  });
+
   it('a command on a schema ahead runs', async () => {
     const s = await schema({ migrate: true });
     const db = await openDb(s);

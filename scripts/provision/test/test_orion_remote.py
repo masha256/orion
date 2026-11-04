@@ -56,6 +56,8 @@ if tool == 'node':
     if cmd == 'daemon drain':
         if b.get('drain') == 'no_daemon':
             out({{'error': {{'code': 'no_daemon', 'message': 'no daemon is running'}}}}, 1)
+        if b.get('drain') == 'gone':
+            out({{'daemonId': 'd1', 'state': 'gone', 'reason': 'heartbeat x is older than 30 min'}})
         out({{'daemonId': 'd1', 'state': 'drained'}})
     if cmd == 'daemon undrain':
         out({{'cleared': 1}})
@@ -78,10 +80,18 @@ if tool == 'node':
         out(b.get('diff', {{'added': [], 'missing': [], 'returned': [], 'configChanged': []}}))
     if rest[:2] == ['asset', 'registry']:
         out([])
+    if rest[:2] == ['db', 'query-ro']:
+        n = b.get('query_bytes')
+        sys.stdout.write('x' * n if n else json.dumps({{'rows': [{{'one': 1}}], 'rowCount': 1}}))
+        sys.exit(0)
     out({{'tag': tag, 'argv': rest}}, b.get('node_exit', 0))
 if tool == 'npm':
     sys.exit(b.get('npm_exit', 0))
 if tool == 'systemctl':
+    if 'is-active' in args:
+        state = b.get('unit_state', 'active')
+        print(state)
+        sys.exit(0 if state == 'active' else 3)
     if 'restart' in args and os.path.islink(cur):
         with open(running_file, 'w') as f:
             f.write(os.path.basename(os.readlink(cur)))
@@ -162,11 +172,14 @@ class RemoteCase(unittest.TestCase):
         with open(os.path.join(self.state, 'behaviour.json'), 'w') as f:
             json.dump(b, f)
 
-    def release(self, tag, current=False):
+    def release(self, tag, current=False, installed=True):
         root = os.path.join(self.home, 'releases', tag)
         os.makedirs(os.path.join(root, 'dist', 'cli'), exist_ok=True)
         with open(os.path.join(root, 'RELEASE'), 'w') as f:
             json.dump({'tag': tag, 'commit': 'c' * 40, 'schema': 2, 'built_at': '2026-11-02T10:00:00Z'}, f)
+        if installed:
+            with open(os.path.join(root, '.installed'), 'w') as f:
+                json.dump({'tag': tag, 'sha256': 'a' * 64, 'installed_at': '2026-11-02T10:00:00Z'}, f)
         if current:
             link = os.path.join(self.home, 'current')
             if os.path.lexists(link):
@@ -353,7 +366,7 @@ class InstallTests(RemoteCase):
         rc, out, err = self.install(TAG, data)
         self.assertEqual(rc, 0, err)
         result = json.loads(out)
-        self.assertEqual(sorted(result), ['db', 'registry', 'release', 'tag', 'validate'])
+        self.assertEqual(sorted(result), ['db', 'registry', 'release', 'sha256', 'tag', 'validate'])
         self.assertEqual(result['tag'], TAG)
         self.assertEqual(result['release']['tag'], TAG)
         self.assertEqual(result['validate'], {'ok': True})
@@ -367,6 +380,22 @@ class InstallTests(RemoteCase):
         self.assertEqual(self.node_argv(), [['asset', 'validate', '--json'], ['db', 'status', '--json'], ['asset', 'registry', 'diff', '--json']])
         self.assertTrue(all(c['argv'][0] == os.path.join(root, 'dist', 'cli', 'index.js') for c in self.calls('node')))
         self.assertEqual(os.listdir(os.path.join(self.home, 'incoming')), [])
+        # I-5: the marker is written last, with the sha256 that was checked
+        with open(os.path.join(root, '.installed')) as f:
+            marker = json.load(f)
+        self.assertEqual(marker['tag'], TAG)
+        self.assertEqual(marker['sha256'], hashlib.sha256(data).hexdigest())
+        self.assertEqual(result.get('sha256'), hashlib.sha256(data).hexdigest())
+
+    def test_install_replaces_a_half_installed_release(self):
+        root = self.release(TAG, installed=False)  # an install killed before its marker
+        with open(os.path.join(root, 'stale-file'), 'w') as f:
+            f.write('x')
+        rc, out, err = self.install(TAG, tarball(TAG))
+        self.assertEqual(rc, 0, err)
+        self.assertIn('half-installed', err)
+        self.assertFalse(os.path.exists(os.path.join(root, 'stale-file')))
+        self.assertTrue(os.path.isfile(os.path.join(root, '.installed')))
 
     def test_install_refuses_existing_release(self):
         self.release(TAG)
@@ -387,6 +416,14 @@ class InstallTests(RemoteCase):
         self.assertEqual(rc, 1)
         self.assertEqual(json.loads(out)['validate'], {'ok': False})
         self.assertFalse(os.path.exists(os.path.join(self.home, 'releases', TAG)))
+
+    def test_install_registry_diff_of_a_schema_behind_does_not_fail(self):
+        # I-6: a release that brings a migration: db status says behind, and the diff still answers (no schema check)
+        self.behave(db_status={'dbAt': 2, 'codeRequires': 3, 'pending': [{'id': 3, 'name': 'x', 'breaking': False}], 'state': 'behind'},
+                    diff={'added': [], 'missing': [], 'returned': [], 'configChanged': [], 'schemaPending': [3]})
+        rc, out, err = self.install(TAG, tarball(TAG))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(json.loads(out)['registry']['schemaPending'], [3])
 
     def test_install_prunes_beyond_five_never_current_or_its_predecessor(self):
         tags = [f'orion-2026.10.{d:02d}.1' for d in range(1, 9)]
@@ -416,9 +453,11 @@ class SwitchTests(RemoteCase):
         self.assertEqual(rc, 0, err)
         old, new = f'releases/{TAG}', f'releases/{TAG2}'
         seq = self.tools()
-        self.assertEqual(seq[:5], [
+        self.assertEqual(seq[:7], [
+            ('systemctl', ['--user', 'is-active'], old),  # I-4: a dead unit is not drained
             ('node', ['daemon', 'drain'], old),
             ('node', ['db', 'status'], old),
+            ('systemctl', ['--user', 'stop'], old),  # M-10: the old daemon is stopped before migrate
             ('node', ['db', 'migrate'], old),
             ('systemctl', ['--user', 'restart'], new),  # the symlink was swapped before the restart
             ('node', ['daemon', 'status'], new),
@@ -429,12 +468,13 @@ class SwitchTests(RemoteCase):
         new_cli = os.path.join(self.home, 'releases', TAG2, 'dist', 'cli', 'index.js')
         self.assertEqual(calls[1]['argv'][0], new_cli)  # db status and migrate: the new release
         self.assertEqual(calls[2]['argv'], [new_cli, 'db', 'migrate', '--json'])
-        self.assertEqual(self.calls('systemctl')[0]['argv'], ['--user', 'restart', 'orion-daemon'])
+        self.assertEqual([c['argv'] for c in self.calls('systemctl')],
+                         [['--user', 'is-active', 'orion-daemon'], ['--user', 'stop', 'orion-daemon'], ['--user', 'restart', 'orion-daemon']])
         self.assertEqual(self.current(), new)
         self.assertFalse(os.path.lexists(os.path.join(self.home, 'current.tmp')))
         log = self.deploys()
         self.assertEqual(len(log), 1)
-        self.assertRegex(log[0], rf'^\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}Z switch {TAG} -> {TAG2} migrations=3$')
+        self.assertRegex(log[0], rf'^\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}Z switch {TAG} -> {TAG2} migrations=3 breaking=0$')
         result = json.loads(out)
         self.assertEqual(result['from'], TAG)
         self.assertEqual(result['to'], TAG2)
@@ -451,8 +491,11 @@ class SwitchTests(RemoteCase):
         self.assertEqual(self.current(), f'releases/{TAG}')
         self.assertEqual(self.node_argv()[-1], ['daemon', 'undrain', '--json'])
         self.assertEqual(self.calls('node')[-1]['argv'][0], os.path.join(self.home, 'current', 'dist', 'cli', 'index.js'))
-        self.assertEqual(self.calls('systemctl'), [])
+        # M-10: the old daemon was stopped for the migration, so it is started again on the old release
+        self.assertEqual([c['argv'][1] for c in self.calls('systemctl')], ['is-active', 'stop', 'start'])
+        self.assertEqual(self.calls('systemctl')[-1]['current'], f'releases/{TAG}')
         self.assertEqual(self.deploys(), [])
+        self.assertFalse(os.path.exists(os.path.join(self.home, '.deploy-pending')))
 
     def test_switch_refuses_breaking_without_flag(self):
         self.behave(db_status={'dbAt': 2, 'codeRequires': 3, 'pending': [{'id': 3, 'name': 'drop_x', 'breaking': True}], 'state': 'behind'})
@@ -468,13 +511,22 @@ class SwitchTests(RemoteCase):
         rc, _out, err = self.remote(f'switch {TAG2} --breaking')
         self.assertEqual(rc, 0, err)
         order = [c['tool'] + (':' + ' '.join(c['argv'][1:3]) if c['tool'] == 'node' else '') for c in self.calls()]
-        self.assertEqual(order[:4], ['node:daemon drain', 'node:db status', 'pg_dump', 'node:db migrate'])
+        self.assertEqual(order[:6], ['systemctl', 'node:daemon drain', 'node:db status', 'pg_dump', 'systemctl', 'node:db migrate'])
         dump = self.calls('pg_dump')[0]['argv']
         self.assertEqual(dump[:5], ['-Fc', '-U', 'orion_prod', '-d', 'orion_prod'])
         path = dump[dump.index('-f') + 1]
         self.assertTrue(path.startswith(os.path.join(self.home, 'shared', 'predeploy', f'{TAG2}-')))
         self.assertTrue(os.path.isfile(path))
         self.assertEqual(self.node_argv()[2], ['db', 'migrate', '--breaking', '--json'])
+        # I-5: the switch line records breaking=1 and the dump, and rollback refuses to cross it
+        self.assertRegex(self.deploys()[-1], rf'switch {TAG} -> {TAG2} migrations=3 breaking=1 dump=' + os.path.basename(path).replace('.', r'\.') + '$')
+        n = len(self.calls())
+        rc, _out, err = self.remote('rollback')
+        self.assertEqual(rc, 1)
+        self.assertIn('breaking', err)
+        self.assertIn(path, err)
+        self.assertEqual(self.current(), f'releases/{TAG2}')
+        self.assertEqual(len(self.calls()), n)
 
     def test_switch_heartbeat_timeout_exits_1_with_rollback_hint(self):
         self.behave(never_up=True)
@@ -495,7 +547,33 @@ class SwitchTests(RemoteCase):
         rc, out, err = self.remote(f'switch {TAG2}')
         self.assertEqual(rc, 0, err)
         self.assertEqual(json.loads(out)['from'], None)
-        self.assertRegex(self.deploys()[0], rf'switch none -> {TAG2} migrations=none$')
+        self.assertRegex(self.deploys()[0], rf'switch none -> {TAG2} migrations=none breaking=0$')
+
+    def test_switch_refuses_a_release_without_the_installed_marker(self):
+        self.release('orion-2026.11.04.1', installed=False)  # half-installed (I-5): killed before install finished
+        rc, _out, err = self.remote('switch orion-2026.11.04.1')
+        self.assertEqual(rc, 1)
+        self.assertIn('not completely installed', err)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.current(), f'releases/{TAG}')
+
+    def test_switch_skips_the_drain_of_a_dead_unit_and_stops_it(self):
+        self.behave(unit_state='activating')  # a crash loop (I-4)
+        rc, _out, err = self.remote(f'switch {TAG2}')
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn(['daemon', 'drain'], [a[:2] for a in self.node_argv()])
+        self.assertIn('drain skipped', err)
+        self.assertEqual([c['argv'][1] for c in self.calls('systemctl')][:2], ['is-active', 'stop'])
+        self.assertTrue(any('drain skipped' in line for line in self.deploys()))
+        self.assertEqual(self.current(), f'releases/{TAG2}')
+
+    def test_switch_treats_a_stale_heartbeat_as_gone(self):
+        self.behave(drain='gone')
+        rc, _out, err = self.remote(f'switch {TAG2}')
+        self.assertEqual(rc, 0, err)
+        self.assertIn('drain skipped', err)
+        self.assertNotIn(['daemon', 'undrain'], [a[:2] for a in self.node_argv()])
+        self.assertEqual(self.current(), f'releases/{TAG2}')
 
 
 class RollbackTests(RemoteCase):
@@ -508,8 +586,8 @@ class RollbackTests(RemoteCase):
         rc, out, err = self.remote('rollback')
         self.assertEqual(rc, 0, err)
         self.assertEqual(self.current(), f'releases/{TAG}')
-        seq = [c['tool'] + (':' + ' '.join(c['argv'][1:3]) if c['tool'] == 'node' else '') for c in self.calls()[n:]]
-        self.assertEqual(seq[:3], ['node:daemon drain', 'systemctl', 'node:daemon status'])
+        seq = [c['tool'] + ':' + ' '.join(c['argv'][1:3] if c['tool'] == 'node' else c['argv'][1:2]) for c in self.calls()[n:]]
+        self.assertEqual(seq[:4], ['systemctl:is-active', 'node:daemon drain', 'systemctl:restart', 'node:daemon status'])
         self.assertNotIn('node:db migrate', seq)
         log = self.deploys()
         self.assertEqual(len(log), 2)
@@ -523,6 +601,16 @@ class RollbackTests(RemoteCase):
         rc, _out, err = self.remote('rollback')
         self.assertEqual(rc, 1)
         self.assertIn('no switch', err)
+        self.assertEqual(self.calls(), [])
+
+    def test_rollback_refuses_a_target_without_the_installed_marker(self):
+        self.release(TAG, current=True)
+        self.release(TAG2, installed=False)
+        with open(os.path.join(self.home, 'deploys.log'), 'w') as f:
+            f.write(f'2026-11-03T00:00:00Z switch {TAG2} -> {TAG} migrations=none breaking=0\n')
+        rc, _out, err = self.remote('rollback')
+        self.assertEqual(rc, 1)
+        self.assertIn('not completely installed', err)
         self.assertEqual(self.calls(), [])
 
 
@@ -630,10 +718,9 @@ class VerbTests(RemoteCase):
     def test_sql_ro_prod_only_and_capped(self):
         rc, out, _err = self.remote("sql-ro 'select 1'")
         self.assertEqual(rc, 0)
-        self.assertIn('(1 row)', out)
-        psql = self.calls('psql')[0]['argv']
-        self.assertEqual(psql, ['-X', '--no-psqlrc', '-v', 'ON_ERROR_STOP=1', '-U', 'orion_prod_ro', '-d', 'orion_prod', '-c', 'select 1'])
-        self.behave(psql_bytes=1024 * 1024 + 500)
+        self.assertEqual(json.loads(out)['rowCount'], 1)
+        self.assertEqual(self.node_argv()[-1], ['db', 'query-ro', '--role', 'orion_prod_ro', '--json', '--', 'select 1'])
+        self.behave(query_bytes=1024 * 1024 + 500)
         rc, out, err = self.remote("sql-ro 'select repeat(1)'")
         self.assertEqual(len(out.encode()), 1024 * 1024)
         self.assertIn('truncated at 1 MB', err)
@@ -665,6 +752,83 @@ class VerbTests(RemoteCase):
         rc, _out, _err = self.remote('inbox aero')
         self.assertEqual(rc, 3)
         self.assertEqual(self.log_lines()[-1].split(' ', 2)[2], 'inbox 2 exit 3')
+
+
+class RecoveryTests(RemoteCase):
+    """M-11: an orion-remote that died between drain and restart (ssh drop, OOM) leaves ~/.deploy-pending behind."""
+
+    def test_next_call_undrains_and_restarts_a_daemon_left_drained(self):
+        self.release(TAG, current=True)
+        with open(os.path.join(self.home, '.deploy-pending'), 'w') as f:
+            json.dump({'verb': 'switch', 'from': TAG, 'to': TAG2, 'at': '2026-11-04T01:00:00Z'}, f)
+        rc, out, err = self.remote('status')
+        self.assertEqual(rc, 0, err)
+        self.assertIn('recovered an interrupted switch', out)
+        self.assertEqual([a[:2] for a in self.node_argv()][:1], [['daemon', 'undrain']])
+        self.assertIn(['--user', 'restart', 'orion-daemon'], [c['argv'] for c in self.calls('systemctl')])
+        self.assertFalse(os.path.exists(os.path.join(self.home, '.deploy-pending')))
+        self.assertRegex(self.deploys()[-1], rf'^\S+ recovered switch {TAG} -> {TAG2} \(started 2026-11-04T01:00:00Z\): undrained and restarted {TAG}$')
+        # once only
+        n = len(self.calls())
+        self.assertEqual(self.remote('status')[0], 0)
+        self.assertNotIn(['daemon', 'undrain'], [c['argv'][1:3] for c in self.calls('node')[n:]])
+
+    def test_a_successful_switch_leaves_no_pending_marker(self):
+        self.release(TAG, current=True)
+        self.release(TAG2)
+        self.assertEqual(self.remote(f'switch {TAG2}')[0], 0)
+        self.assertFalse(os.path.exists(os.path.join(self.home, '.deploy-pending')))
+
+
+class SqlRoShellEscapeTests(RemoteCase):
+    """C-1: `sql-ro '\\! <cmd>'` ran a shell through psql's meta-commands and printed ~/shared/.env.
+
+    The reproduction puts the REAL psql (exec'd against ORION_TEST_DATABASE_URL, orion-remote's own argv otherwise) where
+    orion-remote looks for psql, so a psql call is a real one; it must leak nothing.
+    """
+
+    def test_sql_ro_backslash_never_reaches_a_shell_or_the_env_file(self):
+        url = os.environ.get('ORION_TEST_DATABASE_URL')
+        psql = shutil.which('psql', path='/usr/lib/postgresql/18/bin:/usr/bin')
+        if not url or not psql:
+            self.skipTest('needs ORION_TEST_DATABASE_URL and a real psql')
+        self.release(TAG, current=True)
+        wrapper = os.path.join(self.bin, 'psql')
+        with open(wrapper, 'w') as f:
+            f.write(f'''#!{sys.executable} -I
+import os, sys
+args = sys.argv[1:]
+out = []
+skip = False
+for i, a in enumerate(args):
+    if skip:
+        skip = False
+        continue
+    if a in ('-U', '-d'):
+        skip = True
+        continue
+    out.append(a)
+os.execv({psql!r}, [{psql!r}, '-d', {url!r}] + out)
+''')
+        os.chmod(wrapper, 0o755)
+        for query in ("'\\! cat ~/shared/.env; id -un'", "'\\o |cat ~/shared/.env'", "'select 1 \\g |cat ~/shared/.env'"):
+            rc, out, err = self.remote(f'sql-ro {query}')
+            self.assertNotIn('SECRET-TOKEN', out + err, f'{query}: the .env leaked')
+            self.assertNotEqual(rc, 0, query)
+        self.assertEqual(self.calls('psql'), [])
+
+    def test_sql_ro_goes_through_orion_db_query_ro_as_the_ro_role(self):
+        self.release(TAG, current=True)
+        rc, out, err = self.remote("sql-ro 'select 1 as one'")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.node_argv()[-1], ['db', 'query-ro', '--role', 'orion_prod_ro', '--json', '--', 'select 1 as one'])
+        self.assertEqual(self.calls('node')[-1]['argv'][0], os.path.join(self.home, 'current', 'dist', 'cli', 'index.js'))
+        self.assertEqual(self.calls('psql'), [])
+        n = len(self.calls())
+        for q in ("'select 1; select 2'", "'\\! id'", "'select 1;'"):
+            rc, _out, err = self.remote(f'sql-ro {q}')
+            self.assertEqual(rc, 64, q)
+        self.assertEqual(len(self.calls()), n, 'a refused query ran something')
 
 
 class StaticTests(unittest.TestCase):

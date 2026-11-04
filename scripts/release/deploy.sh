@@ -7,8 +7,12 @@
 # Every call to venus is `ssh -i ~/.ssh/orion-<env>_ed25519 -o IdentitiesOnly=yes orion-<env>@192.168.0.12 <verb>`; the
 # key's forced command is /usr/local/bin/orion-remote, so there is no scp: the tarball is streamed on stdin to
 # `install <tag> <sha256>`.
-#   1. git fetch origin; refuse unless the tag is on origin (git ls-remote), the tarball's RELEASE names the tag and
-#      the tag's commit, its sha256 matches <tarball>.sha256 when that file exists, and the commit is reachable from
+#   1. git fetch https://github.com/masha256/orion.git (branches into refs/remotes/origin/*, tags into refs/tags/*; the
+#      dev host has no SSH key for GitHub, I-8) with a one-shot credential helper: GH_PAT is read from the one line
+#      `GH_PAT=` of $DEPLOY_CRED_FILE (default ~/.hermes/profiles/raymond/.env; the file is never sourced), exported only
+#      to the git children that talk to GitHub, never printed and never on argv. Refuse unless the tag is on origin
+#      (git ls-remote), the tarball's RELEASE names the tag and the tag's commit, <tarball>.sha256 exists and matches
+#      the tarball (M-9), and the commit is reachable from
 #      origin/main. Stage only (R-c1): --branch <name> accepts a commit reachable from origin/<name> instead (pre-cutover
 #      staging deploys from a branch tag); prod refuses --branch.
 #   2. prod only, unless --no-soak: staging's `status --json` must show release.tag == <tag> and a soak (a done,
@@ -19,8 +23,9 @@
 # --rollback: `rollback` only (orion-remote goes back to the `from` of the last switch).
 #
 # Default tarball: $DEPLOY_RELEASES/<tag>.tgz (DEPLOY_RELEASES defaults to ~/orion-releases, build.sh's output).
-# Overrides for tests (never needed for a real deploy): DEPLOY_SSH (the ssh program), DEPLOY_HOST, DEPLOY_REPO (the
-# git checkout to check tags in; default the one holding this script). Exit 0 only when everything asked for worked.
+# Overrides for tests (never needed for a real deploy): DEPLOY_SSH (the ssh program), DEPLOY_HOST, DEPLOY_CRED_FILE;
+# and, only with DEPLOY_TEST=1, DEPLOY_REPO (the git checkout to check tags in; default the one holding this script)
+# and DEPLOY_ORIGIN (the URL fetched instead of GitHub's). Exit 0 only when everything asked for worked.
 set -euo pipefail
 
 die() {
@@ -52,6 +57,10 @@ while (($# > 0)); do
   shift
 done
 
+if [[ ${DEPLOY_TEST-} != 1 && -n ${DEPLOY_REPO-}${DEPLOY_ORIGIN-} ]]; then
+  # a checkout or URL of one's choosing would quietly defeat the "tag on GitHub" check
+  die "DEPLOY_REPO and DEPLOY_ORIGIN are for tests only (DEPLOY_TEST=1)"
+fi
 ssh_bin=${DEPLOY_SSH:-ssh}
 dest=orion-$env@${DEPLOY_HOST:-192.168.0.12}
 remote() { "$ssh_bin" -i "$HOME/.ssh/orion-${env}_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes "$dest" "$@"; }
@@ -79,11 +88,24 @@ work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=${DEPLOY_REPO:-$(git -C "$here" rev-parse --show-toplevel)}
+origin_url=${DEPLOY_ORIGIN:-https://github.com/masha256/orion.git}
 g() { git -C "$repo" "$@"; }
 
+# GH_PAT: the one key, read without sourcing the file (it holds every other secret of the profile too).
+cred_file=${DEPLOY_CRED_FILE:-$HOME/.hermes/profiles/raymond/.env}
+gh_pat=''
+if [[ -r $cred_file ]]; then
+  gh_pat=$(grep -m1 '^GH_PAT=' "$cred_file" | cut -d= -f2- | tr -d '\r') || gh_pat=''
+  gh_pat=${gh_pat#\"} gh_pat=${gh_pat%\"} gh_pat=${gh_pat#\'} gh_pat=${gh_pat%\'}
+fi
+[[ -n $gh_pat ]] || die "no GH_PAT in $cred_file (deploy.sh fetches GitHub over HTTPS with it)"
+# git talking to GitHub: GH_PAT in this child's environment only; the helper text names $GH_PAT, never its value.
+# shellcheck disable=SC2016  # expanded by the helper's shell, from the environment, not here
+github_git() { GH_PAT=$gh_pat git -C "$repo" -c credential.helper= -c 'credential.helper=!f(){ echo username=retrobitbot; echo "password=$GH_PAT"; }; f' "$@"; }
+
 # ---- 1. the tag, the tarball, the commit
-g fetch --quiet --tags origin || die "git fetch origin failed"
-remote_tag=$(g ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}") || die "git ls-remote origin failed"
+github_git fetch --quiet "$origin_url" '+refs/heads/*:refs/remotes/origin/*' 'refs/tags/*:refs/tags/*' || die "git fetch $origin_url failed"
+remote_tag=$(github_git ls-remote --tags "$origin_url" "refs/tags/$tag" "refs/tags/$tag^{}") || die "git ls-remote $origin_url failed"
 [[ -n $remote_tag ]] || die "tag $tag is not on origin (git push origin $tag first)"
 # an annotated tag lists its object and, as <tag>^{}, the commit; a lightweight one only the commit
 commit=$(awk -v r="refs/tags/$tag^{}" '$2 == r { print $1 }' <<<"$remote_tag")
@@ -99,9 +121,8 @@ print(r.get("tag", "-"), r.get("commit", "-"))' "$work/RELEASE") || die "$tarbal
 [[ $rel_tag == "$tag" ]] || die "$tarball: RELEASE.tag is $rel_tag, not $tag"
 [[ $rel_commit == "$commit" ]] || die "$tarball: RELEASE.commit $rel_commit differs from the commit tag $tag is $commit on origin"
 sha=$(sha256sum "$tarball" | cut -d' ' -f1)
-if [[ -f $tarball.sha256 ]]; then
-  [[ $(cut -d' ' -f1 "$tarball.sha256") == "$sha" ]] || die "$tarball's sha256 $sha does not match $tarball.sha256"
-fi
+[[ -f $tarball.sha256 ]] || die "$tarball.sha256 is missing (build.sh writes it beside the tarball)"
+[[ $(cut -d' ' -f1 "$tarball.sha256") == "$sha" ]] || die "$tarball's sha256 $sha does not match $tarball.sha256"
 
 g rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null || die "origin/$branch does not exist"
 g cat-file -e "$commit^{commit}" 2>/dev/null || die "commit $commit (tag $tag) is not in $repo after the fetch"

@@ -17,19 +17,24 @@ XDG_RUNTIME_DIR). orion-remote never reads or prints the .env file. Every call i
 and never with argument text. The exit code is the child's.
 
 Verbs (anything else: exit 64):
-  install <tag> <sha256>          tarball on stdin (300 MB cap) -> ~/releases/<tag>; npm ci; validate, db status, diff
-  switch <tag> [--breaking]       drain, (pg_dump,) migrate, repoint ~/current, restart, wait for the heartbeat
-  rollback                        back to the `from` of the last switch in ~/deploys.log
+  install <tag> <sha256>          tarball on stdin (300 MB cap) -> ~/releases/<tag>; npm ci; validate, db status, diff;
+                                  last, ~/releases/<tag>/.installed (tag, sha256); a tag dir without it is re-installed
+  switch <tag> [--breaking]       drain (skipped, unit stopped, when the unit is not active or the heartbeat is stale),
+                                  (pg_dump,) stop the old daemon, migrate, repoint ~/current, restart, wait for the
+                                  heartbeat; refuses a release without .installed; logs breaking=0|1 (and dump=)
+  rollback                        back to the `from` of the last switch in ~/deploys.log; refuses after breaking=1
+An install/switch/rollback that dies between drain and restart leaves ~/.deploy-pending; the next orion-remote call
+undrains and restarts the daemon, logs `recovered ...` to deploys.log and prints it (M-11).
   status [--json] | logs [n] | jobs [--since <iso>] | dev-queue [n]
   report yield [<a>] [--day <d>] | data anomalies [<a>] [--all] | data sources <a> | data show <a> [<metric>]
   proposals list [<a>] [--all] | agent runs list [<a>] | inbox <a>
   confirm <id> | reject <id> | approve <id> [note] | decline <id> <note> | ack <id> <note> | resolve <id> <note>
   asset pause <a> --reason <text> [--for <who>] | asset resume|activate <a> [--for <who>] | asset registry [diff]
-  job run-now <kind> [asset] | sql-ro <query> (prod) | refresh-staging (stage) | reconcile --allow-retire [--yes]
+  job run-now <kind> [asset] | sql-ro <query> (prod: orion db query-ro as orion_prod_ro, never psql) | refresh-staging (stage) | reconcile --allow-retire [--yes]
 
 Test hooks (scripts/provision/test/test_orion_remote.py): only when ORION_REMOTE_TEST=1 and the uid is not 0,
-ORION_REMOTE_TEST_USER (the Unix user), ORION_REMOTE_TEST_BIN (a directory with fake node, npm, psql, pg_dump,
-pg_isready, systemctl), $HOME, ORION_REMOTE_TEST_MAX_BYTES, ORION_REMOTE_TEST_POLL and
+ORION_REMOTE_TEST_USER (the Unix user), ORION_REMOTE_TEST_BIN (a directory with fake node, npm, pg_dump, pg_isready,
+systemctl), $HOME, ORION_REMOTE_TEST_MAX_BYTES, ORION_REMOTE_TEST_POLL and
 ORION_REMOTE_TEST_HEARTBEAT_TIMEOUT are honoured.
 """
 
@@ -110,7 +115,6 @@ class Env:
         tbin = os.environ.get('ORION_REMOTE_TEST_BIN') if test else None
         self.node = os.path.join(tbin, 'node') if tbin else NODE
         self.npm = os.path.join(tbin, 'npm') if tbin else NPM
-        self.psql = os.path.join(tbin, 'psql') if tbin else os.path.join(PG_BIN, 'psql')
         self.pg_dump = os.path.join(tbin, 'pg_dump') if tbin else os.path.join(PG_BIN, 'pg_dump')
         self.pg_isready = os.path.join(tbin, 'pg_isready') if tbin else os.path.join(PG_BIN, 'pg_isready')
         self.systemctl = os.path.join(tbin, 'systemctl') if tbin else SYSTEMCTL
@@ -444,7 +448,23 @@ def v_refresh_staging(env, args):
     return passthrough(env, ['job', 'run-now', 'staging_refresh', '--by', 'raymond', '--json'])
 
 
+def single_statement(query):
+    """No ';' outside a '...' string or a "..." identifier (the same scan as `orion db query-ro`)."""
+    quote = None
+    for ch in query:
+        if quote is not None:
+            if ch == quote:
+                quote = None
+        elif ch in '\'"':
+            quote = ch
+        elif ch == ';':
+            return False
+    return True
+
+
 def v_sql_ro(env, args):
+    """One read-only statement through `orion db query-ro` (node + pg as orion_prod_ro, READ ONLY, 30 s), never psql:
+    psql's -c, -f and stdin all run backslash meta-commands (\\! is a shell), C-1."""
     if env.name != 'prod':
         raise Refused('sql-ro is prod-only: staging has no read-only role')
     if len(args) != 1:
@@ -452,7 +472,12 @@ def v_sql_ro(env, args):
     query = args[0]
     if query.strip() == '' or len(query) > MAX_COMMAND:
         raise Refused('sql-ro needs a query')
-    argv = [env.psql, '-X', '--no-psqlrc', '-v', 'ON_ERROR_STOP=1', '-U', f'orion_{env.name}_ro', '-d', f'orion_{env.name}', '-c', query]
+    if '\\' in query:
+        raise Refused('sql-ro refuses a backslash anywhere in the query')
+    if not single_statement(query):
+        raise Refused('sql-ro runs exactly one statement: no ";" outside quotes (drop a trailing ";")')
+    need_current(env)
+    argv = [env.node, env.cli(), 'db', 'query-ro', '--role', f'orion_{env.name}_ro', '--json', '--', query]
     p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, env=env.child_env(), cwd=env.home)
     written = 0
     truncated = False
@@ -493,8 +518,12 @@ def tag_key(tag):
     return (int(y), int(m), int(d), int(n))
 
 
+INSTALLED = '.installed'
+PENDING = '.deploy-pending'
+
+
 def last_switch(env):
-    """(from, to) of the last `switch` line in ~/deploys.log, or None."""
+    """(from, to, fields) of the last `switch` line in ~/deploys.log (fields: its key=value words), or None."""
     path = env.path('deploys.log')
     if not os.path.isfile(path):
         return None
@@ -503,8 +532,57 @@ def last_switch(env):
         for line in f:
             parts = line.split()
             if len(parts) >= 5 and parts[1] == 'switch' and parts[3] == '->':
-                found = (parts[2], parts[4])
+                found = (parts[2], parts[4], dict(p.split('=', 1) for p in parts[5:] if '=' in p))
     return found
+
+
+def is_installed(env, tag):
+    """The release finished install (I-5): its marker exists, written as install's last step."""
+    return os.path.isfile(env.path('releases', tag, INSTALLED))
+
+
+def mark_pending(env, verb, frm, to):
+    """M-11: from the drain until the restart; a later orion-remote that finds it recovers the daemon."""
+    with open(env.path(PENDING), 'w') as f:
+        json.dump({'verb': verb, 'from': frm, 'to': to, 'at': iso_seconds()}, f)
+
+
+def clear_pending(env):
+    if os.path.lexists(env.path(PENDING)):
+        os.unlink(env.path(PENDING))
+
+
+def recover_interrupted(env):
+    """M-11: an install/switch/rollback that died between drain and restart left the daemon drained with nothing said.
+    Undrain and restart it on whatever is current, log it, and say so (on stdout, so `status` shows it). Skipped while
+    another deploy holds the lock (that one is not interrupted, it is running)."""
+    if not os.path.isfile(env.path(PENDING)):
+        return
+    try:
+        lock = open(env.path('.orion-remote.lock'), 'w')  # noqa: SIM115
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return
+    try:
+        if not os.path.isfile(env.path(PENDING)):
+            return
+        try:
+            with open(env.path(PENDING)) as f:
+                info = json.load(f)
+        except (OSError, ValueError):
+            info = {}
+        info = info if isinstance(info, dict) else {}
+        cur = env.current_tag()
+        if cur is not None:
+            orion(env, ['daemon', 'undrain', '--json'], capture=True)
+            run(env, [env.systemctl, '--user', 'restart', 'orion-daemon'])
+        what = f"{info.get('verb', '?')} {info.get('from') or 'none'} -> {info.get('to') or '?'}"
+        append_deploys(env, f"recovered {what} (started {info.get('at', '?')}): undrained and restarted {cur or 'nothing (no current)'}")
+        clear_pending(env)
+        print(f"orion-remote: recovered an interrupted {what} (started {info.get('at', '?')}): "
+              f"the daemon was left drained; undrained and restarted {cur or 'nothing'}", flush=True)
+    finally:
+        lock.close()
 
 
 def append_deploys(env, text):
@@ -538,7 +616,12 @@ def v_install(env, args):
     releases = env.path('releases')
     root = os.path.join(releases, tag)
     if os.path.lexists(root):
-        raise Failed(f'{tag} is already installed (~/releases/{tag}); a release is immutable')
+        if is_installed(env, tag):
+            raise Failed(f'{tag} is already installed (~/releases/{tag}); a release is immutable')
+        if env.current_tag() == tag:
+            raise Failed(f'{tag} is current but has no {INSTALLED} marker: switch to another release first')
+        print(f'orion-remote: {tag} is half-installed (no {INSTALLED}: an earlier install died); removing it and installing again', file=sys.stderr)
+        shutil.rmtree(root)
     os.makedirs(env.path('incoming'), mode=0o700, exist_ok=True)
     os.makedirs(releases, exist_ok=True)
     tgz = env.path('incoming', f'{tag}.tgz')
@@ -598,9 +681,14 @@ def v_install(env, args):
             rc, results[key] = orion_json(env, cmd, release=tag)
             if rc != 0:
                 failed.append(f'{" ".join(cmd[:-1])} exit {rc}')
-        print(json.dumps({'tag': tag, 'release': release, 'validate': results['validate'], 'db': results['db'], 'registry': results['registry']}, indent=2))
+        print(json.dumps({'tag': tag, 'sha256': want, 'release': release, 'validate': results['validate'], 'db': results['db'],
+                          'registry': results['registry']}, indent=2))
         if failed:
             raise Failed(f'{", ".join(failed)}; {tag} removed')
+        # I-5: the last step. switch and rollback refuse a release without it.
+        with open(os.path.join(root, INSTALLED + '.tmp'), 'w') as f:
+            json.dump({'tag': tag, 'sha256': want, 'installed_at': iso_seconds()}, f)
+        os.replace(os.path.join(root, INSTALLED + '.tmp'), os.path.join(root, INSTALLED))
         ok = True
     finally:
         if not ok and os.path.lexists(root):
@@ -611,12 +699,35 @@ def v_install(env, args):
     return 0
 
 
+def unit_active(env):
+    """`systemctl --user is-active orion-daemon` says active (not inactive, failed, or activating in a restart loop)."""
+    try:
+        r = subprocess.run([env.systemctl, '--user', 'is-active', 'orion-daemon'], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                           stderr=subprocess.DEVNULL, env=env.child_env(), cwd=env.home, check=False)
+    except OSError:
+        return False
+    return r.returncode == 0 and r.stdout.decode('utf-8', 'replace').strip() == 'active'
+
+
+def skip_drain(env, why):
+    """I-4: the daemon is gone (dead unit, or a heartbeat too old): nothing to wait for. Stop the unit, log it."""
+    run(env, [env.systemctl, '--user', 'stop', 'orion-daemon'])
+    append_deploys(env, f'drain skipped: {why}; unit stopped')
+    print(f'orion-remote: drain skipped: {why}; orion-daemon stopped', file=sys.stderr, flush=True)
+
+
 def drain(env):
     """Drains the current daemon. True when there was one (it must be undrained on failure)."""
     if env.current_tag() is None:
         return False
+    if not unit_active(env):
+        skip_drain(env, 'orion-daemon is not active')
+        return False
     rc, out = orion_json(env, ['daemon', 'drain', '--wait', DRAIN_WAIT, '--json'])
     if rc == 0:
+        if isinstance(out, dict) and out.get('state') == 'gone':
+            skip_drain(env, f"the daemon is gone ({out.get('reason') or 'no heartbeat row'})")
+            return False
         return True
     if isinstance(out, dict) and isinstance(out.get('error'), dict) and out['error'].get('code') == 'no_daemon':
         return False
@@ -669,9 +780,19 @@ def v_switch(env, args):
     lock = deploy_lock(env)
     if not os.path.isdir(env.path('releases', tag)):
         raise Failed(f'{tag} is not installed (orion-remote install {tag} <sha256> first)')
+    if not is_installed(env, tag):
+        raise Failed(f'{tag} is not completely installed (no {INSTALLED}: its install died); install it again')
     frm = env.current_tag()
     if frm == tag:
         raise Failed(f'{tag} is already current')
+    mark_pending(env, 'switch', frm, tag)
+    try:
+        return switch_drained(env, tag, frm, breaking, lock)
+    finally:
+        clear_pending(env)
+
+
+def switch_drained(env, tag, frm, breaking, lock):
     drained = drain(env)
     rc, status = orion_json(env, ['db', 'status', '--json'], release=tag)
     if rc != 0 or not isinstance(status, dict):
@@ -682,6 +803,7 @@ def v_switch(env, args):
         undrain(env, drained)
         raise Failed(f'{tag} has a breaking migration pending ({", ".join(str(p.get("id")) for p in pending if p.get("breaking"))}); '
                      'nothing changed. Re-run with --breaking (a pg_dump is taken first)')
+    dump = None
     if breaking:
         os.makedirs(env.path('shared', 'predeploy'), mode=0o700, exist_ok=True)
         dump = env.path('shared', 'predeploy', f'{tag}-{utc_now().strftime("%Y%m%dT%H%M%SZ")}.dump')
@@ -690,14 +812,23 @@ def v_switch(env, args):
         if rc != 0:
             undrain(env, drained)
             raise Failed(f'pg_dump failed (exit {rc}); nothing changed')
+    # M-10: the old daemon stops before the migration (its scheduler and heartbeat would keep writing through it).
+    stopped = frm is not None
+    if stopped:
+        run(env, [env.systemctl, '--user', 'stop', 'orion-daemon'])
     rc, migrated = orion_json(env, ['db', 'migrate'] + (['--breaking'] if breaking else []) + ['--json'], release=tag)
     if rc != 0:
         undrain(env, drained)
-        raise Failed(f'db migrate failed (exit {rc}): {json.dumps(migrated)[:500]}; current is still {frm or "none"}')
+        if stopped:
+            run(env, [env.systemctl, '--user', 'start', 'orion-daemon'])
+        raise Failed(f'db migrate failed (exit {rc}): {json.dumps(migrated)[:500]}; current is still {frm or "none"}'
+                     + (' (its daemon was started again)' if stopped else ''))
     applied = migrated.get('applied', []) if isinstance(migrated, dict) else []
     repoint(env, tag)
-    # Logged as soon as current moved: a rollback needs this line even when the restart below fails.
-    append_deploys(env, f'switch {frm or "none"} -> {tag} migrations={",".join(str(a) for a in applied) or "none"}')
+    # Logged as soon as current moved: a rollback needs this line even when the restart below fails. breaking=1 (I-5)
+    # stops a rollback across it: the old code cannot run on the migrated schema; the dump is the way back.
+    append_deploys(env, f'switch {frm or "none"} -> {tag} migrations={",".join(str(a) for a in applied) or "none"} '
+                        f'breaking={1 if breaking else 0}' + (f' dump={os.path.basename(dump)}' if dump else ''))
     restart_and_wait(env, tag)
     _, registry = orion_json(env, ['asset', 'registry', '--json'], release=tag)
     print(json.dumps({
@@ -722,10 +853,21 @@ def v_rollback(env, args):
         raise Failed(f'{target} is already current')
     if not os.path.isdir(env.path('releases', target)):
         raise Failed(f'{target} is no longer installed')
-    drain(env)
-    repoint(env, target)
-    append_deploys(env, f'rollback {cur} -> {target}')
-    restart_and_wait(env, target)
+    if not is_installed(env, target):
+        raise Failed(f'{target} is not completely installed (no {INSTALLED}); install it again before rolling back to it')
+    if sw[2].get('breaking') == '1':
+        dump = sw[2].get('dump')
+        where = env.path('shared', 'predeploy', dump) if dump else '~/shared/predeploy/ (the newest dump)'
+        raise Failed(f'the last switch ({target} -> {sw[1]}) applied a breaking migration: {target} cannot run on this schema. '
+                     f'Rolling back means restoring the predeploy dump {where} (Mike, by hand); nothing changed')
+    mark_pending(env, 'rollback', cur, target)
+    try:
+        drain(env)
+        repoint(env, target)
+        append_deploys(env, f'rollback {cur} -> {target}')
+        restart_and_wait(env, target)
+    finally:
+        clear_pending(env)
     print(json.dumps({'from': cur, 'to': target, 'next': f'{target} is current; the schema stays where it is (ahead is accepted)'}, indent=2))
     lock.close()
     return 0
@@ -793,6 +935,10 @@ def main():
     raw = os.environ.get('SSH_ORIGINAL_COMMAND', '')
     verb, argc = '-', 0
     try:
+        try:
+            recover_interrupted(env)
+        except Exception as err:  # never let recovery block the verb asked for
+            print(f'orion-remote: recovering an interrupted deploy failed: {type(err).__name__}: {str(err)[:300]}', file=sys.stderr)
         argv = split_command(raw)
         argc = len(argv)
         if argv[0] not in VERBS:

@@ -10,6 +10,9 @@ const DEPLOY = join(ROOT, 'scripts', 'release', 'deploy.sh');
 const TAG = 'orion-2026.11.03.1';
 
 const dirs: string[] = [];
+/** The origin URL of each fixture checkout (deploy.sh fetches it by URL, as it fetches GitHub's in real use). */
+const repos = new Map<string, string>();
+const TOKEN = 'ghp_FAKE_TOKEN_never_printed_0123456789';
 const scratch = (prefix: string): string => {
   const d = mkdtempSync(join(tmpdir(), prefix));
   dirs.push(d);
@@ -28,7 +31,7 @@ const git = (cwd: string, ...args: string[]): string =>
  * A dev checkout whose origin is a file:// bare repo (no network): main has one commit, feat/x one more on top.
  * `tags` are created annotated on the given commits and pushed unless listed in `localOnly`.
  */
-function fixtureRepo(): { repo: string; main: string; feat: string } {
+function fixtureRepo(): { repo: string; main: string; feat: string; origin: string } {
   const base = scratch('orion-deploy-repo-');
   const origin = join(base, 'origin.git');
   const repo = join(base, 'work');
@@ -47,7 +50,8 @@ function fixtureRepo(): { repo: string; main: string; feat: string } {
   const feat = git(repo, 'rev-parse', 'HEAD');
   git(repo, 'push', '-q', 'origin', 'feat/x');
   git(repo, 'checkout', '-q', 'main');
-  return { repo, main, feat };
+  repos.set(repo, `file://${origin}`);
+  return { repo, main, feat, origin: `file://${origin}` };
 }
 
 function tag(repo: string, name: string, commit: string, push = true): void {
@@ -56,7 +60,7 @@ function tag(repo: string, name: string, commit: string, push = true): void {
 }
 
 /** <dir>/<tag>.tgz holding <tag>/RELEASE (and some bulk, so the stdin byte count means something). */
-function tarball(dir: string, name: string, commit: string): string {
+function tarball(dir: string, name: string, commit: string, withSha = true): string {
   const src = scratch('orion-deploy-tgz-');
   mkdirSync(join(src, name, 'dist'), { recursive: true });
   writeFileSync(join(src, name, 'RELEASE'), JSON.stringify({ tag: name, commit, schema: 2, built_at: '2026-11-03T10:00:00Z', node: 'v26.7.0' }));
@@ -64,6 +68,7 @@ function tarball(dir: string, name: string, commit: string): string {
   mkdirSync(dir, { recursive: true });
   const out = join(dir, `${name}.tgz`);
   execFileSync('tar', ['-czf', out, '-C', src, name]);
+  if (withSha) writeFileSync(`${out}.sha256`, `${execFileSync('sha256sum', [out], { encoding: 'utf8' }).split(' ')[0]}  ${name}.tgz\n`);
   return out;
 }
 
@@ -118,15 +123,22 @@ function status(f: Fake, user: string, s: unknown): void {
 
 const NEXT = [{ key: 'nightly', slot: '2026-11-04T00:45:00.000Z' }, { key: 'levels', slot: '2026-11-03T19:15:00.000Z' }];
 
-function deploy(repo: string, releases: string, f: Fake, args: string[], extra: Record<string, string> = {}): { status: number; stdout: string; stderr: string } {
-  const r = spawnSync('bash', [DEPLOY, ...args], {
-    encoding: 'utf8',
-    env: {
-      PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: scratch('orion-deploy-home-'), TMPDIR: tmpdir(),
-      GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
-      DEPLOY_SSH: f.bin, DEPLOY_REPO: repo, DEPLOY_RELEASES: releases, ...extra,
-    },
-  });
+/** A fake credentials file (the real one is the raymond profile's .env: tests never read it). */
+function credFile(text = `OTHER=x\nGH_PAT=${TOKEN}\nLATER=y\n`): string {
+  const p = join(scratch('orion-deploy-cred-'), '.env');
+  writeFileSync(p, text);
+  return p;
+}
+
+function deploy(repo: string, releases: string, f: Fake, args: string[], extra: Record<string, string | undefined> = {}): { status: number; stdout: string; stderr: string } {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries({
+    PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: scratch('orion-deploy-home-'), TMPDIR: tmpdir(),
+    GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
+    DEPLOY_TEST: '1', DEPLOY_SSH: f.bin, DEPLOY_REPO: repo, DEPLOY_ORIGIN: repos.get(repo) ?? 'file:///nonexistent', DEPLOY_RELEASES: releases,
+    DEPLOY_CRED_FILE: credFile(), ...extra,
+  })) if (v !== undefined) env[k] = v;
+  const r = spawnSync('bash', [DEPLOY, ...args], { encoding: 'utf8', env });
   return { status: r.status ?? -1, stdout: r.stdout, stderr: r.stderr };
 }
 
@@ -273,6 +285,80 @@ describe('deploy.sh', () => {
     expect(mism.status).not.toBe(0);
     expect(mism.stderr).toContain('does not match');
     expect(calls(f).length).toBe(n);
+  });
+
+  it('deploy (I-8): fetches the origin URL with a one-shot GH_PAT credential helper; the token is never on argv or printed', () => {
+    const { repo, main, origin } = fixtureRepo();
+    tag(repo, TAG, main);
+    const rel = scratch('orion-deploy-rel-');
+    tarball(rel, TAG, main);
+    const f = fakeSsh();
+    status(f, 'orion-stage', { env: 'stage', release: { tag: TAG }, next: NEXT, soak: null, last_nightly: null });
+    // a git on PATH that records argv and whether GH_PAT is in its environment, then runs the real git
+    const wrap = scratch('orion-deploy-git-');
+    const log = join(wrap, 'git.jsonl');
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    writeFileSync(join(wrap, 'git'), `#!/usr/bin/python3
+import json, os, sys
+with open(${JSON.stringify(log)}, 'a') as f:
+    f.write(json.dumps({'argv': sys.argv[1:], 'pat': os.environ.get('GH_PAT')}) + '\\n')
+os.execv(${JSON.stringify(realGit)}, [${JSON.stringify(realGit)}] + sys.argv[1:])
+`);
+    chmodSync(join(wrap, 'git'), 0o755);
+    const r = deploy(repo, rel, f, ['stage', TAG], { PATH: `${wrap}:${process.env.PATH ?? '/usr/bin:/bin'}` });
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    expect(r.stdout + r.stderr).not.toContain(TOKEN);
+    const gitCalls = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { argv: string[]; pat: string | null });
+    for (const c of gitCalls) expect(c.argv.join(' ')).not.toContain(TOKEN);
+    const remoteCalls = gitCalls.filter((c) => c.argv.includes('fetch') || c.argv.includes('ls-remote'));
+    expect(remoteCalls.map((c) => c.argv.find((a) => a === 'fetch' || a === 'ls-remote'))).toEqual(['fetch', 'ls-remote']);
+    for (const c of remoteCalls) {
+      expect(c.pat).toBe(TOKEN); // exported to the git child only
+      expect(c.argv).toContain(origin);
+      expect(c.argv).toContain('credential.helper=');
+    }
+    expect(gitCalls.filter((c) => !remoteCalls.includes(c)).every((c) => c.pat === null)).toBe(true);
+    // the helper answers git's credential protocol with the token from its environment, and nothing else
+    const helper = remoteCalls[0]!.argv.find((a) => a.startsWith('credential.helper=!'))!;
+    expect(helper).not.toContain(TOKEN);
+    const answer = execFileSync(realGit, ['-c', 'credential.helper=', '-c', helper, 'credential', 'fill'], {
+      input: 'protocol=https\nhost=github.com\n\n', encoding: 'utf8', env: { PATH: process.env.PATH ?? '', GH_PAT: TOKEN, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' },
+    });
+    expect(answer).toContain('username=retrobitbot');
+    expect(answer).toContain(`password=${TOKEN}`);
+  });
+
+  it('deploy (I-8): DEPLOY_REPO / DEPLOY_ORIGIN need DEPLOY_TEST=1; a credentials file without GH_PAT is refused', () => {
+    const { repo, main } = fixtureRepo();
+    tag(repo, TAG, main);
+    const rel = scratch('orion-deploy-rel-');
+    tarball(rel, TAG, main);
+    const f = fakeSsh();
+    for (const extra of [{ DEPLOY_TEST: undefined }, { DEPLOY_TEST: '0' }]) {
+      const r = deploy(repo, rel, f, ['stage', TAG], extra);
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toContain('DEPLOY_REPO and DEPLOY_ORIGIN are for tests only (DEPLOY_TEST=1)');
+    }
+    const noPat = deploy(repo, rel, f, ['stage', TAG], { DEPLOY_CRED_FILE: credFile('OTHER=x\n# GH_PAT=commented\n') });
+    expect(noPat.status).not.toBe(0);
+    expect(noPat.stderr).toMatch(/no GH_PAT in .*\.env/);
+    const missing = deploy(repo, rel, f, ['stage', TAG], { DEPLOY_CRED_FILE: '/nonexistent/.env' });
+    expect(missing.status).not.toBe(0);
+    expect(missing.stderr).toContain('no GH_PAT in /nonexistent/.env');
+    expect(calls(f)).toEqual([]);
+  });
+
+  it('deploy (M-9): a tarball without its .sha256 is refused before any call', () => {
+    const { repo, main } = fixtureRepo();
+    tag(repo, TAG, main);
+    const rel = scratch('orion-deploy-rel-');
+    tarball(rel, TAG, main, false);
+    const f = fakeSsh();
+    const r = deploy(repo, rel, f, ['stage', TAG]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain('.sha256 is missing');
+    expect(calls(f)).toEqual([]);
   });
 
   it('deploy: --rollback calls rollback only', () => {
