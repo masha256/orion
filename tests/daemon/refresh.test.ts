@@ -6,7 +6,7 @@ import { makeRefreshHandler, refreshHandler, REFRESH_RETRY_MS, REFRESH_LOCKED_RE
 import type { Job } from '../../src/db/jobs.js';
 import { listLatestLevels } from '../../src/db/latestLevels.js';
 import { getRegistryRow, setRegistryState } from '../../src/db/registry.js';
-import { listWatchStates } from '../../src/db/watchState.js';
+import { listWatchStates, putWatchStates } from '../../src/db/watchState.js';
 import { harness, NOW } from '../helpers/fetchHarness.js';
 import { useTestDb } from '../helpers/db.js';
 import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
@@ -140,6 +140,30 @@ describe('refresh job', () => {
       { assetId: 'mini', metricKey: 'stats_price', rule: 'outside', firing: true, since: NOW.toISOString(), lastValue: 10.1 },
     ]);
     expect(run.posts).toEqual([]);
+  });
+
+  it('refresh: a nightly that clears a firing level watch posts the cleared line', async () => {
+    // stats_price reads 10.1; the watch range [1, 20] holds it, so a watch the hourly job left firing clears.
+    const yaml = INGEST_ASSET_YAML.replace(
+      'holder_flows:',
+      '  stats_price:\n    type: level\n    unit: usd\n    staleness_days: 3\n    monitor_only: true\n    watch: { outside: [1, 20] }\n    source: { type: http_json, url: "https://api.example.test/stats", path: price }\nholder_flows:',
+    );
+    const w = levelsWorld({ mini: yaml });
+    worlds.push(w);
+    await activate(testDb(), ['mini']);
+    await putWatchStates(testDb(), [{ assetId: 'mini', metricKey: 'stats_price', rule: 'outside', firing: true, since: '2026-09-18T12:15:00.000Z', lastValue: 25 }]);
+    const run = levelsContext(testDb(), w.root, NOW);
+    const h = harness(testDb());
+    const out = await makeRefreshHandler({ fetchDeps: () => h.deps })(refreshJob(), run.ctx);
+    expect(out).toMatchObject({ status: 'done', result: { cleared: ['ORION WATCH MINI cleared: stats_price outside'], undelivered: [] } });
+    expect(run.posts).toEqual(['ORION WATCH MINI cleared: stats_price outside']);
+    expect(await listWatchStates(testDb(), 'mini')).toMatchObject([{ metricKey: 'stats_price', firing: false }]);
+
+    // Undelivered: kept in the result, the job is still done (the refresh is not retried for Slack).
+    await putWatchStates(testDb(), [{ assetId: 'mini', metricKey: 'stats_price', rule: 'outside', firing: true, since: '2026-09-18T12:15:00.000Z', lastValue: 25 }]);
+    const down = levelsContext(testDb(), w.root, NOW, {}, false);
+    const out2 = await makeRefreshHandler({ fetchDeps: () => h.deps })(refreshJob(1, 2), down.ctx);
+    expect(out2).toMatchObject({ status: 'done', result: { undelivered: ['ORION WATCH MINI cleared: stats_price outside'] } });
   });
 
   it('refresh: the daemon runs the refresh handler', () => {

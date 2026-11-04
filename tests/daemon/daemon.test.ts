@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { OrionPaths } from '../../src/cli/paths.js';
 import type { OrionDb } from '../../src/db/connection.js';
-import { activeAssetIds, Daemon, RESTART_RETRY_MS, type DaemonDeps, type JobHandler, type JobOutcome } from '../../src/daemon/daemon.js';
+import { activeAssetIds, Daemon, defaultHandlers, RESTART_RETRY_MS, type DaemonDeps, type JobHandler, type JobOutcome } from '../../src/daemon/daemon.js';
 import { daemonLog, LOG_ROTATE_BYTES } from '../../src/daemon/log.js';
 import { systemdNotifier } from '../../src/daemon/systemd.js';
 import { clearDrain, latestHeartbeat, requestDrain } from '../../src/db/heartbeat.js';
@@ -292,6 +292,24 @@ describe('daemon worker', () => {
     // levels has one attempt: a throw fails it for good.
     expect(await w.daemon.workerTick()).toBe(true);
     expect(await job(2)).toMatchObject({ status: 'failed', attempts: 1, last_error: 'boom' });
+  });
+
+  it('daemon: a job kind not built yet (disclosure_watch, staging_refresh) is skipped quietly: one log line, no retry, no post (R-c16)', async () => {
+    const clock = new FakeClock('2026-11-03T17:00:00.000Z');
+    const h = defaultHandlers();
+    const w = daemon({ clock, handlers: { disclosure_watch: h.disclosure_watch, staging_refresh: h.staging_refresh } });
+    await enqueueJob(db(), { kind: 'disclosure_watch', assetId: null, slot: '2026-11-03T16:40:00.000Z' });
+    await enqueueJob(db(), { kind: 'staging_refresh', assetId: null, slot: '2026-11-01T10:30:00.000Z' });
+    expect(await w.daemon.workerTick()).toBe(true);
+    expect(await w.daemon.workerTick()).toBe(true);
+    expect(await w.daemon.workerTick()).toBe(false);
+    for (const id of [1, 2]) expect(await job(id)).toMatchObject({ status: 'skipped', attempts: 1, last_error: null });
+    expect(w.posts).toEqual([]);
+    expect(w.logs.filter((l) => /not installed/.test(l))).toEqual([
+      'job 2 staging_refresh: not installed in this release (Task 12): skipped', // the older slot is claimed first
+      'job 1 disclosure_watch: not installed in this release (Task 11): skipped',
+    ]);
+    expect(w.logs.filter((l) => /failed|retry/.test(l))).toEqual([]);
   });
 
   it('daemon: a deferred job does not consume an attempt', async () => {

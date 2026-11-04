@@ -13,7 +13,7 @@ import type { FetchDeps, FetchResult } from '../../ingest/run.js';
 import type { BlockRef, RpcFactory } from '../../ingest/transport/rpc.js';
 import { levelMetricKeys, toLatestLevels } from '../../levels/levels.js';
 import { levelWatchRule, watchTransitions } from '../../levels/watchTransitions.js';
-import { slackClean } from '../../notify/format.js';
+import { formatWatchCleared, slackClean } from '../../notify/format.js';
 import { OrionError, type WatchRule } from '../../types.js';
 import type { JobContext, JobHandler, JobOutcome } from '../daemon.js';
 
@@ -36,6 +36,10 @@ export interface RefreshJobResult {
   levels: number;
   /** On a failed attempt: whether the double-failure ALERT was posted (the last attempt only). */
   alerted?: boolean;
+  /** Present when this fetch cleared a level watch that was firing (R-c15): the `cleared` lines posted. */
+  cleared?: string[];
+  /** With `cleared`: the lines Slack did not take after its retries (kept here; the refresh is not retried for them). */
+  undelivered?: string[];
 }
 
 export interface RefreshHandlerOptions {
@@ -56,10 +60,13 @@ function codeOf(err: unknown): { code: string; message: string } {
 
 /**
  * The fetch's level and schedule readings into `latest_levels` (the hourly job's rows, so a nightly reading is never
- * older than the table), and the level watches' state into `watch_state` (no post: the nightly report lists what
- * fires). Flow (`above`) rules are not tracked here. How many rows were written.
+ * older than the table), and the level watches' state into `watch_state`. A watch that starts firing is not posted
+ * (the nightly report lists what fires); one that was firing and no longer does yields its `cleared` line (R-c15: the
+ * same text as the hourly job; otherwise the clear would be silent). Flow (`above`) rules are not tracked here.
  */
-async function keepLevels(ctx: JobContext, job: Job, loaded: LoadedAsset, fetch: FetchResult, block: BlockRef | null): Promise<number> {
+async function keepLevels(
+  ctx: JobContext, job: Job, loaded: LoadedAsset, fetch: FetchResult, block: BlockRef | null,
+): Promise<{ rows: number; cleared: string[] }> {
   const asset = loaded.config;
   const keys = new Set(levelMetricKeys(asset));
   const now = ctx.clock.now();
@@ -73,8 +80,9 @@ async function keepLevels(ctx: JobContext, job: Job, loaded: LoadedAsset, fetch:
     const firings = fetch.watch.filter((f) => f.rule !== 'above');
     const t = watchTransitions(await listWatchStates(ctx.db, asset.id), firings, evaluated, now.toISOString(), asset.id);
     await putWatchStates(ctx.db, t.next);
+    return { rows: rows.length, cleared: t.cleared.map((c) => formatWatchCleared(asset.symbol, c.metricKey, c.rule)) };
   }
-  return rows.length;
+  return { rows: rows.length, cleared: [] };
 }
 
 /**
@@ -119,7 +127,22 @@ export function makeRefreshHandler(o: RefreshHandlerOptions = {}): JobHandler {
       if (fetched) {
         result.fetchLines = fetchSummary(fetched);
         result.alertFlags = result.fetchLines.filter((l) => ALERT_LINE.test(l));
-        if (!fetched.dryRun) result.levels = await keepLevels(ctx, job, loaded, fetched, block);
+        if (!fetched.dryRun) {
+          const kept = await keepLevels(ctx, job, loaded, fetched, block);
+          result.levels = kept.rows;
+          if (kept.cleared.length > 0) {
+            result.cleared = kept.cleared;
+            result.undelivered = [];
+            for (const text of kept.cleared) {
+              if (ctx.signal.aborted) return aborted;
+              const posted = await ctx.notify.post(text);
+              if (!posted.ok) {
+                result.undelivered.push(text);
+                ctx.log(`watch cleared line not delivered: ${posted.error ?? 'unknown error'}`);
+              }
+            }
+          }
+        }
       }
       const rep = r.report;
       if (rep.outcome === 'run_in_progress') {

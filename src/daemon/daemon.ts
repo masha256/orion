@@ -117,9 +117,15 @@ export async function activeAssetIds(db: Db, slot: Date): Promise<string[]> {
   return (await listRegistry(db)).filter((r) => r.state === 'active' && Date.parse(r.stateSince) <= at).map((r) => r.assetId);
 }
 
-/** A handler for a job kind a later task builds: the job is recorded as skipped, so the queue keeps moving. */
+/**
+ * A handler for a job kind a later task builds (R-c16): the job ends `skipped` with one log line, so the queue keeps
+ * moving. Never a failure, a retry, a Slack post or an alert.
+ */
 function notBuiltYet(task: string): JobHandler {
-  return async () => ({ status: 'skipped', result: { reason: `handler not built yet (${task})` } });
+  return async (_job, ctx) => {
+    ctx.log(`not installed in this release (${task}): skipped`);
+    return { status: 'skipped', result: { reason: `not installed in this release (${task})` } };
+  };
 }
 
 /** The handlers `orion daemon` runs with. */
