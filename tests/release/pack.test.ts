@@ -53,6 +53,7 @@ function fixtureTree(): { src: string; commit: string } {
   put(src, 'dist/db/pg/migrations/0002_daemon.sql');
   put(src, 'node_modules/pg/index.js');
   put(src, 'tools/disclosure-watcher/__pycache__/x.pyc');
+  put(src, 'scripts/provision/files/__pycache__/orion-remote.cpython-312.pyc');
   put(src, '.env', 'SECRET=1\n');
   put(src, 'orion.db');
   return { src, commit: git(src, 'rev-parse', 'HEAD') };

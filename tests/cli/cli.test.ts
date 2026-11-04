@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -133,6 +133,33 @@ describe('orion cli', () => {
     const counts = await registryCounts();
     expect(await orion('asset', 'registry', 'diff')).toBe('registry matches the YAML');
     expect(await registryCounts()).toEqual(counts);
+  });
+
+  it('cli: asset registry reconcile applies the diff; retiring every asset needs --allow-retire (R-c10)', async () => {
+    writeFileSync(join(home, 'assets', 'two.yaml'), MINI_ASSET_YAML.replace('id: mini', 'id: two'));
+    await orion('asset', 'registry', 'seed', '--all', '--reason', 'cutover', '--by', 'mike');
+    // Both YAMLs gone: the reconcile would retire every asset, refused (no writes) without --allow-retire.
+    const kept = mkdtempSync(join(tmpdir(), 'orion-cli-kept-'));
+    for (const f of ['mini.yaml', 'two.yaml']) {
+      copyFileSync(join(home, 'assets', f), join(kept, f));
+      rmSync(join(home, 'assets', f));
+    }
+    const counts = await registryCounts();
+    const exit: number[] = [];
+    const lines: string[] = [];
+    await buildProgram(testCliContext(home, { stdout: (l) => lines.push(l), setExitCode: (c) => exit.push(c) }))
+      .parseAsync(['asset', 'registry', 'reconcile', '--json'], { from: 'user' });
+    expect(exit).toEqual([1]);
+    expect(JSON.parse(lines.join('\n')).error.code).toBe('reconcile_would_retire');
+    expect(await registryCounts()).toEqual(counts);
+    expect(JSON.parse(await orion('asset', 'registry', 'reconcile', '--allow-retire', '--json'))).toEqual({
+      added: [], missing: ['mini', 'two'], returned: [], configChanged: [],
+    });
+    const rows = JSON.parse(await orion('asset', 'registry', '--json'));
+    expect(rows.map((r: { state: string }) => r.state)).toEqual(['missing', 'missing']);
+    for (const f of ['mini.yaml', 'two.yaml']) copyFileSync(join(kept, f), join(home, 'assets', f));
+    rmSync(kept, { recursive: true, force: true });
+    expect(await orion('asset', 'registry', 'reconcile')).toBe('YAML back (return inactive): mini, two');
   });
 
   it('cli: asset registry seed needs ids or --all, seeds only an empty registry and prints what it activates (I-2)', async () => {

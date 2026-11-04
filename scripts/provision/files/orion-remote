@@ -1,78 +1,821 @@
-#!/bin/bash
-# orion-remote: forced-command entry point for the deploy keys (spec §3.4, plan 1.5a ruling R1).
-# Installed by scripts/provision/orion-host.sh as /usr/local/bin/orion-remote (root:root 755), so neither a release nor
-# the Orion user can replace what a deploy key runs. Each key's authorized_keys line is
-#   restrict,command="/usr/local/bin/orion-remote" ssh-ed25519 AAAA...
-# sshd puts what the caller asked for in $SSH_ORIGINAL_COMMAND. It is split on whitespace into words and NEVER given to
-# a shell: no eval, no command substitution, no globbing ("set -f"), and control characters (newlines included) are
-# refused outright. Phase 1.5a knows one verb, "status"; every other verb is refused with exit 64 (EX_USAGE).
-# Phase 1.5c replaces this file (by re-running orion-host.sh) with the full verb set.
-# Every call is logged, one line, to ~/remote.log. Its own tools are called by absolute path; only pg_isready is looked
-# up in PATH (the one sshd sets), which lets the test harness substitute a fake.
-set -euo pipefail
-set -f
-umask 077
+#!/usr/bin/python3 -I
+"""orion-remote: the forced-command entry point for the deploy keys (spec §3.4, plan 1.5c Task 14).
 
-user=$(/usr/bin/id -un)
-case $user in
-  orion-prod) env_name=prod ;;
-  orion-stage) env_name=stage ;;
-  *) env_name="unknown (user $user)" ;;
-esac
-raw=${SSH_ORIGINAL_COMMAND-}
-caller=${SSH_CLIENT-}
-caller=${caller%% *}
-caller=${caller:-local}
-log_file="${HOME:-/nonexistent}/remote.log"
+Installed by scripts/provision/orion-host.sh as /usr/local/bin/orion-remote (root:root 755), so neither a release nor
+the Orion user can replace what a deploy key runs. Each key's authorized_keys line is
+  restrict,command="/usr/local/bin/orion-remote" ssh-ed25519 AAAA...
+sshd puts what the caller asked for in $SSH_ORIGINAL_COMMAND. It is split with shlex (POSIX rules: quotes are honoured,
+nothing is expanded: no $(...), no backticks, no globbing, no variables) into argv, checked against the verb table
+below, and passed to Orion as an argv list. No shell is ever involved, and caller text only ever travels as one argv
+element. A parse error, a NUL, or a newline/control character outside quotes is refused (exit 64, EX_USAGE).
 
-log() { # log <result>: one line; the request is %q-quoted so it can never forge a log line
-  local quoted
-  quoted=$(printf '%q' "$raw")
-  printf '%s env=%s from=%s cmd=%s result=%s\n' "$(/usr/bin/date -u +%Y-%m-%dT%H:%M:%SZ)" "${env_name%% *}" "$caller" \
-    "$quoted" "$1" >>"$log_file" 2>/dev/null || true
+Runs as the env's Unix user: orion-prod -> prod, orion-stage -> stage (anything else exits 64). Orion runs as
+  /opt/node-v26/bin/node ~/current/dist/cli/index.js <argv>
+with a clean environment (HOME, PATH=/usr/bin:/bin, ORION_HOME=~/home, ORION_ENV, ORION_ENV_FILE=~/shared/.env,
+XDG_RUNTIME_DIR). orion-remote never reads or prints the .env file. Every call is logged, one line, to ~/remote.log:
+  <ISO> <user> <verb> <argc> <ok|refused|exit n>
+and never with argument text. The exit code is the child's.
+
+Verbs (anything else: exit 64):
+  install <tag> <sha256>          tarball on stdin (300 MB cap) -> ~/releases/<tag>; npm ci; validate, db status, diff
+  switch <tag> [--breaking]       drain, (pg_dump,) migrate, repoint ~/current, restart, wait for the heartbeat
+  rollback                        back to the `from` of the last switch in ~/deploys.log
+  status [--json] | logs [n] | jobs [--since <iso>] | dev-queue [n]
+  report yield [<a>] [--day <d>] | data anomalies [<a>] [--all] | data sources <a> | data show <a> [<metric>]
+  proposals list [<a>] [--all] | agent runs list [<a>] | inbox <a>
+  confirm <id> | reject <id> | approve <id> [note] | decline <id> <note> | ack <id> <note> | resolve <id> <note>
+  asset pause <a> --reason <text> [--for <who>] | asset resume|activate <a> [--for <who>] | asset registry [diff]
+  job run-now <kind> [asset] | sql-ro <query> (prod) | refresh-staging (stage) | reconcile --allow-retire [--yes]
+
+Test hooks (scripts/provision/test/test_orion_remote.py): only when ORION_REMOTE_TEST=1 and the uid is not 0,
+ORION_REMOTE_TEST_USER (the Unix user), ORION_REMOTE_TEST_BIN (a directory with fake node, npm, psql, pg_dump,
+pg_isready, systemctl), $HOME, ORION_REMOTE_TEST_MAX_BYTES, ORION_REMOTE_TEST_POLL and
+ORION_REMOTE_TEST_HEARTBEAT_TIMEOUT are honoured.
+"""
+
+import datetime
+import fcntl
+import hashlib
+import json
+import os
+import pwd
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import tarfile
+import time
+from collections import deque
+
+EX_USAGE = 64
+
+NODE = '/opt/node-v26/bin/node'
+NPM = '/opt/node-v26/bin/npm'
+PG_BIN = '/usr/lib/postgresql/18/bin'
+SYSTEMCTL = '/usr/bin/systemctl'
+
+MAX_COMMAND = 8192
+MAX_TARBALL = 300 * 1024 * 1024
+SQL_OUTPUT_CAP = 1024 * 1024
+DRAIN_WAIT = '30m'
+HEARTBEAT_TIMEOUT_S = 60.0
+POLL_S = 2.0
+KEEP_RELEASES = 5
+LOGS_DEFAULT, LOGS_MAX = 200, 2000
+TEXT_MAX = 2000
+
+# The job kinds `orion job run-now` takes (src/db/jobs.ts JOB_KINDS; tests/release/orionRemote.test.ts checks them).
+JOB_KINDS = ('refresh', 'nightly_report', 'levels', 'snapshot_push', 'disclosure_watch', 'staging_refresh', 'retention')
+
+TAG_RE = re.compile(r'^orion-[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$')
+SHA_RE = re.compile(r'^[0-9a-f]{64}$')
+ID_RE = re.compile(r'^[0-9]{1,12}$')
+ASSET_RE = re.compile(r'^[a-z0-9-]{1,32}$')
+METRIC_RE = re.compile(r'^[a-z0-9_.]{1,64}$')
+WHO_RE = re.compile(r'^[A-Za-z0-9._][A-Za-z0-9._-]{0,31}$')
+DAY_RE = re.compile(r'^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+ISO_RE = re.compile(r'^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]{1,3})?)?(Z|[+-][0-9]{2}:[0-9]{2})?)?$')
+COUNT_RE = re.compile(r'^[0-9]{1,4}$')
+
+
+class Refused(Exception):
+    """A usage refusal: printed as `orion-remote: <message>`, exit 64."""
+
+
+class Failed(Exception):
+    """An operational failure (install, switch, rollback): printed as `orion-remote: <message>`, exit 1."""
+
+
+def utc_now():
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def iso_seconds(t=None):
+    return (t or utc_now()).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+# ---- Who and where ---------------------------------------------------------------------------------------------------
+
+class Env:
+    def __init__(self):
+        uid = os.getuid()
+        test = os.environ.get('ORION_REMOTE_TEST') == '1' and uid != 0
+        self.test = test
+        entry = pwd.getpwuid(uid)
+        self.user = os.environ.get('ORION_REMOTE_TEST_USER', entry.pw_name) if test else entry.pw_name
+        self.uid = uid
+        self.home = os.environ.get('HOME', entry.pw_dir) if test else entry.pw_dir
+        self.name = {'orion-prod': 'prod', 'orion-stage': 'stage'}.get(self.user)
+        tbin = os.environ.get('ORION_REMOTE_TEST_BIN') if test else None
+        self.node = os.path.join(tbin, 'node') if tbin else NODE
+        self.npm = os.path.join(tbin, 'npm') if tbin else NPM
+        self.psql = os.path.join(tbin, 'psql') if tbin else os.path.join(PG_BIN, 'psql')
+        self.pg_dump = os.path.join(tbin, 'pg_dump') if tbin else os.path.join(PG_BIN, 'pg_dump')
+        self.pg_isready = os.path.join(tbin, 'pg_isready') if tbin else os.path.join(PG_BIN, 'pg_isready')
+        self.systemctl = os.path.join(tbin, 'systemctl') if tbin else SYSTEMCTL
+
+        def num(var, default):
+            return float(os.environ[var]) if test and var in os.environ else default
+
+        self.max_tarball = int(num('ORION_REMOTE_TEST_MAX_BYTES', MAX_TARBALL))
+        self.poll_s = num('ORION_REMOTE_TEST_POLL', POLL_S)
+        self.heartbeat_timeout_s = num('ORION_REMOTE_TEST_HEARTBEAT_TIMEOUT', HEARTBEAT_TIMEOUT_S)
+
+    def path(self, *parts):
+        return os.path.join(self.home, *parts)
+
+    def child_env(self, path='/usr/bin:/bin'):
+        return {
+            'HOME': self.home,
+            'PATH': path,
+            'ORION_HOME': self.path('home'),
+            'ORION_ENV': self.name,
+            'ORION_ENV_FILE': self.path('shared', '.env'),
+            'XDG_RUNTIME_DIR': f'/run/user/{self.uid}',
+        }
+
+    def cli(self, release=None):
+        """The entry point of `release` (a tag), or of ~/current."""
+        root = self.path('releases', release) if release else self.path('current')
+        return os.path.join(root, 'dist', 'cli', 'index.js')
+
+    def current_tag(self):
+        link = self.path('current')
+        if not os.path.islink(link):
+            return None
+        return os.path.basename(os.readlink(link).rstrip('/'))
+
+
+# ---- Running children (argv lists only, never a shell) -----------------------------------------------------------------
+
+def run(env, argv, capture=False, cwd=None, child_env=None):
+    """argv as a list, stdin closed; stdout captured (text) or inherited; stderr inherited. (exit code, stdout)."""
+    r = subprocess.run(
+        argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE if capture else None,
+        env=child_env or env.child_env(), cwd=cwd or env.home, check=False,
+    )
+    return r.returncode, (r.stdout.decode('utf-8', 'replace') if capture else '')
+
+
+def orion(env, args, release=None, capture=False):
+    return run(env, [env.node, env.cli(release)] + list(args), capture=capture)
+
+
+def parsed(text):
+    try:
+        return json.loads(text)
+    except ValueError:
+        return {'raw': text}
+
+
+def orion_json(env, args, release=None):
+    rc, out = orion(env, args, release, capture=True)
+    return rc, parsed(out)
+
+
+# ---- Parsing the request ---------------------------------------------------------------------------------------------
+
+def split_command(raw):
+    """shlex POSIX split; refuses NUL, and control characters (newline included) outside quotes."""
+    if raw == '':
+        raise Refused('no command given (this key runs orion-remote verbs only, never a shell)')
+    if len(raw) > MAX_COMMAND:
+        raise Refused('command too long')
+    if '\x00' in raw:
+        raise Refused('NUL is not allowed in a command')
+    quote = None
+    escaped = False
+    for ch in raw:
+        if escaped:
+            if quote is None and ord(ch) < 32 and ch != '\t':
+                raise Refused('control characters (newlines included) are only allowed inside quotes')
+            escaped = False
+            continue
+        if quote == "'":
+            if ch == "'":
+                quote = None
+        elif quote == '"':
+            if ch == '\\':
+                escaped = True
+            elif ch == '"':
+                quote = None
+        else:
+            if ch == '\\':
+                escaped = True
+            elif ch in '\'"':
+                quote = ch
+            elif ord(ch) < 32 and ch != '\t' or ch == '\x7f':
+                raise Refused('control characters (newlines included) are only allowed inside quotes')
+    try:
+        argv = shlex.split(raw, comments=False, posix=True)
+    except ValueError as err:
+        raise Refused(f'cannot parse the command: {err}') from None
+    if not argv:
+        raise Refused('no command given (this key runs orion-remote verbs only, never a shell)')
+    return argv
+
+
+def text_value(what):
+    def check(v):
+        if v.strip() == '':
+            raise Refused(f'{what} required')
+        if v.startswith('-'):
+            raise Refused(f'{what} may not start with "-"')
+        if len(v) > TEXT_MAX:
+            raise Refused(f'{what} longer than {TEXT_MAX} characters')
+        if any((ord(c) < 32 and c not in '\n\t') or c == '\x7f' for c in v):
+            raise Refused(f'{what} has control characters')
+        return v
+    return check
+
+
+def pattern(regex, what):
+    def check(v):
+        if not regex.match(v):
+            raise Refused(f'bad {what}: expected {regex.pattern}')
+        return v
+    return check
+
+
+def count(lo, hi, what):
+    def check(v):
+        if not COUNT_RE.match(v) or not lo <= int(v) <= hi:
+            raise Refused(f'{what} must be a number from {lo} to {hi}')
+        return v
+    return check
+
+
+ID = pattern(ID_RE, 'id')
+ASSET = pattern(ASSET_RE, 'asset id')
+NOTE = text_value('note')
+
+
+def parse(args, positional=(), flags=None, usage=''):
+    """`args` against `positional` [(name, check, required)] and `flags` {flag: check or None (a switch)}."""
+    flags = flags or {}
+    out = {}
+    pos = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a.startswith('-'):
+            if a not in flags:
+                raise Refused(f'unknown or misplaced option for this verb (usage: {usage})')
+            key = a.lstrip('-').replace('-', '_')
+            if key in out:
+                raise Refused(f'{a} given twice')
+            check = flags[a]
+            if check is None:
+                out[key] = True
+                i += 1
+                continue
+            if i + 1 >= len(args) or args[i + 1].startswith('-'):
+                raise Refused(f'{a} needs a value (usage: {usage})')
+            out[key] = check(args[i + 1])
+            i += 2
+            continue
+        pos.append(a)
+        i += 1
+    if len(pos) > len(positional):
+        raise Refused(f'too many arguments (usage: {usage})')
+    for idx, (name, check, required) in enumerate(positional):
+        if idx < len(pos):
+            out[name] = check(pos[idx])
+        elif required:
+            raise Refused(f'{name} required (usage: {usage})')
+    return out
+
+
+def opt(values, key, flag):
+    """`[flag, value]` when `key` was given."""
+    return [flag, values[key]] if key in values else []
+
+
+# ---- Verbs: passthrough --------------------------------------------------------------------------------------------
+
+def need_current(env):
+    if env.current_tag() is None:
+        raise Failed('no release is current (~/current is missing): install and switch one first')
+
+
+def passthrough(env, args):
+    need_current(env)
+    return orion(env, args)[0]
+
+
+def v_status(env, args):
+    o = parse(args, flags={'--json': None}, usage='status [--json]')
+    if o.get('json'):
+        return passthrough(env, ['daemon', 'status', '--json'])
+    cur = os.readlink(env.path('current')) if os.path.islink(env.path('current')) else 'none'
+    try:
+        rc = subprocess.run([env.pg_isready, '-q'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, env=env.child_env(), check=False).returncode
+    except OSError:
+        rc = -1
+    pg = {0: 'accepting connections', 1: 'rejecting connections', 2: 'no response'}.get(rc, f'not checked (pg_isready exit {rc})')
+    print(f'env: {env.name}')
+    print(f'host: {os.uname().nodename}')
+    print(f'current: {cur}')
+    print(f'postgres: {pg}', flush=True)
+    if env.current_tag() is None:
+        print('daemon: no release installed')
+        return 0
+    return orion(env, ['daemon', 'status'])[0]
+
+
+def tail(path, n):
+    if not os.path.isfile(path):
+        raise Failed(f'{os.path.basename(path)} does not exist yet')
+    with open(path, 'rb') as f:
+        lines = deque(f, maxlen=n)
+    sys.stdout.buffer.write(b''.join(lines))
+    sys.stdout.flush()
+    return 0
+
+
+def v_logs(env, args):
+    o = parse(args, [('n', count(1, LOGS_MAX, 'n'), False)], usage=f'logs [n <= {LOGS_MAX}]')
+    return tail(env.path('home', 'daemon.log'), int(o.get('n', LOGS_DEFAULT)))
+
+
+def v_dev_queue(env, args):
+    o = parse(args, [('n', count(1, LOGS_MAX, 'n'), False)], usage=f'dev-queue [n <= {LOGS_MAX}]')
+    return tail(env.path('home', 'disclosure', 'dev-queue.md'), int(o.get('n', LOGS_DEFAULT)))
+
+
+def v_jobs(env, args):
+    o = parse(args, flags={'--since': pattern(ISO_RE, 'ISO instant')}, usage='jobs [--since <iso>]')
+    return passthrough(env, ['job', 'list', '--json'] + opt(o, 'since', '--since'))
+
+
+def v_report(env, args):
+    if args[:1] != ['yield']:
+        raise Refused('report: only "report yield [<asset>] [--day <yyyy-mm-dd>]"')
+    o = parse(args[1:], [('asset', ASSET, False)], {'--day': pattern(DAY_RE, 'day')}, 'report yield [<asset>] [--day <d>]')
+    return passthrough(env, ['report', 'yield'] + ([o['asset']] if 'asset' in o else []) + opt(o, 'day', '--day') + ['--json'])
+
+
+def v_data(env, args):
+    sub, rest = (args[0], args[1:]) if args else ('', [])
+    if sub == 'anomalies':
+        o = parse(rest, [('asset', ASSET, False)], {'--all': None}, 'data anomalies [<asset>] [--all]')
+        return passthrough(env, ['data', 'anomalies'] + ([o['asset']] if 'asset' in o else []) + (['--all'] if o.get('all') else []) + ['--json'])
+    if sub == 'sources':
+        o = parse(rest, [('asset', ASSET, True)], usage='data sources <asset>')
+        return passthrough(env, ['data', 'sources', o['asset'], '--json'])
+    if sub == 'show':
+        o = parse(rest, [('asset', ASSET, True), ('metric', pattern(METRIC_RE, 'metric'), False)], usage='data show <asset> [<metric>]')
+        return passthrough(env, ['data', 'show', o['asset']] + ([o['metric']] if 'metric' in o else []) + ['--json'])
+    raise Refused('data: only "data anomalies", "data sources", "data show" (decisions are confirm/reject/ack/resolve)')
+
+
+def v_proposals(env, args):
+    if args[:1] != ['list']:
+        raise Refused('proposals: only "proposals list [<asset>] [--all]" (decisions are approve/decline)')
+    o = parse(args[1:], [('asset', ASSET, False)], {'--all': None}, 'proposals list [<asset>] [--all]')
+    return passthrough(env, ['proposals', 'list'] + ([o['asset']] if 'asset' in o else []) + (['--all'] if o.get('all') else []) + ['--json'])
+
+
+def v_agent(env, args):
+    if args[:2] != ['runs', 'list']:
+        raise Refused('agent: only "agent runs list [<asset>]"')
+    o = parse(args[2:], [('asset', ASSET, False)], usage='agent runs list [<asset>]')
+    return passthrough(env, ['agent', 'runs', 'list'] + ([o['asset']] if 'asset' in o else []) + ['--json'])
+
+
+def v_inbox(env, args):
+    o = parse(args, [('asset', ASSET, True)], usage='inbox <asset>')
+    return passthrough(env, ['inbox', o['asset'], '--json'])
+
+
+# ---- Verbs: decisions ------------------------------------------------------------------------------------------------
+
+def decision(target, note):
+    """`note`: 'none', 'optional' or 'required'."""
+    def verb(env, args):
+        positional = [('id', ID, True)]
+        if note != 'none':
+            positional.append(('note', NOTE, note == 'required'))
+        o = parse(args, positional, usage=f'{target[-1]} <id>' + {'none': '', 'optional': ' [note]', 'required': ' <note>'}[note])
+        return passthrough(env, target + [o['id']] + opt(o, 'note', '--note') + ['--json'])
+    return verb
+
+
+# ---- Verbs: registry and jobs ----------------------------------------------------------------------------------------
+
+def by_of(o):
+    return f"{o['for']} via raymond" if 'for' in o else 'raymond'
+
+
+def v_asset(env, args):
+    sub, rest = (args[0], args[1:]) if args else ('', [])
+    who = pattern(WHO_RE, 'name for --for')
+    if sub == 'pause':
+        o = parse(rest, [('asset', ASSET, True)], {'--reason': text_value('reason'), '--for': who}, 'asset pause <a> --reason <text> [--for <who>]')
+        if 'reason' not in o:
+            raise Refused('reason required (asset pause <a> --reason <text>)')
+        return passthrough(env, ['asset', 'pause', o['asset'], '--reason', o['reason'], '--by', by_of(o)])
+    if sub in ('resume', 'activate'):
+        o = parse(rest, [('asset', ASSET, True)], {'--for': who}, f'asset {sub} <a> [--for <who>]')
+        return passthrough(env, ['asset', sub, o['asset'], '--by', by_of(o)])
+    if sub == 'registry':
+        if rest == []:
+            return passthrough(env, ['asset', 'registry', '--json'])
+        if rest == ['diff']:
+            return passthrough(env, ['asset', 'registry', 'diff', '--json'])
+        raise Refused('asset registry: only "asset registry" and "asset registry diff"')
+    raise Refused('asset: only pause, resume, activate, registry, registry diff')
+
+
+def v_job(env, args):
+    if args[:1] != ['run-now']:
+        raise Refused('job: only "job run-now <kind> [asset]" (the job list is "jobs")')
+    o = parse(args[1:], [('kind', pattern(re.compile('^(' + '|'.join(JOB_KINDS) + ')$'), 'job kind'), True), ('asset', ASSET, False)],
+              usage='job run-now <kind> [asset]')
+    return passthrough(env, ['job', 'run-now', o['kind']] + ([o['asset']] if 'asset' in o else []) + ['--by', 'raymond', '--json'])
+
+
+def v_refresh_staging(env, args):
+    parse(args, usage='refresh-staging')
+    if env.name != 'stage':
+        raise Refused('refresh-staging is stage-only')
+    return passthrough(env, ['job', 'run-now', 'staging_refresh', '--by', 'raymond', '--json'])
+
+
+def v_sql_ro(env, args):
+    if env.name != 'prod':
+        raise Refused('sql-ro is prod-only: staging has no read-only role')
+    if len(args) != 1:
+        raise Refused("sql-ro takes exactly one argument, the query (quote it: sql-ro 'select ...')")
+    query = args[0]
+    if query.strip() == '' or len(query) > MAX_COMMAND:
+        raise Refused('sql-ro needs a query')
+    argv = [env.psql, '-X', '--no-psqlrc', '-v', 'ON_ERROR_STOP=1', '-U', f'orion_{env.name}_ro', '-d', f'orion_{env.name}', '-c', query]
+    p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, env=env.child_env(), cwd=env.home)
+    written = 0
+    truncated = False
+    while True:
+        chunk = p.stdout.read(65536)
+        if not chunk:
+            break
+        room = SQL_OUTPUT_CAP - written
+        if len(chunk) > room:
+            sys.stdout.buffer.write(chunk[:room])
+            truncated = True
+            p.kill()
+            break
+        sys.stdout.buffer.write(chunk)
+        written += len(chunk)
+    sys.stdout.flush()
+    p.stdout.close()
+    rc = p.wait()
+    if truncated:
+        print('orion-remote: output truncated at 1 MB', file=sys.stderr)
+        return 0
+    return rc
+
+
+# ---- Verbs: deploy ---------------------------------------------------------------------------------------------------
+
+def deploy_lock(env):
+    f = open(env.path('.orion-remote.lock'), 'w')  # noqa: SIM115 (held until exit)
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise Failed('another install, switch, rollback or reconcile is running') from None
+    return f
+
+
+def tag_key(tag):
+    y, m, d, n = tag[len('orion-'):].split('.')
+    return (int(y), int(m), int(d), int(n))
+
+
+def last_switch(env):
+    """(from, to) of the last `switch` line in ~/deploys.log, or None."""
+    path = env.path('deploys.log')
+    if not os.path.isfile(path):
+        return None
+    found = None
+    with open(path) as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) >= 5 and parts[1] == 'switch' and parts[3] == '->':
+                found = (parts[2], parts[4])
+    return found
+
+
+def append_deploys(env, text):
+    with open(env.path('deploys.log'), 'a') as f:
+        f.write(f'{iso_seconds()} {text}\n')
+
+
+def check_members(t, tag):
+    for m in t.getmembers():
+        name = m.name.rstrip('/')
+        parts = name.split('/')
+        if name.startswith('/') or '..' in parts or parts[0] != tag:
+            raise Failed(f'the tarball has a path outside {tag}/: {m.name[:200]!r}')
+        if not (m.isfile() or m.isdir()):
+            raise Failed(f'the tarball has a link or special file: {m.name[:200]!r}')
+
+
+def prune(env, keep_also):
+    rel = env.path('releases')
+    tags = sorted((t for t in os.listdir(rel) if TAG_RE.match(t)), key=tag_key)
+    protected = set(tags[-KEEP_RELEASES:]) | {t for t in keep_also if t}
+    for t in tags:
+        if t not in protected:
+            shutil.rmtree(os.path.join(rel, t))
+
+
+def v_install(env, args):
+    o = parse(args, [('tag', pattern(TAG_RE, 'tag'), True), ('sha256', pattern(SHA_RE, 'sha256'), True)], usage='install <tag> <sha256> (tarball on stdin)')
+    tag, want = o['tag'], o['sha256']
+    lock = deploy_lock(env)
+    releases = env.path('releases')
+    root = os.path.join(releases, tag)
+    if os.path.lexists(root):
+        raise Failed(f'{tag} is already installed (~/releases/{tag}); a release is immutable')
+    os.makedirs(env.path('incoming'), mode=0o700, exist_ok=True)
+    os.makedirs(releases, exist_ok=True)
+    tgz = env.path('incoming', f'{tag}.tgz')
+    partial = tgz + '.partial'
+    unpack = os.path.join(releases, f'.unpack-{tag}')
+    try:
+        h = hashlib.sha256()
+        size = 0
+        with open(partial, 'wb') as f:
+            while True:
+                chunk = sys.stdin.buffer.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > env.max_tarball:
+                    raise Failed(f'the tarball is larger than {env.max_tarball // (1024 * 1024)} MB ({env.max_tarball} bytes): refused')
+                h.update(chunk)
+                f.write(chunk)
+        got = h.hexdigest()
+        if got != want:
+            raise Failed(f'sha256 mismatch: got {got}, expected {want}; nothing installed')
+        os.replace(partial, tgz)
+        if os.path.lexists(unpack):
+            shutil.rmtree(unpack)
+        os.makedirs(unpack)
+        try:
+            with tarfile.open(tgz, 'r:gz') as t:
+                check_members(t, tag)
+                t.extractall(unpack, filter='data')
+        except (tarfile.TarError, OSError, EOFError) as err:
+            raise Failed(f'cannot unpack the tarball: {err}') from None
+        os.rename(os.path.join(unpack, tag), root)
+    finally:
+        for p in (partial, tgz):
+            if os.path.exists(p):
+                os.unlink(p)
+        if os.path.lexists(unpack):
+            shutil.rmtree(unpack)
+
+    ok = False
+    try:
+        try:
+            with open(os.path.join(root, 'RELEASE')) as f:
+                release = json.load(f)
+        except (OSError, ValueError) as err:
+            raise Failed(f'the release has no readable RELEASE file: {err}') from None
+        if not isinstance(release, dict) or release.get('tag') != tag:
+            raise Failed(f'RELEASE names {release.get("tag") if isinstance(release, dict) else release!r}, not {tag}')
+        npm_env = env.child_env(path=f'{os.path.dirname(env.npm)}:/usr/bin:/bin')
+        rc, _ = run(env, [env.npm, 'ci', '--omit=dev', '--ignore-scripts'], cwd=root, child_env=npm_env)
+        if rc != 0:
+            raise Failed(f'npm ci failed (exit {rc}); {tag} removed')
+        results = {}
+        failed = []
+        for key, cmd in (('validate', ['asset', 'validate', '--json']), ('db', ['db', 'status', '--json']),
+                         ('registry', ['asset', 'registry', 'diff', '--json'])):
+            rc, results[key] = orion_json(env, cmd, release=tag)
+            if rc != 0:
+                failed.append(f'{" ".join(cmd[:-1])} exit {rc}')
+        print(json.dumps({'tag': tag, 'release': release, 'validate': results['validate'], 'db': results['db'], 'registry': results['registry']}, indent=2))
+        if failed:
+            raise Failed(f'{", ".join(failed)}; {tag} removed')
+        ok = True
+    finally:
+        if not ok and os.path.lexists(root):
+            shutil.rmtree(root)
+    prev = last_switch(env)
+    prune(env, [tag, env.current_tag(), prev[0] if prev else None])
+    lock.close()
+    return 0
+
+
+def drain(env):
+    """Drains the current daemon. True when there was one (it must be undrained on failure)."""
+    if env.current_tag() is None:
+        return False
+    rc, out = orion_json(env, ['daemon', 'drain', '--wait', DRAIN_WAIT, '--json'])
+    if rc == 0:
+        return True
+    if isinstance(out, dict) and isinstance(out.get('error'), dict) and out['error'].get('code') == 'no_daemon':
+        return False
+    undrain(env, True)
+    raise Failed(f'daemon drain failed (exit {rc}): {json.dumps(out)[:500]}')
+
+
+def undrain(env, drained):
+    if drained:
+        orion(env, ['daemon', 'undrain', '--json'], capture=True)
+
+
+def repoint(env, tag):
+    tmp = env.path('current.tmp')
+    if os.path.lexists(tmp):
+        os.unlink(tmp)
+    os.symlink(f'releases/{tag}', tmp)
+    os.replace(tmp, env.path('current'))  # rename(2): atomic, like mv -T
+
+
+def restart_and_wait(env, tag):
+    started = utc_now()
+    rc, _ = run(env, [env.systemctl, '--user', 'restart', 'orion-daemon'])
+    if rc != 0:
+        raise Failed(f'systemctl --user restart orion-daemon failed (exit {rc}); to go back: orion-remote rollback')
+    deadline = time.monotonic() + env.heartbeat_timeout_s
+    last = None
+    while time.monotonic() < deadline:
+        time.sleep(env.poll_s)
+        rc, out = orion_json(env, ['daemon', 'status', '--json'], release=tag)
+        hb = out.get('heartbeat') if isinstance(out, dict) else None
+        if rc == 0 and isinstance(hb, dict):
+            running = hb.get('releaseTag', hb.get('release_tag'))
+            beat = hb.get('beatAt', hb.get('beat_at'))
+            last = f'{running} beat {beat}'
+            try:
+                fresh = beat is not None and datetime.datetime.fromisoformat(beat.replace('Z', '+00:00')) > started
+            except ValueError:
+                fresh = False
+            if running == tag and fresh:
+                return
+    raise Failed(f'the daemon did not come up on {tag} within {env.heartbeat_timeout_s:g} s (last heartbeat: {last}); '
+                 'to go back: orion-remote rollback')
+
+
+def v_switch(env, args):
+    o = parse(args, [('tag', pattern(TAG_RE, 'tag'), True)], {'--breaking': None}, 'switch <tag> [--breaking]')
+    tag = o['tag']
+    breaking = o.get('breaking', False)
+    lock = deploy_lock(env)
+    if not os.path.isdir(env.path('releases', tag)):
+        raise Failed(f'{tag} is not installed (orion-remote install {tag} <sha256> first)')
+    frm = env.current_tag()
+    if frm == tag:
+        raise Failed(f'{tag} is already current')
+    drained = drain(env)
+    rc, status = orion_json(env, ['db', 'status', '--json'], release=tag)
+    if rc != 0 or not isinstance(status, dict):
+        undrain(env, drained)
+        raise Failed(f'db status failed (exit {rc}): {json.dumps(status)[:500]}')
+    pending = status.get('pending') or []
+    if any(isinstance(p, dict) and p.get('breaking') for p in pending) and not breaking:
+        undrain(env, drained)
+        raise Failed(f'{tag} has a breaking migration pending ({", ".join(str(p.get("id")) for p in pending if p.get("breaking"))}); '
+                     'nothing changed. Re-run with --breaking (a pg_dump is taken first)')
+    if breaking:
+        os.makedirs(env.path('shared', 'predeploy'), mode=0o700, exist_ok=True)
+        dump = env.path('shared', 'predeploy', f'{tag}-{utc_now().strftime("%Y%m%dT%H%M%SZ")}.dump')
+        db = f'orion_{env.name}'
+        rc, _ = run(env, [env.pg_dump, '-Fc', '-U', db, '-d', db, '-f', dump])
+        if rc != 0:
+            undrain(env, drained)
+            raise Failed(f'pg_dump failed (exit {rc}); nothing changed')
+    rc, migrated = orion_json(env, ['db', 'migrate'] + (['--breaking'] if breaking else []) + ['--json'], release=tag)
+    if rc != 0:
+        undrain(env, drained)
+        raise Failed(f'db migrate failed (exit {rc}): {json.dumps(migrated)[:500]}; current is still {frm or "none"}')
+    applied = migrated.get('applied', []) if isinstance(migrated, dict) else []
+    repoint(env, tag)
+    # Logged as soon as current moved: a rollback needs this line even when the restart below fails.
+    append_deploys(env, f'switch {frm or "none"} -> {tag} migrations={",".join(str(a) for a in applied) or "none"}')
+    restart_and_wait(env, tag)
+    _, registry = orion_json(env, ['asset', 'registry', '--json'], release=tag)
+    print(json.dumps({
+        'from': frm, 'to': tag, 'migrations': applied, 'registry': registry,
+        'next': f'soak on {tag} (its first scheduled nightly); to go back: orion-remote rollback',
+    }, indent=2))
+    lock.close()
+    return 0
+
+
+def v_rollback(env, args):
+    parse(args, usage='rollback')
+    lock = deploy_lock(env)
+    sw = last_switch(env)
+    if sw is None or sw[0] == 'none':
+        raise Failed('no switch in ~/deploys.log to roll back')
+    target = sw[0]
+    cur = env.current_tag()
+    if cur is None:
+        raise Failed('no release is current')
+    if cur == target:
+        raise Failed(f'{target} is already current')
+    if not os.path.isdir(env.path('releases', target)):
+        raise Failed(f'{target} is no longer installed')
+    drain(env)
+    repoint(env, target)
+    append_deploys(env, f'rollback {cur} -> {target}')
+    restart_and_wait(env, target)
+    print(json.dumps({'from': cur, 'to': target, 'next': f'{target} is current; the schema stays where it is (ahead is accepted)'}, indent=2))
+    lock.close()
+    return 0
+
+
+def v_reconcile(env, args):
+    o = parse(args, flags={'--allow-retire': None, '--yes': None}, usage='reconcile --allow-retire --yes')
+    if not o.get('allow_retire'):
+        raise Refused('reconcile is only for --allow-retire (the daemon reconciles every other diff at start-up)')
+    need_current(env)
+    lock = deploy_lock(env)
+    rc, _ = orion(env, ['asset', 'registry', 'diff', '--json'])
+    if rc != 0:
+        return rc
+    if not o.get('yes'):
+        print('orion-remote: this is the diff; re-run as "reconcile --allow-retire --yes" to apply it', file=sys.stderr)
+        return 1
+    rc, _ = orion(env, ['asset', 'registry', 'reconcile', '--allow-retire', '--json'])
+    lock.close()
+    return rc
+
+
+VERBS = {
+    'install': v_install,
+    'switch': v_switch,
+    'rollback': v_rollback,
+    'status': v_status,
+    'logs': v_logs,
+    'jobs': v_jobs,
+    'report': v_report,
+    'data': v_data,
+    'proposals': v_proposals,
+    'agent': v_agent,
+    'inbox': v_inbox,
+    'dev-queue': v_dev_queue,
+    'confirm': decision(['data', 'confirm'], 'none'),
+    'reject': decision(['data', 'reject'], 'none'),
+    'approve': decision(['proposals', 'approve'], 'optional'),
+    'decline': decision(['proposals', 'reject'], 'required'),
+    'ack': decision(['data', 'ack'], 'required'),
+    'resolve': decision(['data', 'resolve'], 'required'),
+    'asset': v_asset,
+    'job': v_job,
+    'sql-ro': v_sql_ro,
+    'refresh-staging': v_refresh_staging,
+    'reconcile': v_reconcile,
 }
-refuse() { # refuse <message> <log result>
-  printf 'orion-remote: %s\n' "$1" >&2
-  log "$2"
-  exit 64
-}
 
-if [[ -z $raw ]]; then
-  refuse "no command given (this key runs orion-remote verbs only, never a shell)" refused:empty
-fi
-if [[ $raw == *[[:cntrl:]]* ]]; then
-  refuse "control characters are not allowed in a command" refused:control-chars
-fi
-if ((${#raw} > 4096)); then
-  refuse "command too long" refused:too-long
-fi
 
-# Split on blanks only; read -a does no expansion of any kind (no globbing, no $(), no quotes processing with -r).
-read -r -a argv <<<"$raw"
-verb=${argv[0]-}
+def log_call(env, verb, argc, result):
+    try:
+        fd = os.open(env.path('remote.log'), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(fd, 'a') as f:
+            f.write(f'{iso_seconds()} {env.user} {verb} {argc} {result}\n')
+    except OSError:
+        pass
 
-case $verb in
-  status)
-    if ((${#argv[@]} != 1)); then
-      refuse "'status' takes no arguments in Phase 1.5a" refused:status-args
-    fi
-    current=none
-    if [[ -L $HOME/current ]]; then current=$(/usr/bin/readlink "$HOME/current"); fi
-    rc=0
-    pg_isready -q >/dev/null 2>&1 || rc=$?
-    case $rc in
-      0) pg="accepting connections" ;;
-      1) pg="rejecting connections" ;;
-      2) pg="no response" ;;
-      *) pg="not checked (pg_isready exit $rc)" ;;
-    esac
-    printf 'env: %s\n' "$env_name"
-    printf 'host: %s\n' "$(/usr/bin/uname -n)"
-    printf 'current: %s\n' "$current"
-    printf 'postgres: %s\n' "$pg"
-    log ok
-    ;;
-  *)
-    refuse "'$verb' not available yet (Phase 1.5c)" "refused:verb"
-    ;;
-esac
+
+def main():
+    os.umask(0o077)
+    env = Env()
+    if env.name is None:
+        print(f'orion-remote: {env.user!r} is not an Orion user (orion-prod or orion-stage)', file=sys.stderr)
+        return EX_USAGE
+    raw = os.environ.get('SSH_ORIGINAL_COMMAND', '')
+    verb, argc = '-', 0
+    try:
+        argv = split_command(raw)
+        argc = len(argv)
+        if argv[0] not in VERBS:
+            verb = '?'
+            shown = argv[0] if len(argv[0]) <= 40 and argv[0].isprintable() else argv[0][:40].encode('unicode_escape').decode()
+            raise Refused(f"'{shown}' is not an allowed verb")
+        verb = argv[0]
+        rc = VERBS[verb](env, argv[1:])
+    except Refused as err:
+        print(f'orion-remote: {err}', file=sys.stderr)
+        log_call(env, verb, argc, 'refused')
+        return EX_USAGE
+    except Failed as err:
+        print(f'orion-remote: {err}', file=sys.stderr)
+        log_call(env, verb, argc, 'exit 1')
+        return 1
+    except Exception as err:  # a bug or a missing tool: one line, logged, never a traceback with caller text
+        print(f'orion-remote: internal error: {type(err).__name__}: {str(err)[:300]}', file=sys.stderr)
+        log_call(env, verb, argc, 'exit 1')
+        return 1
+    log_call(env, verb, argc, 'ok' if rc == 0 else f'exit {rc}')
+    return rc
+
+
+if __name__ == '__main__':
+    sys.exit(main())

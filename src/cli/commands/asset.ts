@@ -5,7 +5,7 @@ import { listAssetIds, loadAsset } from '../../config/load.js';
 import { loadSchedule, nextSlot } from '../../daemon/schedule.js';
 import { listRegistry, type RegistryRow } from '../../db/registry.js';
 import { activateAsset, pauseAsset, resumeAsset, seedRegistry } from '../../registry/actions.js';
-import { loadAssetYamls, planReconcile, type RegistryDiff } from '../../registry/reconcile.js';
+import { loadAssetYamls, planReconcile, reconcileFromDisk, type RegistryDiff } from '../../registry/reconcile.js';
 import { OrionError } from '../../types.js';
 import { loadEnv } from '../env.js';
 import { orionEnv } from '../paths.js';
@@ -162,6 +162,21 @@ export function registerAsset(program: Command, ctx: CliContext): void {
       return guarded(ctx, opts.json, async () => {
         const yamls = loadAssetYamls(ctx.configRoot);
         const diff = planReconcile(await withDb(ctx, (db) => listRegistry(db)), yamls);
+        output(ctx, opts.json, diff, () => diffLines(diff));
+      });
+    });
+
+  registry
+    .command('reconcile')
+    .description('apply what the daemon applies at start-up (registry diff); retiring every asset or more than 2 at once needs --allow-retire')
+    .option('--allow-retire', 'accept a reconcile that retires every asset, or more than 2 at once (refused otherwise)')
+    .option('--json', 'JSON output')
+    .action((_opts: unknown, cmd: Command) => {
+      const opts = cmd.optsWithGlobals<{ allowRetire?: boolean; json?: boolean }>();
+      return guarded(ctx, opts.json, async () => {
+        const diff = await withDb(ctx, (db) =>
+          reconcileFromDisk(db, ctx.configRoot, ctx.release?.tag ?? null, ctx.now(), { allowRetire: opts.allowRetire === true }),
+        );
         output(ctx, opts.json, diff, () => diffLines(diff));
       });
     });

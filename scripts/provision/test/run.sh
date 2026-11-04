@@ -384,11 +384,13 @@ run_case host-backup-disk 0 "${H[@]}" --backup-disk "$tmp"
 expect host-backup-disk 'repo 2 protects against nothing if .* is on the same physical disk'
 expect_before host-backups 'stanza-create' 'orion-backup\.conf'
 
-# --- orion-remote (R1): only "status" runs; caller text never reaches a shell --------------------------------------
+# --- orion-remote (1.5c, Python): caller text never reaches a shell ------------------------------------------------
+# The full unit tests are test_orion_remote.py (tests/release/orionRemote.test.ts runs them); here: the dry-run user's
+# view, with ORION_REMOTE_TEST=1 pretending to be orion-stage and fakes for pg_isready and anything a shell would run.
 fakebin=$tmp/fakebin
 mkdir -p "$fakebin" "$tmp/rhome"
 marker=$tmp/PWNED
-for c in id touch sh bash rm; do
+for c in id touch sh bash rm node npm psql pg_dump systemctl; do
   printf '#!/bin/sh\necho evaluated >"%s"\n' "$marker" >"$fakebin/$c"
   chmod +x "$fakebin/$c"
 done
@@ -397,7 +399,8 @@ chmod +x "$fakebin/pg_isready"
 remote() { # remote <case name> <SSH_ORIGINAL_COMMAND>
   local rpath="$fakebin:/usr/bin:/bin"
   env -i HOME="$tmp/rhome" PATH="$rpath" SSH_CLIENT="192.168.0.201 50000 22" SSH_ORIGINAL_COMMAND="$2" \
-    /bin/bash "$prov/files/orion-remote" >"$tmp/$1.out" 2>&1
+    ORION_REMOTE_TEST=1 ORION_REMOTE_TEST_USER=orion-stage ORION_REMOTE_TEST_BIN="$fakebin" \
+    /usr/bin/python3 -I -B "$prov/files/orion-remote" >"$tmp/$1.out" 2>&1
 }
 remote_case() { # remote_case <name> <want exit> <command>
   local rc
@@ -408,7 +411,7 @@ remote_case() { # remote_case <name> <want exit> <command>
   if [[ -e $marker ]]; then bad "orion-remote $1: caller text was evaluated"; else ok "orion-remote $1: nothing evaluated"; fi
 }
 remote_case r-status 0 'status'
-expect r-status '^env: unknown'
+expect r-status '^env: stage$'
 expect r-status "^host: $hn\$"
 expect r-status '^current: none$'
 expect r-status '^postgres: accepting connections$'
@@ -420,22 +423,23 @@ remote_case r-subst 64 '$(id)'
 remote_case r-backticks 64 '`id`'
 remote_case r-quotes 64 "status 'x' \"y\""
 remote_case r-install 64 'install x'
-expect r-install "orion-remote: 'install' not available yet \(Phase 1\.5c\)"
+expect r-install "orion-remote: bad tag"
 remote_case r-newline 64 "status
 id"
 remote_case r-empty 64 ''
 remote_case r-glob 64 '*'
 remote_case r-redirect 64 'status >/tmp/x'
 if [[ $(wc -l <"$tmp/rhome/remote.log") -eq 11 ]]; then ok "orion-remote: every call logged (11 lines)"; else bad "orion-remote: every call logged" "$(wc -l <"$tmp/rhome/remote.log") lines"; fi
-if grep -q 'result=ok' "$tmp/rhome/remote.log" && [[ $(grep -c 'result=refused' "$tmp/rhome/remote.log") -eq 10 ]]; then
+if [[ $(grep -c ' ok$' "$tmp/rhome/remote.log") -eq 1 && $(grep -c ' refused$' "$tmp/rhome/remote.log") -eq 10 ]]; then
   ok "orion-remote: log has 1 ok and 10 refusals"
 else
   bad "orion-remote: log has 1 ok and 10 refusals"
 fi
-if [[ $(grep -c . "$tmp/rhome/remote.log") -eq $(wc -l <"$tmp/rhome/remote.log") ]] && ! grep -q $'\x1b' "$tmp/rhome/remote.log"; then
-  ok "orion-remote: one line per call, no control characters in the log"
+if [[ $(grep -c . "$tmp/rhome/remote.log") -eq $(wc -l <"$tmp/rhome/remote.log") ]] && ! grep -q $'\x1b' "$tmp/rhome/remote.log" &&
+  ! grep -Eq 'id|touch|tmp' "$tmp/rhome/remote.log"; then
+  ok "orion-remote: one line per call, no control characters and no argument text in the log"
 else
-  bad "orion-remote: one line per call, no control characters in the log"
+  bad "orion-remote: one line per call, no control characters and no argument text in the log"
 fi
 
 # --- optional: the SQL files against a throwaway cluster ----------------------------------------------------------

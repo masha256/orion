@@ -8,7 +8,7 @@ them with sudo**. Each one is idempotent: running it again changes nothing and s
 | `dev-postgres.sh` | dev host (Ubuntu 24.04 noble): PGDG PostgreSQL 18 + pgBackRest, role `orion_dev`, databases `orion_dev` and `orion_test`, peer map from your Unix user |
 | `orion-host.sh` | Orion server (Ubuntu 26.04 resolute): packages, Node 26, users `orion-prod` / `orion-stage`, home layout, `.env` templates, keys, Postgres roles/databases, pgBackRest scaffold, `orion-remote`, ufw; `--enable-backups` for step 2 |
 | `sql/dev-roles.sql`, `sql/host-roles.sql` | the roles/databases/grants, guarded (a re-run is a no-op); usable alone: `sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d postgres -f <file>` |
-| `files/orion-remote` | forced-command entry point, installed as `/usr/local/bin/orion-remote` (Phase 1.5a: `status` only) |
+| `files/orion-remote` | forced-command entry point (Python 3, stdlib only; verbs in its header), installed as `/usr/local/bin/orion-remote`; unit tests `test/test_orion_remote.py` |
 | `files/orion-pg-dump` | nightly encrypted `pg_dump`, installed by `--enable-backups` as `/usr/local/sbin/orion-pg-dump` |
 | `files/env.template`, `files/pgbackrest.conf.tmpl` | templates for `~/shared/.env` and `/etc/pgbackrest/pgbackrest.conf` (created once, never overwritten) |
 | `lib.sh` | shared helpers |

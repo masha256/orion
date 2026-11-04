@@ -63,7 +63,8 @@ done
   printf '%s\n' RELEASE schedule.yaml package.json package-lock.json
   (cd "$src" && find dist assets personas skills \( -type f -o -type d -o -type l \) -print)
   printf 'scripts\n'
-  (cd "$src" && find scripts/provision -path scripts/provision/test -prune -o \( -type f -o -type d -o -type l \) -print)
+  (cd "$src" && find scripts/provision \( -path scripts/provision/test -o -name __pycache__ \) -prune -o \
+    \( -type f -o -type d -o -type l \) -print)
   if [[ -d $src/tools/disclosure-watcher ]]; then
     printf 'tools\n'
     (cd "$src" && find tools/disclosure-watcher \( -name tests -o -name __pycache__ \) -prune -o -name '*.pyc' -prune -o \
