@@ -8,6 +8,7 @@ import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
+import { statementShape } from '../helpers/assets.js';
 
 const testDb = useTestDb();
 
@@ -79,7 +80,23 @@ describe('assets/ycrv.yaml', () => {
     expect(config.metrics.revenue_run_rate_usd).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/ycrv.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('6e51d315fcf0148ccdfe1ff76f6ed57fa42337c5abf4de734c86c95020ba149b');
+    // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('7c686726688bdcae558109e929798a27c33581484bcb18c99761b4074e7c0f0b');
+  });
+
+  it('v2 block shape: an income_statement with the plan line ids', () => {
+    // Income statement v2 (Phase 2 Task 2), beside reporting for one release: the plan's line ids, which the v2 report and
+    // the parity map key on. A revenue line a use line passes on with the same name is `<name>_rev` (ruling R8).
+    expect(statementShape(config.income_statement)).toEqual({
+      category: 'liquid_locker',
+      scope: 'complete',
+      window_days: 91,
+      revenue: ['yearn_gross'],
+      holders: ['ybs_payout'],
+      protocol: ['treasury'],
+      checks: ['splitter'],
+      of: {},
+    });
   });
 
   it('plans one transfer scan of vault shares, converted at the share price', () => {

@@ -10,6 +10,7 @@ import { addDays } from '../../src/ingest/time.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
+import { statementShape } from '../helpers/assets.js';
 
 const testDb = useTestDb();
 
@@ -67,7 +68,23 @@ describe('assets/aero.yaml', () => {
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-10-26: window 90 -> 91 days on every asset (Mike), backfill_days 90 -> 100.
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/aero.yaml`, 'utf8')).hash).toBe('562eb17d0443e5b06a99e50581d73aff8596900d42c4417325dc16b0de53f3a3');
+    // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/aero.yaml`, 'utf8')).hash).toBe('c1065fd5aad2898493b9c35f74349d10b549426dc8f17610ae7fa1e12436ca8b');
+  });
+
+  it('v2 block shape: an income_statement with the plan line ids', () => {
+    // Income statement v2 (Phase 2 Task 2), beside reporting for one release: the plan's line ids, which the v2 report and
+    // the parity map key on. A revenue line a use line passes on with the same name is `<name>_rev` (ruling R8).
+    expect(statementShape(config.income_statement)).toEqual({
+      category: 'dex',
+      scope: 'protocol_share_only',
+      window_days: 91,
+      revenue: ['fees'],
+      cost_of_revenue: ['lp_fees'],
+      holders: ['voter_fees'],
+      below_line: ['bribes'],
+      of: { voter_fees: 'fees' },
+    });
   });
 
   it('plans the source map of the spec: no transfer scan, one API-series flow, no derived level, two adapters', () => {

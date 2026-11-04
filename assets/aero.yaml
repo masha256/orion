@@ -96,3 +96,18 @@ reporting:
   income:
     lines:
       - { id: voter_fees, to: holders, metric: flow_usd.fees }
+
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
+# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+income_statement:
+  category: dex
+  scope: protocol_share_only
+  window_days: 91
+  revenue:
+    - { id: fees, label: "gauged-pool fees to voters (DefiLlama dailyHoldersRevenue)", metric: flow_usd.fees }
+  cost_of_revenue:
+    - { id: lp_fees, to: lps, not_measured: "swap fees to LPs and ungauged pools: pools not scanned yet (Phase 3)" }
+  holders:
+    - { id: voter_fees, of: fees, bucket: cash, haircut: 0.02, recipient_base: locked, capture_rule: contractual }
+  below_line:
+    - { id: bribes, to: holders, not_measured: "voter bribes (BribeVotingReward): gauges not scanned yet (Phase 3)" }

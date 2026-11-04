@@ -198,3 +198,17 @@ reporting:
   income:
     lines:
       - { id: burn, to: holders, metric: flow_usd.burn }
+
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
+# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+income_statement:
+  category: ai_platform
+  scope: complete
+  window_days: 91
+  revenue:
+    - { id: business, label: "disclosed business revenue (annual run rate)", disclosed: revenue_run_rate_usd, cross_check: flow_usd.revenue_proxy }
+  cost_of_revenue:
+    - { id: compute, to: other, not_measured: "compute costs: not disclosed by Venice" }
+  holders:
+    - { id: burn, metric: flow_usd.burn, bucket: burn, haircut: 0, recipient_base: all, capture_rule: discretionary }
+  remainder: protocol

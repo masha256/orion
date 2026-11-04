@@ -9,6 +9,7 @@ import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
+import { statementShape } from '../helpers/assets.js';
 
 const testDb = useTestDb();
 
@@ -89,7 +90,25 @@ describe('assets/crv.yaml', () => {
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/crv.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('909af85346b12598b706347ac4d3cd97c415b5aae27fac141a0664d94d8f606a');
+    // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('d86de62b9e69d39e50cc5ca78f1c49072b87c371a7feb8d96cd5e1e40694083d');
+  });
+
+  it('v2 block shape: an income_statement with the plan line ids', () => {
+    // Income statement v2 (Phase 2 Task 2), beside reporting for one release: the plan's line ids, which the v2 report and
+    // the parity map key on. A revenue line a use line passes on with the same name is `<name>_rev` (ruling R8).
+    expect(statementShape(config.income_statement)).toEqual({
+      category: 'dex',
+      scope: 'protocol_share_only',
+      window_days: 91,
+      revenue: ['fees', 'treasury_rev'],
+      cost_of_revenue: ['lp_fees'],
+      holders: ['vecrv_fees'],
+      protocol: ['treasury'],
+      below_line: ['vote_incentives'],
+      checks: ['splitter'],
+      of: { vecrv_fees: 'fees', treasury: 'treasury_rev' },
+    });
   });
 
   it('plans the source map of the spec: one transfer scan, a constant, an adapter, the bribes feed', () => {

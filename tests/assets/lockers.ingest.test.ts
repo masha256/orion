@@ -9,6 +9,7 @@ import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.j
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
+import { statementShape } from '../helpers/assets.js';
 
 const testDb = useTestDb();
 
@@ -74,7 +75,7 @@ const sd = loadAsset(ROOT, 'sdcrv').config.contracts;
 const CASES: Case[] = [
   {
     id: 'cvxcrv',
-    hash: 'c22393aed76d70ea7c030d4bc6dad5080f864170b23fef14a1cfeb17ffda1571',
+    hash: 'e426e489d3d3b552f908bc92e4d5279b8643476c1f4f18ecf427cf368ed14b0f',
     coingecko: 'convex-crv',
     price: 0.1392,
     llamaPrice: 0.1391,
@@ -90,7 +91,7 @@ const CASES: Case[] = [
   },
   {
     id: 'sdcrv',
-    hash: '340919e9f6b2cb23605ea8e28fdcc30d7a77071062cb19651cc375ed0aae18c2',
+    hash: '82060273f817de2dbd6aeca8afdbc452648dd96a22b14d24975aa7c670f42f4f',
     coingecko: 'stake-dao-crv',
     price: 0.1884,
     llamaPrice: 0.1832,
@@ -105,6 +106,33 @@ const CASES: Case[] = [
     },
   },
 ];
+
+/** The plan's income statement v2 line ids per locker (Phase 2 Task 2; `_rev`: ruling R8). */
+const V2: Record<Case['id'], unknown> = {
+  cvxcrv: {
+    category: 'liquid_locker',
+    scope: 'complete',
+    window_days: 91,
+    revenue: ['vecrv_fees_rev', 'platform_cvxcrv', 'platform_cvx', 'platform_treasury', 'callers_fee'],
+    holders: ['vecrv_fees', 'crv'],
+    protocol: ['cvx_stakers', 'treasury'],
+    operating_costs: ['callers'],
+    below_line: ['cvx_rewards'],
+    of: { vecrv_fees: 'vecrv_fees_rev', crv: 'platform_cvxcrv', cvx_stakers: 'platform_cvx', treasury: 'platform_treasury', callers: 'callers_fee' },
+  },
+  sdcrv: {
+    category: 'liquid_locker',
+    scope: 'complete',
+    window_days: 91,
+    revenue: ['vecrv_fees_rev', 'crv_fee_share_rev', 'vesdt_rev', 'treasury_crv_rev', 'liquidity_fee_rev', 'treasury_fees_rev', 'boost_delegators_rev'],
+    holders: ['vecrv_fees', 'crv_fee_share'],
+    protocol: ['vesdt', 'treasury_crv', 'liquidity_fee', 'treasury_fees'],
+    operating_costs: ['boost_delegators'],
+    below_line: ['bribes'],
+    checks: ['crv_fee'],
+    of: { vecrv_fees: 'vecrv_fees_rev', crv_fee_share: 'crv_fee_share_rev', vesdt: 'vesdt_rev', treasury_crv: 'treasury_crv_rev', liquidity_fee: 'liquidity_fee_rev', treasury_fees: 'treasury_fees_rev', boost_delegators: 'boost_delegators_rev' },
+  },
+};
 
 function world(c: Case) {
   const llama = `https://coins.llama.fi/prices/current/ethereum:${loadAsset(ROOT, c.id).config.contracts.token}`;
@@ -140,6 +168,7 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     expect(config.metrics.revenue_run_rate_usd).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
+    // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     expect(parseAssetYaml(readFileSync(`${ROOT}/assets/${c.id}.yaml`, 'utf8')).hash).toBe(c.hash);
     // Supply definitions (Mike, 2026-10-12): CoinGecko has no circulating supply for the wrappers, so it is the on-chain total;
     // CoinGecko's total_supply checks cvxCRV only (sdCRV's figure there is a stale 2022 snapshot).
@@ -147,6 +176,12 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     expect(config.metrics.total_supply.cross_checks?.map((x) => x.source)).toEqual(
       c.id === 'cvxcrv' ? [{ type: 'coingecko', id: 'convex-crv', field: 'total_supply' }] : undefined,
     );
+  });
+
+  it('v2 block shape: an income_statement with the plan line ids', () => {
+    // Income statement v2 (Phase 2 Task 2), beside reporting for one release: the plan's line ids, which the v2 report and
+    // the parity map key on. A revenue line a use line passes on with the same name is `<name>_rev` (ruling R8).
+    expect(statementShape(config.income_statement)).toEqual(V2[c.id]);
   });
 
   it('plans one transfer scan per stream and no derived level', () => {

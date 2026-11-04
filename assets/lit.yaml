@@ -239,3 +239,22 @@ reporting:
   burned_tokens: [ flow_tokens.buyback ]
   dilution:
     - { id: unlocks, metric: unlocks_next_year, note: "team and investor vesting, 36 monthly tranches from 2027-01-29 (Lighter terms; sizes from DefiLlama emissions)" }
+
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
+# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+income_statement:
+  category: perp_dex
+  scope: complete
+  window_days: 91
+  revenue:
+    - { id: core, label: "Lighter Core fees (Lighter API)", metric: flow_usd.fees_core, settlement: daily }
+    - { id: robinhood, label: "Robinhood-instance fees (Lighter API)", metric: flow_usd.fees_rh, settlement: daily, started: "2026-06-26" }
+  cost_of_revenue:
+    - { id: robinhood_partner, to: partners, of: robinhood, share: 0.5, share_metric: rh_revenue_share_app, note: "Robinhood's 50 percent (Q3 2026 call; Lighter's app constant)" }
+  holders:
+    - { id: buyback, metric: flow_usd.buyback, bucket: burn, haircut: 0, recipient_base: all, capture_rule: discretionary, note: "treasury buys LIT daily; an equal count is burned quarterly" }
+  remainder: protocol
+  volume: [ flow_usd.fees_core, flow_usd.fees_rh ]
+  burned_tokens: [ flow_tokens.buyback ]
+  dilution:
+    - { id: unlocks, metric: unlocks_next_year, note: "team and investor vesting, 36 monthly tranches from 2027-01-29 (Lighter terms; sizes from DefiLlama emissions)" }

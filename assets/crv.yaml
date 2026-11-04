@@ -153,3 +153,23 @@ reporting:
       - { id: treasury, to: protocol, metric: flow_usd.curve_treasury }
     checks:
       - { total: [ flow_usd.protocol_revenue ], parts: [ vecrv_fees, treasury ] }
+
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
+# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+income_statement:
+  category: dex
+  scope: protocol_share_only
+  window_days: 91
+  revenue:
+    - { id: fees, label: "admin fees paid to veCRV (FeeAllocator)", metric: flow_usd.fees }
+    - { id: treasury_rev, label: "admin fees kept (FeeAllocator)", metric: flow_usd.curve_treasury }
+  cost_of_revenue:
+    - { id: lp_fees, to: lps, not_measured: "swap fees to LPs and crvUSD/LlamaLend lender interest: not read yet (Phase 3)" }
+  holders:
+    - { id: vecrv_fees, of: fees, bucket: cash, haircut: 0, recipient_base: locked, capture_rule: programmatic }
+  protocol:
+    - { id: treasury, of: treasury_rev }
+  below_line:
+    - { id: vote_incentives, run_rate: vote_incentive_run_rate_usd, to: holders, bucket: cash, haircut: 0.03, recipient_base: locked, capture_rule: programmatic, note: "third parties paying veCRV voters" }
+  checks:
+    - { id: splitter, type: sum, total: [ flow_usd.protocol_revenue ], parts: [ vecrv_fees, treasury ], tolerance_pct: 2 }

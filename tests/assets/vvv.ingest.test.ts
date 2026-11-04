@@ -11,6 +11,7 @@ import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { fixture } from '../helpers/sourceCtx.js';
 import { useTestDb } from '../helpers/db.js';
+import { statementShape } from '../helpers/assets.js';
 
 const testDb = useTestDb();
 
@@ -81,7 +82,23 @@ describe('assets/vvv.yaml', () => {
     // Re-pinned 2026-11-01 (first pin here; it was in tests/assets/vvv.golden.test.ts, deleted with the valuation layer): the
     // valuation keys (supply_basis, modules, scenario_probabilities, total_return_variants, assumptions, agent budgets,
     // review_triggers, peer_set) left (Phase 1).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/vvv.yaml`, 'utf8')).hash).toBe('d455b4d958554bfe96eedcc44bd247a8b618e7a77dfdf8fe14b7cd332b659383');
+    // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/vvv.yaml`, 'utf8')).hash).toBe('433d0306b2cad2849a717180e24568d5c0bf3ed3c62455c2208b470c9ed3f4f5');
+  });
+
+  it('v2 block shape: an income_statement with the plan line ids', () => {
+    // Income statement v2 (Phase 2 Task 2), beside reporting for one release: the plan's line ids, which the v2 report and
+    // the parity map key on. A revenue line a use line passes on with the same name is `<name>_rev` (ruling R8).
+    expect(statementShape(config.income_statement)).toEqual({
+      category: 'ai_platform',
+      scope: 'complete',
+      window_days: 91,
+      revenue: ['business'],
+      cost_of_revenue: ['compute'],
+      holders: ['burn'],
+      remainder: 'protocol',
+      of: {},
+    });
   });
 
   it('keeps the revenue run rate for the user alone: critical, no provisional data, no source', () => {

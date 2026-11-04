@@ -135,12 +135,13 @@ describe('adapter params validation', () => {
   registerAdapter({ name: 'test_checked', needsRpc: false, validateParams: (p) => (p.ok === true ? [] : ['ok: must be true']), run: () => Promise.reject(new Error('not run')) });
 
   it('parseAssetObject surfaces the refusal with the metric path; assets/lit.yaml still loads and keeps its hash', () => {
-    expect(parseAssetYaml(litYaml).hash).toBe('f462c23680a3cc076fcff22864cd4086c04084bfd4b29280e1561c3bd835c517');
-    expect(parseAssetObject(parseYaml(litYaml)).hash).toBe('f462c23680a3cc076fcff22864cd4086c04084bfd4b29280e1561c3bd835c517');
+    // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
+    expect(parseAssetYaml(litYaml).hash).toBe('7d82928714f47280b81d85634b867601164bcbe9a3beab1d35b85457bcf98e44');
+    expect(parseAssetObject(parseYaml(litYaml)).hash).toBe('7d82928714f47280b81d85634b867601164bcbe9a3beab1d35b85457bcf98e44');
     // Another valid schedule loads (and is a different config from the file's 36 monthly tranches).
     const good = parseAssetObject(withTranches({ first: '2027-01-29', every_months: 3, count: 12 }));
     expect(good.config.metrics.unlocks_next_year.source).toMatchObject({ params: { tranches: { first: '2027-01-29', every_months: 3, count: 12 } } });
-    expect(good.hash).not.toBe('f462c23680a3cc076fcff22864cd4086c04084bfd4b29280e1561c3bd835c517');
+    expect(good.hash).not.toBe('7d82928714f47280b81d85634b867601164bcbe9a3beab1d35b85457bcf98e44');
     // A malformed one is refused with the metric path, through the object path (filing) and the YAML path (approve).
     const bad = withTranches({ first: '2027-01-29', every_months: 13, count: 36 });
     expect(() => parseAssetObject(bad)).toThrow(expect.objectContaining({ code: 'invalid_asset_config', message: expect.stringContaining('metrics.unlocks_next_year.source.params: tranches.every_months') }));
@@ -202,8 +203,9 @@ describe('metric watch', () => {
     const asset = (id: string) => parseAssetYaml(readFileSync(fileURLToPath(new URL(`../../assets/${id}.yaml`, import.meta.url)), 'utf8')).hash;
     // Re-pinned 2026-10-26: window 90 -> 91 days on every asset (Mike); no watch/share key involved.
     // Re-pinned 2026-11-01: the valuation keys and valuation-only metrics left (Phase 1); no watch/share key involved.
-    expect(asset('vvv')).toBe('d455b4d958554bfe96eedcc44bd247a8b618e7a77dfdf8fe14b7cd332b659383');
-    expect(asset('hype')).toBe('91a3d4fe5abf7c01b81d562b3096e6d18e86fc910dde7459e126decdb2940133');
-    expect(asset('aero')).toBe('562eb17d0443e5b06a99e50581d73aff8596900d42c4417325dc16b0de53f3a3');
+    // Re-pinned 2026-11-04: income_statement v2 block added (Phase 2 Task 2); no watch/share key involved.
+    expect(asset('vvv')).toBe('433d0306b2cad2849a717180e24568d5c0bf3ed3c62455c2208b470c9ed3f4f5');
+    expect(asset('hype')).toBe('7a52e7974c9c90234ac9ac27d6d0495291b047aa04d566e02e89c1801c284296');
+    expect(asset('aero')).toBe('c1065fd5aad2898493b9c35f74349d10b549426dc8f17610ae7fa1e12436ca8b');
   });
 });

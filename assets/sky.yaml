@@ -154,3 +154,20 @@ reporting:
       - { id: buyback, to: holders, metric: flow_usd.buyback, note: "SKY bought, paid on to staked SKY" }
   dilution:
     - { id: treasury_net, metric: treasury_net_payout, note: "SKY rewards paid beyond the SKY bought (trailing 357 days)" }
+
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
+# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+income_statement:
+  category: cdp_stablecoin
+  scope: protocol_share_only
+  window_days: 91
+  revenue:
+    - { id: surplus_usds, label: "surplus paid to stakers in USDS (Splitter)", metric: flow_usd.stakers, settlement: daily }
+    - { id: surplus_buyback, label: "surplus spent buying SKY (flapper), paid on to stakers", metric: flow_usd.buyback, settlement: daily }
+  cost_of_revenue:
+    - { id: savers, to: savers, not_measured: "savings rate paid to sUSDS holders: not read yet (Phase 3)" }
+  holders:
+    - { id: stakers, of: surplus_usds, bucket: cash, haircut: 0, recipient_base: staked, capture_rule: programmatic, note: "USDS to staked SKY" }
+    - { id: buyback, of: surplus_buyback, bucket: cash, haircut: 0, recipient_base: staked, capture_rule: programmatic, note: "SKY bought, paid on to staked SKY" }
+  dilution:
+    - { id: treasury_net, metric: treasury_net_payout, note: "SKY rewards paid beyond the SKY bought (trailing 357 days)" }

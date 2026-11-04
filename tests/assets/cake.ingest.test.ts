@@ -12,6 +12,7 @@ import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
+import { statementShape } from '../helpers/assets.js';
 
 const testDb = useTestDb();
 
@@ -110,7 +111,23 @@ describe('assets/cake.yaml', () => {
     // A deliberate edit of assets/cake.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/cake.yaml`, 'utf8')).hash).toBe('63e98522a5bcedcd3a010fb733e95c48d3c9acc02cc3f285cc953f0983dd397d');
+    // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/cake.yaml`, 'utf8')).hash).toBe('8e346497ae64e104477a1466234dfdfd773139c7f6186d7275d3c77f5bff5b91');
+  });
+
+  it('v2 block shape: an income_statement with the plan line ids', () => {
+    // Income statement v2 (Phase 2 Task 2), beside reporting for one release: the plan's line ids, which the v2 report and
+    // the parity map key on. A revenue line a use line passes on with the same name is `<name>_rev` (ruling R8).
+    expect(statementShape(config.income_statement)).toEqual({
+      category: 'dex',
+      scope: 'protocol_share_only',
+      window_days: 91,
+      revenue: ['burn_rev', 'treasury_rev'],
+      cost_of_revenue: ['lp_fees'],
+      holders: ['burn'],
+      protocol: ['treasury'],
+      of: { burn: 'burn_rev', treasury: 'treasury_rev' },
+    });
   });
 
   it('plans one allowlisted scan into the burner (chef ignored, dust floor) and one into the treasury', () => {

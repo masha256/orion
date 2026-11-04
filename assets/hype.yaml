@@ -146,3 +146,22 @@ reporting:
   income:
     lines:
       - { id: af_buyback, to: holders, metric: flow_usd.af_buyback }
+
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
+# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+income_statement:
+  category: perp_dex
+  scope: protocol_share_only
+  window_days: 91
+  revenue:
+    - { id: trading, label: "trading fees (DefiLlama dailyRevenue)", metric: flow_usd.revenue_proxy, settlement: daily }
+    - { id: reserve_yield, label: "reserve yield on user deposits", metric: flow_usd.reserve_yield, settlement: periodic, started: "2026-08-26" }
+  cost_of_revenue:
+    - { id: hlp, to: lps, not_measured: "HLP vault share of trading fees: not read from the Hyperliquid API yet (Phase 3)" }
+    - { id: builders, to: builders, not_measured: "builder fees: not read yet (Phase 3)" }
+    - { id: deployers, to: deployers, not_measured: "HIP-3 deployer shares: not read yet (Phase 3)" }
+    - { id: referrers, to: referrers, not_measured: "referral rebates: not read yet (Phase 3)" }
+  holders:
+    - { id: af_buyback, metric: flow_usd.af_buyback, bucket: burn, haircut: 0, recipient_base: all, capture_rule: programmatic, note: "burned by validator vote (Dec 2025); tokens sit in a keyless system address, not destroyed on chain" }
+    - { id: reserve_yield_paid, of: reserve_yield, bucket: burn, haircut: 0, recipient_base: all, capture_rule: programmatic, note: "paid into the Assistance Fund" }
+  remainder: protocol

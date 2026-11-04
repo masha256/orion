@@ -127,3 +127,21 @@ reporting:
   burned_tokens: [ flow_tokens.buyback ]
   dilution:
     - { id: unlocks, metric: unlocks_next_year, note: "team and existing-investor vesting to mid-2029 (DefiLlama emissions)" }
+
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
+# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+income_statement:
+  category: launchpad
+  scope: protocol_share_only
+  window_days: 91
+  revenue:
+    - { id: protocol, label: "pump.fun revenue (DefiLlama dailyRevenue)", metric: flow_usd.llama_revenue, settlement: daily }
+  cost_of_revenue:
+    - { id: creators, to: creators, not_measured: "pump.fun creator fees: fee accounts not yet scanned (Phase 3)" }
+    - { id: lps, to: lps, not_measured: "PumpSwap LP fees: fee accounts not yet scanned (Phase 3)" }
+  holders:
+    - { id: buyback, metric: flow_usd.buyback, bucket: burn, haircut: 0, recipient_base: all, capture_rule: discretionary, note: "company wallets buy PUMP daily and burn it (supply drop)" }
+  remainder: protocol
+  burned_tokens: [ flow_tokens.buyback ]
+  dilution:
+    - { id: unlocks, metric: unlocks_next_year, note: "team and existing-investor vesting to mid-2029 (DefiLlama emissions)" }

@@ -203,3 +203,33 @@ reporting:
       - { id: boost_delegators, to: cost, metric: flow_usd.sd_boost_delegation }
     checks:
       - { total: [ flow_usd.sd_rev_crv ], parts: [ vesdt, treasury_crv, crv_fee_share, boost_delegators ] }
+
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
+# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+income_statement:
+  category: liquid_locker
+  scope: complete
+  window_days: 91
+  revenue:
+    - { id: vecrv_fees_rev, label: "veCRV crvUSD fees: stakers' 85 percent", metric: flow_usd.fees }
+    - { id: crv_fee_share_rev, label: "CRV fee: accumulator part", metric: flow_usd.crv }
+    - { id: vesdt_rev, label: "CRV fee: veSDT part", metric: flow_usd.sd_rev_crv_vesdt }
+    - { id: treasury_crv_rev, label: "CRV fee: treasury part", metric: flow_usd.sd_rev_crv_treasury }
+    - { id: liquidity_fee_rev, label: "veCRV crvUSD fees: liquidity part (10 percent)", metric: flow_usd.sd_rev_fees_liquidity }
+    - { id: treasury_fees_rev, label: "veCRV crvUSD fees: treasury part", metric: flow_usd.sd_rev_fees_treasury }
+    - { id: boost_delegators_rev, label: "CRV fee: boost delegators part", metric: flow_usd.sd_boost_delegation }
+  holders:
+    - { id: vecrv_fees, of: vecrv_fees_rev, bucket: cash, haircut: 0, recipient_base: staked, valued_per: recipients, capture_rule: programmatic }
+    - { id: crv_fee_share, of: crv_fee_share_rev, bucket: cash, haircut: 0.005, recipient_base: staked, valued_per: recipients, capture_rule: programmatic }
+  protocol:
+    - { id: vesdt, of: vesdt_rev }
+    - { id: treasury_crv, of: treasury_crv_rev }
+    - { id: liquidity_fee, of: liquidity_fee_rev }
+    - { id: treasury_fees, of: treasury_fees_rev }
+  operating_costs:
+    - { id: boost_delegators, of: boost_delegators_rev }
+  below_line:
+    - { id: bribes, metric: flow_usd.bribes, to: holders, bucket: cash, haircut: 0.05, recipient_base: staked, valued_per: recipients, capture_rule: programmatic, note: "vote incentives (Votemarket, botmarket to merkle stash): third parties, not paid by users" }
+  checks:
+    - { id: crv_fee, type: sum, total: [ flow_usd.sd_rev_crv ], parts: [ vesdt, treasury_crv, crv_fee_share, boost_delegators ], tolerance_pct: 2 }
+  volume: [ flow_usd.sd_gross_crv ]

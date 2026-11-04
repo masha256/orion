@@ -11,6 +11,7 @@ import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
+import { statementShape } from '../helpers/assets.js';
 
 const testDb = useTestDb();
 
@@ -98,7 +99,22 @@ describe('assets/uni.yaml', () => {
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check; then the revenue label (protocol fees, v2 + selected v3). A deliberate edit of assets/uni.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('a45e8359744e7780b6ba195840d7daf3bdcd528dae01b16d058e5c7444cc7117');
+    // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('a56e3ebc8ddcfdab7587b7cde5fcd766dda23e97ab1ed3bc5dc2199aaf792e84');
+  });
+
+  it('v2 block shape: an income_statement with the plan line ids', () => {
+    // Income statement v2 (Phase 2 Task 2), beside reporting for one release: the plan's line ids, which the v2 report and
+    // the parity map key on. A revenue line a use line passes on with the same name is `<name>_rev` (ruling R8).
+    expect(statementShape(config.income_statement)).toEqual({
+      category: 'dex',
+      scope: 'protocol_share_only',
+      window_days: 91,
+      revenue: ['protocol_fees'],
+      cost_of_revenue: ['lps'],
+      holders: ['burn'],
+      of: { burn: 'protocol_fees' },
+    });
   });
 
   it('plans one any-sender scan of burns, the chain levels with the Chainlink cross-check, the constants and the fees feed', () => {

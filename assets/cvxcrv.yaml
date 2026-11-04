@@ -172,3 +172,27 @@ reporting:
       - { id: callers, to: cost, estimate: { of: flow_usd.convex_rev_cvxcrv, ratio: 0.05 }, note: 50 of the lock's 1000 bps }
     outside_revenue:
       - { id: cvx_rewards, metric: flow_usd.cvx, note: treasury CVX program; ran dry 2026-08 }
+
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
+# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+income_statement:
+  category: liquid_locker
+  scope: complete
+  window_days: 91
+  revenue:
+    - { id: vecrv_fees_rev, label: "veCRV crvUSD fees (wrapper receipt)", metric: flow_usd.fees }
+    - { id: platform_cvxcrv, label: "CRV platform fee: lock incentive (10 percent)", metric: flow_usd.convex_rev_cvxcrv }
+    - { id: platform_cvx, label: "CRV platform fee: CVX stakers (4.5 percent)", metric: flow_usd.convex_rev_cvx }
+    - { id: platform_treasury, label: "CRV platform fee: treasury (2 percent)", metric: flow_usd.convex_rev_treasury }
+    - { id: callers_fee, label: "CRV platform fee: callers (0.5 percent)", estimate: { of: platform_cvxcrv, ratio: 0.05 } }
+  holders:
+    - { id: vecrv_fees, of: vecrv_fees_rev, bucket: cash, haircut: 0, recipient_base: staked, valued_per: recipients, capture_rule: programmatic, note: wrapper stakers }
+    - { id: crv, of: platform_cvxcrv, paid_metric: flow_usd.crv, bucket: cash, haircut: 0.01, recipient_base: staked, valued_per: recipients, capture_rule: programmatic }
+  protocol:
+    - { id: cvx_stakers, of: platform_cvx }
+    - { id: treasury, of: platform_treasury }
+  operating_costs:
+    - { id: callers, of: callers_fee, note: 50 of the lock's 1000 bps }
+  below_line:
+    - { id: cvx_rewards, metric: flow_usd.cvx, to: holders, bucket: cash, haircut: 0.005, recipient_base: staked, valued_per: recipients, capture_rule: discretionary, note: treasury CVX program; ran dry 2026-08 }
+  volume: [ flow_usd.convex_gross_crv ]

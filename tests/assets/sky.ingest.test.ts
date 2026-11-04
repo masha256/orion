@@ -12,6 +12,7 @@ import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
+import { statementShape } from '../helpers/assets.js';
 
 const testDb = useTestDb();
 
@@ -117,7 +118,22 @@ describe('assets/sky.yaml', () => {
     // A deliberate edit of assets/sky.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/sky.yaml`, 'utf8')).hash).toBe('110d0519ff8db97f4ed3aa7694d8e3b373ca1e1d0419a31cbf712db762805cee');
+    // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/sky.yaml`, 'utf8')).hash).toBe('4438a38748f72d5b9cd9227dffa3ad04ea67467d3ee3452d21fb81bc3b159620');
+  });
+
+  it('v2 block shape: an income_statement with the plan line ids', () => {
+    // Income statement v2 (Phase 2 Task 2), beside reporting for one release: the plan's line ids, which the v2 report and
+    // the parity map key on. A revenue line a use line passes on with the same name is `<name>_rev` (ruling R8).
+    expect(statementShape(config.income_statement)).toEqual({
+      category: 'cdp_stablecoin',
+      scope: 'protocol_share_only',
+      window_days: 91,
+      revenue: ['surplus_usds', 'surplus_buyback'],
+      cost_of_revenue: ['savers'],
+      holders: ['stakers', 'buyback'],
+      of: { stakers: 'surplus_usds', buyback: 'surplus_buyback' },
+    });
   });
 
   it('plans the two holder-flow scans, the treasury scans, the chain levels and the DefiLlama price cross-check', () => {

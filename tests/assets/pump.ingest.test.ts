@@ -10,6 +10,7 @@ import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { useTestDb } from '../helpers/db.js';
+import { statementShape } from '../helpers/assets.js';
 
 const testDb = useTestDb();
 
@@ -80,7 +81,23 @@ describe('assets/pump.yaml', () => {
     // A deliberate edit of assets/pump.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/pump.yaml`, 'utf8')).hash).toBe('0c8cd815b68a1eed8686e6ddc54293fe665c1fd4bb947a566b61ee54a0f30b18');
+    // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/pump.yaml`, 'utf8')).hash).toBe('981a2959037c7a13cc62bb880481cf124cdf12afec1237ff7f83744bd328a072');
+  });
+
+  it('v2 block shape: an income_statement with the plan line ids', () => {
+    // Income statement v2 (Phase 2 Task 2), beside reporting for one release: the plan's line ids, which the v2 report and
+    // the parity map key on. A revenue line a use line passes on with the same name is `<name>_rev` (ruling R8).
+    expect(statementShape(config.income_statement)).toEqual({
+      category: 'launchpad',
+      scope: 'protocol_share_only',
+      window_days: 91,
+      revenue: ['protocol'],
+      cost_of_revenue: ['creators', 'lps'],
+      holders: ['buyback'],
+      remainder: 'protocol',
+      of: {},
+    });
   });
 
   it('plans the Solana readers, CoinGecko, the Jupiter price check, the unlocks and the revenue line, and no EVM scan', () => {

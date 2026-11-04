@@ -126,3 +126,20 @@ reporting:
   burned_tokens: [ flow_tokens.burn ]
   dilution:
     - { id: labs_vest, metric: labs_vest_rate, cap_metric: labs_vest_approved, note: "Timelock to Uniswap Labs via UNIVesting" }
+
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
+# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+income_statement:
+  category: dex
+  scope: protocol_share_only
+  window_days: 91
+  revenue:
+    - { id: protocol_fees, label: "protocol fees (v2 + selected v3)", metric: flow_usd.burn, settlement: daily }
+  cost_of_revenue:
+    - { id: lps, to: lps, not_measured: "swap fees to LPs: v2 gross not derived, v3/v4 pools not scanned yet (Phase 3)" }
+  holders:
+    - { id: burn, of: protocol_fees, bucket: burn, haircut: 0, recipient_base: all, capture_rule: programmatic, note: "every protocol fee burns UNI" }
+  volume: [ flow_usd.swap_fees ]
+  burned_tokens: [ flow_tokens.burn ]
+  dilution:
+    - { id: labs_vest, metric: labs_vest_rate, cap_metric: labs_vest_approved, note: "Timelock to Uniswap Labs via UNIVesting" }

@@ -167,3 +167,20 @@ reporting:
       - { id: styc_fee, to: protocol, metric: flow_usd.yearn_styc_fee }
     checks:
       - { total: [ flow_usd.yearn_gross ], parts: [ ybs_payout, treasury ] }
+
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
+# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+income_statement:
+  category: liquid_locker
+  scope: complete
+  window_days: 91
+  # The st-yCRV performance fee is inside the YBS payouts (probe 2026-11-04): it is not a line here.
+  revenue:
+    - { id: yearn_gross, label: "crvUSD into the splitter (veCRV fees and auctioned vote incentives)", metric: flow_usd.yearn_gross }
+  holders:
+    - { id: ybs_payout, metric: flow_usd.fees, bucket: cash, haircut: 0, recipient_base: staked, valued_per: recipients, capture_rule: programmatic }
+  protocol:
+    - { id: treasury, metric: flow_usd.yearn_revenue }
+  checks:
+    - { id: splitter, type: sum, total: [ flow_usd.yearn_gross ], parts: [ ybs_payout, treasury ], tolerance_pct: 2 }
+  volume: [ flow_usd.yearn_gross ]

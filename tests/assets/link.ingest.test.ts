@@ -12,6 +12,7 @@ import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
+import { statementShape } from '../helpers/assets.js';
 
 const testDb = useTestDb();
 
@@ -108,7 +109,22 @@ describe('assets/link.yaml', () => {
     // A deliberate edit of assets/link.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/link.yaml`, 'utf8')).hash).toBe('b04cd1017f89ee1b5338976b5ad71af7d1ee506f0ce16f32a1b5c64c64d43c62');
+    // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/link.yaml`, 'utf8')).hash).toBe('123c6c69bcc903e7178f991cf958ddb357afa10634642a6eece5fd7249b0cc74');
+  });
+
+  it('v2 block shape: an income_statement with the plan line ids', () => {
+    // Income statement v2 (Phase 2 Task 2), beside reporting for one release: the plan's line ids, which the v2 report and
+    // the parity map key on. A revenue line a use line passes on with the same name is `<name>_rev` (ruling R8).
+    expect(statementShape(config.income_statement)).toEqual({
+      category: 'oracle',
+      scope: 'protocol_share_only',
+      window_days: 91,
+      revenue: ['onchain_fees'],
+      cost_of_revenue: ['node_operators'],
+      holders: ['reserve'],
+      of: { reserve: 'onchain_fees' },
+    });
   });
 
   it('plans the Reserve scan, the two release scans and the chain levels with the Chainlink cross-check', () => {

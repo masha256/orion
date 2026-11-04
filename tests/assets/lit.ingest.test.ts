@@ -15,6 +15,7 @@ import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { testCliContext, useTestDb } from '../helpers/db.js';
+import { statementShape } from '../helpers/assets.js';
 
 const testDb = useTestDb();
 
@@ -189,7 +190,23 @@ describe('assets/lit.yaml', () => {
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-10-23: revenue and volume from Lighter's API, the Robinhood watch, staked LIT (all monitor-only).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('f462c23680a3cc076fcff22864cd4086c04084bfd4b29280e1561c3bd835c517');
+    // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('7d82928714f47280b81d85634b867601164bcbe9a3beab1d35b85457bcf98e44');
+  });
+
+  it('v2 block shape: an income_statement with the plan line ids', () => {
+    // Income statement v2 (Phase 2 Task 2), beside reporting for one release: the plan's line ids, which the v2 report and
+    // the parity map key on. A revenue line a use line passes on with the same name is `<name>_rev` (ruling R8).
+    expect(statementShape(config.income_statement)).toEqual({
+      category: 'perp_dex',
+      scope: 'complete',
+      window_days: 91,
+      revenue: ['core', 'robinhood'],
+      cost_of_revenue: ['robinhood_partner'],
+      holders: ['buyback'],
+      remainder: 'protocol',
+      of: { robinhood_partner: 'robinhood' },
+    });
   });
 
   it('plans one allowlisted scan into dead (the quarterly burns) and the routing rate', () => {

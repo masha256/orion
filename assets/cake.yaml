@@ -143,3 +143,21 @@ reporting:
       - { id: treasury, to: protocol, metric: flow_usd.treasury, note: "the converters' treasury share" }
   volume: [ flow_usd.fees ]
   burned_tokens: [ flow_tokens.burn ]
+
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
+# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+income_statement:
+  category: dex
+  scope: protocol_share_only
+  window_days: 91
+  revenue:
+    - { id: burn_rev, label: "converters' output burned", metric: flow_usd.burn }
+    - { id: treasury_rev, label: "converters' treasury share", metric: flow_usd.treasury }
+  cost_of_revenue:
+    - { id: lp_fees, to: lps, not_measured: "swap fees to LPs: v2 split and v3 tiers not read yet (Phase 3)" }
+  holders:
+    - { id: burn, of: burn_rev, bucket: burn, haircut: 0, recipient_base: all, capture_rule: programmatic, note: "fee-funded CAKE burned (weekly)" }
+  protocol:
+    - { id: treasury, of: treasury_rev }
+  volume: [ flow_usd.fees ]
+  burned_tokens: [ flow_tokens.burn ]

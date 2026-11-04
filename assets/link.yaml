@@ -136,3 +136,18 @@ reporting:
       - { id: reserve, to: holders, metric: flow_usd.reserve, note: "fees converted to LINK and held in the Chainlink Reserve" }
   dilution:
     - { id: releases, metric: released_rate, note: "quarterly releases from Chainlink's non-circulating Safes (trailing 365 days)" }
+
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
+# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+income_statement:
+  category: oracle
+  scope: protocol_share_only
+  window_days: 91
+  revenue:
+    - { id: onchain_fees, label: "on-chain service fees converted to LINK (Payment Abstraction)", metric: flow_usd.reserve, settlement: daily }
+  cost_of_revenue:
+    - { id: node_operators, to: node_operators, not_measured: "fees paid to node operators (CCIP fee tokens, off-chain Data Feeds): not read yet (Phase 3)" }
+  holders:
+    - { id: reserve, of: onchain_fees, bucket: hold, haircut: 0.05, recipient_base: all, capture_rule: discretionary, note: "fees converted to LINK and held in the Chainlink Reserve" }
+  dilution:
+    - { id: releases, metric: released_rate, note: "quarterly releases from Chainlink's non-circulating Safes (trailing 365 days)" }

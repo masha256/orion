@@ -9,6 +9,7 @@ import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { addDays } from '../../src/ingest/time.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { useTestDb } from '../helpers/db.js';
+import { statementShape } from '../helpers/assets.js';
 
 const testDb = useTestDb();
 
@@ -89,7 +90,23 @@ describe('assets/hype.yaml', () => {
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-10-26: window 90 -> 91 days on every asset (Mike).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('91a3d4fe5abf7c01b81d562b3096e6d18e86fc910dde7459e126decdb2940133');
+    // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('7a52e7974c9c90234ac9ac27d6d0495291b047aa04d566e02e89c1801c284296');
+  });
+
+  it('v2 block shape: an income_statement with the plan line ids', () => {
+    // Income statement v2 (Phase 2 Task 2), beside reporting for one release: the plan's line ids, which the v2 report and
+    // the parity map key on. A revenue line a use line passes on with the same name is `<name>_rev` (ruling R8).
+    expect(statementShape(config.income_statement)).toEqual({
+      category: 'perp_dex',
+      scope: 'protocol_share_only',
+      window_days: 91,
+      revenue: ['trading', 'reserve_yield'],
+      cost_of_revenue: ['hlp', 'builders', 'deployers', 'referrers'],
+      holders: ['af_buyback', 'reserve_yield_paid'],
+      remainder: 'protocol',
+      of: { reserve_yield_paid: 'reserve_yield' },
+    });
   });
 
   it('plans the source map of the spec: no chain, three adapters, one API-series flow, no derived level', () => {
