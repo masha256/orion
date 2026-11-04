@@ -102,4 +102,56 @@ describe('orion cli', () => {
     expect(lines.join('\n')).toBe('nothing to decide');
     expect(errors.some((l) => /^warning: the inbox could not be built \(.+\); nothing is listed$/s.test(l))).toBe(true);
   });
+
+  async function registryCounts(): Promise<{ rows: number; events: number }> {
+    const r = await testDb().one<{ rows: number; events: number }>(
+      'SELECT (SELECT count(*)::int FROM asset_registry) AS rows, (SELECT count(*)::int FROM asset_state_events) AS events',
+    );
+    return r!;
+  }
+
+  it('cli: asset registry diff writes nothing', async () => {
+    writeFileSync(join(home, 'assets', 'two.yaml'), MINI_ASSET_YAML.replace('id: mini', 'id: two'));
+    expect(JSON.parse(await orion('asset', 'registry', 'diff', '--json'))).toEqual({ added: ['mini', 'two'], missing: [], returned: [], configChanged: [] });
+    expect(await orion('asset', 'registry', 'diff')).toBe('new (arrive inactive): mini, two');
+    expect(await registryCounts()).toEqual({ rows: 0, events: 0 });
+    expect(await orion('asset', 'registry')).toBe('the asset registry is empty');
+    // Once seeded, the diff is empty and still writes nothing.
+    await orion('asset', 'registry', 'seed', '--reason', 'cutover', '--by', 'mike');
+    const counts = await registryCounts();
+    expect(await orion('asset', 'registry', 'diff')).toBe('registry matches the YAML');
+    expect(await registryCounts()).toEqual(counts);
+  });
+
+  it('cli: asset registry seed makes every YAML active once', async () => {
+    writeFileSync(join(home, 'assets', 'two.yaml'), MINI_ASSET_YAML.replace('id: mini', 'id: two'));
+    const first = JSON.parse(await orion('asset', 'registry', 'seed', '--reason', 'cutover from SQLite', '--by', 'mike', '--json'));
+    expect(first).toEqual({ seeded: ['mini', 'two'], existing: [] });
+    const second = await orion('asset', 'registry', 'seed', '--reason', 'cutover from SQLite', '--by', 'mike');
+    expect(second).toBe('nothing to seed: every YAML has a registry row (mini, two)');
+    expect(await registryCounts()).toEqual({ rows: 2, events: 2 });
+    const rows = JSON.parse(await orion('asset', 'registry', '--json'));
+    expect(rows.map((r: { assetId: string; state: string; stateBy: string; stateReason: string }) => [r.assetId, r.state, r.stateBy, r.stateReason])).toEqual([
+      ['mini', 'active', 'mike', 'cutover from SQLite'],
+      ['two', 'active', 'mike', 'cutover from SQLite'],
+    ]);
+    // --reason and --by are both required.
+    const exit: number[] = [];
+    const lines: string[] = [];
+    await buildProgram(testCliContext(home, { stdout: (l) => lines.push(l), setExitCode: (c) => exit.push(c) })).parseAsync(['asset', 'registry', 'seed', '--by', 'mike', '--json'], { from: 'user' });
+    expect(JSON.parse(lines.join('\n')).error.code).toBe('reason_required');
+    expect(exit).toEqual([1]);
+  });
+
+  it('cli: asset pause, resume and activate change the registry and print it', async () => {
+    await orion('asset', 'registry', 'seed', '--reason', 'cutover', '--by', 'mike');
+    await testDb().run("UPDATE asset_registry SET state = 'inactive'"); // as a new asset from a release
+    expect(await orion('asset', 'activate', 'mini', '--by', 'mike')).toBe('MINI active (was inactive)');
+    expect(await orion('asset', 'pause', 'mini', '--reason', 'merger rebuild', '--by', 'mike via raymond')).toBe('MINI paused (was active): merger rebuild');
+    const listed = await orion('asset', 'registry');
+    expect(listed).toMatch(/^mini {2}paused {2}since \d{4}-\d{2}-\d{2} by mike via raymond: merger rebuild {2}last run never$/);
+    expect(await orion('asset', 'resume', 'mini', '--by', 'mike')).toBe('MINI active (was paused 0 days): flows backfill from their cursors');
+    const err = JSON.parse(await orion('asset', 'resume', 'mini', '--json'));
+    expect(err.error).toEqual({ code: 'invalid_state_transition', message: 'mini is active; resume needs paused' });
+  });
 });
