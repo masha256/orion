@@ -16,6 +16,15 @@ columns, and the report keeps reading `observations.value` until Mike signs off 
 **Spec:** `docs/superpowers/specs/2026-10-28-orion-data-strategy-income-v2-design.md` (APPROVED 2026-11-04, D1-D9 as
 recommended). Umbrella: roadmap on `feat/coinrevs-core` @ e666b87.
 
+**Decisions (Mike, 2026-11-04, #orion-dev "proceed"):** P1 = A (`income_statement` beside the old blocks for one
+release, parity test, old keys removed in Task 11). P2 = both (snapshot body carries v2 + legacy keys during the legacy
+release). P3 = generic source types built with Phase 3, none here. **P4 (added by Raymond, accepted): no Phase 2 deploy to
+staging before the Phase 1.5 prod cutover**, because staging carries the cutover's 3-day parallel run; every proof runs in
+local `p2proof_*` schemas. Gate G1's go therefore does not cover a staging deploy until the cutover has landed. Merge
+order: `feat/daemon` merges to `main` at the cutover (first prod release); this branch is then rebased onto `main` and
+ships as release 2 via staging -> prod. No Phase 2 task changes `feat/daemon` code outside this branch, and no Phase 2
+migration may assume it ships in the cutover release.
+
 **Base:** `feat/data-strategy` = `feat/daemon` @ f5f36fa + 3 spec commits (tip fdbbbf3). Never rebase onto `main`, and
 never branch from it. `main` has no Postgres code, and Phase 1.5 merges into `main` only at the cutover.
 
@@ -109,8 +118,7 @@ in `orion_test`.
 
 - No live writes: never touch `/home/hermes/git/orion` (tree, `orion.db`, `.env`, `dist/`, `backups/`), prod on venus,
   or `masha256/orion-data`. Read live only as `sqlite3 'file:/home/hermes/git/orion/orion.db?mode=ro'` (its `.backup`
-  included). Staging deploys only under the authority recorded in `workspace/orion/phase1.5-mike-steps.md`, otherwise
-  with Mike's go.
+  included). No staging deploys from this plan before the Phase 1.5 cutover (P4); after it, only with Mike's go.
 - No analyst spend: never run `agent run`, `tick` with the agent, `bootstrap`, or a disclosure ingest without `--dry-run`.
 - Scratch homes: `ORION_HOME=<dir under $TMPDIR>` inline on every command. A `.env` copy has its `ORION_HOME=` line
   deleted, the home is removed with a `.py` `shutil.rmtree` at the end, and the live `.env` is never sourced.
@@ -401,8 +409,7 @@ revenue line is a decision for Mike: block with the two figures). Also stop if t
 **Stop if:** any legacy byte differs, or a reclass figure misses its formula. Report the asset, the path and both
 values, and change nothing to make it pass.
 
-**Gate G1 (Mike):** the v2 table from Step 5. His go covers deploying to staging (if not already under standing
-authority) and continuing to Task 5.
+**Gate G1 (Mike):** the v2 table from Step 5. His go covers continuing to Task 5; a staging deploy waits for the Phase 1.5 cutover (P4) and its own go.
 
 ### Task 5: Checks framework
 
