@@ -7,6 +7,7 @@ import { harness } from '../helpers/fetchHarness.js';
 import { useTestDb } from '../helpers/db.js';
 import { activate, cleanupAfterAll, handlerFor, levelsContext, levelsJob, levelsWorld } from '../helpers/levelsWorld.js';
 import { watchAsset, watchAssetYaml } from '../helpers/watchAsset.js';
+import { TEST_PROVENANCE } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 const worlds: { cleanup(): void }[] = [];
@@ -68,7 +69,7 @@ describe('watch posts from the hourly levels job', () => {
     const db = testDb();
     await activate(db, ['mini']);
     // The newest nightly row: the baseline every hourly change_pct compares with (R13).
-    await insertObservation(db, { assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-19T00:45:00.000Z', value: 10, source: 'api', sourceDetail: null, fetchedAt: '2026-09-19T00:45:00.000Z' });
+    await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-19T00:45:00.000Z', value: 10, source: 'api', sourceDetail: null, fetchedAt: '2026-09-19T00:45:00.000Z' });
     const price = { now: '10' as string | Error };
     const stats = () => {
       if (price.now instanceof Error) throw price.now;

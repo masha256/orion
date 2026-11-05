@@ -65,7 +65,7 @@ describe('orion data fetch', () => {
   });
 
   it('explains conflicts, and adopts with --adopt', async () => {
-    await orion('data', 'set', 'mini', 'flow_usd.fees', '5000', '--at', '2026-09-18', '--period-days', '30');
+    await orion('data', 'set', 'mini', 'flow_usd.fees', '5000', '--at', '2026-09-18', '--period-days', '30', '--citation', 'https://example.com/aug');
     const refused = await orion('data', 'fetch', 'mini');
     expect(refused).toMatch(/^MINI fetch partial$/m);
     expect(refused).toMatch(/skipped\s+transfer_flow/);

@@ -61,7 +61,7 @@ const hostOf = (url: string): string => {
 };
 
 /** The flow or level metrics a `derived` source reads (`metric`, `metrics`, `minus`). */
-function derivedInputs(s: Extract<SourceConfig, { type: 'derived' }>): string[] {
+export function derivedInputs(s: Extract<SourceConfig, { type: 'derived' }>): string[] {
   const p = (s.params ?? {}) as Record<string, unknown>;
   const names = (x: unknown): string[] => (typeof x === 'string' ? [x] : Array.isArray(x) ? x.filter((m): m is string => typeof m === 'string') : []);
   return [...names(p.metric), ...names(p.metrics), ...names(p.minus)];

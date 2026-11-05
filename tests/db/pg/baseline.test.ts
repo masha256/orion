@@ -33,6 +33,11 @@ const NOT_CARRIED = [
 const DAEMON = ['asset_registry', 'asset_state_events', 'daemon_heartbeat', 'day_blocks', 'jobs', 'latest_levels', 'snapshots_out', 'watch_state'];
 /** Phase 2's tables (0003 check_results): not in SQLite, not carried; checked in tests/db/pg/migrate.test.ts. */
 const PHASE2 = ['check_results'];
+/** 0004_provenance's columns on observations: not in SQLite, never carried (the importer leaves them null). */
+const PROVENANCE_COLUMNS = [
+  'method', 'source_type', 'chain', 'locator', 'block_from', 'block_to', 'tx_count', 'tx_refs', 'tx_digest', 'response_digest', 'inputs',
+  'formula', 'coverage', 'code_version', 'config_hash',
+];
 
 let config: DatabaseConfig;
 let db: PgDb;
@@ -77,7 +82,8 @@ describe('baseline', () => {
             [config.schema, table],
           )
         ).map((c) => c.column_name);
-        expect(pgCols, table).toEqual(liteCols);
+        // 0004 appends the provenance columns to observations, after every baseline column.
+        expect(pgCols, table).toEqual(table === 'observations' ? [...liteCols, ...PROVENANCE_COLUMNS] : liteCols);
       }
     } finally {
       lite.close();
@@ -93,6 +99,8 @@ describe('baseline', () => {
     expect(cols.length).toBeGreaterThanOrEqual(100);
     for (const c of cols) {
       const where = `${c.table_name}.${c.column_name}`;
+      // 0004's provenance columns: jsonb by the plan (Task 6), checked in tests/db/observations.test.ts.
+      if (c.table_name === 'observations' && PROVENANCE_COLUMNS.includes(c.column_name)) continue;
       if (c.column_name.endsWith('_json')) expect(c.data_type, where).toBe('json');
       if (c.data_type === 'text') expect(c.collation_name, where).toBe('C');
       expect(['jsonb', 'integer', 'real', 'character varying', 'timestamp without time zone'], where).not.toContain(c.data_type);

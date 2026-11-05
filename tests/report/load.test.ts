@@ -10,6 +10,7 @@ import { lastCompleteReportDay, loadHolderYieldReport, yieldReport } from '../..
 import { MINI_ASSET_YAML, MINI_REPORT_YAML, seedMiniReport } from '../helpers/assets.js';
 import { useTestDb } from '../helpers/db.js';
 import { ALL_ASSETS, repoAsset, syntheticInput } from '../helpers/syntheticReport.js';
+import { TEST_PROVENANCE } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -30,6 +31,7 @@ async function seed(db: Db, metricKey: string, lastDay: string, days: number, va
   for (let i = 0; i < days; i++) {
     const day = addDays(lastDay, -i);
     await insertObservation(db, {
+      provenance: TEST_PROVENANCE,
       assetId: 'hype', metricKey, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, source: 'api', fetchedAt: '2026-10-11T00:00:00.000Z',
     });
   }
@@ -135,7 +137,7 @@ income_statement:
     await seedMiniReport(db, '2026-10-10');
     const at = (d: string) => `${d}T00:00:00.000Z`;
     for (const [key, value, day] of [['revenue_run_rate_usd', 1000, '2026-06-01'], ['revenue_run_rate_usd', 2000, '2026-10-01'], ['disclosed_b', 50_000, '2026-05-01'], ['disclosed_b', 60_000, '2026-09-01']] as const) {
-      await insertObservation(db, { assetId: 'mini', metricKey: key, observedAt: at(day), value, source: 'manual', fetchedAt: at(day) });
+      await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: key, observedAt: at(day), value, source: 'manual', fetchedAt: at(day) });
     }
   }
 

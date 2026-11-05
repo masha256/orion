@@ -10,6 +10,8 @@ import { coingeckoBase, coingeckoHeaders } from '../ingest/sources/coingecko.js'
 import type { HttpTransport } from '../ingest/transport/http.js';
 import type { BlockRef, RpcFactory } from '../ingest/transport/rpc.js';
 import type { WrittenObservation } from '../ingest/types.js';
+import { locatorOfSource, scrubLocator } from '../provenance/locator.js';
+import { sourceTypeOf } from '../report/sourceTypes.js';
 import type { WatchFiring } from '../types.js';
 
 /** CoinGecko takes at most this many ids in one /coins/markets call. */
@@ -82,6 +84,13 @@ function readsChain(asset: AssetConfig, metricKey: string): boolean {
 }
 
 /** One row per metric read: a level's reading; for a schedule, its newest step at or before `now` (none: no row). */
+/** A level's rung and scrubbed locator, from the asset config (the same mapping the observation writers use). */
+function levelProvenance(asset: AssetConfig, metricKey: string): Pick<LatestLevel, 'sourceType' | 'locator'> {
+  const def = asset.metrics[metricKey];
+  if (def?.source === undefined) return { sourceType: null, locator: null };
+  return { sourceType: sourceTypeOf(def, asset.metrics), locator: scrubLocator(locatorOfSource(asset, metricKey, def.source)) };
+}
+
 export function toLatestLevels(asset: AssetConfig, written: WrittenObservation[], now: Date, jobId: number | null, block: BlockRef | null): LatestLevel[] {
   const byMetric = new Map<string, WrittenObservation>();
   for (const w of written) {
@@ -96,6 +105,7 @@ export function toLatestLevels(asset: AssetConfig, written: WrittenObservation[]
     .map((w) => ({
       assetId: asset.id, metricKey: w.metricKey, value: w.value, observedAt: new Date(w.observedAt).toISOString(), source: w.source,
       blockNumber: block !== null && readsChain(asset, w.metricKey) ? Number(block.number) : null, jobId,
+      ...levelProvenance(asset, w.metricKey),
     }));
 }
 

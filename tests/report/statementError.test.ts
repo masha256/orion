@@ -18,6 +18,7 @@ import { useTestDb } from '../helpers/db.js';
 import { harness, NOW, type Harness } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 import { repoAsset, syntheticInput } from '../helpers/syntheticReport.js';
+import { TEST_PROVENANCE } from '../helpers/provenance.js';
 
 /**
  * Task 4 ruling C4: an exception inside incomeStatementV2 never fails the legacy report, the tick or the snapshot. The
@@ -144,7 +145,7 @@ describe('a throwing income statement v2 in a tick (C4)', () => {
     h = harness(db, { loaded: parseAssetYaml(`${INGEST_ASSET_YAML}reporting:\n  window_days: 7\n  haircuts: { fees: 0 }\n${IS_BLOCK}`) });
     for (let i = 0; i < 12; i++) {
       const day = addDays('2026-09-15', -i);
-      await insertObservation(h.db, { assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value: 2, source: 'onchain', fetchedAt: NOW.toISOString() });
+      await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value: 2, source: 'onchain', fetchedAt: NOW.toISOString() });
     }
     const deps: TickDeps = { home: '/nonexistent', now: h.deps.now, fetchDeps: h.deps };
     const { report, exitCode } = await tickAsset(db, h.loaded, deps);

@@ -3,6 +3,8 @@ import type { Db } from '../db/connection.js';
 import { advanceCursor, getCursor } from '../db/fetchCursors.js';
 import type { FlowConflict, SourceOutcome } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
+import { fetchedProvenance } from '../provenance/locator.js';
+import { responseDigest } from '../provenance/types.js';
 import { MS_PER_DAY } from '../types.js';
 import { findFlowConflicts } from './flow.js';
 import { addDays, dayStartMs, observationDays, utcDay } from './time.js';
@@ -26,6 +28,8 @@ export const DEFILLAMA_REVISION_DAYS = 30;
 export interface ApiFlowArgs {
   db: Db;
   asset: AssetConfig;
+  /** The loaded asset's config hash, for the rows' provenance. */
+  configHash: string;
   metricKey: string;
   /** The fetch_cursors key: one per source and metric. */
   scanKey: string;
@@ -178,6 +182,8 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
       if (!dryRun) {
         observationId = (await insertObservation(h, {
           assetId: asset.id, metricKey, observedAt, periodDays: 1, value, source: 'api', sourceDetail: args.detail, fetchedAt: nowIso,
+          // The slice of the response this row is: the series' point for the day.
+          provenance: fetchedProvenance({ config: asset, hash: args.configHash }, metricKey, { responseDigest: responseDigest({ metric: metricKey, day, value }) }),
         })).id;
       }
       result.written.push({ metricKey, value, observedAt, periodDays: 1, source: 'api', observationId });

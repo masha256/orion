@@ -8,6 +8,9 @@ import { getCursor } from '../db/fetchCursors.js';
 import { emptySourceOutcome, insertFetchRun, recentSourceStatuses, type FetchOutcome, type SourceOutcome } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations } from '../db/observations.js';
 import { latestLevel } from '../observations/select.js';
+import { fetchedProvenance } from '../provenance/locator.js';
+import { responseDigest, type Provenance } from '../provenance/types.js';
+import type { SourceType } from '../report/sourceTypes.js';
 import { MS_PER_DAY, OrionError, STD_METRICS } from '../types.js';
 import { getAdapter } from './adapters/registry.js';
 import { checkRevenueStale, REVENUE_STALE_MOVE_PCT, type IndexPoint } from './alerts.js';
@@ -19,7 +22,7 @@ import { isMarketChartBody, scanFlowGroup } from './flow.js';
 import { buildPlan, hasSources, type FlowGroup, type SourceBatch } from './plan.js';
 import { sourceId } from './sourceId.js';
 import { getSourceHandler } from './sources/registry.js';
-import { monthOf, utcDay } from './time.js';
+import { addDays, monthOf, utcDay } from './time.js';
 import { CHAINS } from './transport/chains.js';
 import { isMarketChartUrl, withRunCache, withSharedCache, type HttpTransport } from './transport/http.js';
 import type { BlockRef, RpcFactory, RpcTransport } from './transport/rpc.js';
@@ -149,12 +152,28 @@ function flowMetricsOf(metricKey: string, name: DerivedName, params: Record<stri
   return many as string[];
 }
 
+/** Rows read from an API (first party, third party or market data) carry a digest of the slice they were taken from. */
+const API_TYPES: ReadonlySet<SourceType> = new Set(['first_party_api', 'third_party', 'market_data']);
+
+/** A metric whose primary source reads the chain at the run's block (chain levels, an RPC adapter). */
+function readsChainAt(def: MetricDef): boolean {
+  const s = def.source;
+  return s !== undefined && (isChainSource(s) || (s.type === 'adapter' && getAdapter(s.name).needsRpc));
+}
+
 function readsChain(batch: SourceBatch): boolean {
   return batch.requests.some((r) => isChainSource(r.source) || (r.source.type === 'adapter' && getAdapter(r.source.name).needsRpc));
 }
 
 export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: FetchDeps, opts: FetchOptions = {}): Promise<FetchResult> {
   const asset = loaded.config;
+  /** A fetched row's provenance: config rung, locator and chain, plus what this read measured. */
+  const provenanceOf = (metricKey: string, slice: { observedAt: string; value: number; detail?: string }, extra: Partial<Provenance> = {}): Provenance => {
+    const p = fetchedProvenance(loaded, metricKey, extra);
+    const atBlock = block !== null && readsChainAt(asset.metrics[metricKey]) ? { blockFrom: Number(block.number), blockTo: Number(block.number) } : {};
+    const digest = API_TYPES.has(p.sourceType) ? { responseDigest: responseDigest({ metric: metricKey, observedAt: slice.observedAt, value: slice.value, detail: slice.detail ?? null }) } : {};
+    return { ...p, ...atBlock, ...digest };
+  };
   if (!hasSources(asset)) throw new OrionError('no_sources', `assets/${asset.id}.yaml defines no metric source; there is nothing to fetch`);
   const plan = buildPlan(asset, { metrics: opts.metrics });
   const startedAt = now.toISOString();
@@ -252,7 +271,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
         const def = asset.metrics[r.metricKey];
         try {
           const flow = await writeApiFlow({
-            db, asset, metricKey: r.metricKey, scanKey: `${batch.sourceId}>${r.metricKey}`, points: result.value.points, detail: result.value.detail, now,
+            db, asset, configHash: loaded.hash, metricKey: r.metricKey, scanKey: `${batch.sourceId}>${r.metricKey}`, points: result.value.points, detail: result.value.detail, now,
             backfillDays: opts.backfillDays ?? (r.source.type === 'defillama' ? r.source.backfill_days : historyDays) ?? DEFAULT_API_FLOW_BACKFILL_DAYS, rescan: opts.backfillDays !== undefined,
             revisionDays: r.source.type === 'defillama' ? (r.source.revision_days ?? DEFILLAMA_REVISION_DAYS) : undefined,
             adopt: opts.adopt ?? false, dryRun, outcome, validate: (value) => validateReading(def, value),
@@ -275,7 +294,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
           const v = result.value;
           written.push(
             ...(await writePeriodicPayments({
-              db, asset, metricKey: r.metricKey, payments: v.payments, due: v.due, payers: v.payers, expectedPayers: v.expectedPayers, detail: v.detail,
+              db, asset, configHash: loaded.hash, metricKey: r.metricKey, payments: v.payments, due: v.due, payers: v.payers, expectedPayers: v.expectedPayers, detail: v.detail,
               now, dryRun, outcome, validate: (value) => validateReading(def, value), raise,
             })),
           );
@@ -304,7 +323,10 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
           const observedAt = new Date(step.observedAt).toISOString();
           const observationId = dryRun
             ? null
-            : (await insertObservation(db, { assetId: asset.id, metricKey: r.metricKey, observedAt, value: step.value, source, sourceDetail: detail, fetchedAt: startedAt })).id;
+            : (await insertObservation(db, {
+                assetId: asset.id, metricKey: r.metricKey, observedAt, value: step.value, source, sourceDetail: detail, fetchedAt: startedAt,
+                provenance: provenanceOf(r.metricKey, { observedAt, value: step.value, detail }),
+              })).id;
           written.push({ metricKey: r.metricKey, value: step.value, observedAt, periodDays: null, source, observationId });
         }
         outcome.metricsWritten.push(r.metricKey);
@@ -325,7 +347,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
         ? null
         : (await insertObservation(db, {
             assetId: asset.id, metricKey: r.metricKey, observedAt: v.observedAt, value: v.value, source: v.source,
-            sourceDetail: v.detail, fetchedAt: startedAt,
+            sourceDetail: v.detail, fetchedAt: startedAt, provenance: provenanceOf(r.metricKey, v),
           })).id;
       outcome.metricsWritten.push(r.metricKey);
       written.push({ metricKey: r.metricKey, value: v.value, observedAt: v.observedAt, periodDays: null, source: v.source, observationId });
@@ -382,7 +404,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       continue;
     }
     const scan = await scanFlowGroup({
-      db, asset, group, rpc, latest: block, http: ctx.http, env: deps.env, sleep: deps.sleep, now,
+      db, asset, configHash: loaded.hash, group, rpc, latest: block, http: ctx.http, env: deps.env, sleep: deps.sleep, now,
       ...(deps.dayBlocks ? { dayBlocks: deps.dayBlocks(asset.ingest!.chain_id) } : {}),
       backfillDays: opts.backfillDays ?? asset.ingest!.backfill_days, rescan: opts.backfillDays !== undefined,
       adopt: opts.adopt ?? false, dryRun, onProgress: opts.onProgress,
@@ -499,11 +521,16 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     for (const point of derivedFunction(name)(days, windowDays)) {
       const observedAt = new Date(new Date(`${point.day}T00:00:00.000Z`).getTime() + MS_PER_DAY).toISOString(); // the day's period end
       if (have.get(observedAt) === point.value) continue;
+      const from = addDays(point.day, -(windowDays - 1));
       const observationId = dryRun
         ? null
         : (await insertObservation(db, {
             assetId: asset.id, metricKey: r.metricKey, observedAt, value: point.value, source: provenance,
             sourceDetail: `derived ${name}(${flowMetric}, ${windowDays}d)`, fetchedAt: startedAt,
+            provenance: fetchedProvenance(loaded, r.metricKey, {
+              formula: `${name}@1`,
+              inputs: [...flowMetrics.map((m) => ({ metric: m, from, to: point.day })), ...minusMetrics.map((m) => ({ metric: m, from, to: point.day, sign: -1 }))],
+            }),
           })).id;
       written.push({ metricKey: r.metricKey, value: point.value, observedAt, periodDays: null, source: provenance, observationId });
       if (r.metricKey === STD_METRICS.usageIndex) derivedIndex.push({ observedAt, value: point.value });

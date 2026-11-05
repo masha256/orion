@@ -3,6 +3,7 @@ import { decideAnomaly, getAnomaly } from '../db/anomalies.js';
 import { insertJournalEntry, type Catalyst } from '../db/journal.js';
 import { insertObservation, listActiveObservations, type Observation } from '../db/observations.js';
 import { insertProposal, type ProposalChange } from '../db/proposals.js';
+import { disclosedProvenance } from '../provenance/locator.js';
 import { OrionError } from '../types.js';
 import type { StoredCitation } from './guardrails.js';
 
@@ -113,6 +114,8 @@ export class Ledger {
   constructor(
     readonly assetId: string,
     readonly persona: string,
+    /** The asset's loaded config hash: the provenance of every row the run commits. */
+    readonly configHash: string,
   ) {}
 
   markShown(ids: Iterable<number>): void {
@@ -238,6 +241,10 @@ export class Ledger {
             assetId: this.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, source: 'manual',
             sourceDetail: `research:${this.persona}:run ${ctx.agentRunId ?? 'none'}`, status: 'provisional', citationUrl: o.citationUrl,
             quotedText: o.quotedText, fetchedAt: nowIso,
+            // The analyst's cited figure: disclosed, not yet approved (the user's confirm adds who and when).
+            provenance: disclosedProvenance(this.configHash, {
+              citationUrl: o.citationUrl, approvedBy: null, approvedAt: null, proposedBy: `research:${this.persona}:run ${ctx.agentRunId ?? 'none'}`,
+            }),
           });
           realId.set(o.tempId, row.id);
         }

@@ -129,7 +129,7 @@ function fakeRunner(o: { schema: string; ids?: number[]; restoreCode?: number })
   const run: CommandRunner = async (cmd, args) => {
     calls.push([cmd, ...args]);
     if (args.includes('-l')) return { code: 0, stdout: fakeToc(o.schema), stderr: '' };
-    if (args.includes('--data-only')) return { code: 0, stdout: fakeMigrationsCopy(o.schema, o.ids ?? [1, 2, 3]), stderr: '' };
+    if (args.includes('--data-only')) return { code: 0, stdout: fakeMigrationsCopy(o.schema, o.ids ?? [1, 2, 3, 4]), stderr: '' };
     if (args.includes('--clean')) {
       list = readFileSync(args[args.indexOf('-L') + 1]!, 'utf8');
       return o.restoreCode ? { code: o.restoreCode, stdout: '', stderr: 'pg_restore: error: could not execute query: ERROR:  boom\n' } : { code: 0, stdout: '', stderr: '' };
@@ -202,7 +202,7 @@ describe('stagingRefresh', () => {
 
   it('stagingRefresh: schema mismatch is refused before any restore command', async () => {
     await seedStaging(db());
-    for (const [ids, text] of [[[1], 'prod 1, staging 3'], [[1, 2, 3, 4], 'prod 4, staging 3']] as const) {
+    for (const [ids, text] of [[[1], 'prod 1, staging 4'], [[1, 2, 3, 4, 5], 'prod 5, staging 4']] as const) {
       const f = fakeRunner({ schema: db().schema, ids: [...ids] });
       const w = world();
       const out = await makeStagingRefreshHandler({ run: f.run })(job, w.ctx);

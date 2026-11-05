@@ -18,6 +18,7 @@ import { testCliContext, useTestDb } from '../helpers/db.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { calls, say, scriptedModel, toolUse, type ScriptedModel, type Step } from '../helpers/fakeModel.js';
 import { sourceCtx } from '../helpers/sourceCtx.js';
+import { TEST_PROVENANCE } from '../helpers/provenance.js';
 
 /**
  * Level 2 of the disclosure watcher's acceptance test (spec 11.2, with the amendments of section 15): the full pipeline on
@@ -112,7 +113,7 @@ async function seedDaily(db: Db, metricKey: string, total: number): Promise<void
   for (let i = 0; i < Q3_DAYS; i++) {
     const day = addDays(Q3_FROM, i);
     const value = i === Q3_DAYS - 1 ? total - per * (Q3_DAYS - 1) : per;
-    await insertObservation(db, { assetId: 'lit', metricKey, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, source: 'api', fetchedAt: NOW });
+    await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'lit', metricKey, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, source: 'api', fetchedAt: NOW });
   }
 }
 
@@ -219,7 +220,7 @@ beforeAll(async () => {
     await seedDaily(db, 'flow_usd.buyback', BUYBACK_Q3);
     await seedDaily(db, 'flow_usd.llama_revenue', LLAMA_Q3);
     const level = async (metricKey: string, value: number, source: 'api' | 'onchain' = 'api') =>
-      await insertObservation(db, { assetId: 'lit', metricKey, observedAt: '2026-10-23T00:00:00.000Z', value, source, fetchedAt: NOW });
+      await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'lit', metricKey, observedAt: '2026-10-23T00:00:00.000Z', value, source, fetchedAt: NOW });
     await level('unlocks_next_year', UNLOCKS_NOW);
     // The levels the 2026-10-23 fetch stamped (the pack shows them as observations in force): the constants are `api`,
     // the supply read `onchain`.

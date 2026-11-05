@@ -44,7 +44,7 @@ describe('transfer_flow share_price', () => {
     const group = buildPlan(h.loaded.config).flowGroups[0];
     expect(group.members.find((m) => m.metricKey === 'flow_usd.fees')?.sharePrice).toEqual({ address: STAKING, functionName: 'pricePerShare', decimals: 18 });
     const r = await scanFlowGroup({
-      db: h.db, asset: h.loaded.config, group, rpc: h.rpc, latest, http: h.http, env: {}, sleep: async () => undefined,
+      db: h.db, asset: h.loaded.config, configHash: h.loaded.hash, group, rpc: h.rpc, latest, http: h.http, env: {}, sleep: async () => undefined,
       now: h.deps.now(), backfillDays: 3, rescan: false, adopt: false, dryRun: false,
     });
     expect(r.outcome.status).toBe('ok');
@@ -60,7 +60,7 @@ describe('transfer_flow share_price', () => {
     const h = world(new Error('execution reverted'));
     const latest = await h.rpc.latestBlock();
     const r = await scanFlowGroup({
-      db: h.db, asset: h.loaded.config, group: buildPlan(h.loaded.config).flowGroups[0], rpc: h.rpc, latest, http: h.http, env: {},
+      db: h.db, asset: h.loaded.config, configHash: h.loaded.hash, group: buildPlan(h.loaded.config).flowGroups[0], rpc: h.rpc, latest, http: h.http, env: {},
       sleep: async () => undefined, now: h.deps.now(), backfillDays: 3, rescan: false, adopt: false, dryRun: false,
     });
     expect(r.outcome.status).toBe('failed');

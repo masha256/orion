@@ -4,6 +4,8 @@ import type { DayBlockCache } from '../db/dayBlocks.js';
 import { advanceCursor, getCursor } from '../db/fetchCursors.js';
 import { emptySourceOutcome, type FlowConflict, type SourceOutcome, type UnlistedTransfer } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
+import { fetchedProvenance } from '../provenance/locator.js';
+import { txRefsProvenance } from '../provenance/types.js';
 import { MS_PER_DAY, OrionError } from '../types.js';
 import type { FlowGroup, FlowMember } from './plan.js';
 import { ERC20_ABI } from './sources/chainLevels.js';
@@ -108,6 +110,8 @@ export async function findFlowConflicts(db: Db, assetId: string, metricKey: stri
 export interface FlowScanArgs {
   db: Db;
   asset: AssetConfig;
+  /** The loaded asset's config hash, for the rows' provenance. */
+  configHash: string;
   group: FlowGroup;
   rpc: RpcTransport;
   /** The latest block at plan start. The scan's upper bound is the finalized block when the transport has one. */
@@ -270,6 +274,8 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
       const dayEndMs = dayStartMs(day) + MS_PER_DAY;
       const next = await dayStart(addDays(day, 1), from);
       const sums = new Map(group.members.map((m) => [m.metricKey, 0]));
+      /** Per member: the `txhash:logIndex` of every transfer counted into it (provenance tx refs and digest). */
+      const refs = new Map<string, string[]>(group.members.map((m) => [m.metricKey, []]));
       const senders = new Map<string, { count: number; tokens: number }>();
       let counted = 0;
       let unlistedToday = 0;
@@ -346,6 +352,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
               amount *= price;
             }
             sums.set(m.metricKey, sums.get(m.metricKey)! + amount);
+            refs.get(m.metricKey)!.push(`${log.txHash}:${log.logIndex}`);
           }
         }
       }
@@ -373,6 +380,9 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
             const o = await insertObservation(t, {
               assetId: asset.id, metricKey: m.metricKey, observedAt, periodDays: 1, value: sums.get(m.metricKey)!, source: 'onchain',
               sourceDetail: detail, fetchedAt: nowIso,
+              provenance: fetchedProvenance({ config: asset, hash: args.configHash }, m.metricKey, {
+                blockFrom: Number(from.number), blockTo: Number(next.number) - 1, ...txRefsProvenance(refs.get(m.metricKey)!),
+              }),
             });
             ids.set(m.metricKey, o.id);
           }

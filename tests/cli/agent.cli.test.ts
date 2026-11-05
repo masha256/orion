@@ -42,7 +42,7 @@ async function seed(skip: string[] = []) {
     ['flow_usd.fees', String((100 * 90) / 365), AS_OF, ['--period-days', '90']],
   ];
   for (const [metric, value, at, extra] of rows) {
-    if (!skip.includes(metric)) await orion('data', 'set', 'mini', metric, value, '--at', at, '--source', 'onchain', ...extra);
+    if (!skip.includes(metric)) await orion('data', 'set', 'mini', metric, value, '--at', at, '--source', 'onchain', '--citation', 'https://example.com/seed', ...extra);
   }
 }
 

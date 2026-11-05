@@ -12,6 +12,7 @@ import { insertDocument, type StoredDocument } from '../../src/db/documents.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { MINI_ASSET_YAML } from './assets.js';
 import { AS_OF, miniObservations } from './obs.js';
+import { TEST_PROVENANCE } from './provenance.js';
 
 /**
  * The mini asset as an agent sees it: revenue is critical, manual, and allows provisional data (like VVV's); the price is
@@ -62,6 +63,7 @@ export async function agentWorld(db: Db, yaml: string = AGENT_ASSET_YAML): Promi
   const ids: Record<string, number> = {};
   for (const o of miniObservations()) {
     ids[o.metricKey] = (await insertObservation(db, {
+      provenance: TEST_PROVENANCE,
       assetId: o.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, source: o.source, fetchedAt: o.fetchedAt,
     })).id;
   }
@@ -69,7 +71,7 @@ export async function agentWorld(db: Db, yaml: string = AGENT_ASSET_YAML): Promi
     assetId: 'mini', kind: 'post', sourceUrl: 'https://x.com/mini/status/1', sourceId: null, title: null, publishedAt: '2026-06-29T00:00:00.000Z',
     addedAt: AS_OF, meta: {}, text: DOC_TEXT,
   })).doc;
-  const ledger = new Ledger('mini', 'analyst');
+  const ledger = new Ledger('mini', 'analyst', 'test');
   const pages: FetchedPage[] = [{ url: PAGE_URL, text: PAGE_TEXT }];
   const target = citable(doc);
   const ctx: ToolContext = {

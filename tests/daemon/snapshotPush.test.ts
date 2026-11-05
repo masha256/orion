@@ -152,7 +152,7 @@ describe('snapshot bodies', () => {
     await insertRegistryRow(db(), 'paws', 'active', 'h', change('2026-09-01T00:00:00.000Z'));
     await setRegistryState(db(), 'paws', 'active', 'paused', { ...change('2026-10-20T00:00:00.000Z'), reason: 'source broken' });
     await insertRegistryRow(db(), 'idle', 'inactive', 'h', change('2026-09-01T00:00:00.000Z'));
-    const level = { metricKey: 'price_usd', value: 1.5, observedAt: '2026-11-03T01:00:00.000Z', source: 'coingecko', blockNumber: null, jobId: 3 };
+    const level = { metricKey: 'price_usd', value: 1.5, observedAt: '2026-11-03T01:00:00.000Z', source: 'coingecko', blockNumber: null, jobId: 3, sourceType: 'market_data', locator: { provider: 'coingecko' } };
     await upsertLatestLevels(db(), [{ assetId: 'mini', ...level }, { assetId: 'idle', ...level }]);
     const registry = await listRegistry(db());
     expect(await levelsBody(db(), registry)).toEqual({

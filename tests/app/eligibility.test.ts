@@ -6,6 +6,7 @@ import { insertObservation } from '../../src/db/observations.js';
 import { MINI_ASSET_YAML, miniAsset } from '../helpers/assets.js';
 import { AS_OF, miniObservations, obs } from '../helpers/obs.js';
 import { useTestDb } from '../helpers/db.js';
+import { TEST_PROVENANCE } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -70,7 +71,7 @@ describe('eligibleObservations', () => {
   });
 
   it('reads the stored rows narrowed to what is usable at as_of', async () => {
-    for (const o of dailyHistory()) await insertObservation(db, { assetId: o.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, source: o.source, fetchedAt: o.fetchedAt });
+    for (const o of dailyHistory()) await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: o.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, source: o.source, fetchedAt: o.fetchedAt });
     const asset = miniAsset();
     const eligible = await eligibleObservations(db, asset, AS_OF);
     expect(eligible.length).toBeLessThan(110);

@@ -10,6 +10,7 @@ import { MINI_ASSET_YAML } from '../helpers/assets.js';
 import { CG_MARKETS, GENESIS_TS, harness, LATEST, NOW, STATS } from '../helpers/fetchHarness.js';
 import { ingestAsset as ingestAssetLoaded, INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
+import { TEST_PROVENANCE } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -181,7 +182,7 @@ describe('fetchAsset: levels', () => {
       // The last good share read is 20 days old (past its 7-day staleness): the source has been failing since.
       if (loaded.config.metrics.dominance_share) {
         const old = new Date(NOW.getTime() - 20 * 86_400_000).toISOString();
-        await insertObservation(h.db, { assetId: 'mini', metricKey: 'dominance_share', observedAt: old, value: 0.3, source: 'api', fetchedAt: old });
+        await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'dominance_share', observedAt: old, value: 0.3, source: 'api', fetchedAt: old });
       }
       const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
       return { h, r };

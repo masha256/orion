@@ -14,6 +14,7 @@ import { defaultRoutes, GENESIS_TS, harness, NOW, STATS, type Harness } from '..
 import { POOL } from '../helpers/ingestAsset.js';
 import { watchAsset, watchAssetYaml } from '../helpers/watchAsset.js';
 import { testCliContext, useTestDb } from '../helpers/db.js';
+import { TEST_PROVENANCE } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -107,7 +108,7 @@ const count = async (db: Db, table: string) => (await db.one<{ n: number }>(`SEL
 describe('fetchAsset: watches', () => {
   it('reports the firings in the result, from the stored rows before the fetch', async () => {
     const h = world();
-    await insertObservation(h.db, { assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-18T12:00:00Z', value: 9.5, source: 'api', fetchedAt: '2026-09-18T12:00:00Z' });
+    await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-18T12:00:00Z', value: 9.5, source: 'api', fetchedAt: '2026-09-18T12:00:00Z' });
     const r = await fetch(h);
     expect(r.watch).toEqual([
       { metric: 'stats_price', rule: 'change_pct', value: 10.1, previous: 9.5, day: '2026-09-19' },
@@ -167,7 +168,7 @@ describe('orion data fetch: watches', () => {
     const orion = (...args: string[]) => buildProgram(ctx).parseAsync(args, { from: 'user' });
     await orion('init');
     writeFileSync(join(home, 'assets', 'mini.yaml'), watchAssetYaml({ above: 20 }));
-    await insertObservation(testDb(), { assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-18T12:00:00Z', value: 9.5, source: 'api', fetchedAt: '2026-09-18T12:00:00Z' });
+    await insertObservation(testDb(), { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-18T12:00:00Z', value: 9.5, source: 'api', fetchedAt: '2026-09-18T12:00:00Z' });
     lines.length = 0;
     await orion('data', 'fetch', 'mini', '--dry-run');
     expect(lines).toContain('  watch: stats_price change_pct 10.1 (was 9.5) 2026-09-19');

@@ -75,6 +75,8 @@ describe('import', () => {
     expect((await pg.all<{ run_id: number }>('SELECT run_id FROM agent_transcripts')).map((r) => r.run_id)).toEqual([2]);
     // The superseded chain survives (2 supersedes 1), and values come back as stored.
     expect(await pg.one('SELECT superseded_by FROM observations WHERE id = 1')).toEqual({ superseded_by: 2 });
+    // On a schema at 0004 the named-column insert leaves every provenance column null, for the backfill to map.
+    expect(await pg.one('SELECT count(*)::bigint AS n FROM observations WHERE method IS NOT NULL OR locator IS NOT NULL OR code_version IS NOT NULL')).toEqual({ n: 0 });
     expect(await pg.one('SELECT value, fetched_at FROM observations WHERE id = 2')).toEqual({ value: 0.1 + 0.2, fetched_at: '2026-10-02T08:30:15.123Z' });
     expect(await pg.one('SELECT published_at FROM documents WHERE id = 1')).toEqual({ published_at: '2026-10-22T16:00:00Z' });
     expect(m.tables_not_carried).toEqual([
@@ -91,7 +93,7 @@ describe('import', () => {
     ]);
     expect(m.source).toMatchObject({ path: f.path, bytes: statSync(f.path).size, schema: 8, integrity: 'ok' });
     expect(m.source.sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(m.target).toEqual({ database: 'orion_test', schema: config.schema, schemaVersion: 3 });
+    expect(m.target).toEqual({ database: 'orion_test', schema: config.schema, schemaVersion: 4 });
     expect(Date.parse(m.ended_at)).toBeGreaterThanOrEqual(Date.parse(m.started_at));
   });
 
@@ -296,6 +298,17 @@ describe('carry', () => {
     const phase2Tables = ['check_results'];
     expect([...fromPg.keys()].filter((t) => !daemonTables.includes(t) && !phase2Tables.includes(t)).sort()).toEqual(CARRIED_TABLES.map((t) => t.table).sort());
     expect([...fromPg.keys()].filter((t) => daemonTables.includes(t)).sort()).toEqual(daemonTables);
-    for (const t of CARRIED_TABLES) expect(t.columns.map((c) => [c.name, c.type]), t.table).toEqual(fromPg.get(t.table));
+    // 0004's provenance columns on observations are not carried: the importer inserts named columns, so they stay null
+    // (the history backfill maps them), and the row-hash proof covers only the carried columns.
+    const provenance = [
+      ['method', 'text'], ['source_type', 'text'], ['chain', 'text'], ['locator', 'jsonb'], ['block_from', 'int'], ['block_to', 'int'], ['tx_count', 'int'],
+      ['tx_refs', 'jsonb'], ['tx_digest', 'text'], ['response_digest', 'text'], ['inputs', 'jsonb'], ['formula', 'text'], ['coverage', 'jsonb'],
+      ['code_version', 'text'], ['config_hash', 'text'],
+    ];
+    for (const t of CARRIED_TABLES) {
+      const pgCols = fromPg.get(t.table)!;
+      expect(t.columns.map((c) => [c.name, c.type]), t.table).toEqual(t.table === 'observations' ? pgCols.slice(0, pgCols.length - provenance.length) : pgCols);
+      if (t.table === 'observations') expect(pgCols.slice(-provenance.length)).toEqual(provenance);
+    }
   });
 });

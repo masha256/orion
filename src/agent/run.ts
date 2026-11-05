@@ -108,7 +108,7 @@ export async function runAgent(db: Db, loaded: LoadedAsset, opts: RunAgentOption
   });
 
   // ---- the run: everything from here is recorded, never thrown ----
-  const ledger = new Ledger(asset.id, persona.name);
+  const ledger = new Ledger(asset.id, persona.name, loaded.hash);
   const messages: ModelMessageParam[] = [];
   const clientTools = toolsForRun(AGENT_TOOLS, opts.runType);
   const tools = [...toApiTools(clientTools), ...webTools(budgets)];

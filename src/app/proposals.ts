@@ -8,6 +8,7 @@ import { decideAnomaly, getAnomaly } from '../db/anomalies.js';
 import type { Db } from '../db/connection.js';
 import { confirmObservation, getObservationsByIds, insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
 import { decideProposal, getProposal, type Proposal } from '../db/proposals.js';
+import { disclosedProvenance } from '../provenance/locator.js';
 import { OrionError, type PathSegment } from '../types.js';
 import { canonicalJson } from '../util/canonical.js';
 import { valueInForce } from './eligibility.js';
@@ -84,7 +85,8 @@ export async function approveProposal(
         if (!active) stale(id, `observation ${change.observationId} is no longer active`);
         if (change.kind === 'confirm_observation') {
           if (o.status !== 'provisional') stale(id, `observation ${o.id} is already ${o.status}`);
-          result = { kind: 'observation', observationId: (await confirmObservation(t, o.id, nowIso)).id, action: 'confirmed' };
+          const by = { approvedBy: `user (proposal #${id})`, configHash: loadAsset(configRoot, p.assetId).hash };
+          result = { kind: 'observation', observationId: (await confirmObservation(t, o.id, nowIso, by)).id, action: 'confirmed' };
         } else {
           await rejectObservation(t, o.id);
           result = { kind: 'observation', observationId: o.id, action: 'rejected' };
@@ -93,7 +95,7 @@ export async function approveProposal(
       }
 
       case 'observation': {
-        const { config } = loadAsset(configRoot, p.assetId);
+        const { config, hash } = loadAsset(configRoot, p.assetId);
         const filed = (p.filedAgainst as { inForce: number | null }).inForce;
         // The last CONFIRMED value: the same baseline the move guard measured from when it filed this proposal.
         const inForce = await valueInForce(t, config, change.metricKey, nowIso, { confirmedOnly: true });
@@ -106,6 +108,11 @@ export async function approveProposal(
           assetId: p.assetId, metricKey: change.metricKey, observedAt: change.observedAt, periodDays: change.periodDays, value: change.value,
           source: 'manual', status: 'confirmed', citationUrl: change.citationUrl, quotedText: change.quotedText, fetchedAt: nowIso,
           sourceDetail: `research:${p.persona}:run ${p.agentRunId ?? 'none'}; approved proposal #${id}`,
+          // A figure the analyst filed from a citation and the user approved: disclosed, the citation required.
+          provenance: disclosedProvenance(hash, {
+            citationUrl: change.citationUrl, approvedBy: `user (proposal #${id})`, approvedAt: nowIso,
+            proposedBy: `research:${p.persona}:run ${p.agentRunId ?? 'none'}`,
+          }),
         });
         result = { kind: 'observation', observationId: row.id, action: 'inserted' };
         break;

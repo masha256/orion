@@ -36,7 +36,7 @@ function world(over: Parameters<typeof harness>[1] = {}): Harness {
 async function argsFor(h: Harness, over: Partial<FlowScanArgs> = {}): Promise<FlowScanArgs> {
   const loaded = over.asset ? { config: over.asset } : h.loaded;
   return {
-    db: h.db, asset: loaded.config, group: buildPlan(loaded.config).flowGroups[0], rpc: h.rpc, latest: await h.rpc.latestBlock(), http: h.http, env: {},
+    db: h.db, asset: loaded.config, configHash: 'test', group: buildPlan(loaded.config).flowGroups[0], rpc: h.rpc, latest: await h.rpc.latestBlock(), http: h.http, env: {},
     sleep: async () => undefined, now: h.deps.now(), backfillDays: 3, rescan: false, adopt: false, dryRun: false, ...over,
   };
 }

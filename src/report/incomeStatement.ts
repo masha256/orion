@@ -1,6 +1,7 @@
 import { resolveUse, type IsBucket, type IsHolderLine, type IsRevenueLine, type IsBelowLine, type IsCostLine, type IsUseLine, type CostTo, type IsCategory } from '../config/incomeStatement.js';
 import type { AssetConfig, IncomeStatementDef, MetricDef, RecipientBase } from '../config/schema.js';
 import { addDays } from '../ingest/time.js';
+import { chainOfSource, locatorOfSource, provenanceLabel, scrubLocator } from '../provenance/locator.js';
 import { DAYS_PER_YEAR, STD_METRICS } from '../types.js';
 import { disclosedGrowthOf, growthOf, NEW_STREAM_DAYS, recipients, windowSum, type Bucket, type Growth, type HolderYieldReport, type ReportInput, type RevenueReport } from './holderYield.js';
 import { crossCheckTypesOf, LISTING_RUNGS, sourceLabelOf, sourceTypeOf, type SourceType } from './sourceTypes.js';
@@ -427,6 +428,21 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     const sum = windowSum(daily, [m], day, W);
     return { metric: m, annualized: sum === null ? null : (sum * DAYS_PER_YEAR) / W, sourceType: metricDef(m) ? sourceTypeOf(metricDef(m)!, asset.metrics) : null };
   };
+  // Provenance from the stored rows (spec §3, Task 6). Basis `observations` when the loader passed the rows' provenance
+  // and every day a revenue line reads (provisional days aside: they are a run rate, never stored) has a mapped row;
+  // otherwise (history not backfilled yet, a pure input) the config's labels, as before.
+  const rowProv = input.provenance;
+  const windowDaysList = Array.from({ length: W }, (_, i) => addDays(day, -i));
+  const termMetrics = (v: Value): string[] => (v.kind === 'terms' ? uniq(v.terms.map((t) => t.metric)) : []);
+  const storedDays = (m: string): string[] => windowDaysList.filter((d) => input.daily.get(m)?.has(d) === true && input.provisional?.get(m)?.has(d) !== true);
+  const basisObservations =
+    rowProv !== undefined && revItems.every((x) => termMetrics(x.v).every((m) => storedDays(m).every((d) => (rowProv.get(m)?.get(d)?.method ?? null) !== null)));
+  /** Days of the window on which every series the line reads comes from a measured row (basis observations only). */
+  const measuredDays = (v: Value): number | null => {
+    const ms = termMetrics(v);
+    if (ms.length === 0) return null;
+    return windowDaysList.filter((d) => ms.every((m) => rowProv!.get(m)?.get(d)?.method === 'measured')).length;
+  };
   const revLines: IsRevenueLineOut[] = is.revenue.map((r) => {
     const v = revenueValue(r);
     const metric = r.metric ?? r.derived?.from;
@@ -447,7 +463,7 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     return {
       id: r.id, label: r.label ?? null, method: revenueMethod(r), sourceTypes: revenueTypes(r),
       annualized: valueAnnual(v), windowSum: ws, settlement: v.kind === 'terms' ? (r.settlement ?? 'daily') : null, started: r.started ?? null,
-      daysMeasured: v.kind === 'terms' ? daysIn(r.started) : null, provisionalDays: pending(metric), coverage: null,
+      daysMeasured: v.kind !== 'terms' ? null : basisObservations ? measuredDays(v) : daysIn(r.started), provisionalDays: pending(metric), coverage: null,
       isNew: age !== null && age < NEW_STREAM_DAYS, growth: valueGrowth(v),
       ...(r.disclosed !== undefined ? { disclosedGrowth: disclosedGrowthOf(disclosedSeries, day).disclosedGrowth } : {}),
       ...(r.cross_check !== undefined ? { crossCheck: crossCheckOf(r.cross_check) } : {}),
@@ -711,9 +727,33 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
 
   const priceDef = metricDef(STD_METRICS.price);
 
-  // Provenance: the share of revenue by method, and every line on a third-party source.
+  // Provenance: the share of revenue by method, and every line on a third-party source. On basis `observations` a
+  // metric line's annualized amount is split by the method of the row behind each day's value (a manual day is
+  // disclosed); a provisional day and a derived or estimated line are derived; a level line keeps its line's method.
+  const lineMethodSplit = (l: IsRevenueLineOut, v: Value): Partial<Record<IsMethod, number>> => {
+    if (l.annualized === null) return {};
+    if (!basisObservations || v.kind !== 'terms' || l.method !== 'measured') return { [l.method]: l.annualized };
+    const by: Partial<Record<IsMethod, number>> = {};
+    let total = 0;
+    for (const t of v.terms) {
+      for (const d of windowDaysList) {
+        const x = input.daily.get(t.metric)?.get(d);
+        if (x === undefined) continue;
+        const m: IsMethod = input.provisional?.get(t.metric)?.has(d) ? 'derived' : (rowProv!.get(t.metric)?.get(d)?.method ?? l.method);
+        by[m] = (by[m] ?? 0) + x * t.gw;
+        total += x * t.gw;
+      }
+    }
+    if (!(total > 0)) return { [l.method]: l.annualized };
+    return Object.fromEntries(Object.entries(by).map(([m, x]) => [m, (l.annualized! * x) / total])) as Partial<Record<IsMethod, number>>;
+  };
+  const splits = revLines.map((l, i) => lineMethodSplit(l, revItems[i]!.v));
   const methodShare = (m: IsMethod): number | null => {
     if (!finite(revenueAnnual) || !(revenueAnnual > 0)) return null;
+    if (basisObservations) {
+      if (revLines.some((l) => l.annualized === null && l.method !== 'not_measured')) return null;
+      return splits.reduce((s, x) => s + (x[m] ?? 0), 0) / revenueAnnual;
+    }
     const ls = revLines.filter((l) => l.method === m);
     if (ls.length === 0) return 0;
     const s = sumOrNull(ls.map((l) => l.annualized));
@@ -747,7 +787,23 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     ...[...(is.cost_of_revenue ?? []), ...(is.holders ?? []), ...(is.protocol ?? []), ...(is.operating_costs ?? [])].flatMap((l) => [l.metric, l.share_metric, (l as IsHolderLine).paid_metric]),
     ...(is.below_line ?? []).flatMap((b) => [b.metric, b.run_rate]),
   ].filter((m): m is string => m !== undefined));
-  const sources = uniq(statementMetrics.map((m) => (metricDef(m) ? sourceLabelOf(metricDef(m)!) : null)).filter((s): s is string => s !== null)).sort();
+  /** A metric's label from its config, in the rows' `<rung>:<what>` form (a level has no daily rows to read it from). */
+  const configLabel = (m: string): string | null => {
+    const def = metricDef(m);
+    if (def?.source === undefined) return def ? sourceLabelOf(def) : null;
+    const t = sourceTypeOf(def, asset.metrics);
+    return t === null ? null : provenanceLabel(t, chainOfSource(asset, def.source), scrubLocator(locatorOfSource(asset, m, def.source)));
+  };
+  const sources = basisObservations
+    ? uniq(
+        statementMetrics.flatMap((m) => {
+          const days = rowProv!.get(m);
+          const inWindow = windowDaysList.flatMap((d) => (days?.get(d)?.label ? [days.get(d)!.label!] : []));
+          const own = inWindow.length > 0 ? inWindow : [configLabel(m)];
+          return own.filter((s): s is string => s !== null);
+        }),
+      ).sort()
+    : uniq(statementMetrics.map((m) => (metricDef(m) ? sourceLabelOf(metricDef(m)!) : null)).filter((s): s is string => s !== null)).sort();
 
   const flags: string[] = [];
   if (costAgg.nm.length > 0) flags.push(`cost of revenue not measured: ${costAgg.nm.join(', ')}`);
@@ -796,7 +852,7 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
       id: c.checkId, type: c.type, status: c.status, lhs: c.lhs, rhs: c.rhs, gapPct: c.gapPct,
       tolerancePct: typeof c.detail.tolerance_pct === 'number' ? c.detail.tolerance_pct : null, evaluatedAt: c.evaluatedAt,
     })),
-    provenance: { methods: { measured: methodShare('measured'), derived: methodShare('derived'), disclosed: methodShare('disclosed') }, thirdParty, sources, basis: 'config' },
+    provenance: { methods: { measured: methodShare('measured'), derived: methodShare('derived'), disclosed: methodShare('disclosed') }, thirdParty, sources, basis: basisObservations ? 'observations' : 'config' },
     flags,
   };
 }

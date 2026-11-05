@@ -11,6 +11,7 @@ import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { useTestDb } from '../helpers/db.js';
 import { statementShape } from '../helpers/assets.js';
+import { TEST_PROVENANCE } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -63,7 +64,7 @@ function world(supplyNow: number) {
 async function seedReadings(db: Db, n: number, supplyNow: number) {
   for (let d = n; d >= 1; d--) {
     const at = new Date(NOW.getTime() - d * DAY).toISOString();
-    await insertObservation(db, { assetId: 'pump', metricKey: 'total_supply', observedAt: at, value: supplyNow + d * BURN_PER_DAY, source: 'onchain', sourceDetail: `solana getTokenSupply ${MINT} slot ${d}`, fetchedAt: at });
+    await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'pump', metricKey: 'total_supply', observedAt: at, value: supplyNow + d * BURN_PER_DAY, source: 'onchain', sourceDetail: `solana getTokenSupply ${MINT} slot ${d}`, fetchedAt: at });
   }
 }
 

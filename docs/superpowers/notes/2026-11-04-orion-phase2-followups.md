@@ -199,3 +199,47 @@ Deferred (spec §5 examples), with the metric each lacks and the track that adds
 | UNI v3 listed pools vs total `collectProtocol` | coverage | the v3 pool_scan series and the protocol total | Phase 3 UNI v3 |
 | `price` on the 7 assets with a `coins.llama.fi` cross-check (AERO, CRV, cvxCRV, HYPE, sdCRV, SKY, yCRV) | price | a Chainlink feed or a deep-pool `slot0` level (SKY's Chronicle pip reverts through Multicall3) | Phase 3 per asset; the llama checks stay, labelled third_party |
 | VVV disclosed revenue | watch | `usage_index` watch in place of the DefiLlama `revenue_proxy` cross-check (a watch, not a check) | Phase 3 VVV |
+
+## Task 6: provenance on every observation (spec §3)
+
+Built: migration 0004 (expand-only: every column nullable; `tx_count` bigint per baseline 7.1, `locator`/`tx_refs`/
+`inputs`/`coverage` jsonb; `latest_levels.source_type` + `locator`; index `(asset_id, metric_key, method)`).
+`NewObservation.provenance` is required, so every writer fills it (`src/provenance/`): the fetch writers from the asset
+config (rung = `sourceTypeOf`, the report's own mapping; method measured / derived / disclosed for constants; CAIP-2
+chain; locator per source type), plus what the read measured: a transfer scan's `block_from/to` (= `source_detail.blocks`)
+and its counted `txhash:logIndex` refs (first 50 of the sorted list, `tx_digest` = sha256 of the JSON of the full sorted
+list); a chain level's block; an API row's `response_digest` (sha256 of the normalized point it is); a derived row's
+`formula` (`flow_annualized@1`) and `inputs` (`[{metric, from, to}]`). `code_version` = RELEASE.commit, else `dev`;
+`config_hash` = the loaded asset hash. Values, `source` and `source_detail` are written exactly as before.
+
+Conventions chosen (review):
+- **A hand-entered figure is a disclosure.** `data set` (any `--source`), an approved `observation` proposal and the
+  analyst ledger's staged rows are `disclosed` / `disclosure`, with the citation required (spec: citation_url NOT NULL
+  when disclosed). `data set` without `--citation` is now refused (`citation_required`); the README line says so. A
+  correction row typed in without a citation (as AERO's 2026-09-09 manual day may be) can no longer be entered that way.
+- Locators never hold a key (`scrubLocator`, applied by the builders and again in `insertObservation` and
+  `upsertLatestLevels`): query keys named key / apikey / api_key / api-key / token / dkey or ending in key / token /
+  secret are dropped, user info and fragments are dropped, every non-version path segment on a known keyed RPC host
+  (Alchemy, Infura, drpc, publicnode, QuickNode, Ankr, Blast, Chainstack, Helius, NodeReal, GetBlock) is dropped, a
+  key-shaped last segment after `/vN/` on any host and any 20+ character segment with a digit are dropped; URLs inside
+  text are scrubbed too. The test fixture is the fake key of `tests/ingest/rpc.test.ts`, read from that file.
+- `confirm` copies the provisional row's provenance and adds `approved_by` / `approved_at` to a disclosure locator.
+- Income statement v2 `provenance` reads the rows when every stored day a revenue line reads has a mapped row
+  (`basis: 'observations'`): `methods` splits each metric line's annualized amount by its rows' method (a manual day is
+  disclosed; a periodic stream's provisional tail is derived; a derived/estimate line stays derived), `daysMeasured`
+  counts the window days with a measured row (it was "days the line existed" for a young line, null otherwise), and
+  `sources` lists the rows' `<rung>:<adapter | provider | host | chain>`. Otherwise (history not backfilled) it is the
+  config's, as before (`basis: 'config'`). No other v2 field and no legacy byte moves (test: tests/report/provenance.test.ts).
+- `latest_levels` rows (and so the `levels` snapshot body) now carry `sourceType` and `locator`.
+
+History backfill: `orion db backfill-provenance [--dry-run] [--json]` maps rows with no provenance by plan correction 1
+(`src/provenance/backfill.ts` lists the rules): `code_version` = `config_hash` = `pre-v2`; unmappable rows are listed with
+a reason (`unknown_asset`, `unknown_metric`, `manual_without_citation`, `no_source_in_config`, `no_source_type`,
+`source_changed`) and never written. The dry run on the proof copy (controller, Step 4) records the per-metric mapped
+counts and the full unmapped list here; a non-empty unmapped list goes to Mike (the fix is a rule).
+
+Review Focus 5: the importer inserts named columns, so on a schema at 0004 the provenance columns stay null and the
+row-hash proof covers only the carried columns (tests/tools/importSqlite.test.ts, tests/tools/proof.test.ts). The
+cutover importer leaves history unmapped until `db backfill-provenance` runs. `staging_refresh` refuses a dump whose
+migrations differ, so after the cutover prod and stage must apply 0004 (and 0005) in the same release step.
+

@@ -1,3 +1,6 @@
+import { scrubLocator } from '../provenance/scrub.js';
+import { codeVersion, disclosedProvenance, MAX_TX_REFS, type Json, type Locator, type Provenance, type ProvenanceMethod } from '../provenance/types.js';
+import type { SourceType } from '../report/sourceTypes.js';
 import { OrionError, type ObservationSource, type ObservationStatus } from '../types.js';
 import type { Db } from './connection.js';
 
@@ -29,6 +32,32 @@ export interface NewObservation {
   citationUrl?: string | null;
   quotedText?: string | null;
   fetchedAt: string;
+  /** Required (spec §3, plan correction 2): the 0004 columns are nullable, so this type is what makes provenance mandatory. */
+  provenance: Provenance;
+}
+
+/** The 0004 columns of a stored row; every field null on history the backfill has not mapped yet. */
+export interface StoredProvenance {
+  id: number;
+  metricKey: string;
+  observedAt: string;
+  periodDays: number | null;
+  status: ObservationStatus;
+  method: ProvenanceMethod | null;
+  sourceType: SourceType | null;
+  chain: string | null;
+  locator: Locator | null;
+  blockFrom: number | null;
+  blockTo: number | null;
+  txCount: number | null;
+  txRefs: string[] | null;
+  txDigest: string | null;
+  responseDigest: string | null;
+  inputs: Json | null;
+  formula: string | null;
+  coverage: Json | null;
+  codeVersion: string | null;
+  configHash: string | null;
 }
 
 interface Row {
@@ -45,6 +74,68 @@ interface Row {
   quoted_text: string | null;
   fetched_at: string;
   superseded_by: number | null;
+}
+
+interface ProvenanceRow {
+  id: number;
+  metric_key: string;
+  observed_at: string;
+  period_days: number | null;
+  status: ObservationStatus;
+  method: ProvenanceMethod | null;
+  source_type: SourceType | null;
+  chain: string | null;
+  locator: Locator | null;
+  block_from: number | null;
+  block_to: number | null;
+  tx_count: number | null;
+  tx_refs: string[] | null;
+  tx_digest: string | null;
+  response_digest: string | null;
+  inputs: Json | null;
+  formula: string | null;
+  coverage: Json | null;
+  code_version: string | null;
+  config_hash: string | null;
+}
+
+const PROVENANCE_COLUMNS =
+  'id, metric_key, observed_at, period_days, status, method, source_type, chain, locator, block_from, block_to, tx_count, tx_refs, tx_digest, response_digest, inputs, formula, coverage, code_version, config_hash';
+
+const fromProvenanceRow = (r: ProvenanceRow): StoredProvenance => ({
+  id: r.id, metricKey: r.metric_key, observedAt: r.observed_at, periodDays: r.period_days, status: r.status, method: r.method,
+  sourceType: r.source_type, chain: r.chain, locator: r.locator, blockFrom: r.block_from, blockTo: r.block_to, txCount: r.tx_count,
+  txRefs: r.tx_refs, txDigest: r.tx_digest, responseDigest: r.response_digest, inputs: r.inputs, formula: r.formula, coverage: r.coverage,
+  codeVersion: r.code_version, configHash: r.config_hash,
+});
+
+/** The provenance columns of the given rows (any status), by id. */
+export async function getProvenanceByIds(db: Db, ids: number[]): Promise<StoredProvenance[]> {
+  if (ids.length === 0) return [];
+  return (await db.all<ProvenanceRow>(`SELECT ${PROVENANCE_COLUMNS} FROM observations WHERE id = ANY($1::bigint[]) ORDER BY id`, [ids])).map(fromProvenanceRow);
+}
+
+/** The provenance of the asset's active rows of these metrics, oldest first. */
+export async function listActiveProvenance(db: Db, assetId: string, metricKeys: string[]): Promise<StoredProvenance[]> {
+  if (metricKeys.length === 0) return [];
+  const rows = await db.all<ProvenanceRow>(
+    `SELECT ${PROVENANCE_COLUMNS} FROM observations WHERE asset_id = $1 AND metric_key = ANY($2::text[]) AND superseded_by IS NULL AND status != 'rejected' ORDER BY observed_at, id`,
+    [assetId, metricKeys],
+  );
+  return rows.map(fromProvenanceRow);
+}
+
+const jsonParam = (v: Json | null | undefined): string | null => (v === undefined || v === null ? null : JSON.stringify(v));
+
+/** Refuses a provenance the columns' CHECKs or the spec's rules would not take; returns it with the locator scrubbed. */
+function checkedProvenance(p: Provenance, citationUrl: string | null): Provenance {
+  if (!['measured', 'derived', 'disclosed'].includes(p.method)) throw new OrionError('invalid_provenance', `unknown provenance method ${String(p.method)}`);
+  if (p.method === 'disclosed' && p.sourceType === 'disclosure' && !citationUrl) {
+    throw new OrionError('citation_required', 'a disclosed observation requires a citation url');
+  }
+  if (p.txRefs && p.txRefs.length > MAX_TX_REFS) throw new OrionError('invalid_provenance', `at most ${MAX_TX_REFS} tx refs per row, got ${p.txRefs.length}`);
+  if (!p.codeVersion || !p.configHash) throw new OrionError('invalid_provenance', 'provenance needs a code version and a config hash');
+  return { ...p, locator: scrubLocator(p.locator) };
 }
 
 function fromRow(r: Row): Observation {
@@ -113,6 +204,7 @@ export async function insertObservation(db: Db, input: NewObservation): Promise<
   }
   const observedAt = toIso(input.observedAt);
   const fetchedAt = toIso(input.fetchedAt);
+  const p = checkedProvenance(input.provenance, input.citationUrl ?? null);
 
   return db.tx(
     async (t) => {
@@ -125,12 +217,18 @@ export async function insertObservation(db: Db, input: NewObservation): Promise<
       );
       const inserted = await t.run<{ id: number }>(
         `INSERT INTO observations
-           (asset_id, metric_key, observed_at, period_days, value, source, source_detail, status, citation_url, quoted_text, fetched_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           (asset_id, metric_key, observed_at, period_days, value, source, source_detail, status, citation_url, quoted_text, fetched_at,
+            method, source_type, chain, locator, block_from, block_to, tx_count, tx_refs, tx_digest, response_digest, inputs, formula,
+            coverage, code_version, config_hash)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                 $12, $13, $14, $15::jsonb, $16, $17, $18, $19::jsonb, $20, $21, $22::jsonb, $23, $24::jsonb, $25, $26)
          RETURNING id`,
         [
           input.assetId, input.metricKey, observedAt, input.periodDays ?? null, input.value, input.source,
           input.sourceDetail ?? null, status, input.citationUrl ?? null, input.quotedText ?? null, fetchedAt,
+          p.method, p.sourceType, p.chain, JSON.stringify(p.locator), p.blockFrom ?? null, p.blockTo ?? null, p.txCount ?? null,
+          jsonParam(p.txRefs), p.txDigest ?? null, p.responseDigest ?? null, jsonParam(p.inputs), p.formula ?? null, jsonParam(p.coverage),
+          p.codeVersion, p.configHash,
         ],
       );
       const newId = Number(inserted.rows[0].id);
@@ -165,11 +263,27 @@ async function assetOf(db: Db, id: number): Promise<string> {
   return row.asset_id;
 }
 
-export async function confirmObservation(db: Db, id: number, nowIso: string): Promise<Observation> {
+/**
+ * Confirms a provisional row as a new confirmed one. Its provenance is the provisional row's (a citation the analyst or a
+ * person entered), marked approved by `by.approvedBy` at `nowIso`; a provisional row written before 0004 has none, so it is
+ * built from its citation under `by.configHash`.
+ */
+export async function confirmObservation(db: Db, id: number, nowIso: string, by: { approvedBy: string; configHash: string }): Promise<Observation> {
   const assetId = await assetOf(db, id);
   return db.tx(
     async (t) => {
       const o = await activeProvisional(t, id);
+      const [stored] = await getProvenanceByIds(t, [id]);
+      const provenance: Provenance =
+        stored?.method && stored.sourceType && stored.locator
+          ? {
+              method: stored.method, sourceType: stored.sourceType, chain: stored.chain,
+              locator: stored.sourceType === 'disclosure' ? { ...stored.locator, approved_by: by.approvedBy, approved_at: nowIso } : stored.locator,
+              blockFrom: stored.blockFrom, blockTo: stored.blockTo, txCount: stored.txCount, txRefs: stored.txRefs, txDigest: stored.txDigest,
+              responseDigest: stored.responseDigest, inputs: stored.inputs, formula: stored.formula, coverage: stored.coverage,
+              codeVersion: codeVersion(), configHash: stored.configHash ?? by.configHash,
+            }
+          : disclosedProvenance(by.configHash, { citationUrl: o.citationUrl, approvedBy: by.approvedBy, approvedAt: nowIso });
       return insertObservation(t, {
         assetId: o.assetId,
         metricKey: o.metricKey,
@@ -182,6 +296,7 @@ export async function confirmObservation(db: Db, id: number, nowIso: string): Pr
         citationUrl: o.citationUrl,
         quotedText: o.quotedText,
         fetchedAt: nowIso,
+        provenance,
       });
     },
     { lockAsset: assetId },

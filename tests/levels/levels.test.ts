@@ -11,6 +11,7 @@ import { fakeHttp } from '../helpers/fakeHttp.js';
 import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
 import { watchAsset } from '../helpers/watchAsset.js';
+import { TEST_PROVENANCE } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -119,7 +120,8 @@ describe('runLevels', () => {
     const latest = await h.rpc.latestBlock();
     expect(stored.find((r) => r.metricKey === 'total_supply')).toEqual({
       assetId: 'mini', metricKey: 'total_supply', value: 100, observedAt: new Date(latest.timestamp * 1000).toISOString(), source: 'onchain',
-      blockNumber: Number(latest.number), jobId: 7,
+      blockNumber: Number(latest.number), jobId: 7, sourceType: 'contract_state',
+      locator: { contracts: [expect.stringMatching(/^0x/)], call: 'totalSupply()', args: [], subtract_balances: { burn_sink: expect.stringMatching(/^0x/) } },
     });
     expect(stored.find((r) => r.metricKey === 'price_usd')).toMatchObject({ value: 10, source: 'api', blockNumber: null, jobId: 7 });
   });
@@ -132,7 +134,10 @@ describe('runLevels', () => {
     await runLevels(h.db, [h2.loaded], h2.deps, later, 2);
     const rows = await listLatestLevels(h.db, 'mini');
     expect(rows.filter((r) => r.metricKey === 'price_usd')).toEqual([
-      { assetId: 'mini', metricKey: 'price_usd', value: 11, observedAt: later.toISOString(), source: 'api', blockNumber: null, jobId: 2 },
+      {
+        assetId: 'mini', metricKey: 'price_usd', value: 11, observedAt: later.toISOString(), source: 'api', blockNumber: null, jobId: 2,
+        sourceType: 'market_data', locator: { provider: 'coingecko', endpoint: '/coins/markets', id: 'mini-token', field: 'price' },
+      },
     ]);
     expect(await count(h.db, 'latest_levels')).toBe(5);
   });
@@ -186,7 +191,7 @@ describe('runLevels', () => {
 
   it('levels: change_pct firings compare with the newest stored nightly row', async () => {
     const h = harness(testDb(), { loaded: watchAsset({ changePct: 5 }), routes: { 'https://api.example.test/stats': { price: '12', apr: 0.06, supply: { totalBaseUnit: (100n * 10n ** 18n).toString() } } } });
-    await insertObservation(h.db, { assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-19T00:45:00.000Z', value: 10, source: 'api', sourceDetail: null, fetchedAt: '2026-09-19T00:45:00.000Z' });
+    await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-19T00:45:00.000Z', value: 10, source: 'api', sourceDetail: null, fetchedAt: '2026-09-19T00:45:00.000Z' });
     const out = await runLevels(h.db, [h.loaded], h.deps, NOW, 1);
     expect(out.perAsset[0].firings).toEqual([{ metric: 'stats_price', rule: 'change_pct', value: 12, previous: 10, day: '2026-09-19' }]);
   });
@@ -202,15 +207,21 @@ describe('toLatestLevels', () => {
       { metricKey: 'flow_usd.fees', value: 5, observedAt: '2026-09-19T00:00:00.000Z', periodDays: 1, source: 'onchain' as const, observationId: null },
     ], NOW, 3, { number: 77n, timestamp: 0 });
     expect(rows).toEqual([
-      { assetId: 'mini', metricKey: 'emission_rate_annual', value: 2, observedAt: '2026-09-01T00:00:00.000Z', source: 'onchain', blockNumber: 77, jobId: 3 },
-      { assetId: 'mini', metricKey: 'price_usd', value: 10, observedAt: '2026-09-19T12:00:01.000Z', source: 'api', blockNumber: null, jobId: 3 },
+      {
+        assetId: 'mini', metricKey: 'emission_rate_annual', value: 2, observedAt: '2026-09-01T00:00:00.000Z', source: 'onchain', blockNumber: 77, jobId: 3,
+        sourceType: expect.any(String), locator: expect.any(Object),
+      },
+      {
+        assetId: 'mini', metricKey: 'price_usd', value: 10, observedAt: '2026-09-19T12:00:01.000Z', source: 'api', blockNumber: null, jobId: 3,
+        sourceType: 'market_data', locator: { provider: 'coingecko', endpoint: '/coins/markets', id: expect.any(String), field: 'price' },
+      },
     ]);
   });
 });
 
 describe('latest_levels store', () => {
   it('deleteLatestLevels removes the rows the predicate does not keep', async () => {
-    const row = { assetId: 'a', metricKey: 'm', value: 1, observedAt: NOW.toISOString(), source: 'api', blockNumber: null, jobId: null };
+    const row = { assetId: 'a', metricKey: 'm', value: 1, observedAt: NOW.toISOString(), source: 'api', blockNumber: null, jobId: null, sourceType: null, locator: null };
     await upsertLatestLevels(testDb(), [row, { ...row, metricKey: 'n' }, { ...row, assetId: 'b' }]);
     expect(await deleteLatestLevels(testDb(), (r) => r.assetId === 'a')).toBe(1);
     expect((await listLatestLevels(testDb())).map((r) => `${r.assetId}.${r.metricKey}`)).toEqual(['a.m', 'a.n']);

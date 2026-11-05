@@ -6,6 +6,7 @@ import { buildProgram } from '../../src/cli/program.js';
 import { MINI_ASSET_YAML, MINI_REPORT_YAML, seedMiniReport } from '../helpers/assets.js';
 import { devPaths, testCliContext, useTestDb } from '../helpers/db.js';
 import { AS_OF } from '../helpers/obs.js';
+import { getProvenanceByIds } from '../../src/db/observations.js';
 
 const testDb = useTestDb();
 
@@ -149,6 +150,22 @@ describe('orion cli', () => {
     expect(confirmed.status).toBe('confirmed');
     expect(await orion('inbox', 'mini')).toBe('nothing to decide');
     await expect(orion('data', 'set', 'mini', 'price_usd', '1', '--provisional')).rejects.toThrow(/citation/);
+  });
+
+  it('data set: a hand-entered figure is disclosed and needs --citation; confirm records who approved it', async () => {
+    await expect(orion('data', 'set', 'mini', 'price_usd', '10', '--at', AS_OF)).rejects.toThrow(expect.objectContaining({ code: 'citation_required' }));
+    const o = JSON.parse(await orion('data', 'set', 'mini', 'price_usd', '10', '--at', AS_OF, '--source', 'onchain', '--citation', 'https://example.com/p', '--json'));
+    expect(o).toMatchObject({ source: 'onchain', citationUrl: 'https://example.com/p' }); // the legacy columns as given
+    expect(Object.keys(o)).not.toContain('provenance'); // the command's output is unchanged
+    expect((await getProvenanceByIds(testDb(), [o.id]))[0]).toMatchObject({
+      method: 'disclosed', sourceType: 'disclosure', chain: null, codeVersion: 'dev', configHash: expect.any(String),
+      locator: { citation_url: 'https://example.com/p', approved_by: 'user (data set)', approved_at: new Date(AS_OF).toISOString() },
+    });
+    const p = JSON.parse(await orion('data', 'set', 'mini', 'revenue_run_rate_usd', '1200', '--at', '2026-06-20', '--provisional', '--citation', 'https://example.com/post', '--json'));
+    const c = JSON.parse(await orion('data', 'confirm', String(p.id), '--json'));
+    expect((await getProvenanceByIds(testDb(), [c.id]))[0]).toMatchObject({
+      method: 'disclosed', sourceType: 'disclosure', locator: { citation_url: 'https://example.com/post', approved_by: 'user (data confirm)', approved_at: new Date(AS_OF).toISOString() },
+    });
   });
 
   it('guards the inbox when a stored proposal has a shape the schema does not expect', async () => {

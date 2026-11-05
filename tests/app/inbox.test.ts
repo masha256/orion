@@ -9,6 +9,7 @@ import { insertObservation } from '../../src/db/observations.js';
 import { insertProposal } from '../../src/db/proposals.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
 import { useTestDb } from '../helpers/db.js';
+import { TEST_PROVENANCE } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -20,12 +21,14 @@ async function world() {
   const db = testDb();
   const asset = parseAssetYaml(MINI_ASSET_YAML).config;
   const runId = await startAgentRun(db, { assetId: 'mini', persona: 'analyst', runType: 'weekly', trigger: 'manual', triggerDetail: {}, dryRun: false, configHash: 'x', model: 'm', startedAt: T });
-  await insertObservation(db, { assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-15', value: 1000, source: 'manual', fetchedAt: T });
+  await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-15', value: 1000, source: 'manual', fetchedAt: T });
   const researched = await insertObservation(db, {
+      provenance: TEST_PROVENANCE,
     assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-15', value: 1200, source: 'manual', status: 'provisional',
     sourceDetail: `research:analyst:run ${runId}`, citationUrl: 'https://example.com/q3', quotedText: 'revenue reached $1,200 in the third quarter', fetchedAt: T,
   });
   const typed = await insertObservation(db, {
+      provenance: TEST_PROVENANCE,
     assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-01', periodDays: 31, value: 90, source: 'manual', status: 'provisional',
     sourceDetail: 'typed from the August report', citationUrl: 'https://example.com/aug', fetchedAt: T,
   });
@@ -87,6 +90,7 @@ describe('buildInbox', () => {
   it('measures the move from the last confirmed value at now, the move guard\'s own baseline, never from another provisional row', async () => {
     const w = await world();
     await insertObservation(w.db, {
+      provenance: TEST_PROVENANCE,
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-10', value: 5000, source: 'manual', status: 'provisional',
       sourceDetail: `research:analyst:run ${w.runId}`, citationUrl: 'https://example.com/earlier', fetchedAt: T,
     });

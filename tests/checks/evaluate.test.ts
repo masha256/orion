@@ -13,6 +13,7 @@ import { emptySourceOutcome, insertFetchRun } from '../../src/db/fetchRuns.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { addDays } from '../../src/ingest/time.js';
 import { useTestDb } from '../helpers/db.js';
+import { TEST_PROVENANCE } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 let db: Db;
@@ -33,10 +34,10 @@ const edited = (id: string, edit: (raw: Record<string, any>) => void): AssetConf
 
 /** A daily flow row for `day` (stamped at its end). */
 async function flow(assetId: string, metricKey: string, day: string, value: number, source: 'onchain' | 'api' = 'onchain') {
-  await insertObservation(db, { assetId, metricKey, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, source, fetchedAt: NOW.toISOString() });
+  await insertObservation(db, { provenance: TEST_PROVENANCE, assetId, metricKey, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, source, fetchedAt: NOW.toISOString() });
 }
 async function level(assetId: string, metricKey: string, at: string, value: number) {
-  await insertObservation(db, { assetId, metricKey, observedAt: at, value, source: 'onchain', fetchedAt: at });
+  await insertObservation(db, { provenance: TEST_PROVENANCE, assetId, metricKey, observedAt: at, value, source: 'onchain', fetchedAt: at });
 }
 const byId = async (a: AssetConfig, day = D) => new Map((await evaluateChecks(db, a, day, { now: NOW })).map((r) => [r.checkId, r]));
 

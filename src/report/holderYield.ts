@@ -53,6 +53,17 @@ export interface ReportInput {
   levels: ReportLevels;
   /** The stored reconciliation check results for `day` (income statement v2 only; v1 never reads them). */
   checks?: CheckResult[];
+  /**
+   * Per flow metric and UTC day, the provenance of the stored row behind `daily`'s value (income statement v2 only; v1
+   * never reads it). Absent: the statement's provenance falls back to the config (`basis: 'config'`).
+   */
+  provenance?: Map<string, Map<string, DayProvenance>>;
+}
+
+/** The method and `<rung>:<what>` label of the row a day's value came from; method null on unmapped history. */
+export interface DayProvenance {
+  method: 'measured' | 'derived' | 'disclosed' | null;
+  label: string | null;
 }
 
 /** Streams younger than this are left out of the second revenue growth figure (a new stream inflates 90d/90d). */

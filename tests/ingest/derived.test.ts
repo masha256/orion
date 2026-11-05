@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { harness, NOW } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
+import { TEST_PROVENANCE } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -76,7 +77,7 @@ describe('fetchAsset: a revenue run rate derived from an API-series flow', () =>
     const at = (rows: Awaited<ReturnType<typeof listActiveObservations>>, day: string) => rows.find((o) => o.observedAt.startsWith(day))!.value;
     expect(at(await listActiveObservations(h.db, 'hype', 'revenue_run_rate_usd'), '2026-09-14')).toBe((9210 * 365) / 3);
     // The user replaces the 2026-09-13 artifact: a manual row at the day's end supersedes the API row.
-    await insertObservation(h.db, { assetId: 'hype', metricKey: 'flow_usd.buyback', observedAt: '2026-09-14T00:00:00Z', periodDays: 1, value: 120, source: 'manual', fetchedAt: NOW.toISOString() });
+    await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'hype', metricKey: 'flow_usd.buyback', observedAt: '2026-09-14T00:00:00Z', periodDays: 1, value: 120, source: 'manual', fetchedAt: NOW.toISOString() });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     // The day is behind the revision window and covered, so the flow source neither refills it nor refuses it as a conflict.
     expect(r.sources.filter((s) => s.sourceId.startsWith('defillama:'))).toMatchObject([{ status: 'ok', metricsWritten: [], conflicts: [] }]);
@@ -135,7 +136,7 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
   /** Stored daily rows for the programmatic flow: `values[i]` covers the day `first + i`. */
   const seedDaily = async (db: Parameters<typeof insertObservation>[0], first: string, values: number[]) => {
     for (const [i, value] of values.entries()) {
-      await insertObservation(db, { assetId: 'mini', metricKey: 'flow_usd.fees_programmatic', observedAt: addDays(first, i + 1), periodDays: 1, value, source: 'onchain', fetchedAt: NOW.toISOString() });
+      await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'flow_usd.fees_programmatic', observedAt: addDays(first, i + 1), periodDays: 1, value, source: 'onchain', fetchedAt: NOW.toISOString() });
     }
   };
 
@@ -173,6 +174,7 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
 
     // A --backfill-days rescan supersedes the stored row covering 2026-09-12 (period end 2026-09-13) with a different value.
     await insertObservation(h.db, {
+      provenance: TEST_PROVENANCE,
       assetId: 'mini', metricKey: 'flow_usd.fees_programmatic', observedAt: '2026-09-13', periodDays: 1, value: 999, source: 'onchain', fetchedAt: NOW.toISOString(),
     });
 
@@ -198,6 +200,7 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
     const h = harness(testDb(), { loaded: parseAssetYaml(WITH_INDEX) });
     await seedDaily(h.db, '2026-09-10', [100, 100, 100, 100, 100, 100]);
     await insertObservation(h.db, {
+      provenance: TEST_PROVENANCE,
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-14', value: 1000, source: 'manual', status: 'provisional',
       citationUrl: 'https://example.com', fetchedAt: NOW.toISOString(),
     });
@@ -211,7 +214,7 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
   it('evaluates a dry run over the rows it would write, and writes none', async () => {
     const h = harness(testDb(), { loaded: parseAssetYaml(WITH_INDEX) });
     await seedDaily(h.db, '2026-09-10', [100, 100, 100, 100, 100, 100]);
-    await insertObservation(h.db, { assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-14', value: 1000, source: 'manual', fetchedAt: NOW.toISOString() });
+    await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-14', value: 1000, source: 'manual', fetchedAt: NOW.toISOString() });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps, { dryRun: true });
     expect(await listActiveObservations(h.db, 'mini', 'usage_index')).toEqual([]);
     expect(r.written.filter((w) => w.metricKey === 'usage_index')).toHaveLength(7);
@@ -225,7 +228,7 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
     );
     const seed = async (db: Parameters<typeof insertObservation>[0], metricKey: string, first: string, values: number[]) => {
       for (const [i, value] of values.entries()) {
-        await insertObservation(db, { assetId: 'mini', metricKey, observedAt: addDays(first, i + 1), periodDays: 1, value, source: 'onchain', fetchedAt: NOW.toISOString() });
+        await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey, observedAt: addDays(first, i + 1), periodDays: 1, value, source: 'onchain', fetchedAt: NOW.toISOString() });
       }
     };
 

@@ -2,6 +2,8 @@ import type { AssetConfig } from '../config/schema.js';
 import type { Db } from '../db/connection.js';
 import type { SourceOutcome } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations } from '../db/observations.js';
+import { fetchedProvenance } from '../provenance/locator.js';
+import { responseDigest } from '../provenance/types.js';
 import { MS_PER_DAY } from '../types.js';
 import { addDays, dayStartMs, utcDay } from './time.js';
 import type { PeriodDue, PeriodicPayment, RaisedAnomaly, WrittenObservation } from './types.js';
@@ -26,6 +28,8 @@ export const ACCRUAL_TOLERANCE_PCT = 2;
 export interface PeriodicArgs {
   db: Db;
   asset: AssetConfig;
+  /** The loaded asset's config hash, for the rows' provenance. */
+  configHash: string;
   metricKey: string;
   payments: PeriodicPayment[];
   due: PeriodDue[];
@@ -63,6 +67,9 @@ export async function writePeriodicPayments(args: PeriodicArgs): Promise<Written
         : (await insertObservation(h, {
             assetId: asset.id, metricKey, observedAt, periodDays, value: p.value, source: 'api',
             sourceDetail: `${args.detail}; covers ${p.from} to ${p.to}, paid ${p.paidAt}`, fetchedAt: nowIso,
+            provenance: fetchedProvenance({ config: asset, hash: args.configHash }, metricKey, {
+              responseDigest: responseDigest({ metric: metricKey, from: p.from, to: p.to, value: p.value, paidAt: p.paidAt }),
+            }),
           })).id;
       written.push({ metricKey, value: p.value, observedAt, periodDays, source: 'api', observationId });
     }

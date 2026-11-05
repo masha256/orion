@@ -6,6 +6,7 @@ import { listJournal } from '../../src/db/journal.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { listProposals } from '../../src/db/proposals.js';
 import { useTestDb } from '../helpers/db.js';
+import { TEST_PROVENANCE } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -29,8 +30,8 @@ const commit = () => ledger.commit(db, { agentRunId: null, now: NOW });
 
 beforeEach(async () => {
   db = testDb();
-  priceId = (await insertObservation(db, { assetId: 'mini', metricKey: 'price_usd', observedAt: '2026-09-19', value: 10, source: 'onchain', fetchedAt: '2026-09-19' })).id;
-  ledger = new Ledger('mini', 'analyst');
+  priceId = (await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'price_usd', observedAt: '2026-09-19', value: 10, source: 'onchain', fetchedAt: '2026-09-19' })).id;
+  ledger = new Ledger('mini', 'analyst', 'test');
 });
 
 describe('staging', () => {
@@ -178,6 +179,7 @@ describe('the world changes mid-run', () => {
     research();
     ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's', catalysts: [] });
     const users = await insertObservation(db, {
+      provenance: TEST_PROVENANCE,
       assetId: 'mini', metricKey: 'staked_supply', observedAt: '2026-09-18', value: 50, source: 'manual', status: 'provisional',
       citationUrl: 'https://example.com/user', fetchedAt: '2026-09-19',
     });

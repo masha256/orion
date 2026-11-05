@@ -1,11 +1,12 @@
 import type { AssetConfig } from '../config/schema.js';
 import type { Db } from '../db/connection.js';
 import { listCheckResults } from '../db/checkResults.js';
-import { listActiveObservations } from '../db/observations.js';
+import { listActiveObservations, listActiveProvenance } from '../db/observations.js';
+import { provenanceLabel } from '../provenance/locator.js';
 import { latestLevel } from '../observations/select.js';
 import { addDays, utcDay } from '../ingest/time.js';
 import { MS_PER_DAY, STD_METRICS } from '../types.js';
-import { holderYieldReport, type HolderYieldReport, type ReportInput, type ReportLevels } from './holderYield.js';
+import { holderYieldReport, type DayProvenance, type HolderYieldReport, type ReportInput, type ReportLevels } from './holderYield.js';
 import { incomeStatementV2, type IsV2 } from './incomeStatement.js';
 
 /**
@@ -217,5 +218,25 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
   }
   // The checks the tick stored for this day (v2 only: the legacy object never carries them).
   const checks = asset.income_statement ? await listCheckResults(db, asset.id, target) : [];
-  return yieldReport({ asset, day: target, daily, provisional, levels, ...(checks.length > 0 ? { checks } : {}) }, opts);
+  // The provenance of every day the daily series hold (v2 only), for the statement's provenance from observations.
+  const provenance = asset.income_statement ? await provenanceByDay(db, asset.id, [...daily.keys()], periodic) : undefined;
+  return yieldReport({ asset, day: target, daily, provisional, levels, ...(checks.length > 0 ? { checks } : {}), ...(provenance ? { provenance } : {}) }, opts);
+}
+
+/**
+ * Per flow metric, the provenance of the row each day's value came from: the rows `dailyOf` reads (confirmed, one day)
+ * or, for a periodic stream, `periodicDaily` (confirmed, spread over the days a payment covers). A row written before
+ * 0004 and not yet backfilled has a null method.
+ */
+async function provenanceByDay(db: Db, assetId: string, metrics: string[], periodic: Set<string>): Promise<Map<string, Map<string, DayProvenance>>> {
+  const out = new Map<string, Map<string, DayProvenance>>(metrics.map((m) => [m, new Map()]));
+  for (const r of await listActiveProvenance(db, assetId, metrics)) {
+    if (r.status !== 'confirmed') continue;
+    const n = r.periodDays ?? 1;
+    if (periodic.has(r.metricKey) ? n < 1 : n !== 1) continue;
+    const end = utcDay(new Date(r.observedAt).getTime() - MS_PER_DAY);
+    const p: DayProvenance = { method: r.method, label: r.sourceType === null ? null : provenanceLabel(r.sourceType, r.chain, r.locator) };
+    for (let i = 0; i < n; i++) out.get(r.metricKey)!.set(addDays(end, -i), p);
+  }
+  return out;
 }

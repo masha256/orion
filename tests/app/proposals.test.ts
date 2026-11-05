@@ -12,6 +12,7 @@ import type { OrionError } from '../../src/types.js';
 import { AGENT_ASSET_YAML, agentWorld, type AgentWorld } from '../helpers/agentWorld.js';
 import { AS_OF } from '../helpers/obs.js';
 import { useTestDb } from '../helpers/db.js';
+import { TEST_PROVENANCE } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -93,6 +94,7 @@ describe('approving anomaly proposals', () => {
 describe('approving observation proposals', () => {
   it('confirms a provisional observation and rejects an active one', async () => {
     const provisional = await insertObservation(w.db, {
+      provenance: TEST_PROVENANCE,
       assetId: 'mini', metricKey: 'staked_supply', observedAt: '2026-06-29T12:00:00Z', value: 80, source: 'manual', status: 'provisional',
       citationUrl: 'https://example.com', fetchedAt: AS_OF,
     });
@@ -110,6 +112,7 @@ describe('approving observation proposals', () => {
     // A row edited in the database, or carried from an older build: approve locks the proposal's asset, and the nested
     // write on the other asset's row asks for that asset's lock, which is refused rather than taken mid-transaction.
     const theirs = await insertObservation(w.db, {
+      provenance: TEST_PROVENANCE,
       assetId: 'other', metricKey: 'staked_supply', observedAt: '2026-06-29T12:00:00Z', value: 80, source: 'manual', status: 'provisional',
       citationUrl: 'https://example.com', fetchedAt: AS_OF,
     });
@@ -144,6 +147,7 @@ describe('approving observation proposals', () => {
   it('checks an observation proposal against the last CONFIRMED value, the baseline the move guard filed it against', async () => {
     // A provisional row is in force (1250). The confirmed value, which the proposal was filed against, is still 1000.
     await insertObservation(w.db, {
+      provenance: TEST_PROVENANCE,
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-20', value: 1250, source: 'manual', status: 'provisional',
       citationUrl: 'https://news.example.com/earlier', fetchedAt: AS_OF,
     });
@@ -164,6 +168,7 @@ describe('approving observation proposals', () => {
     };
     const p = await file(change, { inForce: 1000 });
     const users = await insertObservation(w.db, {
+      provenance: TEST_PROVENANCE,
       assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-10', value: 900, source: 'manual', fetchedAt: AS_OF,
     });
     expect(await codeOf(() => approve(p.id))).toBe('stale_proposal');

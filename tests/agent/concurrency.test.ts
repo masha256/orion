@@ -5,6 +5,7 @@ import { insertObservation, listActiveObservations } from '../../src/db/observat
 import { fetchAsset } from '../../src/ingest/run.js';
 import { testDbPair } from '../helpers/db.js';
 import { harness } from '../helpers/fetchHarness.js';
+import { TEST_PROVENANCE } from '../helpers/provenance.js';
 
 /**
  * Two pools on ONE schema, which is what a scheduled run and a manual command are. Every transaction that reads before
@@ -21,7 +22,7 @@ let ledger: Ledger;
 
 beforeEach(() => {
   [A, B] = pair();
-  ledger = new Ledger('mini', 'analyst');
+  ledger = new Ledger('mini', 'analyst', 'test');
   ledger.stageObservation({
     metricKey: 'revenue_run_rate_usd', value: 1100, observedAt: '2026-09-18', periodDays: null, citationUrl: 'doc:1', quotedText: 'annualized revenue of $1,100', live: false,
   });
@@ -64,7 +65,7 @@ const OTHER_AT = '2026-09-19T00:00:00.000Z';
 const otherRows = async (db: Db) => (await listActiveObservations(db, 'mini', 'staked_supply')).filter((o) => o.observedAt === OTHER_AT);
 
 const otherWrite = async (db: Db) =>
-  await insertObservation(db, { assetId: 'mini', metricKey: 'staked_supply', observedAt: OTHER_AT, value: 50, source: 'onchain', fetchedAt: '2026-09-19' });
+  await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'staked_supply', observedAt: OTHER_AT, value: 50, source: 'onchain', fetchedAt: '2026-09-19' });
 
 /** B opens a transaction on the asset's lock, writes, holds it `ms`, and commits. Resolves once B holds the lock. */
 async function holdAssetTransaction(db: OrionDb, ms: number): Promise<{ done: Promise<void> }> {

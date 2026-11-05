@@ -1,10 +1,11 @@
 import type { Command } from 'commander';
 import { listAssetIds, loadAsset } from '../../config/load.js';
 import { decideAnomaly, listAnomalies, type Anomaly } from '../../db/anomalies.js';
-import { confirmObservation, insertObservation, listActiveObservations, rejectObservation } from '../../db/observations.js';
+import { confirmObservation, getObservationsByIds, insertObservation, listActiveObservations, rejectObservation } from '../../db/observations.js';
 import { describeSources } from '../../ingest/describe.js';
 import { hasSources } from '../../ingest/plan.js';
 import { fetchAsset, type FetchResult } from '../../ingest/run.js';
+import { disclosedProvenance } from '../../provenance/locator.js';
 import { OrionError, type ObservationSource } from '../../types.js';
 import { fetchSummary, ingestDepsFor, output, parseNumber, withDb, type CliContext } from '../util.js';
 
@@ -49,7 +50,7 @@ export function registerData(program: Command, ctx: CliContext): void {
     .option('--quote <text>', 'quoted source text')
     .option('--json', 'JSON output')
     .action(async (assetId: string, metric: string, value: string, opts: SetOpts) => {
-      const { config } = loadAsset(ctx.configRoot, assetId);
+      const { config, hash } = loadAsset(ctx.configRoot, assetId);
       const def = config.metrics[metric];
       if (!def) throw new OrionError('unknown_metric', `metric "${metric}" is not defined in assets/${assetId}.yaml`);
       if (!SOURCES.includes(opts.source as ObservationSource)) throw new OrionError('invalid_source', `source must be one of ${SOURCES.join(', ')}`);
@@ -63,6 +64,9 @@ export function registerData(program: Command, ctx: CliContext): void {
         throw new OrionError('unexpected_period_days', `metric "${metric}" is a ${def.type} metric: --period-days applies only to flow metrics`);
       }
       const nowIso = ctx.now().toISOString();
+      // A figure typed in by hand is a disclosure whatever --source says (that column is still written as given): its
+      // provenance is the citation, so --citation is required (spec §3: citation_url NOT NULL when method = disclosed).
+      const provenance = disclosedProvenance(hash, { citationUrl: opts.citation, approvedBy: 'user (data set)', approvedAt: nowIso });
       const o = await withDb(ctx, async (db) =>
         await insertObservation(db, {
           assetId,
@@ -76,6 +80,7 @@ export function registerData(program: Command, ctx: CliContext): void {
           citationUrl: opts.citation ?? null,
           quotedText: opts.quote ?? null,
           fetchedAt: nowIso,
+          provenance,
         }),
       );
       output(ctx, opts.json, o, () => [`recorded #${o.id}: ${assetId} ${metric} = ${o.value} at ${o.observedAt} (${o.status})`]);
@@ -85,7 +90,12 @@ export function registerData(program: Command, ctx: CliContext): void {
     .command('confirm <obs_id>')
     .option('--json', 'JSON output')
     .action(async (id: string, opts: { json?: boolean }) => {
-      const o = await withDb(ctx, (db) => confirmObservation(db, parseNumber(id, 'obs_id'), ctx.now().toISOString()));
+      const n = parseNumber(id, 'obs_id');
+      const o = await withDb(ctx, async (db) => {
+        const [row] = await getObservationsByIds(db, [n]);
+        if (!row) throw new OrionError('observation_not_found', `no observation with id ${n}`);
+        return await confirmObservation(db, n, ctx.now().toISOString(), { approvedBy: 'user (data confirm)', configHash: loadAsset(ctx.configRoot, row.assetId).hash });
+      });
       output(ctx, opts.json, o, () => [`confirmed as #${o.id}: ${o.metricKey} = ${o.value}`]);
     });
 
