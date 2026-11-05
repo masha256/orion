@@ -126,6 +126,7 @@ function isAlert(r: AssetRunResult): boolean {
   if (!rep) return false;
   return (
     rep.holder_yield?.statement_error !== undefined ||
+    rep.checks_error !== undefined ||
     rep.outcome === 'error' ||
     rep.outcome === 'run_in_progress' ||
     rep.report_error !== null ||
@@ -157,14 +158,17 @@ export function formatAssetBlock(r: AssetRunResult): { lines: string[]; alert: b
     if (failed.length > 0) lines.push(`failed sources: ${failed.map((s) => slackClean(s)).join(', ')}`);
     lines.push('DECISIONS', ...inboxLines(rep.inbox));
     const errLine = rep.report_error ? `HOLDER YIELD ${sym} ${rep.report_error.code}: ${slackClean(rep.report_error.message)}` : null;
+    // Task 5 I1 (as C4): a checks step that threw prints one ALERT line, so a step failing every night is never silent.
+    const checksLine = rep.checks_error !== undefined ? `ALERT ${sym} checks unavailable: ${slackClean(rep.checks_error)}` : null;
     if (rep.holder_yield) {
       const [first, ...rest] = holderYieldLines(sym, rep.holder_yield);
       // Ruling C4: a statement that threw prints one ALERT line (the v1 block still prints), so silence never means broken.
       const statementErr = rep.holder_yield.statement_error;
       const isLine = statementErr !== undefined ? `ALERT ${sym} income statement unavailable: ${slackClean(statementErr)}` : null;
-      lines.push(first!, ...(errLine ? [errLine] : []), ...(isLine ? [isLine] : []), ...rest);
-    } else if (errLine) {
-      lines.push(errLine);
+      lines.push(first!, ...(errLine ? [errLine] : []), ...(isLine ? [isLine] : []), ...(checksLine ? [checksLine] : []), ...rest);
+    } else {
+      if (errLine) lines.push(errLine);
+      if (checksLine) lines.push(checksLine);
     }
   }
   if (alert) lines.push(...r.fetchLines.filter((l) => ALERT_LINE.test(l)).map((l) => slackClean(l)));

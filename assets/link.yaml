@@ -153,7 +153,9 @@ income_statement:
     - { id: releases, metric: released_rate, note: "quarterly releases from Chainlink's non-circulating Safes (trailing 365 days)" }
   # Reconciliation checks (spec §5, Phase 2 Task 5): CoinGecko's price vs the Chainlink LINK/USD feed (the price
   # cross-check's stored reading); the Reserve's day change in LINK vs the scanned buys (no outflow is expected; a fall
-  # is a withdrawal). tolerance_abs 10 LINK: the scan ignores transfers below 10 LINK and unlisted senders.
+  # is a withdrawal). tolerance_abs 10 LINK is a per-day allowance for the scan's per-transfer floor (ignore_below_tokens
+  # 10: dust transfers under it are not counted); several such transfers in one day can exceed it and breach. LINK
+  # from senders the scan does not list is not covered by the allowance: it should breach.
   checks:
     - { id: price_chainlink, type: price, level: price_usd, against: chainlink_link_usd, tolerance_pct: 2 }
     - { id: reserve_balance, type: balance, level: reserve_link, inflows: [ flow_tokens.reserve ], outflows: [], tolerance_pct: 1, tolerance_abs: 10 }

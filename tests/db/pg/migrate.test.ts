@@ -197,6 +197,23 @@ describe('migrate', () => {
     await expect(insert('made_up', 'x')).rejects.toThrow(/anomalies_kind_check/);
   });
 
+  it('0003 applies to a populated anomalies table: every old kind inserted at 0002 survives the constraint re-add (Task 5 M6)', async () => {
+    const db = await emptySchema();
+    const all = loadMigrations();
+    expect(await applyMigrations(db, { migrations: all.slice(0, 2) })).toEqual({ applied: [1, 2] });
+    const OLD = ['cross_check_mismatch', 'unlisted_sender', 'source_failure_streak', 'revenue_disclosure_stale', 'revenue_payment'];
+    for (const kind of OLD) {
+      await db.run(
+        `INSERT INTO anomalies (asset_id, kind, metric_key, dedupe_key, severity, status, detail_json, occurrences, first_seen_at, last_seen_at)
+         VALUES ('mini', $1, 'm', $1, 'advisory', 'open', '{}', 1, now(), now())`,
+        [kind],
+      );
+    }
+    // ADD CONSTRAINT validates the existing rows: a kind 0003 left out would fail the migration here.
+    expect(await applyMigrations(db, { migrations: all.slice(0, 3) })).toEqual({ applied: [3] });
+    expect((await db.all<{ kind: string }>('SELECT kind FROM anomalies ORDER BY id')).map((r) => r.kind)).toEqual(OLD);
+  });
+
   it('migrate: the shipped migrations load in order from 1', () => {
     const ms = loadMigrations();
     expect(ms.map((m) => m.id)).toEqual(ms.map((_, i) => i + 1));

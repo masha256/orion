@@ -209,16 +209,24 @@ export async function evaluateChecks(db: Db, asset: AssetConfig, day: string, op
 
 /**
  * Stores the results and opens (or counts again) one `check_breach` anomaly per breached check: advisory, deduped by
- * check id, so a check that keeps breaching bumps one row's occurrences. Anomalies wake no agent (Phase 1). One
+ * check id, so a check that keeps breaching bumps one row's occurrences. Occurrences count breached days, not
+ * evaluations: a day whose stored result is already a breach (a stale report day ticked again, a manual re-tick) raises
+ * nothing more, though its stored row still takes the latest evaluation. Anomalies wake no agent (Phase 1). One
  * transaction under the asset's lock.
  */
 export async function recordChecks(db: Db, assetId: string, results: CheckResult[], nowIso: string): Promise<Anomaly[]> {
   return db.tx(
     async (t) => {
+      const counted = new Set<string>();
+      for (const r of results) {
+        if (r.status !== 'breach') continue;
+        const prior = await t.one<{ status: string }>('SELECT status FROM check_results WHERE asset_id = $1 AND check_id = $2 AND day = $3', [assetId, r.checkId, r.day]);
+        if (prior?.status === 'breach') counted.add(`${r.checkId}\u0000${r.day}`);
+      }
       await upsertCheckResults(t, results);
       const raised: Anomaly[] = [];
       for (const r of results) {
-        if (r.status !== 'breach') continue;
+        if (r.status !== 'breach' || counted.has(`${r.checkId}\u0000${r.day}`)) continue;
         raised.push(await raiseAnomaly(t, {
           assetId, kind: 'check_breach', metricKey: '', dedupeKey: r.checkId, severity: 'advisory', seenAt: nowIso,
           detail: { check_id: r.checkId, check_type: r.type, day: r.day, lhs: r.lhs, rhs: r.rhs, gap_pct: r.gapPct, tolerance_pct: r.detail.tolerance_pct ?? null },

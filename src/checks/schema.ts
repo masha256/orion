@@ -221,20 +221,73 @@ function sides(c: ResolvedCheck): [string[], string[]] | null {
   }
 }
 
-/** Why series `a` and `b` are not independent readings, or null: the same metric, an adapter computed from the other's, a derived metric of the other. */
+/**
+ * Every adapter `name`'s series is computed from, followed transitively (A computedFrom B computedFrom C), each with the
+ * adapters it was reached through (empty for a direct entry). Cycles stop at the first repeat.
+ */
+function adapterUpstream(name: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const walk = (n: string, via: string[]) => {
+    for (const up of findAdapter(n)?.computedFrom ?? []) {
+      if (out.has(up) || up === name) continue;
+      out.set(up, via);
+      walk(up, [...via, up]);
+    }
+  };
+  walk(name, []);
+  return out;
+}
+
+/** The metric keys a derived source's params name, arrays flattened (LINK released_rate: `metrics: [a, b]`). */
+function paramMetrics(asset: CheckAsset, params: Record<string, unknown> | undefined): string[] {
+  const out: string[] = [];
+  const visit = (v: unknown) => {
+    if (typeof v === 'string') {
+      if (asset.metrics[v] !== undefined) out.push(v);
+    } else if (Array.isArray(v)) v.forEach(visit);
+    else if (v !== null && typeof v === 'object') Object.values(v).forEach(visit);
+  };
+  visit(params ?? {});
+  return out;
+}
+
+/** Every metric a derived metric `m` is computed from, followed through derived inputs, each with the metrics it was reached through. */
+function derivedUpstream(asset: CheckAsset, m: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const walk = (n: string, via: string[]) => {
+    const s = asset.metrics[n]?.source;
+    if (s?.type !== 'derived') return;
+    for (const up of paramMetrics(asset, s.params)) {
+      if (out.has(up) || up === m) continue;
+      out.set(up, via);
+      walk(up, [...via, up]);
+    }
+  };
+  walk(m, []);
+  return out;
+}
+
+const viaText = (via: string[]) => (via.length > 0 ? ` (via ${via.join(' -> ')})` : '');
+
+/**
+ * Why series `a` and `b` are not independent readings, or null: the same metric, an adapter computed (transitively) from
+ * the other's, a derived metric (transitively) of the other.
+ */
 function joined(asset: CheckAsset, a: string, b: string): string | null {
   if (a === b) return `"${a}" is on both sides`;
   const src = (m: string) => asset.metrics[m]?.source;
   const sa = src(a);
   const sb = src(b);
   if (sa?.type === 'adapter' && sb?.type === 'adapter') {
-    const from = (x: string) => findAdapter(x)?.computedFrom ?? [];
-    if (from(sa.name).includes(sb.name)) return `"${a}" (adapter ${sa.name}) is computedFrom ${sb.name}, which reads "${b}"`;
-    if (from(sb.name).includes(sa.name)) return `"${b}" (adapter ${sb.name}) is computedFrom ${sa.name}, which reads "${a}"`;
+    const fromA = adapterUpstream(sa.name).get(sb.name);
+    if (fromA !== undefined) return `"${a}" (adapter ${sa.name}) is computedFrom ${sb.name}${viaText(fromA)}, which reads "${b}"`;
+    const fromB = adapterUpstream(sb.name).get(sa.name);
+    if (fromB !== undefined) return `"${b}" (adapter ${sb.name}) is computedFrom ${sa.name}${viaText(fromB)}, which reads "${a}"`;
   }
-  const derivedOf = (s: SourceConfig | undefined, other: string) => s?.type === 'derived' && Object.values(s.params ?? {}).includes(other);
-  if (derivedOf(sa, b)) return `"${a}" is derived from "${b}"`;
-  if (derivedOf(sb, a)) return `"${b}" is derived from "${a}"`;
+  const ofA = derivedUpstream(asset, a).get(b);
+  if (ofA !== undefined) return `"${a}" is derived from "${b}"${viaText(ofA)}`;
+  const ofB = derivedUpstream(asset, b).get(a);
+  if (ofB !== undefined) return `"${b}" is derived from "${a}"${viaText(ofB)}`;
   return null;
 }
 

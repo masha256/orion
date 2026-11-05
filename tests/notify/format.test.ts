@@ -84,6 +84,27 @@ describe('report blocks', () => {
     expect(formatAssetBlock(run({}, gone))).toEqual({ lines: ['DECISIONS', 'nothing to decide', 'HOLDER YIELD MINI report_unavailable: no price'], alert: true });
   });
 
+  it('format: a checks step that threw prints one ALERT line after the block\'s first line and is an alert (Task 5 I1)', () => {
+    const report = cleanReport();
+    report.checks_error = 'income_statement checks: check x part "y" is not a line id';
+    const out = formatAssetBlock(run({}, report));
+    expect(out.lines).toEqual([
+      'DECISIONS', 'nothing to decide', HOLDER_BLOCK[0],
+      'ALERT MINI checks unavailable: income_statement checks: check x part "y" is not a line id',
+      ...HOLDER_BLOCK.slice(1),
+    ]);
+    expect(out.alert).toBe(true);
+    // With no holder-yield block the line still prints.
+    const noBlock = cleanReport();
+    noBlock.holder_yield = null;
+    noBlock.checks_error = 'boom <@U1>';
+    expect(formatAssetBlock(run({}, noBlock))).toEqual({ lines: ['DECISIONS', 'nothing to decide', `ALERT MINI checks unavailable: ${slackClean('boom <@U1>')}`], alert: true });
+    // Checks that ran (even a breach, which the inbox carries) are no alert of their own.
+    const ran = cleanReport();
+    ran.checks = [{ id: 'splitter', type: 'sum', status: 'ok', gap_pct: 0 }];
+    expect(formatAssetBlock(run({}, ran)).alert).toBe(false);
+  });
+
   it('format: failed sources, raised anomalies, degrading inbox anomalies, job failures and flags are alerts; only flagged fetch lines print', () => {
     const report = cleanReport();
     report.ingest!.sources_failed = ['coingecko', 'rpc:base'];

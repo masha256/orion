@@ -11,6 +11,8 @@ import { listCheckResults } from '../../src/db/checkResults.js';
 import type { Db } from '../../src/db/connection.js';
 import { emptySourceOutcome, insertFetchRun } from '../../src/db/fetchRuns.js';
 import { insertObservation } from '../../src/db/observations.js';
+import { REVISION_DAYS } from '../../src/ingest/apiFlow.js';
+import { registerAdapter } from '../../src/ingest/adapters/registry.js';
 import { addDays } from '../../src/ingest/time.js';
 import { useTestDb } from '../helpers/db.js';
 import { TEST_PROVENANCE } from '../helpers/provenance.js';
@@ -129,7 +131,14 @@ describe('checks', () => {
     await flow('lit', 'flow_usd.fees_core', addDays(D, -2), 103_000, 'api');
     const r = (await byId(lit)).get('fees_core_revision')!;
     expect(r).toMatchObject({ status: 'breach', lhs: 100_002, rhs: 103_000 });
-    expect(r.detail).toMatchObject({ days: 30, worst_day: addDays(D, -2), restated_count: 1 });
+    expect(r.detail).toMatchObject({ days: 3, worst_day: addDays(D, -2), restated_count: 1 });
+  });
+
+  it('revision: LIT fees_core_revision looks back exactly the Lighter adapter\'s re-read depth (Task 5 I2)', () => {
+    // A restatement exists only for a day ingest read again; lit.exchange_fees_daily re-reads REVISION_DAYS days.
+    const rev = resolveChecks(asset('lit')).find((c) => c.id === 'fees_core_revision');
+    expect(rev).toMatchObject({ type: 'revision', metric: 'flow_usd.fees_core', days: REVISION_DAYS });
+    expect(REVISION_DAYS).toBe(3);
   });
 
   it('refuses a circular check: same metric both sides', () => {
@@ -145,6 +154,32 @@ describe('checks', () => {
     expect(() => edited('pump', (raw) => {
       raw.income_statement.checks = [{ id: 'supply_burns', type: 'supply', level: 'total_supply', burns: ['flow_tokens.buyback'], tolerance_pct: 1 }];
     })).toThrow(/check supply_burns is circular: "flow_tokens\.buyback" \(adapter solana\.supply_burn_daily\) is computedFrom solana\.token_supply, which reads "total_supply"/);
+  });
+
+  it('refuses a circular check: computedFrom followed transitively (Task 5 M1)', () => {
+    // An adapter computed from supply_burn_daily, which is computed from token_supply: still the same readings.
+    registerAdapter({ name: 'test.relay_of_burn', needsRpc: false, computedFrom: ['solana.supply_burn_daily'], run: () => Promise.reject(new Error('not run')) });
+    const withRelay = (raw: Record<string, any>) => {
+      raw.metrics['flow_tokens.relay'] = { type: 'flow', unit: 'tokens', cadence: 'daily', staleness_days: 4, monitor_only: true, source: { type: 'adapter', name: 'test.relay_of_burn', params: {} } };
+    };
+    expect(() => edited('pump', (raw) => {
+      withRelay(raw);
+      raw.income_statement.checks = [{ id: 'supply_relay', type: 'supply', level: 'total_supply', burns: ['flow_tokens.relay'], tolerance_pct: 1 }];
+    })).toThrow(/check supply_relay is circular: "flow_tokens\.relay" \(adapter test\.relay_of_burn\) is computedFrom solana\.token_supply \(via solana\.supply_burn_daily\), which reads "total_supply"/);
+    // Without the check the extra metric loads (the refusal is the check's, not the metric's).
+    expect(() => edited('pump', withRelay)).not.toThrow();
+  });
+
+  it('refuses a circular check: a derived metric whose params list the other side in an array (Task 5 M1)', () => {
+    // LINK released_rate = flow_annualized(metrics: [released_hub, released_rewards]).
+    expect(() => edited('link', (raw) => {
+      raw.income_statement.checks.push({ id: 'released_loop', type: 'balance', level: 'released_rate', inflows: ['flow_tokens.released_hub'], outflows: [], tolerance_pct: 1 });
+    })).toThrow(/check released_loop is circular: "released_rate" is derived from "flow_tokens\.released_hub"/);
+    // A derived of that derived is still computed from the flow (transitively).
+    expect(() => edited('link', (raw) => {
+      raw.metrics.released_rate_copy = { type: 'level', unit: 'tokens_per_year', staleness_days: 120, monitor_only: true, source: { type: 'derived', name: 'flow_annualized', params: { metrics: ['released_rate'], days: 365 } } };
+      raw.income_statement.checks.push({ id: 'released_loop2', type: 'balance', level: 'released_rate_copy', inflows: ['flow_tokens.released_rewards'], outflows: [], tolerance_pct: 1 });
+    })).toThrow(/check released_loop2 is circular: "released_rate_copy" is derived from "flow_tokens\.released_rewards" \(via released_rate\)/);
   });
 
   it('incomplete when a side has no row for the day (never a breach)', async () => {
@@ -195,5 +230,33 @@ describe('checks', () => {
     // Evaluating a day again replaces its row (the latest evaluation wins), never a second row.
     await recordChecks(db, 'lit', await evaluateChecks(db, lit, D2, { now: later }), later.toISOString());
     expect(await listCheckResults(db, 'lit', D2)).toHaveLength(2);
+  });
+
+  it('occurrences count breached days: re-evaluating a breached day does not bump (Task 5 M5)', async () => {
+    const lit = asset('lit');
+    await level('lit', 'rh_revenue_share_app', `${addDays(D, 1)}T00:45:00.000Z`, 0.4);
+    const t1 = NOW.toISOString();
+    expect(await recordChecks(db, 'lit', await evaluateChecks(db, lit, D, { now: NOW }), t1)).toHaveLength(1);
+    // A stale report day (the same holder_yield.day every tick) or a manual re-tick: same day, no new occurrence.
+    const t2 = new Date(NOW.getTime() + 3_600_000);
+    expect(await recordChecks(db, 'lit', await evaluateChecks(db, lit, D, { now: t2 }), t2.toISOString())).toEqual([]);
+    const t3 = new Date(NOW.getTime() + 7_200_000);
+    await recordChecks(db, 'lit', await evaluateChecks(db, lit, D, { now: t3 }), t3.toISOString());
+    let all = await listAnomalies(db, { assetId: 'lit', includeDecided: true });
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({ occurrences: 1, lastSeenAt: t1 });
+    // The stored row still takes the latest evaluation.
+    expect((await listCheckResults(db, 'lit', D)).find((r) => r.checkId === 'robinhood_partner_share')!.evaluatedAt).toBe(t3.toISOString());
+
+    // A day first stored ok (or incomplete) that breaches on re-evaluation is a new breached day: it counts.
+    const D2 = addDays(D, 1);
+    await level('lit', 'rh_revenue_share_app', `${addDays(D2, 1)}T00:45:00.000Z`, 0.5);
+    const t4 = new Date(NOW.getTime() + 86_400_000);
+    expect(await recordChecks(db, 'lit', await evaluateChecks(db, lit, D2, { now: t4 }), t4.toISOString())).toEqual([]);
+    await db.run("UPDATE observations SET value = 0.4 WHERE metric_key = 'rh_revenue_share_app' AND observed_at = $1", [`${addDays(D2, 1)}T00:45:00.000Z`]);
+    const t5 = new Date(t4.getTime() + 3_600_000);
+    expect(await recordChecks(db, 'lit', await evaluateChecks(db, lit, D2, { now: t5 }), t5.toISOString())).toHaveLength(1);
+    all = await listAnomalies(db, { assetId: 'lit', includeDecided: true });
+    expect(all[0]).toMatchObject({ occurrences: 2, lastSeenAt: t5.toISOString() });
   });
 });

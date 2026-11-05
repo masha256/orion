@@ -147,6 +147,11 @@ holder-yield report, inside the run lock (`checks` in the tick report; v2 `incom
 rows). A side with no row for the day is `incomplete`, never a breach. Circular checks are refused at load: the same
 series on both sides, an adapter `computedFrom` the other side's adapter (set on `solana.supply_burn_daily`), a derived
 metric of the other side, a `parameter` on a `constant`, a `price` against the level's own primary contract.
+`computedFrom` and derived inputs are followed transitively, and a derived metric's array params (`metrics: [a, b]`)
+count (fix round 1, M1). A checks step that throws prints `ALERT <SYM> checks unavailable: <msg>` in the nightly block
+and makes the asset an alert, like an income statement that throws (fix round 1, I1). Occurrences of a `check_breach`
+count breached days: re-evaluating a day already stored as a breach (a stale report day, a re-tick) raises nothing more
+(fix round 1, M5).
 
 Conventions chosen (review before Phase 3 relies on them):
 - gap_pct = |lhs - rhs| / max(|lhs|, |rhs|) x 100, unsigned (0 when both are 0); lhs/rhs are stored, so the sign is not lost.
@@ -158,7 +163,10 @@ Conventions chosen (review before Phase 3 relies on them):
   its detail (`chain_levels`); against a metric it reads that level's first reading on D+1.
 - A `revision` check compares, per day of the last `days`, the first row the source wrote with the row in force (the
   adapter re-reads its last 3 days and supersedes a changed row; the superseded row is kept). LIT's Lighter adapter
-  re-reads only 3 days, so a restatement older than that is never seen by Orion at all.
+  re-reads only 3 days (`REVISION_DAYS`), so a restatement older than that is never seen by Orion at all, and LIT's
+  check is set to `days: 3` to match (fix round 1, I2; the adapter's depth is unchanged, since a deeper re-read would
+  change stored values). Catching restatements 4-30 days back needs a periodic deep re-read of the Lighter series:
+  Phase 3 LIT.
 - Automatic checks: `<line>_share` (`parameter`, tolerance 0) per `share_metric`; `<line>_paid` (`two_path`, the
   statement window, tolerance 5 percent: a payout measured at the recipients lags its source) per `paid_metric`, skipped
   when the paid series is the line's own.
@@ -171,7 +179,7 @@ Wired (per asset):
 | sdCRV | crv_fee | sum | flow_usd.sd_rev_crv vs vesdt + treasury_crv + crv_fee_share + boost_delegators (daily) | 2% |
 | yCRV | splitter | sum | flow_usd.yearn_gross vs ybs_payout + treasury (daily) | 2% |
 | LIT | robinhood_partner_share (auto) | parameter | rh_revenue_share_app vs 0.5 | 0 |
-| LIT | fees_core_revision | revision | flow_usd.fees_core, 30 days | 0.01% |
+| LIT | fees_core_revision | revision | flow_usd.fees_core, 3 days (the adapter's re-read depth) | 0.01% |
 | cvxCRV | crv_paid (auto) | two_path | flow_usd.convex_rev_cvxcrv vs flow_usd.crv, 91-day sums | 5% |
 | UNI | price_chainlink | price | price_usd (CoinGecko) vs chainlink_uni_usd | 2% |
 | LINK | price_chainlink | price | price_usd vs chainlink_link_usd | 2% |
@@ -199,6 +207,15 @@ Deferred (spec §5 examples), with the metric each lacks and the track that adds
 | UNI v3 listed pools vs total `collectProtocol` | coverage | the v3 pool_scan series and the protocol total | Phase 3 UNI v3 |
 | `price` on the 7 assets with a `coins.llama.fi` cross-check (AERO, CRV, cvxCRV, HYPE, sdCRV, SKY, yCRV) | price | a Chainlink feed or a deep-pool `slot0` level (SKY's Chronicle pip reverts through Multicall3) | Phase 3 per asset; the llama checks stay, labelled third_party |
 | VVV disclosed revenue | watch | `usage_index` watch in place of the DefiLlama `revenue_proxy` cross-check (a watch, not a check) | Phase 3 VVV |
+
+Task 5 review, deferred (controller rulings):
+- M2: a `price` check `against` a contract matches its cross-check reading by sourceId (`chain_levels`) and label, not by
+  contract. Harmless while each level has one `contract_read` cross-check; before a second one on a checked level (a
+  Phase 3 pool `slot0`), refuse it or store and match the contract in the run detail.
+- M3: UNI/LINK/CAKE `price_chainlink` repeat their ingest cross-check at the same 2 percent, so one bad print raises both
+  `cross_check_mismatch` and `check_breach`. Revisit in Phase 3 when the llama checks go.
+- M4 (decision for Mike at G2): gaps are relative only, so `sum`/`two_path` breach at dust (sdCRV 2026-08-31: $0.046 vs
+  $0, gap 100 percent). Recommendation: `tolerance_abs` $1 on sum checks (a schema change and a hash move).
 
 ## Task 6: provenance on every observation (spec §3)
 

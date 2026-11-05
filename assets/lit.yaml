@@ -261,5 +261,8 @@ income_statement:
   # Reconciliation checks (spec §5, Phase 2 Task 5). Automatic: robinhood_partner_share (rh_revenue_share_app read from
   # Lighter's app bundle vs the 0.5 the cost line assumes). Listed: a Lighter API restatement of a Core fee day (the
   # adapter re-reads its last 3 days and supersedes a changed row; this compares each day's first row with the one in force).
+  # days 3 = that re-read depth (REVISION_DAYS for adapter series): a restatement exists in Orion only for a day ingest
+  # read again, so a longer look-back would claim cover it cannot give. Catching restatements 4-30 days back needs a
+  # periodic deep re-read (Phase 3).
   checks:
-    - { id: fees_core_revision, type: revision, metric: flow_usd.fees_core, days: 30, tolerance_pct: 0.01 }
+    - { id: fees_core_revision, type: revision, metric: flow_usd.fees_core, days: 3, tolerance_pct: 0.01 }
