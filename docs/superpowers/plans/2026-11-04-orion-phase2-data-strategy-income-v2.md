@@ -25,6 +25,11 @@ order: `feat/daemon` merges to `main` at the cutover (first prod release); this 
 ships as release 2 via staging -> prod. No Phase 2 task changes `feat/daemon` code outside this branch, and no Phase 2
 migration may assume it ships in the cutover release.
 
+**Gate G1 (Mike, 2026-11-04, "Proceed, go with your yCRV recommendation and ok for task 7"):** go for Tasks 5, 6, 7
+(incl. the Step 5 backfill rehearsal, run outside the 05:00-06:30 PT prod cron window, one asset at a time, stopping on
+any prod fetch failure), Task 7b (yCRV option A) and Task 9; stop at G2. st-yCRV ruling R6 stands (fee out of the
+statement). Listing bar stays as built (revenue + holders + supply, D6). Task 3's silent-spec defaults accepted.
+
 **Base:** `feat/data-strategy` = `feat/daemon` @ f5f36fa + 3 spec commits (tip fdbbbf3). Never rebase onto `main`, and
 never branch from it. `main` has no Postgres code, and Phase 1.5 merges into `main` only at the cutover.
 
@@ -582,6 +587,34 @@ rule, never a guess. Also stop if a legacy JSON byte moves.
 responsible. The method only moves sub-hour timing, so a bigger gap means a bug or a data finding.
 
 **Gate G2 (Mike):** sign off the USD comparison table per metric. Until then, nothing reads `flow_usd_v`.
+
+### Task 7b (Mike G1, yCRV option A): yCRV vote incentives below the line
+
+Measured (controller, 2026-11-04, 93 days): splitter crvUSD inflow $560,940 = voter (veCRV fees) $140,085 (25%) +
+Yearn FeeBurner (auctioned third-party vote incentives) $420,855 (75%). Spec rule 3 puts third-party vote payments
+below the line (as sdCRV's bribes). Splitter ratios (ycrv.yaml header, 2026-10-09): fees 87.3% to YBS stakers, rest to
+treasury; incentives 78.0 / 9.3 / 12.7; the Receiver then takes 10%.
+
+**Files:** `assets/ycrv.yaml` (two new monitor_only flows + the income_statement change), whatever generic config/report
+code the design needs (prefer config over a bespoke series), `src/report/parity.ts` / reclass expectations,
+`tools/phase2-proof/expected.py`, tests, followups note.
+
+- Add `flow_usd.yearn_gross_fees` (crvUSD to splitter, `from_allowlist: [voter]`) and `flow_usd.yearn_gross_incentives`
+  (`from_allowlist: [fee_burner]`), monitor_only, backfillable; their sum must equal `flow_usd.yearn_gross` per day
+  (a `sum` check).
+- Statement: revenue = the fees line only; the incentives go to `below_line` (to holders for the YBS stakers' part,
+  to protocol for Yearn's part). The measured `ybs_payout` and `treasury` flows are apportioned between "from revenue"
+  and "below the line" by the window's sender mix (Ruling R14: mix apportioning, labelled `derived`; the splitter's
+  per-source ratios differ, 87.3 vs 78.0 to YBS, so from-revenue holder flow is slightly understated; recorded in the
+  followups note with the size of that error on real data).
+- Invariant: yCRV total holder flow, yields, buckets, supply and dilution unchanged (only re-labelled between
+  fromRevenue and fromBelowLine). Legacy JSON byte-identical (the old blocks are untouched).
+- New reclass expectations for yCRV: revenue = window annualized `yearn_gross_fees`; belowLine.toHolders = ybs_payout x
+  incentive share; unreconciled ~ 0.
+- Controller: backfill the two flows on the proof copy (`data fetch ycrv --metric ... --backfill-days 100`), then the
+  cross-release proof.
+
+**Stop if:** fees + incentives differ from `yearn_gross` on any day by more than 1e-9 relative (an unlisted sender).
 
 ### Task 8 (after G2): the report reads tokens × prices
 
