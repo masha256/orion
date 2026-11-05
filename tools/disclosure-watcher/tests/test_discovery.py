@@ -332,6 +332,7 @@ class TestScan(Base):
         st = self.state()
         st.set(FIFTH, status="irrelevant")  # known, so no scan day here is a failed tweet-result day (B4)
         st.data["windows"] = {}
+        st.data["watch_since"] = "2026-10-01"  # pinned: seed() stamps first_seen_at with the real clock
         st.save()
         http = lambda: FakeHttp(posts=[ddg_ok()], tweets=all_tweets())  # noqa: E731
         self.assertEqual(self.scan(http(), date(2026, 11, 3)), [])

@@ -281,6 +281,9 @@ class TestWindowClosedCatchUp(ScanBase):
         self.seed()
         st = self.state()
         st.data["windows"] = {}
+        # seed() stamps first_seen_at with the real clock, which watch_since falls back to: pin it, or the test fails
+        # once the real date passes the window's last day (2026-11-04).
+        st.data["watch_since"] = "2026-10-01"
         st.save()
         self.assertEqual(self.scan(date(2026, 11, 3)), [])
         # 2026-11-04 (the last day of the Q3 window) is missed; 2026-11-09 is the next Monday scan.
