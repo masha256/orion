@@ -100,7 +100,7 @@ describe('assets/uni.yaml', () => {
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('a56e3ebc8ddcfdab7587b7cde5fcd766dda23e97ab1ed3bc5dc2199aaf792e84');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('0afe3bd337931a6055754f89705d2c21c3193572a216e5a5378865486fec1895');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -113,6 +113,7 @@ describe('assets/uni.yaml', () => {
       revenue: ['protocol_fees'],
       cost_of_revenue: ['lps'],
       holders: ['burn'],
+      checks: ['price_chainlink'],
       of: { burn: 'protocol_fees' },
     });
   });

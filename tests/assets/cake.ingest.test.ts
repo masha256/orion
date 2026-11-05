@@ -112,7 +112,7 @@ describe('assets/cake.yaml', () => {
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/cake.yaml`, 'utf8')).hash).toBe('8e346497ae64e104477a1466234dfdfd773139c7f6186d7275d3c77f5bff5b91');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/cake.yaml`, 'utf8')).hash).toBe('def0ff7a45832e4cb3adaa3972389457b2214810e629545e59b2b30984424d0b');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -126,6 +126,7 @@ describe('assets/cake.yaml', () => {
       cost_of_revenue: ['lp_fees'],
       holders: ['burn'],
       protocol: ['treasury'],
+      checks: ['price_chainlink'],
       of: { burn: 'burn_rev', treasury: 'treasury_rev' },
     });
   });

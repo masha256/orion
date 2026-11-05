@@ -1,3 +1,5 @@
+import { evaluateChecks, recordChecks } from '../checks/evaluate.js';
+import { resolveChecks, type CheckType } from '../checks/schema.js';
 import type { LoadedAsset } from '../config/load.js';
 import type { OrionDb } from '../db/connection.js';
 import { fetchAsset, type FetchDeps, type FetchResult } from '../ingest/run.js';
@@ -47,8 +49,8 @@ const errorOf = (err: unknown): { code: string; message: string } =>
 
 /**
  * The scheduled loop, in one process: lock, ingest (with its anomaly checks and watch rules), the holder-yield report for
- * the latest complete day, unlock, then the inbox. No agent run, ever. The report is the answer, whatever happened; only
- * a bug escapes as a throw.
+ * the latest complete day, the reconciliation checks for that day, unlock, then the inbox. No agent run, ever. The report
+ * is the answer, whatever happened; only a bug escapes as a throw.
  */
 export async function tickAsset(db: OrionDb, loaded: LoadedAsset, deps: TickDeps): Promise<TickResult> {
   const asset = loaded.config;
@@ -93,6 +95,19 @@ export async function tickAsset(db: OrionDb, loaded: LoadedAsset, deps: TickDeps
         const today = utcDay(started.getTime());
         report.report_error = { code: 'report_stale', message: `holder-yield report day ${report.holder_yield.day} is ${lag} days behind the tick (${today}); a report flow has stopped`.slice(0, 300) };
         deps.onProgress?.(`report stale: ${report.report_error.message}`);
+      }
+
+      // ---- checks ----
+      // The reconciliation checks for the report's day, from stored rows (spec §5): stored, and a breach opens an advisory
+      // check_breach anomaly. No agent run, ever. A failure here is reported, never fatal: the report above stands.
+      try {
+        if (resolveChecks(asset).length === 0) return;
+        const results = await evaluateChecks(db, asset, report.holder_yield.day, { now: started });
+        await recordChecks(db, asset.id, results, deps.now().toISOString());
+        report.checks = results.map((r) => ({ id: r.checkId, type: r.type as CheckType, status: r.status, gap_pct: r.gapPct }));
+      } catch (err) {
+        report.checks_error = message(err).slice(0, 300);
+        deps.onProgress?.(`checks failed: ${report.checks_error}`);
       }
     }, {
       onTakeover: (n) => deps.onProgress?.(`${n} orphaned run(s) of a process that is gone marked abandoned`),

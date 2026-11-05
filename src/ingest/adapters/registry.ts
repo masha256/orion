@@ -18,6 +18,11 @@ export interface AdapterDef {
   /** Problems with `params`, one message each (empty when valid). The asset loader runs it, so a config proposal and its approve refuse bad params. */
   validateParams?(params: Record<string, unknown>): string[];
   run(ctx: SourceContext, params: Record<string, unknown>): Promise<SourceValue>;
+  /**
+   * The adapters whose readings this one's series is computed from (PUMP's `solana.supply_burn_daily` IS the fall in
+   * `solana.token_supply`'s readings). A reconciliation check refuses two sides joined by it (spec §5, circular checks).
+   */
+  computedFrom?: string[];
 }
 
 const ADAPTERS = new Map<string, AdapterDef>();

@@ -136,12 +136,12 @@ describe('adapter params validation', () => {
 
   it('parseAssetObject surfaces the refusal with the metric path; assets/lit.yaml still loads and keeps its hash', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(litYaml).hash).toBe('7d82928714f47280b81d85634b867601164bcbe9a3beab1d35b85457bcf98e44');
-    expect(parseAssetObject(parseYaml(litYaml)).hash).toBe('7d82928714f47280b81d85634b867601164bcbe9a3beab1d35b85457bcf98e44');
+    expect(parseAssetYaml(litYaml).hash).toBe('6f0c67f8a9a46f0474c1d50c8bf55fc38185e86fcfb393c5f5fb9c7483dac5a1');
+    expect(parseAssetObject(parseYaml(litYaml)).hash).toBe('6f0c67f8a9a46f0474c1d50c8bf55fc38185e86fcfb393c5f5fb9c7483dac5a1');
     // Another valid schedule loads (and is a different config from the file's 36 monthly tranches).
     const good = parseAssetObject(withTranches({ first: '2027-01-29', every_months: 3, count: 12 }));
     expect(good.config.metrics.unlocks_next_year.source).toMatchObject({ params: { tranches: { first: '2027-01-29', every_months: 3, count: 12 } } });
-    expect(good.hash).not.toBe('7d82928714f47280b81d85634b867601164bcbe9a3beab1d35b85457bcf98e44');
+    expect(good.hash).not.toBe('6f0c67f8a9a46f0474c1d50c8bf55fc38185e86fcfb393c5f5fb9c7483dac5a1');
     // A malformed one is refused with the metric path, through the object path (filing) and the YAML path (approve).
     const bad = withTranches({ first: '2027-01-29', every_months: 13, count: 36 });
     expect(() => parseAssetObject(bad)).toThrow(expect.objectContaining({ code: 'invalid_asset_config', message: expect.stringContaining('metrics.unlocks_next_year.source.params: tranches.every_months') }));

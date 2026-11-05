@@ -259,10 +259,13 @@ describe('income_statement schema', () => {
     refused(dl, /income_statement: dilution "unlocks" metric "flow_usd\.core" is not a level metric/);
   });
 
-  it('checks take only the sum type for now', () => {
+  it('a check takes one of the eight types (Task 5); an unknown type is refused', () => {
     const is = base();
-    is.checks[0].type = 'parameter';
-    refused(is, /checks.*expected "sum"/s);
+    is.checks[0].type = 'ratio';
+    refused(is, /checks/);
+    const wrongShape = base();
+    wrongShape.checks[0].type = 'parameter'; // a sum's keys under another type
+    refused(wrongShape, /checks\.0/);
   });
 
   it('unknown keys refused (strict)', () => {

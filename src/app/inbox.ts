@@ -69,10 +69,10 @@ export type Inbox = z.infer<typeof InboxSchema>;
 export const emptyInbox = (): Inbox => ({ observations: [], proposals: [], anomalies: [] });
 
 /** The keys under which an anomaly's detail holds a name Orion wrote itself (a source id, an address, a day). */
-const READING_STRING_KEYS: ReadonlySet<string> = new Set(['primary_source', 'check_source', 'source', 'scan', 'sender', 'month', 'day', 'tx']);
+const READING_STRING_KEYS: ReadonlySet<string> = new Set(['primary_source', 'check_source', 'source', 'scan', 'sender', 'month', 'day', 'tx', 'check_id', 'check_type']);
 
 /**
- * The numeric subset of an anomaly's detail: numbers, booleans, and the source, sender, day, and month names Orion
+ * The numeric subset of an anomaly's detail: numbers, booleans, and the source, sender, day, month and check names Orion
  * itself wrote, at any depth. Every other string is dropped, above all a source's error text, which may quote a
  * third-party response, and a note.
  */

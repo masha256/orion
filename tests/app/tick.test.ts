@@ -63,6 +63,46 @@ describe('tickAsset', () => {
     expect(await agentRuns()).toBe(0);
   });
 
+  it('tick report lists checks; no agent run is started', async () => {
+    // The mini asset with a statement and two checks: a two_path the fetch's own rows satisfy, a parameter that breaches.
+    const statement = [
+      'income_statement:', '  category: dex', '  scope: complete', '  window_days: 7',
+      '  revenue:', '    - { id: fees_rev, metric: flow_usd.fees }',
+      '  holders:', '    - { id: fees, of: fees_rev, bucket: cash, haircut: 0, recipient_base: all, capture_rule: contractual }',
+      '  checks:',
+      '    - { id: two_ways, type: two_path, a: flow_usd.fees, b: flow_usd.fees_programmatic, tolerance_pct: 1 }',
+      '    - { id: staker_share, type: parameter, metric: staker_emission_share, expected: 0.5, tolerance_pct: 0 }',
+      '',
+    ].join('\n');
+    world({ loaded: reportAsset(INGEST_ASSET_YAML, statement) });
+    await seedFees('2026-09-15', 12, 2);
+    await insertObservation(h.db, { assetId: 'mini', metricKey: 'staker_emission_share', observedAt: '2026-09-19T00:45:00.000Z', value: 0.3, source: 'onchain', fetchedAt: '2026-09-19T00:45:00.000Z' });
+    const { report, exitCode } = await tick();
+    expect(exitCode).toBe(0);
+    expect(report.holder_yield!.day).toBe('2026-09-18');
+    expect(report.checks).toEqual([
+      { id: 'two_ways', type: 'two_path', status: 'ok', gap_pct: 0 },
+      { id: 'staker_share', type: 'parameter', status: 'breach', gap_pct: expect.closeTo(40, 9) },
+    ]);
+    expect(TickReportSchema.parse(report)).toEqual(report);
+    // Stored for the report day, and the breach is an open advisory anomaly in the inbox: nothing else happens.
+    const stored = await h.db.all<{ check_id: string; day: string; status: string }>('SELECT check_id, day, status FROM check_results ORDER BY check_id');
+    expect(stored).toEqual([{ check_id: 'staker_share', day: '2026-09-18', status: 'breach' }, { check_id: 'two_ways', day: '2026-09-18', status: 'ok' }]);
+    expect(report.inbox.anomalies).toEqual([expect.objectContaining({ kind: 'check_breach', metric: '', severity: 'advisory', occurrences: 1, reading: expect.objectContaining({ check_id: 'staker_share', check_type: 'parameter', day: '2026-09-18', lhs: 0.3, rhs: 0.5 }) })]);
+    expect(await agentRuns()).toBe(0);
+    // The report reads the stored results back.
+    const yr = await loadHolderYieldReport(h.db, h.loaded.config, undefined, { legacy: true });
+    expect(yr.incomeStatement!.checks.map((c) => [c.id, c.status])).toEqual([['staker_share', 'breach'], ['two_ways', 'ok']]);
+
+    // An asset with no checks: no `checks` key, nothing stored.
+    await testDb.reset();
+    world();
+    await seedFees('2026-09-15', 12, 2);
+    const plain = (await tick()).report;
+    expect(Object.keys(plain)).not.toContain('checks');
+    expect(await h.db.all('SELECT * FROM check_results')).toEqual([]);
+  });
+
   it('tick: ingest throws -> exit 1, error.code set, holder_yield null', async () => {
     // A chain with no default RPC URL and no environment variable for it: a configuration error, which is what throws.
     world({ loaded: reportAsset(INGEST_ASSET_YAML.replace('chain_id: 8453', 'chain_id: 999')) });

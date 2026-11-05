@@ -137,3 +137,65 @@ Open for Mike at G1:
 - Listing bar (M7): checks revenue + holders + supply (D6); counting below-line-to-holders lines would also fail CRV
   (llama.box vote incentives). AERO, HYPE, PUMP fail the bar today (third-party revenue), reported, not blocked.
 - Implementer choices where the spec is silent (Task 3 review, "Open for Mike" 1-6 above in this note).
+
+## Task 5: internal reconciliation checks (spec §5)
+
+Built: `income_statement.checks` takes all eight types (`src/checks/schema.ts`), results are stored per (asset, check,
+day) in `check_results` (migration 0003), a breach opens one advisory `check_breach` anomaly per check (dedupe = check
+id; no agent run: anomalies wake nothing since Phase 1), and the tick evaluates the report day's checks after the
+holder-yield report, inside the run lock (`checks` in the tick report; v2 `incomeStatement.checks` reads the stored
+rows). A side with no row for the day is `incomplete`, never a breach. Circular checks are refused at load: the same
+series on both sides, an adapter `computedFrom` the other side's adapter (set on `solana.supply_burn_daily`), a derived
+metric of the other side, a `parameter` on a `constant`, a `price` against the level's own primary contract.
+
+Conventions chosen (review before Phase 3 relies on them):
+- gap_pct = |lhs - rhs| / max(|lhs|, |rhs|) x 100, unsigned (0 when both are 0); lhs/rhs are stored, so the sign is not lost.
+- A level for day D is its first reading on D+1 (the report's rule). `balance`/`supply` use the readings within
+  6 h after each midnight (nightly 00:45 UTC, staging 02:45); the SQLite-era readings at ~12:05 UTC leave them
+  `incomplete`, which is right: a noon-to-noon change is not a midnight-to-midnight flow. Edge risk: a transfer in the
+  00:00-00:45 slot lands in the next day's balance change.
+- A `price` check `against` a contract reads the price cross-check's reading that the first fetch run on D+1 stored in
+  its detail (`chain_levels`); against a metric it reads that level's first reading on D+1.
+- A `revision` check compares, per day of the last `days`, the first row the source wrote with the row in force (the
+  adapter re-reads its last 3 days and supersedes a changed row; the superseded row is kept). LIT's Lighter adapter
+  re-reads only 3 days, so a restatement older than that is never seen by Orion at all.
+- Automatic checks: `<line>_share` (`parameter`, tolerance 0) per `share_metric`; `<line>_paid` (`two_path`, the
+  statement window, tolerance 5 percent: a payout measured at the recipients lags its source) per `paid_metric`, skipped
+  when the paid series is the line's own.
+
+Wired (per asset):
+
+| asset | check | type | sides | tolerance |
+|---|---|---|---|---|
+| CRV | splitter | sum | flow_usd.protocol_revenue vs vecrv_fees + treasury (daily) | 2% |
+| sdCRV | crv_fee | sum | flow_usd.sd_rev_crv vs vesdt + treasury_crv + crv_fee_share + boost_delegators (daily) | 2% |
+| yCRV | splitter | sum | flow_usd.yearn_gross vs ybs_payout + treasury (daily) | 2% |
+| LIT | robinhood_partner_share (auto) | parameter | rh_revenue_share_app vs 0.5 | 0 |
+| LIT | fees_core_revision | revision | flow_usd.fees_core, 30 days | 0.01% |
+| cvxCRV | crv_paid (auto) | two_path | flow_usd.convex_rev_cvxcrv vs flow_usd.crv, 91-day sums | 5% |
+| UNI | price_chainlink | price | price_usd (CoinGecko) vs chainlink_uni_usd | 2% |
+| LINK | price_chainlink | price | price_usd vs chainlink_link_usd | 2% |
+| LINK | reserve_balance | balance | Δ reserve_link vs flow_tokens.reserve (no outflows) | 1%, or 10 LINK |
+| CAKE | price_chainlink | price | price_usd vs chainlink_cake_usd (BNB Chain) | 2% |
+
+The CRV-family sums were already in `income_statement.checks` (Task 2); their YAML is unchanged and their hashes did not
+move. They are now evaluated daily: the spec's 0.00 / 0.00 / 0.01 percent gaps are 91-day figures, so a split paid out
+in a later transaction than the inflow would breach on single days. If the proof copy shows that, set `window_days` on
+the check (a hash move), and do not raise the tolerance.
+
+Deferred (spec §5 examples), with the metric each lacks and the track that adds it:
+
+| check | type | lacks | track |
+|---|---|---|---|
+| LIT reserve vs buys - burns | balance | a level of the L1 ecosystem reserve's LIT and a burns-in-tokens flow from it | Phase 3 LIT |
+| LIT buybacks (fills) vs treasury LIT balance | two_path | a level of the treasury account's (index 0) LIT balance on Lighter | Phase 3 LIT |
+| PUMP supply drop vs burn instructions | supply | an independent burn-instruction series: `flow_tokens.buyback` IS the supply drop (refused as circular) | Phase 3 PUMP |
+| UNI 0xdead balance vs burns | supply | nothing: `total_supply` (less 0xdead) and `flow_tokens.burn` are stored; not in this task's list, so not wired (one YAML line, UNI hash moves) | Phase 3 UNI, or a follow-up |
+| VVV burn vs DefiLlama `venice` -> supply on the burn sink | supply | nothing structural (`total_supply`, `flow_tokens.burn` stored); left for Phase 3 with the DefiLlama removal | Phase 3 VVV |
+| HYPE AF buys (fills) vs AF balance | two_path | a first-party fills series and a level of the Assistance Fund's HYPE | Phase 3 HYPE |
+| Hyperliquid fills | revision | the first-party fills series (today `flow_usd.af_buyback` is DefiLlama) | Phase 3 HYPE |
+| UNI v2 `feeTo` share (x6) | parameter | a `v2_protocol_share` level and a derived v2 gross line (decision 7) | Phase 3 UNI |
+| SKY splitter burn share | parameter | a statement line that assumes the share: `splitter_burn_share` is stored, but both SKY flows are measured, so nothing states 0.55 | Phase 3 SKY |
+| UNI v3 listed pools vs total `collectProtocol` | coverage | the v3 pool_scan series and the protocol total | Phase 3 UNI v3 |
+| `price` on the 7 assets with a `coins.llama.fi` cross-check (AERO, CRV, cvxCRV, HYPE, sdCRV, SKY, yCRV) | price | a Chainlink feed or a deep-pool `slot0` level (SKY's Chronicle pip reverts through Multicall3) | Phase 3 per asset; the llama checks stay, labelled third_party |
+| VVV disclosed revenue | watch | `usage_index` watch in place of the DefiLlama `revenue_proxy` cross-check (a watch, not a check) | Phase 3 VVV |

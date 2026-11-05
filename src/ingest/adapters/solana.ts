@@ -184,5 +184,5 @@ async function supplyBurnDaily(ctx: SourceContext, params: Record<string, unknow
 export const solanaAdapters: AdapterDef[] = [
   { name: 'solana.token_supply', needsRpc: false, run: tokenSupplyLevel },
   { name: 'solana.owner_balance', needsRpc: false, run: ownerBalanceLevel },
-  { name: 'solana.supply_burn_daily', needsRpc: false, run: supplyBurnDaily },
+  { name: 'solana.supply_burn_daily', needsRpc: false, run: supplyBurnDaily, computedFrom: ['solana.token_supply'] },
 ];

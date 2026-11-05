@@ -187,6 +187,8 @@ income_statement:
     - { id: callers_fee, label: "CRV platform fee: callers (0.5 percent)", estimate: { of: platform_cvxcrv, ratio: 0.05 } }
   holders:
     - { id: vecrv_fees, of: vecrv_fees_rev, bucket: cash, haircut: 0, recipient_base: staked, valued_per: recipients, capture_rule: programmatic, note: wrapper stakers }
+    # paid_metric adds the automatic two_path check crv_paid (Phase 2 Task 5): the lock line's CRV into the BaseRewardPool
+    # vs the CRV the wrapper received, summed over the 91-day window (the pool streams rewards over 7 days), 5 percent.
     - { id: crv, of: platform_cvxcrv, paid_metric: flow_usd.crv, bucket: cash, haircut: 0.01, recipient_base: staked, valued_per: recipients, capture_rule: programmatic }
   protocol:
     - { id: cvx_stakers, of: platform_cvx }

@@ -248,8 +248,11 @@ export interface IsV2 {
     /** How the flows are priced: each day's USD at that day's price, as stored. */
     flows: string;
   };
-  /** Checks run in Task 5; empty here. */
-  checks: [];
+  /**
+   * The reconciliation checks (spec §5) as the tick stored them for this day, by check id: none when the day was never
+   * evaluated. `gapPct` is |lhs - rhs| / max(|lhs|, |rhs|) x 100; lhs/rhs/gapPct are null when a side had no row.
+   */
+  checks: IsCheckOut[];
   provenance: {
     /** Share of revenue by method (null without a positive revenue). */
     methods: { measured: number | null; derived: number | null; disclosed: number | null };
@@ -260,6 +263,17 @@ export interface IsV2 {
   };
   /** Display flags: not-measured lines, third-party lines, the payout ratio basis. */
   flags: string[];
+}
+
+export interface IsCheckOut {
+  id: string;
+  type: string;
+  status: 'ok' | 'breach' | 'incomplete';
+  lhs: number | null;
+  rhs: number | null;
+  gapPct: number | null;
+  tolerancePct: number | null;
+  evaluatedAt: string;
 }
 
 export interface PerToken {
@@ -778,7 +792,10 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
       price, metric: STD_METRICS.price, sourceType: priceDef ? sourceTypeOf(priceDef, asset.metrics) : null, source: priceDef ? sourceLabelOf(priceDef) : null,
       day, asOf: lv.asOf ?? null, flows: "each flow day's USD at that day's price (the stored value)",
     },
-    checks: [],
+    checks: (input.checks ?? []).map((c) => ({
+      id: c.checkId, type: c.type, status: c.status, lhs: c.lhs, rhs: c.rhs, gapPct: c.gapPct,
+      tolerancePct: typeof c.detail.tolerance_pct === 'number' ? c.detail.tolerance_pct : null, evaluatedAt: c.evaluatedAt,
+    })),
     provenance: { methods: { measured: methodShare('measured'), derived: methodShare('derived'), disclosed: methodShare('disclosed') }, thirdParty, sources, basis: 'config' },
     flags,
   };

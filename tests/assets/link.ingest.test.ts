@@ -110,7 +110,7 @@ describe('assets/link.yaml', () => {
     // Re-pinned 2026-10-17: dominance_share (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/link.yaml`, 'utf8')).hash).toBe('123c6c69bcc903e7178f991cf958ddb357afa10634642a6eece5fd7249b0cc74');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/link.yaml`, 'utf8')).hash).toBe('036be4e28d3fa0bcb08af0f0338e1b37c9130a8e551b4cdd39bd12217aa8b6e4');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -123,6 +123,7 @@ describe('assets/link.yaml', () => {
       revenue: ['onchain_fees'],
       cost_of_revenue: ['node_operators'],
       holders: ['reserve'],
+      checks: ['price_chainlink', 'reserve_balance'],
       of: { reserve: 'onchain_fees' },
     });
   });

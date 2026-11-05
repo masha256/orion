@@ -258,3 +258,8 @@ income_statement:
   burned_tokens: [ flow_tokens.buyback ]
   dilution:
     - { id: unlocks, metric: unlocks_next_year, note: "team and investor vesting, 36 monthly tranches from 2027-01-29 (Lighter terms; sizes from DefiLlama emissions)" }
+  # Reconciliation checks (spec §5, Phase 2 Task 5). Automatic: robinhood_partner_share (rh_revenue_share_app read from
+  # Lighter's app bundle vs the 0.5 the cost line assumes). Listed: a Lighter API restatement of a Core fee day (the
+  # adapter re-reads its last 3 days and supersedes a changed row; this compares each day's first row with the one in force).
+  checks:
+    - { id: fees_core_revision, type: revision, metric: flow_usd.fees_core, days: 30, tolerance_pct: 0.01 }

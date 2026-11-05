@@ -143,3 +143,7 @@ income_statement:
   burned_tokens: [ flow_tokens.burn ]
   dilution:
     - { id: labs_vest, metric: labs_vest_rate, cap_metric: labs_vest_approved, note: "Timelock to Uniswap Labs via UNIVesting" }
+  # Reconciliation checks (spec §5, Phase 2 Task 5): CoinGecko's price vs the Chainlink UNI/USD feed, the reading the
+  # price cross-check already stores in each fetch run's detail.
+  checks:
+    - { id: price_chainlink, type: price, level: price_usd, against: chainlink_uni_usd, tolerance_pct: 2 }

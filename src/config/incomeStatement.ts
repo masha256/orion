@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CheckSchema, checkIssues, type CheckAsset } from '../checks/schema.js';
 import type { IncomeStatementDef } from './schema.js';
 
 /**
@@ -89,14 +90,12 @@ export const IsBelowLineSchema = z.strictObject({
   capture_rule: CaptureRuleSchema.optional(),
 });
 
-/** A reconciliation: measured total flow metrics that the listed lines should add up to (the gap is reported, never booked). */
-export const IsCheckSchema = z.strictObject({
-  id: LineId,
-  type: z.literal('sum'),
-  total: z.array(z.string()).min(1),
-  parts: z.array(LineId).min(1),
-  tolerance_pct: z.number().nonnegative(),
-});
+/**
+ * The statement's reconciliation checks (spec §5; shapes in src/checks/schema.ts): `sum` (measured totals vs the lines
+ * they split into), `parameter`, `balance`, `supply`, `two_path`, `price`, `revision`, `coverage`. A gap is reported and
+ * stored (check_results), never booked.
+ */
+export const IsCheckSchema = CheckSchema;
 
 /** The block without the four keys shared with `reporting` (window_days, volume, dilution, burned_tokens; see schema.ts). */
 export const IncomeStatementBaseSchema = z.strictObject({
@@ -138,7 +137,7 @@ const present = (line: object, keys: string[]): string[] => keys.filter((k) => (
  * below-line line to holders, and no series read twice (a use of a revenue series goes through `of`; a `paid_metric` is
  * read by no other line). The shared reporting keys are checked in schema.ts. Messages are prefixed.
  */
-export function incomeStatementIssues(asset: { metrics: Record<string, { type: string; unit: string }>; income_statement?: IncomeStatementDef }): string[] {
+export function incomeStatementIssues(asset: CheckAsset): string[] {
   const is = asset.income_statement;
   if (!is) return [];
   const out: string[] = [];
@@ -296,13 +295,8 @@ export function incomeStatementIssues(asset: { metrics: Record<string, { type: s
     issue(`remainder ${is.remainder} closes that section as revenue less the rest; list no ${is.remainder} line`);
   }
 
-  const checkIds = new Set<string>();
-  for (const c of is.checks ?? []) {
-    if (checkIds.has(c.id)) issue(`check id "${c.id}" is used twice`);
-    checkIds.add(c.id);
-    for (const m of c.total) flow(m, `check ${c.id} total`);
-    for (const p of c.parts) if (!ids.has(p)) issue(`check ${c.id} part "${p}" is not a line id`);
-  }
+  // Every check, explicit or automatic (src/checks/schema.ts): references, types, ids, and the circular-check rule.
+  for (const message of checkIssues(asset)) issue(message);
   return out;
 }
 

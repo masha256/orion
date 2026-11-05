@@ -161,3 +161,7 @@ income_statement:
     - { id: treasury, of: treasury_rev }
   volume: [ flow_usd.fees ]
   burned_tokens: [ flow_tokens.burn ]
+  # Reconciliation checks (spec §5, Phase 2 Task 5): CoinGecko's price vs the Chainlink CAKE/USD feed on BNB Chain, the
+  # reading the price cross-check already stores in each fetch run's detail.
+  checks:
+    - { id: price_chainlink, type: price, level: price_usd, against: chainlink_cake_usd, tolerance_pct: 2 }

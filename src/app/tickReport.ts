@@ -1,5 +1,6 @@
 import { appendFileSync } from 'node:fs';
 import { z } from 'zod';
+import { CHECK_TYPES } from '../checks/schema.js';
 import type { HolderYieldReport } from '../report/holderYield.js';
 import type { IsV2 } from '../report/incomeStatement.js';
 import { WATCH_RULES } from '../types.js';
@@ -123,6 +124,15 @@ export const TickReportSchema = z.strictObject({
    * a day more than REPORT_STALE_DAYS behind the tick (`report_stale`, `holder_yield` kept). Message capped at 300.
    */
   report_error: ErrorSchema.nullable(),
+  /**
+   * The reconciliation checks evaluated for the report's day (spec §5, Task 5), in check order: what each found. Absent
+   * when the asset has no checks or the tick never reached them (an optional key, so a v2 row without it still parses).
+   */
+  checks: z
+    .array(z.strictObject({ id: z.string(), type: z.enum(CHECK_TYPES), status: z.enum(['ok', 'breach', 'incomplete']), gap_pct: num }))
+    .optional(),
+  /** Evaluating or storing the checks threw: its message (capped at 300). The rest of the tick is unaffected. */
+  checks_error: z.string().optional(),
   /** What awaits the user after this tick, computed last, outside the lock, so a tick that never got the lock still lists it. */
   inbox: InboxSchema,
   error: ErrorSchema.nullable(),

@@ -1,5 +1,6 @@
 import type { AssetConfig } from '../config/schema.js';
 import type { Db } from '../db/connection.js';
+import { listCheckResults } from '../db/checkResults.js';
 import { listActiveObservations } from '../db/observations.js';
 import { latestLevel } from '../observations/select.js';
 import { addDays, utcDay } from '../ingest/time.js';
@@ -35,7 +36,8 @@ function statementFlowMetrics(asset: AssetConfig): string[] {
     ...is.revenue.flatMap((l) => [l.metric, l.derived?.from, l.cross_check]),
     ...uses.flatMap((l) => [l.metric, 'paid_metric' in l ? l.paid_metric : undefined]),
     ...(is.below_line ?? []).map((b) => b.metric),
-    ...(is.checks ?? []).flatMap((c) => c.total),
+    // Only a sum check's totals: the other check types read their own series, which must never move the report day.
+    ...(is.checks ?? []).flatMap((c) => (c.type === 'sum' ? c.total : [])),
     ...(is.volume ?? []),
     ...(is.burned_tokens ?? []),
   ].filter((m): m is string => m !== undefined);
@@ -213,5 +215,7 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
     provisional.set(m, p.provisional);
     daily.set(m, p.days);
   }
-  return yieldReport({ asset, day: target, daily, provisional, levels }, opts);
+  // The checks the tick stored for this day (v2 only: the legacy object never carries them).
+  const checks = asset.income_statement ? await listCheckResults(db, asset.id, target) : [];
+  return yieldReport({ asset, day: target, daily, provisional, levels, ...(checks.length > 0 ? { checks } : {}) }, opts);
 }

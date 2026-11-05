@@ -191,7 +191,7 @@ describe('assets/lit.yaml', () => {
     // Re-pinned 2026-10-23: revenue and volume from Lighter's API, the Robinhood watch, staked LIT (all monitor-only).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('7d82928714f47280b81d85634b867601164bcbe9a3beab1d35b85457bcf98e44');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('6f0c67f8a9a46f0474c1d50c8bf55fc38185e86fcfb393c5f5fb9c7483dac5a1');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -205,6 +205,7 @@ describe('assets/lit.yaml', () => {
       cost_of_revenue: ['robinhood_partner'],
       holders: ['buyback'],
       remainder: 'protocol',
+      checks: ['fees_core_revision'],
       of: { robinhood_partner: 'robinhood' },
     });
   });

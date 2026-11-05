@@ -1,7 +1,8 @@
 import { OrionError } from '../types.js';
 import type { Db } from './connection.js';
 
-export type AnomalyKind = 'cross_check_mismatch' | 'unlisted_sender' | 'source_failure_streak' | 'revenue_disclosure_stale' | 'revenue_payment';
+/** `check_breach`: an internal reconciliation check past its tolerance (src/checks, migration 0003); advisory, no agent. */
+export type AnomalyKind = 'cross_check_mismatch' | 'unlisted_sender' | 'source_failure_streak' | 'revenue_disclosure_stale' | 'revenue_payment' | 'check_breach';
 export type AnomalySeverity = 'degrading' | 'advisory';
 export type AnomalyStatus = 'open' | 'resolved' | 'acknowledged';
 

@@ -151,3 +151,9 @@ income_statement:
     - { id: reserve, of: onchain_fees, bucket: hold, haircut: 0.05, recipient_base: all, capture_rule: discretionary, note: "fees converted to LINK and held in the Chainlink Reserve" }
   dilution:
     - { id: releases, metric: released_rate, note: "quarterly releases from Chainlink's non-circulating Safes (trailing 365 days)" }
+  # Reconciliation checks (spec §5, Phase 2 Task 5): CoinGecko's price vs the Chainlink LINK/USD feed (the price
+  # cross-check's stored reading); the Reserve's day change in LINK vs the scanned buys (no outflow is expected; a fall
+  # is a withdrawal). tolerance_abs 10 LINK: the scan ignores transfers below 10 LINK and unlisted senders.
+  checks:
+    - { id: price_chainlink, type: price, level: price_usd, against: chainlink_link_usd, tolerance_pct: 2 }
+    - { id: reserve_balance, type: balance, level: reserve_link, inflows: [ flow_tokens.reserve ], outflows: [], tolerance_pct: 1, tolerance_abs: 10 }

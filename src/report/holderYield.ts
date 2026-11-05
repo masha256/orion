@@ -1,4 +1,5 @@
 import type { AssetConfig, FlowKind, RecipientBase } from '../config/schema.js';
+import type { CheckResult } from '../db/checkResults.js';
 import { addDays } from '../ingest/time.js';
 import { DAYS_PER_YEAR } from '../types.js';
 import type { IsV2 } from './incomeStatement.js';
@@ -50,6 +51,8 @@ export interface ReportInput {
   /** Days of a periodic stream's metric not yet paid for: filled at the last period's daily rate, provisional. */
   provisional?: Map<string, Set<string>>;
   levels: ReportLevels;
+  /** The stored reconciliation check results for `day` (income statement v2 only; v1 never reads them). */
+  checks?: CheckResult[];
 }
 
 /** Streams younger than this are left out of the second revenue growth figure (a new stream inflates 90d/90d). */

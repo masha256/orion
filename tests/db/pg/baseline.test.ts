@@ -31,6 +31,8 @@ const NOT_CARRIED = [
 ];
 /** 0002_daemon's tables: not in SQLite, not carried; checked in tests/db/daemonSchema.test.ts. */
 const DAEMON = ['asset_registry', 'asset_state_events', 'daemon_heartbeat', 'day_blocks', 'jobs', 'latest_levels', 'snapshots_out', 'watch_state'];
+/** Phase 2's tables (0003 check_results): not in SQLite, not carried; checked in tests/db/pg/migrate.test.ts. */
+const PHASE2 = ['check_results'];
 
 let config: DatabaseConfig;
 let db: PgDb;
@@ -64,7 +66,7 @@ describe('baseline', () => {
           [config.schema],
         )
       ).map((r) => r.table_name);
-      expect(pgTables).toEqual([...CARRIED, ...DAEMON, 'schema_migrations'].sort());
+      expect(pgTables).toEqual([...CARRIED, ...DAEMON, ...PHASE2, 'schema_migrations'].sort());
       for (const t of NOT_CARRIED) expect(pgTables).not.toContain(t);
 
       for (const table of CARRIED) {

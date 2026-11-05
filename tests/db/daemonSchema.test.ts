@@ -28,9 +28,9 @@ describe('0002_daemon', () => {
     const migrations = loadMigrations();
     const daemon = migrations.find((m) => m.id === 2);
     expect(daemon).toMatchObject({ name: 'daemon', breaking: false }); // expand-only
-    expect(await applyMigrations(db, {})).toEqual({ applied: [1, 2] });
+    expect(await applyMigrations(db, {})).toEqual({ applied: [1, 2, 3] });
     const rows = await db.all<{ id: number; name: string; sha256: string }>('SELECT id, name, sha256 FROM schema_migrations ORDER BY id');
-    expect(rows.map((r) => [r.id, r.name])).toEqual([[1, 'baseline'], [2, 'daemon']]);
+    expect(rows.map((r) => [r.id, r.name])).toEqual([[1, 'baseline'], [2, 'daemon'], [3, 'checks']]);
     expect(rows[1]!.sha256).toBe(daemon!.sha256);
     expect(await applyMigrations(db, {})).toEqual({ applied: [] });
   });
