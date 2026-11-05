@@ -4,6 +4,8 @@ import type { DayBlockCache } from '../db/dayBlocks.js';
 import { advanceCursor, getCursor } from '../db/fetchCursors.js';
 import { emptySourceOutcome, type FlowConflict, type SourceOutcome, type UnlistedTransfer } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
+import { coingeckoTokenRef, evmTokenRef, HOURS_PER_DAY, MS_PER_HOUR, upsertPrices, upsertToken, type TokenInfo } from '../db/prices.js';
+import { COINGECKO_PRICE_SOURCE, hourlyPriceRows } from '../prices/coingeckoHourly.js';
 import { fetchedProvenance } from '../provenance/locator.js';
 import { txRefsProvenance } from '../provenance/types.js';
 import { MS_PER_DAY, OrionError } from '../types.js';
@@ -174,7 +176,7 @@ export function mintDepositor(logs: ReceiptLog[], vault: string, sink: string, v
  * The block a transfer scan reads up to: the finalized block when the transport has the tag; when the RPC rejects it
  * (M-7: not every provider serves `finalized`), `latest` minus the chain's confirmations, with a note saying so.
  */
-async function scanUpperBound(rpc: RpcTransport, latest: BlockRef, notes: string[]): Promise<BlockRef> {
+export async function scanUpperBound(rpc: RpcTransport, latest: BlockRef, notes: string[]): Promise<BlockRef> {
   if (!rpc.finalizedBlock) return latest;
   try {
     return await rpc.finalizedBlock();
@@ -185,6 +187,235 @@ async function scanUpperBound(rpc: RpcTransport, latest: BlockRef, notes: string
     notes.push(`no finalized block (${why}): scanned up to latest - ${rpc.confirmations} (block ${n})`);
     return await rpc.getBlock(n);
   }
+}
+
+/** The token's decimals, read at `latest` (one multicall). */
+export async function readDecimals(rpc: RpcTransport, group: FlowGroup, latest: BlockRef): Promise<number> {
+  const [decimalsCall] = await rpc.multicall([{ address: group.token, signature: ERC20_ABI.decimals, functionName: 'decimals' }], latest.number);
+  if (!decimalsCall.ok) throw new Error(`decimals() on the token: ${decimalsCall.error}`);
+  return Number(decimalsCall.value);
+}
+
+/**
+ * The token a member's amounts are in (spec §4): the scanned token itself, or, for a vault share valued at its
+ * pricePerShare, the underlying the price id names (`coingecko:<id>`, since the config names no underlying address).
+ * Null when neither applies (a share counted in tokens: no such member today).
+ */
+export function memberToken(asset: AssetConfig, group: FlowGroup, m: FlowMember, decimals: number): TokenInfo | null {
+  if (m.sharePrice) {
+    if (m.priceCoingeckoId === null) return null;
+    return { tokenRef: coingeckoTokenRef(m.priceCoingeckoId), symbol: m.priceCoingeckoId, decimals: null, coingeckoId: m.priceCoingeckoId };
+  }
+  const name = Object.entries(asset.contracts ?? {}).find(([, address]) => String(address).toLowerCase() === group.token)?.[0];
+  const priced = m.priceCoingeckoId ?? group.members.find((o) => o.unit === 'usd' && !o.sharePrice && o.priceCoingeckoId !== null)?.priceCoingeckoId ?? null;
+  return {
+    tokenRef: evmTokenRef(asset.ingest!.chain_id, group.token),
+    symbol: name === undefined || name === 'token' ? asset.symbol : name,
+    decimals,
+    coingeckoId: priced,
+  };
+}
+
+/** One entry per token ref (the first one seen), skipping nulls. */
+export function uniqueTokens(list: (TokenInfo | null)[]): TokenInfo[] {
+  const out = new Map<string, TokenInfo>();
+  for (const t of list) if (t && !out.has(t.tokenRef)) out.set(t.tokenRef, t);
+  return [...out.values()];
+}
+
+/** A member's token total for the day and its 24 UTC-hour sub-totals (spec §4). */
+export interface MemberTokens {
+  amount: number;
+  hourly: number[];
+}
+
+/** What one day's scan counted, before anything is written. */
+export interface DayScan {
+  /** Per member, the value its row stores (USD for unit usd, tokens otherwise); null when the scanner has no prices. */
+  values: Map<string, number> | null;
+  /** Per member, in the member's token (tokens x share price for a vault share; never priced). */
+  tokens: Map<string, MemberTokens>;
+  /** Per member: the `txhash:logIndex` of every transfer counted into it (provenance tx refs and digest). */
+  refs: Map<string, string[]>;
+  senders: Map<string, { count: number; tokens: number }>;
+  sharePrices: Map<string, number>;
+  counted: number;
+  unlisted: UnlistedTransfer[];
+}
+
+export interface DayScanner {
+  /** The first block of day `d`: from the chain's cache, else searched (and cached once it is safely final). */
+  dayStart(d: string, anchor: BlockRef): Promise<BlockRef>;
+  /** Counts the transfers of `day` in blocks [from, next - 1]. Reads the chain; writes nothing. */
+  scanDay(day: string, from: BlockRef, next: BlockRef): Promise<DayScan>;
+  /** Transfers not counted, as configured, over every day scanned so far. */
+  readonly ignored: { zero: number; listed: number; clones: number; dust: number };
+  readonly mintsAttributed: number;
+  /** Transfers whose time fell outside their day's 24 hours (bucketed at the nearer edge). */
+  readonly edgeHours: number;
+}
+
+export interface DayScannerArgs {
+  group: FlowGroup;
+  rpc: RpcTransport;
+  /** The scan's upper bound (the finalized block when the chain has one). */
+  latest: BlockRef;
+  dayBlocks?: DayBlockCache;
+  /** Write final day boundaries to `dayBlocks` (a real run only). */
+  cacheDayBlocks: boolean;
+  sleep(ms: number): Promise<void>;
+  /** Price series by CoinGecko id for the usd members; null: count tokens only (`values` is null). */
+  series: Map<string, PriceSeries> | null;
+  decimals: number;
+  /** Hears every unlisted transfer as it is found, so a day that fails part-way still reports the ones it saw. */
+  onUnlisted?: (t: UnlistedTransfer) => void;
+}
+
+/**
+ * The transfer scanner's per-day count, shared by the flow writer and the token backfill so both count exactly the same
+ * transfers. USD is priced per transfer at its own time (the reference method, spec §4); token amounts are summed per
+ * member and per UTC hour beside it.
+ */
+export async function openDayScanner(o: DayScannerArgs): Promise<DayScanner> {
+  const { group, rpc, latest, decimals } = o;
+  const allow = new Map(group.allowlist.map((a) => [a.address, a.name]));
+  const ignore = new Set(group.ignore ?? []);
+  const cloneImpls = new Set(group.ignoreClonesOf ?? []);
+  if (cloneImpls.size > 0 && !rpc.getCode) throw new Error('from_ignore_clones_of needs an RPC transport that reads contract code');
+  // Code does not change for a clone, so one read per sender per scan.
+  const cloneOf = new Map<string, string | null>();
+  const isIgnoredClone = async (sender: string): Promise<boolean> => {
+    if (cloneImpls.size === 0) return false;
+    if (!cloneOf.has(sender)) cloneOf.set(sender, cloneImplementation(await rpc.getCode!(sender)));
+    const impl = cloneOf.get(sender)!;
+    return impl !== null && cloneImpls.has(impl);
+  };
+  const ignored = { zero: 0, listed: 0, clones: 0, dust: 0 };
+  if (group.mintSender && !rpc.getReceiptLogs) throw new Error('mint_sender needs an RPC transport that reads receipts');
+  let mintsAttributed = 0;
+  let edgeHours = 0;
+
+  const dayStart = async (d: string, anchor: BlockRef): Promise<BlockRef> => {
+    const hit = await o.dayBlocks?.get(d);
+    if (hit) return hit;
+    const found = await firstBlockAtOrAfter(rpc, dayStartMs(d) / 1000, anchor, latest);
+    if (o.dayBlocks && o.cacheDayBlocks && found.timestamp <= latest.timestamp - DAY_BLOCK_MIN_AGE_SEC) await o.dayBlocks.put(d, found);
+    return found;
+  };
+
+  const scanDay = async (day: string, from: BlockRef, next: BlockRef): Promise<DayScan> => {
+    const startMs = dayStartMs(day);
+    const values = o.series ? new Map(group.members.map((m) => [m.metricKey, 0])) : null;
+    const tokens = new Map<string, MemberTokens>(group.members.map((m) => [m.metricKey, { amount: 0, hourly: new Array<number>(HOURS_PER_DAY).fill(0) }]));
+    const refs = new Map<string, string[]>(group.members.map((m) => [m.metricKey, []]));
+    const senders = new Map<string, { count: number; tokens: number }>();
+    const unlisted: UnlistedTransfer[] = [];
+    let counted = 0;
+    // Share prices for the day, read once at its last block and only when a counted transfer needs one.
+    const sharePrices = new Map<string, number>();
+    const sharePriceOf = async (sp: NonNullable<FlowMember['sharePrice']>): Promise<number> => {
+      const key = `${sp.address}.${sp.functionName}`;
+      const hit = sharePrices.get(key);
+      if (hit !== undefined) return hit;
+      const [r] = await rpc.multicall(
+        [{ address: sp.address, signature: `function ${sp.functionName}() view returns (uint256)`, functionName: sp.functionName }],
+        next.number - 1n,
+      );
+      if (!r.ok) throw new Error(`${sp.functionName}() on ${sp.address} at block ${next.number - 1n}: ${r.error}`);
+      const v = unitsToNumber(r.value, sp.decimals);
+      if (!(v > 0) || !Number.isFinite(v)) throw new Error(`${sp.functionName}() on ${sp.address} returned ${v}; day ${day} was not written`);
+      sharePrices.set(key, v);
+      return v;
+    };
+
+    for await (const chunk of getLogsChunked(rpc, { token: group.token, to: group.sink, fromBlock: from.number, toBlock: next.number - 1n }, { sleep: o.sleep })) {
+      for (const log of chunk.logs) {
+        let sender = log.from.toLowerCase();
+        if (sender === ZERO && group.mintSender === 'erc4626_deposit') {
+          const depositor = mintDepositor(await rpc.getReceiptLogs!(log.txHash), group.token, group.sink, log.value, log.logIndex);
+          if (depositor !== null) {
+            sender = depositor;
+            mintsAttributed++;
+          }
+        }
+        const amountTokens = unitsToNumber(log.value, decimals);
+        let name = allow.get(sender);
+        if (name === undefined) {
+          // Not this flow, and known to be so: a zero-amount transfer (it moves nothing), a listed sender, or a clone of a
+          // listed implementation. None is counted (an unlisted sender never is); they are only kept out of the report.
+          if (log.value === 0n) {
+            ignored.zero++;
+            continue;
+          }
+          if (ignore.has(sender)) {
+            ignored.listed++;
+            continue;
+          }
+          if (group.ignoreBelowTokens !== undefined && amountTokens < group.ignoreBelowTokens) {
+            ignored.dust++;
+            continue;
+          }
+          if (await isIgnoredClone(sender)) {
+            ignored.clones++;
+            continue;
+          }
+        }
+        if (name === undefined && group.anySender) name = sender; // from_any: every sender not ignored is the flow, by address
+        if (name === undefined) {
+          const u: UnlistedTransfer = { txHash: log.txHash, logIndex: log.logIndex, blockNumber: Number(log.blockNumber), from: sender, tokens: amountTokens, day };
+          unlisted.push(u);
+          o.onUnlisted?.(u);
+          continue;
+        }
+        counted++;
+        const tally = senders.get(name) ?? { count: 0, tokens: 0 };
+        tally.count++;
+        tally.tokens += amountTokens;
+        senders.set(name, tally);
+        // The UTC hour of the transfer within its day (blocks [from, next) lie inside the day by construction).
+        let hour = Math.floor((log.timestamp * 1000 - startMs) / MS_PER_HOUR);
+        if (hour < 0 || hour >= HOURS_PER_DAY) {
+          edgeHours++;
+          hour = hour < 0 ? 0 : HOURS_PER_DAY - 1;
+        }
+        for (const m of group.members) {
+          if (m.countFrom !== null && !m.countFrom.includes(sender)) continue;
+          let amount = m.sharePrice ? amountTokens * (await sharePriceOf(m.sharePrice)) : amountTokens;
+          const tk = tokens.get(m.metricKey)!;
+          tk.amount += amount;
+          tk.hourly[hour] += amount;
+          if (values) {
+            if (m.unit === 'usd') {
+              const price = priceAt(o.series!.get(m.priceCoingeckoId!)!, log.timestamp * 1000);
+              if (price === null) {
+                throw new Error(
+                  `no ${m.priceCoingeckoId} price point at or before ${new Date(log.timestamp * 1000).toISOString()}; day ${day} was not written`,
+                );
+              }
+              amount *= price;
+            }
+            values.set(m.metricKey, values.get(m.metricKey)! + amount);
+          }
+          refs.get(m.metricKey)!.push(`${log.txHash}:${log.logIndex}`);
+        }
+      }
+    }
+    return { values, tokens, refs, senders, sharePrices, counted, unlisted };
+  };
+
+  return {
+    dayStart,
+    scanDay,
+    get ignored() {
+      return ignored;
+    },
+    get mintsAttributed() {
+      return mintsAttributed;
+    },
+    get edgeHours() {
+      return edgeHours;
+    },
+  };
 }
 
 export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult> {
@@ -229,10 +460,8 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
       return result;
     }
 
-    // 3. Token decimals and price series.
-    const [decimalsCall] = await rpc.multicall([{ address: group.token, signature: ERC20_ABI.decimals, functionName: 'decimals' }], latest.number);
-    if (!decimalsCall.ok) throw new Error(`decimals() on the token: ${decimalsCall.error}`);
-    const decimals = Number(decimalsCall.value);
+    // 3. Token decimals, price series, and the tokens and prices the rows refer to.
+    const decimals = await readDecimals(rpc, group, latest);
     const series = new Map<string, PriceSeries>();
     for (const m of group.members) {
       if (m.unit !== 'usd') continue;
@@ -241,128 +470,36 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
         series.set(m.priceCoingeckoId, await loadPrices(args.http, args.env, m.priceCoingeckoId, rangeStartMs, args.now.getTime()));
       }
     }
+    const tokenOf = new Map(group.members.map((m) => [m.metricKey, memberToken(asset, group, m, decimals)]));
+    if (!dryRun) {
+      // Every hourly point the scan loaded goes into `prices` (spec §4): no request beyond the ones made above.
+      for (const t of uniqueTokens([...tokenOf.values()])) await upsertToken(db, t);
+      for (const [id, s] of series) {
+        const rows = hourlyPriceRows(s.hourly);
+        for (const t of uniqueTokens([...tokenOf.values()])) if (t.coingeckoId === id) await upsertPrices(db, t.tokenRef, COINGECKO_PRICE_SOURCE, rows, nowIso);
+      }
+    }
 
     // 4. One day at a time, oldest first. Each day commits on its own, so an interrupted backfill resumes.
-    const allow = new Map(group.allowlist.map((a) => [a.address, a.name]));
-    const ignore = new Set(group.ignore ?? []);
-    const cloneImpls = new Set(group.ignoreClonesOf ?? []);
-    if (cloneImpls.size > 0 && !rpc.getCode) throw new Error('from_ignore_clones_of needs an RPC transport that reads contract code');
-    // Code does not change for a clone, so one read per sender per scan.
-    const cloneOf = new Map<string, string | null>();
-    const isIgnoredClone = async (sender: string): Promise<boolean> => {
-      if (cloneImpls.size === 0) return false;
-      if (!cloneOf.has(sender)) cloneOf.set(sender, cloneImplementation(await rpc.getCode!(sender)));
-      const impl = cloneOf.get(sender)!;
-      return impl !== null && cloneImpls.has(impl);
-    };
-    const ignored = { zero: 0, listed: 0, clones: 0, dust: 0 };
-    if (group.mintSender && !rpc.getReceiptLogs) throw new Error('mint_sender needs an RPC transport that reads receipts');
-    let mintsAttributed = 0;
+    const scanner = await openDayScanner({
+      group, rpc, latest, dayBlocks: args.dayBlocks, cacheDayBlocks: !dryRun, sleep: args.sleep, series, decimals, onUnlisted: (u) => result.unlisted.push(u),
+    });
     const retired = new Set<number>();
     const wroteAny = new Set<string>();
-    // The first block of day `d`: from the chain's cache, else searched (and cached once it is safely final).
-    const dayStart = async (d: string, anchor: BlockRef): Promise<BlockRef> => {
-      const hit = await args.dayBlocks?.get(d);
-      if (hit) return hit;
-      const found = await firstBlockAtOrAfter(rpc, dayStartMs(d) / 1000, anchor, latest);
-      if (args.dayBlocks && !dryRun && found.timestamp <= latest.timestamp - DAY_BLOCK_MIN_AGE_SEC) await args.dayBlocks.put(d, found);
-      return found;
-    };
-    let from = await dayStart(startDay, latest);
+    let from = await scanner.dayStart(startDay, latest);
 
     for (let day = startDay; day <= lastCompleteDay; day = addDays(day, 1)) {
       const dayEndMs = dayStartMs(day) + MS_PER_DAY;
-      const next = await dayStart(addDays(day, 1), from);
-      const sums = new Map(group.members.map((m) => [m.metricKey, 0]));
-      /** Per member: the `txhash:logIndex` of every transfer counted into it (provenance tx refs and digest). */
-      const refs = new Map<string, string[]>(group.members.map((m) => [m.metricKey, []]));
-      const senders = new Map<string, { count: number; tokens: number }>();
-      let counted = 0;
-      let unlistedToday = 0;
-      // Share prices for the day, read once at its last block and only when a counted transfer needs one.
-      const sharePrices = new Map<string, number>();
-      const sharePriceOf = async (sp: NonNullable<FlowMember['sharePrice']>): Promise<number> => {
-        const key = `${sp.address}.${sp.functionName}`;
-        const hit = sharePrices.get(key);
-        if (hit !== undefined) return hit;
-        const [r] = await rpc.multicall(
-          [{ address: sp.address, signature: `function ${sp.functionName}() view returns (uint256)`, functionName: sp.functionName }],
-          next.number - 1n,
-        );
-        if (!r.ok) throw new Error(`${sp.functionName}() on ${sp.address} at block ${next.number - 1n}: ${r.error}`);
-        const v = unitsToNumber(r.value, sp.decimals);
-        if (!(v > 0) || !Number.isFinite(v)) throw new Error(`${sp.functionName}() on ${sp.address} returned ${v}; day ${day} was not written`);
-        sharePrices.set(key, v);
-        return v;
-      };
-
-      for await (const chunk of getLogsChunked(rpc, { token: group.token, to: group.sink, fromBlock: from.number, toBlock: next.number - 1n }, { sleep: args.sleep })) {
-        for (const log of chunk.logs) {
-          let sender = log.from.toLowerCase();
-          if (sender === ZERO && group.mintSender === 'erc4626_deposit') {
-            const depositor = mintDepositor(await rpc.getReceiptLogs!(log.txHash), group.token, group.sink, log.value, log.logIndex);
-            if (depositor !== null) {
-              sender = depositor;
-              mintsAttributed++;
-            }
-          }
-          const tokens = unitsToNumber(log.value, decimals);
-          let name = allow.get(sender);
-          if (name === undefined) {
-            // Not this flow, and known to be so: a zero-amount transfer (it moves nothing), a listed sender, or a clone of a
-            // listed implementation. None is counted (an unlisted sender never is); they are only kept out of the report.
-            if (log.value === 0n) {
-              ignored.zero++;
-              continue;
-            }
-            if (ignore.has(sender)) {
-              ignored.listed++;
-              continue;
-            }
-            if (group.ignoreBelowTokens !== undefined && tokens < group.ignoreBelowTokens) {
-              ignored.dust++;
-              continue;
-            }
-            if (await isIgnoredClone(sender)) {
-              ignored.clones++;
-              continue;
-            }
-          }
-          if (name === undefined && group.anySender) name = sender; // from_any: every sender not ignored is the flow, by address
-          if (name === undefined) {
-            result.unlisted.push({ txHash: log.txHash, logIndex: log.logIndex, blockNumber: Number(log.blockNumber), from: sender, tokens, day });
-            unlistedToday++;
-            continue;
-          }
-          counted++;
-          const tally = senders.get(name) ?? { count: 0, tokens: 0 };
-          tally.count++;
-          tally.tokens += tokens;
-          senders.set(name, tally);
-          for (const m of group.members) {
-            if (m.countFrom !== null && !m.countFrom.includes(sender)) continue;
-            let amount = m.sharePrice ? tokens * (await sharePriceOf(m.sharePrice)) : tokens;
-            if (m.unit === 'usd') {
-              const price = priceAt(series.get(m.priceCoingeckoId!)!, log.timestamp * 1000);
-              if (price === null) {
-                throw new Error(
-                  `no ${m.priceCoingeckoId} price point at or before ${new Date(log.timestamp * 1000).toISOString()}; day ${day} was not written`,
-                );
-              }
-              amount *= price;
-            }
-            sums.set(m.metricKey, sums.get(m.metricKey)! + amount);
-            refs.get(m.metricKey)!.push(`${log.txHash}:${log.logIndex}`);
-          }
-        }
-      }
+      const next = await scanner.dayStart(addDays(day, 1), from);
+      const scan = await scanner.scanDay(day, from, next);
+      const sums = scan.values!;
 
       const observedAt = new Date(dayEndMs).toISOString();
       const detail = JSON.stringify({
         day,
         blocks: [Number(from.number), Number(next.number) - 1],
-        senders: Object.fromEntries([...senders.entries()].sort(([a], [b]) => (a < b ? -1 : 1))),
-        ...(sharePrices.size > 0 ? { share_price: Object.fromEntries([...sharePrices.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) } : {}),
+        senders: Object.fromEntries([...scan.senders.entries()].sort(([a], [b]) => (a < b ? -1 : 1))),
+        ...(scan.sharePrices.size > 0 ? { share_price: Object.fromEntries([...scan.sharePrices.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) } : {}),
       });
       const ids = new Map<string, number | null>(group.members.map((m) => [m.metricKey, null]));
       if (!dryRun) {
@@ -377,12 +514,15 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
               retired.add(c.observationId);
               outcome.retiredObservationIds.push(c.observationId);
             }
+            const token = tokenOf.get(m.metricKey)!;
+            const tk = scan.tokens.get(m.metricKey)!;
             const o = await insertObservation(t, {
               assetId: asset.id, metricKey: m.metricKey, observedAt, periodDays: 1, value: sums.get(m.metricKey)!, source: 'onchain',
               sourceDetail: detail, fetchedAt: nowIso,
               provenance: fetchedProvenance({ config: asset, hash: args.configHash }, m.metricKey, {
-                blockFrom: Number(from.number), blockTo: Number(next.number) - 1, ...txRefsProvenance(refs.get(m.metricKey)!),
+                blockFrom: Number(from.number), blockTo: Number(next.number) - 1, ...txRefsProvenance(scan.refs.get(m.metricKey)!),
               }),
+              ...(token ? { tokens: { tokenRef: token.tokenRef, amount: tk.amount, hourlyAmounts: tk.hourly } } : {}),
             });
             ids.set(m.metricKey, o.id);
           }
@@ -395,11 +535,12 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
         result.daily.get(m.metricKey)!.push({ day, value });
         wroteAny.add(m.metricKey);
       }
-      args.onProgress?.(`${group.sourceId} ${day}: ${counted} transfers${unlistedToday > 0 ? `, ${unlistedToday} unlisted` : ''}`);
+      args.onProgress?.(`${group.sourceId} ${day}: ${scan.counted} transfers${scan.unlisted.length > 0 ? `, ${scan.unlisted.length} unlisted` : ''}`);
       from = next;
     }
 
     outcome.metricsWritten = group.members.map((m) => m.metricKey).filter((k) => wroteAny.has(k));
+    const { ignored, mintsAttributed } = scanner;
     const parts = [
       ignored.zero > 0 ? `${ignored.zero} zero-amount` : '',
       ignored.listed > 0 ? `${ignored.listed} from from_ignore senders` : '',
@@ -408,6 +549,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
     ].filter((p) => p !== '');
     if (parts.length > 0) outcome.notes.push(`not counted, as configured: ${parts.join(', ')}`);
     if (mintsAttributed > 0) outcome.notes.push(`${mintsAttributed} mint(s) attributed to their ERC-4626 depositor`);
+    if (scanner.edgeHours > 0) outcome.notes.push(`${scanner.edgeHours} transfer(s) stamped outside their day's hours, counted in its first or last hour`);
     if (dryRun && conflicts.length > 0) outcome.notes.push(`--adopt would reject ${conflicts.map((c) => `#${c.observationId}`).join(', ')}`);
   } catch (err) {
     if (err instanceof OrionError) throw err;

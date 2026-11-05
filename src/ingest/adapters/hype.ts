@@ -1,3 +1,4 @@
+import { USD_TOKEN } from '../../db/prices.js';
 import type { Json } from '../../provenance/types.js';
 import type { DailyPoint, PeriodicPayment, SourceContext, SourceValue } from '../types.js';
 import { toFiniteNumber } from '../units.js';
@@ -197,7 +198,8 @@ const fundBuysDaily: AdapterDef = {
     }
     // Drop leading empty days: before the API's memory, not zero buys.
     while (points.length > 0 && points[0].value === 0) points.shift();
-    return { kind: 'daily_series', points, detail: `hyperliquid userFillsByTime ${user} ${pair} buys` };
+    // USDC spent, priced by the fills themselves: token 'usd' (spec §4).
+    return { kind: 'daily_series', points, detail: `hyperliquid userFillsByTime ${user} ${pair} buys`, token: USD_TOKEN };
   },
 };
 
@@ -289,6 +291,8 @@ const reserveYieldPayments: AdapterDef = {
     return {
       kind: 'periodic_payments', payments, due, payers: [...payers].sort(), expectedPayers: treasuries.sort(),
       detail: `hyperliquid userNonFundingLedgerUpdates ${interest} -> ${fund} ${token}, ${interval}-day periods from ${started}, paid ${lag} days after`,
+      // USDC payments: dollars as the ledger reports them (token 'usd', spec §4).
+      ...(token === 'USDC' ? { token: USD_TOKEN } : {}),
     };
   },
 };

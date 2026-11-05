@@ -3,6 +3,7 @@ import { codeVersion, disclosedProvenance, MAX_TX_REFS, type Json, type Locator,
 import type { SourceType } from '../report/sourceTypes.js';
 import { OrionError, type ObservationSource, type ObservationStatus } from '../types.js';
 import type { Db } from './connection.js';
+import { checkedTokens, type ObservationTokens } from './prices.js';
 
 export interface Observation {
   id: number;
@@ -34,6 +35,11 @@ export interface NewObservation {
   fetchedAt: string;
   /** Required (spec §3, plan correction 2): the 0004 columns are nullable, so this type is what makes provenance mandatory. */
   provenance: Provenance;
+  /**
+   * The row's amount in token units (0005, spec §4), written next to `value`, which keeps its meaning (USD for a
+   * `flow_usd.*` row) until gate G3 (plan correction 2). Absent: the columns stay null. The token row must exist.
+   */
+  tokens?: ObservationTokens;
 }
 
 /** The 0004 columns of a stored row; every field null on history the backfill has not mapped yet. */
@@ -205,6 +211,7 @@ export async function insertObservation(db: Db, input: NewObservation): Promise<
   const observedAt = toIso(input.observedAt);
   const fetchedAt = toIso(input.fetchedAt);
   const p = checkedProvenance(input.provenance, input.citationUrl ?? null);
+  const tk = input.tokens ? checkedTokens(input.tokens) : null;
 
   return db.tx(
     async (t) => {
@@ -219,9 +226,10 @@ export async function insertObservation(db: Db, input: NewObservation): Promise<
         `INSERT INTO observations
            (asset_id, metric_key, observed_at, period_days, value, source, source_detail, status, citation_url, quoted_text, fetched_at,
             method, source_type, chain, locator, block_from, block_to, tx_count, tx_refs, tx_digest, response_digest, inputs, formula,
-            coverage, code_version, config_hash)
+            coverage, code_version, config_hash, token_ref, amount, hourly_amounts)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                 $12, $13, $14, $15::jsonb, $16, $17, $18, $19::jsonb, $20, $21, $22::jsonb, $23, $24::jsonb, $25, $26)
+                 $12, $13, $14, $15::jsonb, $16, $17, $18, $19::jsonb, $20, $21, $22::jsonb, $23, $24::jsonb, $25, $26,
+                 $27, $28, $29::jsonb)
          RETURNING id`,
         [
           input.assetId, input.metricKey, observedAt, input.periodDays ?? null, input.value, input.source,
@@ -229,6 +237,7 @@ export async function insertObservation(db: Db, input: NewObservation): Promise<
           p.method, p.sourceType, p.chain, JSON.stringify(p.locator), p.blockFrom ?? null, p.blockTo ?? null, p.txCount ?? null,
           jsonParam(p.txRefs), p.txDigest ?? null, p.responseDigest ?? null, jsonParam(p.inputs), p.formula ?? null, jsonParam(p.coverage),
           p.codeVersion, p.configHash,
+          tk?.tokenRef ?? null, tk?.amount ?? null, tk?.hourlyAmounts ? JSON.stringify(tk.hourlyAmounts) : null,
         ],
       );
       const newId = Number(inserted.rows[0].id);
@@ -313,4 +322,36 @@ export async function rejectObservation(db: Db, id: number): Promise<void> {
     },
     { lockAsset: assetId },
   );
+}
+
+/** The 0005 columns of a stored row: null on rows written before 0005 that the token backfill has not filled. */
+export interface StoredTokens {
+  id: number;
+  tokenRef: string | null;
+  amount: number | null;
+  hourlyAmounts: number[] | null;
+}
+
+export async function getTokensByIds(db: Db, ids: number[]): Promise<StoredTokens[]> {
+  if (ids.length === 0) return [];
+  const rows = await db.all<{ id: number; token_ref: string | null; amount: number | null; hourly_amounts: number[] | null }>(
+    'SELECT id, token_ref, amount, hourly_amounts FROM observations WHERE id = ANY($1::bigint[]) ORDER BY id',
+    [ids],
+  );
+  return rows.map((r) => ({ id: r.id, tokenRef: r.token_ref, amount: r.amount, hourlyAmounts: r.hourly_amounts }));
+}
+
+/**
+ * Fills the token columns of one active row that has none (the token backfill, Task 7). Only `token_ref`, `amount` and
+ * `hourly_amounts` change: never `value`, never a new row. Returns false when the row already had tokens, or is no
+ * longer active (a concurrent write got there first), and then changes nothing.
+ */
+export async function fillObservationTokens(db: Db, id: number, tokens: ObservationTokens): Promise<boolean> {
+  const t = checkedTokens(tokens);
+  const r = await db.run(
+    `UPDATE observations SET token_ref = $2, amount = $3, hourly_amounts = $4::jsonb
+     WHERE id = $1 AND amount IS NULL AND ${ACTIVE}`,
+    [id, t.tokenRef, t.amount, t.hourlyAmounts ? JSON.stringify(t.hourlyAmounts) : null],
+  );
+  return r.rowCount === 1;
 }

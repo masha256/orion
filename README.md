@@ -35,6 +35,8 @@ orion asset list | show <id> | validate [id]
 orion data fetch [asset] [--metric <key>]... [--backfill-days <n>] [--adopt] [--dry-run]
 orion data sources vvv                    # per metric: source, cross-checks, last fetch outcome, age of the value in force
 orion data show vvv [metric]              # active observations, newest first
+orion data backfill-tokens crv [--metric <key>]... [--days <n>] [--dry-run]   # fill token amounts + hourly buckets on pre-0005 transfer-scan rows (never changes value)
+orion data compare-usd crv [--days 91]   # stored USD vs hourly tokens x hourly prices, per metric (read-only; gate G2)
 orion data set vvv price_usd 28.10 --citation <url>   # a hand-entered observation: a disclosure, so --citation is required (add --quote "...")
 orion data confirm <obs_id>               # promote a provisional observation
 orion data reject <obs_id>                # retire an observation; the row is kept

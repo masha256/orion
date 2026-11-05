@@ -43,22 +43,23 @@ describe('migrate', () => {
   it('migrate: the shipped migrations apply to an empty schema; a second run applies nothing; status is current', async () => {
     const db = await emptySchema();
     const before = await migrationStatus(db);
-    expect(before).toMatchObject({ schema: db.schema, dbAt: 0, codeRequires: 4, applied: [], changed: [], state: 'behind' });
+    expect(before).toMatchObject({ schema: db.schema, dbAt: 0, codeRequires: 5, applied: [], changed: [], state: 'behind' });
     expect(before.pending).toEqual([
       { id: 1, name: 'baseline', breaking: false }, { id: 2, name: 'daemon', breaking: false }, { id: 3, name: 'checks', breaking: false },
-      { id: 4, name: 'provenance', breaking: false },
+      { id: 4, name: 'provenance', breaking: false }, { id: 5, name: 'tokens_prices', breaking: false },
     ]);
 
-    expect(await applyMigrations(db, {})).toEqual({ applied: [1, 2, 3, 4] });
+    expect(await applyMigrations(db, {})).toEqual({ applied: [1, 2, 3, 4, 5] });
     expect(await applyMigrations(db, {})).toEqual({ applied: [] });
     const after = await migrationStatus(db);
-    const [baseline, daemon, checks, provenance] = loadMigrations();
-    expect(after).toMatchObject({ dbAt: 4, codeRequires: 4, pending: [], changed: [], state: 'current' });
+    const [baseline, daemon, checks, provenance, tokensPrices] = loadMigrations();
+    expect(after).toMatchObject({ dbAt: 5, codeRequires: 5, pending: [], changed: [], state: 'current' });
     expect(after.applied).toEqual([
       { id: 1, name: 'baseline', sha256: baseline!.sha256, appliedAt: expect.stringMatching(/Z$/) },
       { id: 2, name: 'daemon', sha256: daemon!.sha256, appliedAt: expect.stringMatching(/Z$/) },
       { id: 3, name: 'checks', sha256: checks!.sha256, appliedAt: expect.stringMatching(/Z$/) },
       { id: 4, name: 'provenance', sha256: provenance!.sha256, appliedAt: expect.stringMatching(/Z$/) },
+      { id: 5, name: 'tokens_prices', sha256: tokensPrices!.sha256, appliedAt: expect.stringMatching(/Z$/) },
     ]);
     expect((await db.one<{ n: number }>('SELECT count(*) AS n FROM observations'))?.n).toBe(0);
   });
@@ -67,7 +68,7 @@ describe('migrate', () => {
     const db = await emptySchema();
     await db.run(`DROP SCHEMA ${db.schema}`);
     expect((await migrationStatus(db)).state).toBe('behind');
-    expect(await applyMigrations(db, {})).toEqual({ applied: [1, 2, 3, 4] });
+    expect(await applyMigrations(db, {})).toEqual({ applied: [1, 2, 3, 4, 5] });
     expect((await migrationStatus(db)).state).toBe('current');
   });
 
@@ -161,7 +162,7 @@ describe('migrate', () => {
     const all = loadMigrations();
     expect(all[3]).toMatchObject({ id: 4, name: 'provenance', breaking: false }); // expand-only
     expect(await applyMigrations(db, { migrations: all.slice(0, 3) })).toEqual({ applied: [1, 2, 3] });
-    expect(await applyMigrations(db, {})).toEqual({ applied: [4] });
+    expect(await applyMigrations(db, { migrations: all.slice(0, 4) })).toEqual({ applied: [4] });
     const cols = async (table: string) =>
       await db.all<{ c: string; t: string; n: string; coll: string | null }>(
         `SELECT column_name AS c, data_type AS t, is_nullable AS n, collation_name AS coll FROM information_schema.columns
@@ -178,6 +179,48 @@ describe('migrate', () => {
     expect((await cols('latest_levels')).slice(-2).map((x) => [x.c, x.t, x.n])).toEqual([['source_type', 'text', 'YES'], ['locator', 'jsonb', 'YES']]);
     const idx = await db.one<{ def: string }>("SELECT indexdef AS def FROM pg_indexes WHERE schemaname = $1 AND indexname = 'idx_obs_method'", [db.schema]);
     expect(idx?.def).toMatch(/\(asset_id, metric_key, method\)/);
+  });
+
+  it('0005 applies after 0004 on a populated observations table: tokens and prices, three nullable token columns, the usd row, flow_usd_v', async () => {
+    const db = await emptySchema();
+    const all = loadMigrations();
+    expect(all[4]).toMatchObject({ id: 5, name: 'tokens_prices', breaking: false }); // expand-only
+    expect(await applyMigrations(db, { migrations: all.slice(0, 4) })).toEqual({ applied: [1, 2, 3, 4] });
+    // A row as the release before 0005 inserts it (named columns, no token columns).
+    await db.run(
+      `INSERT INTO observations (asset_id, metric_key, observed_at, period_days, value, source, status, fetched_at)
+       VALUES ('crv', 'flow_usd.fees', '2026-10-02T00:00:00Z', 1, 12.5, 'onchain', 'confirmed', now())`,
+    );
+    expect(await applyMigrations(db, {})).toEqual({ applied: [5] });
+    const cols = async (table: string) =>
+      await db.all<{ c: string; t: string; n: string; coll: string | null }>(
+        `SELECT column_name AS c, data_type AS t, is_nullable AS n, collation_name AS coll FROM information_schema.columns
+         WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position`,
+        [db.schema, table],
+      );
+    expect((await cols('observations')).slice(-3).map((x) => [x.c, x.t, x.n])).toEqual([
+      ['token_ref', 'text', 'YES'], ['amount', 'double precision', 'YES'], ['hourly_amounts', 'jsonb', 'YES'],
+    ]);
+    expect((await cols('tokens')).map((x) => [x.c, x.t, x.n])).toEqual([
+      ['token_ref', 'text', 'NO'], ['symbol', 'text', 'NO'], ['decimals', 'bigint', 'YES'], ['peg', 'text', 'YES'], ['coingecko_id', 'text', 'YES'],
+    ]);
+    expect((await cols('prices')).map((x) => [x.c, x.t, x.n])).toEqual([
+      ['token_ref', 'text', 'NO'], ['ts', 'timestamp with time zone', 'NO'], ['price_usd', 'double precision', 'NO'], ['source', 'text', 'NO'],
+      ['fetched_at', 'timestamp with time zone', 'NO'],
+    ]);
+    for (const t of ['tokens', 'prices', 'observations']) expect((await cols(t)).filter((x) => x.t === 'text').every((x) => x.coll === 'C'), t).toBe(true);
+    expect(await db.all('SELECT token_ref, symbol, peg FROM tokens')).toEqual([{ token_ref: 'usd', symbol: 'USD', peg: 'usd' }]);
+    // The old row: its value untouched, its token columns null, and the view falls back to it.
+    expect(await db.one('SELECT value, token_ref, amount, hourly_amounts FROM observations')).toEqual({ value: 12.5, token_ref: null, amount: null, hourly_amounts: null });
+    expect(await db.one('SELECT legacy_usd, usd, usd_basis FROM flow_usd_v')).toEqual({ legacy_usd: 12.5, usd: 12.5, usd_basis: 'legacy_no_tokens' });
+    // A release before 0005 still inserts its rows (named columns) on the newer schema.
+    await db.run(
+      `INSERT INTO observations (asset_id, metric_key, observed_at, period_days, value, source, status, fetched_at)
+       VALUES ('crv', 'flow_usd.fees', '2026-10-03T00:00:00Z', 1, 13, 'onchain', 'confirmed', now())`,
+    );
+    // An unknown token ref is refused (FK), and a price needs its token.
+    await expect(db.run("UPDATE observations SET token_ref = 'eip155:1/0xnope' WHERE value = 13")).rejects.toThrow(/foreign key/);
+    await expect(db.run("INSERT INTO prices VALUES ('eip155:1/0xnope', now(), 1, 'coingecko', now())")).rejects.toThrow(/foreign key/);
   });
 
   it('a release-N-1 insert of every old anomaly kind still works on 0003', async () => {

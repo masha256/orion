@@ -1,3 +1,4 @@
+import { USD_TOKEN } from '../../db/prices.js';
 import type { Json } from '../../provenance/types.js';
 import type { DailyPoint, SourceContext, SourceValue } from '../types.js';
 import { toFiniteNumber } from '../units.js';
@@ -97,7 +98,11 @@ async function treasuryBuysDaily(ctx: SourceContext, params: Record<string, unkn
   }
   const sold = sells > 0 ? `; SOLD ${sells.toFixed(0)} USD of LIT (not netted)` : '';
   const short = reachedStart ? '' : `; history ends ${new Date(oldestSeen).toISOString().slice(0, 10)}`;
-  return { kind: 'daily_series', points, detail: `lighter trades account ${account} market ${market} ${unit === 'usd' ? 'buys' : 'LIT bought'} (${trades} trades, ${pages} pages${short}${sold})` };
+  // USDC spent is a dollar amount Lighter reports (token 'usd', spec §4); LIT bought gets no token ref here.
+  return {
+    kind: 'daily_series', points, detail: `lighter trades account ${account} market ${market} ${unit === 'usd' ? 'buys' : 'LIT bought'} (${trades} trades, ${pages} pages${short}${sold})`,
+    ...(unit === 'usd' ? { token: USD_TOKEN } : {}),
+  };
 }
 
 interface Tranches {
@@ -314,7 +319,11 @@ async function exchangeFeesDaily(ctx: SourceContext, params: Record<string, unkn
   }
   if (points.length === 0) throw new Error(`exchangeMetrics ${kinds.join('+')}: no completed day in the last ${days} days`);
   const heldNote = held ? '; newest day held back (no row for today yet)' : '';
-  return { kind: 'daily_series', points, detail: `lighter exchangeMetrics ${new URL(api).host} ${kinds.join('+')} (${points.length} days)${heldNote}` };
+  // Lighter reports every kind but `buyback` (LIT) in dollars: such a series is token 'usd' (spec §4).
+  return {
+    kind: 'daily_series', points, detail: `lighter exchangeMetrics ${new URL(api).host} ${kinds.join('+')} (${points.length} days)${heldNote}`,
+    ...(kinds.includes('buyback') ? {} : { token: USD_TOKEN }),
+  };
 }
 
 /** Lighter's revenue kinds: the fees a Robinhood-instance split applies to. */

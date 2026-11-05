@@ -34,6 +34,7 @@ const job = { id: 7, kind: 'staging_refresh', assetId: null, slot: NOW } as unkn
 const PROD_DATA_TABLES = [
   'observations', 'fetch_runs', 'fetch_cursors', 'anomalies', 'coverage', 'agent_runs', 'agent_transcripts', 'proposals', 'journal', 'documents',
   'check_results', // 0003: computed from prod's observations, so prod's rows come with them
+  'tokens', 'prices', // 0005: the tokens prod's flow rows refer to, and the hourly prices prod loaded
 ];
 
 function scratch(prefix: string): string {
@@ -129,7 +130,7 @@ function fakeRunner(o: { schema: string; ids?: number[]; restoreCode?: number })
   const run: CommandRunner = async (cmd, args) => {
     calls.push([cmd, ...args]);
     if (args.includes('-l')) return { code: 0, stdout: fakeToc(o.schema), stderr: '' };
-    if (args.includes('--data-only')) return { code: 0, stdout: fakeMigrationsCopy(o.schema, o.ids ?? [1, 2, 3, 4]), stderr: '' };
+    if (args.includes('--data-only')) return { code: 0, stdout: fakeMigrationsCopy(o.schema, o.ids ?? [1, 2, 3, 4, 5]), stderr: '' };
     if (args.includes('--clean')) {
       list = readFileSync(args[args.indexOf('-L') + 1]!, 'utf8');
       return o.restoreCode ? { code: o.restoreCode, stdout: '', stderr: 'pg_restore: error: could not execute query: ERROR:  boom\n' } : { code: 0, stdout: '', stderr: '' };
@@ -202,7 +203,7 @@ describe('stagingRefresh', () => {
 
   it('stagingRefresh: schema mismatch is refused before any restore command', async () => {
     await seedStaging(db());
-    for (const [ids, text] of [[[1], 'prod 1, staging 4'], [[1, 2, 3, 4, 5], 'prod 5, staging 4']] as const) {
+    for (const [ids, text] of [[[1], 'prod 1, staging 5'], [[1, 2, 3, 4, 5, 6], 'prod 6, staging 5']] as const) {
       const f = fakeRunner({ schema: db().schema, ids: [...ids] });
       const w = world();
       const out = await makeStagingRefreshHandler({ run: f.run })(job, w.ctx);

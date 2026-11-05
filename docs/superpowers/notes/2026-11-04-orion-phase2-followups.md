@@ -271,3 +271,45 @@ row-hash proof covers only the carried columns (tests/tools/importSqlite.test.ts
 cutover importer leaves history unmapped until `db backfill-provenance` runs. `staging_refresh` refuses a dump whose
 migrations differ, so after the cutover prod and stage must apply 0004 (and 0005) in the same release step.
 
+## Task 7: token amounts and prices stored apart (spec §4)
+
+Built: migration 0005 (expand-only): `tokens` (`token_ref` PK, symbol, `decimals` bigint per baseline 7.1, `peg`,
+`coingecko_id`; seeded with `usd`), `prices` (`token_ref`, `ts` = top of the UTC hour, `price_usd` double precision,
+`source`, `fetched_at`; PK `(token_ref, ts, source)`), nullable `observations.token_ref` / `amount` (double precision) /
+`hourly_amounts` (jsonb, 24 numbers), and the view `flow_usd_v` (per active flow row: `usd_hourly` = sum of hour amount x
+the newest `prices` row at or before the hour, coingecko first, at most 6 hours old; `hours_priced`, `hours_needed`,
+`legacy_usd` = `value`, and `usd` / `usd_basis` = hourly | usd_native | legacy_unpriced | legacy_no_hourly |
+legacy_no_tokens). No report code reads the view; the report still reads `value` (Task 8 switches it after G2).
+
+Dual write (values unchanged, plan correction 2):
+- Transfer scans (`src/ingest/flow.ts`): the per-day count moved into `openDayScanner`, shared with the backfill, so both
+  count the same transfers. Per member it sums the day's amount and 24 UTC-hour buckets in the member's token (tokens x
+  share price for a vault share), beside the USD it priced per transfer exactly as before. Token refs:
+  `eip155:<chain>/<token>`; a vault share valued at pricePerShare is in its underlying, `coingecko:<price id>` (the config
+  names no underlying address: yCRV's yvcrvUSD -> `coingecko:crvusd`, st-yCRV -> `coingecko:yearn-crv`). Every hourly
+  market_chart point the scan already loaded is upserted into `prices` (floored to the hour, the earlier of two points
+  in an hour kept); no new request. A dry run writes no tokens or prices.
+- USD-native first-party series: `token_ref = 'usd'`, `amount = value` (Lighter exchangeMetrics kinds except `buyback`,
+  Lighter treasury buys `unit: usd`, Hyperliquid fund fills, Hyperliquid USDC reserve-yield payments). DefiLlama series
+  and Lighter's `unit: tokens` series get no token columns.
+- Solana supply drop: `amount` = the day's fall in tokens (`solana:mainnet/<mint>`), `hourly_amounts` null; days from the
+  DefiLlama history carry none.
+
+`orion data backfill-tokens <a> [--metric k]... [--days N] [--dry-run] [--json]` (`src/ingest/tokenBackfill.ts`):
+re-scans each day with the writer's day scanner and fills only `token_ref`/`amount`/`hourly_amounts` on the active
+row (`UPDATE ... WHERE id = <id> AND amount IS NULL` and still active), one transaction per day under the asset lock,
+the whole run under the asset's run lock; never `insertObservation`. A day whose re-scanned amount differs from a stored
+`flow_tokens.*` twin (same group, same senders, no share price; a tokens member is its own twin) by more than 1e-9
+relative is refused whole; a member-day with no active row (or a non-scan active row) is skipped and listed; a row that
+already has tokens is counted, never rewritten, so a re-run resumes. Prices for the range come from
+`market_chart/range` in windows of at most 89 days (hourly), newest first, one id at a time through the run's
+transport (keyless spacing 2.5 s); the first failing window stops the walk and is listed (the key's history reach,
+correction 13). A dry run fetches nothing and writes nothing. Without `--days` the range starts at the oldest stored
+row of the metrics; a day with nothing to fill is not re-scanned (no log request).
+
+`orion data compare-usd <a> [--days 91] [--json]` (`compareUsd` in `src/db/prices.ts`): per `unit: usd` flow metric,
+over rows observed in (now - days, now]: within the hourly series (rows whose day starts no more than 90 days before
+the row's `fetched_at`, so the legacy USD was priced at hourly points; dollar-native rows included and counted) sum
+legacy vs sum hourly, gap %, and nearest-rank p50/p90 of the per-day |hourly - legacy| / legacy; days beyond (legacy
+priced at daily points) reported apart in `beyond`; `unpriced` (an hour with an amount has no price: keeps value),
+`noTokens`, `noHourly` counted. The G2 table (Step 5, controller) comes from this.

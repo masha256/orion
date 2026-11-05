@@ -137,3 +137,21 @@ describe('orion data anomalies, resolve, ack', () => {
     await expect(orion('data', 'resolve', '99', '--note', 'x')).rejects.toThrow(/no anomaly with id 99/);
   });
 });
+
+describe('orion data backfill-tokens / compare-usd', () => {
+  it('backfill-tokens re-scans under the run lock and reports; compare-usd prints the within and beyond groups', async () => {
+    await orion('data', 'fetch', 'mini', '--json');
+    // The fetch wrote tokens already (dual write): nothing is left to fill, and nothing is refused.
+    const dry = JSON.parse(await orion('data', 'backfill-tokens', 'mini', '--days', '3', '--dry-run', '--json'));
+    expect(dry).toMatchObject({ assetId: 'mini', dryRun: true, filled: 0, alreadyFilled: 9, refused: [], skipped: [], prices: [{ rows: 0, requests: 0 }] });
+    const real = JSON.parse(await orion('data', 'backfill-tokens', 'mini', '--days', '3', '--json'));
+    expect(real).toMatchObject({ dryRun: false, filled: 0, alreadyFilled: 9, refused: [] });
+    expect(await orion('data', 'backfill-tokens', 'mini', '--days', '3', '--metric', 'flow_usd.fees')).toMatch(/^MINI backfill-tokens: 2026-09-16 to 2026-09-18; filled 0 row\(s\), 3 already had tokens/);
+    await expect(orion('data', 'backfill-tokens', 'mini', '--metric', 'price_usd')).rejects.toMatchObject({ code: 'not_a_transfer_flow' });
+
+    const cmp = JSON.parse(await orion('data', 'compare-usd', 'mini', '--days', '91', '--json'));
+    expect(cmp.map((r: { metric: string }) => r.metric)).toEqual(['flow_usd.fees', 'flow_usd.fees_programmatic']);
+    expect(cmp[0]).toMatchObject({ days: 3, hourlyCovered: 3, sumLegacy: 0, sumHourly: 0, beyondHourly: 0, noTokens: 0 });
+    expect(await orion('data', 'compare-usd', 'mini')).toMatch(/flow_usd\.fees: 3 day\(s\) within: legacy 0\.00 vs hourly 0\.00/);
+  });
+});

@@ -22,7 +22,8 @@ import type { JobContext, JobHandler, JobOutcome } from '../daemon.js';
  *   migrations are the same ids and checksums, so prod's copy would add nothing but prod's applied_at times.
  *
  * Everything else (observations, fetch runs and cursors, anomalies, coverage, agent runs and transcripts, proposals,
- * journal, documents, check results) is prod's after a refresh: staging's own week of those rows is overwritten, by design.
+ * journal, documents, check results, tokens and prices) is prod's after a refresh: staging's own week of those rows is
+ * overwritten, by design.
  */
 export const ENV_LOCAL_TABLES = [
   'jobs', 'asset_registry', 'asset_state_events', 'latest_levels', 'watch_state', 'snapshots_out', 'daemon_heartbeat', 'day_blocks',

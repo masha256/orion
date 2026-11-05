@@ -276,6 +276,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
             backfillDays: opts.backfillDays ?? (r.source.type === 'defillama' ? r.source.backfill_days : historyDays) ?? DEFAULT_API_FLOW_BACKFILL_DAYS, rescan: opts.backfillDays !== undefined,
             revisionDays: r.source.type === 'defillama' ? (r.source.revision_days ?? DEFILLAMA_REVISION_DAYS) : undefined,
             adopt: opts.adopt ?? false, dryRun, outcome, validate: (value) => validateReading(def, value),
+            ...(result.value.token ? { token: result.value.token } : {}),
           });
           written.push(...flow.written);
           scannedDaily.set(r.metricKey, flow.daily);
@@ -296,7 +297,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
           written.push(
             ...(await writePeriodicPayments({
               db, asset, configHash: loaded.hash, metricKey: r.metricKey, payments: v.payments, due: v.due, payers: v.payers, expectedPayers: v.expectedPayers, detail: v.detail,
-              now, dryRun, outcome, validate: (value) => validateReading(def, value), raise,
+              now, dryRun, outcome, validate: (value) => validateReading(def, value), raise, ...(v.token ? { token: v.token } : {}),
             })),
           );
         } catch (err) {

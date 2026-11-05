@@ -3,6 +3,7 @@ import type { Db } from '../db/connection.js';
 import { advanceCursor, getCursor } from '../db/fetchCursors.js';
 import type { FlowConflict, SourceOutcome } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
+import { upsertToken, USD_TOKEN_REF, type ObservationTokens, type TokenInfo } from '../db/prices.js';
 import { fetchedProvenance } from '../provenance/locator.js';
 import { responseDigest } from '../provenance/types.js';
 import { MS_PER_DAY } from '../types.js';
@@ -47,6 +48,19 @@ export interface ApiFlowArgs {
   outcome: SourceOutcome;
   /** Rejects a value the metric cannot store; null when it may be stored. */
   validate: (value: number) => string | null;
+  /**
+   * What the series' amounts are in (spec §4), when the source says: 'usd' for a first-party API that reports dollars
+   * (amount = value), or a token whose per-day `amount` the points carry. Absent (DefiLlama): no token columns.
+   */
+  token?: TokenInfo;
+}
+
+/** A day's token columns: the point's own amount, or the value itself for a dollar series; null when neither is known. */
+export function seriesTokens(token: TokenInfo | undefined, point: { value: number; amount?: number }): ObservationTokens | null {
+  if (token === undefined) return null;
+  if (point.amount !== undefined) return { tokenRef: token.tokenRef, amount: point.amount, hourlyAmounts: null };
+  if (token.tokenRef === USD_TOKEN_REF) return { tokenRef: token.tokenRef, amount: point.value, hourlyAmounts: null };
+  return null;
 }
 
 export interface ApiFlowResult {
@@ -156,6 +170,7 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
         await rejectObservation(h, c.observationId);
         retired.push(c.observationId);
       }
+      if (args.token) await upsertToken(h, args.token);
     }
     for (const day of days) {
       if (manualDays.has(day)) continue;
@@ -181,10 +196,12 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
       const observedAt = new Date(dayEndMs).toISOString();
       let observationId: number | null = null;
       if (!dryRun) {
+        const tokens = seriesTokens(args.token, point!);
         observationId = (await insertObservation(h, {
           assetId: asset.id, metricKey, observedAt, periodDays: 1, value, source: 'api', sourceDetail: args.detail, fetchedAt: nowIso,
           // The raw slice of the response the day's value was read from (null when the source exposes none).
           provenance: fetchedProvenance({ config: asset, hash: args.configHash }, metricKey, { responseDigest: responseDigest(point!.slice) }),
+          ...(tokens ? { tokens } : {}),
         })).id;
       }
       result.written.push({ metricKey, value, observedAt, periodDays: 1, source: 'api', observationId });

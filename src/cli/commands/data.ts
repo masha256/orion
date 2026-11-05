@@ -2,7 +2,10 @@ import type { Command } from 'commander';
 import { listAssetIds, loadAsset } from '../../config/load.js';
 import { decideAnomaly, listAnomalies, type Anomaly } from '../../db/anomalies.js';
 import { confirmObservation, getObservationsByIds, insertObservation, listActiveObservations, rejectObservation } from '../../db/observations.js';
+import { compareUsd, type UsdComparison } from '../../db/prices.js';
 import { describeSources } from '../../ingest/describe.js';
+import { backfillTokens, type BackfillTokensResult } from '../../ingest/tokenBackfill.js';
+import { lockHolder, withRunLock } from '../../app/lock.js';
 import { hasSources } from '../../ingest/plan.js';
 import { fetchAsset, type FetchResult } from '../../ingest/run.js';
 import { confirmConfigHash } from '../../provenance/configHash.js';
@@ -35,6 +38,40 @@ const anomalyLine = (a: Anomaly): string =>
   `#${a.id}  ${a.status}  ${a.severity}  ${a.kind}  ${a.metricKey || '(source)'}  ${a.dedupeKey}  x${a.occurrences}  last seen ${a.lastSeenAt}${a.note ? `  note: ${a.note}` : ''}`;
 
 const SOURCES: ObservationSource[] = ['onchain', 'api', 'manual'];
+
+function positiveDays(text: string | undefined, label: string): number | undefined {
+  if (text === undefined) return undefined;
+  const n = parseNumber(text, label);
+  if (!Number.isInteger(n) || n < 1) throw new OrionError('invalid_number', `${label} must be a positive whole number`);
+  return n;
+}
+
+const pct = (v: number | null): string => (v === null ? 'n/a' : `${v >= 0 ? '+' : ''}${v.toFixed(3)}%`);
+const usd = (v: number): string => v.toFixed(2);
+
+function backfillTokenLines(r: BackfillTokensResult): string[] {
+  return [
+    `${r.assetId.toUpperCase()} backfill-tokens${r.dryRun ? ' (dry run: nothing was written)' : ''}: ${r.range ? `${r.range.from} to ${r.range.to}` : 'no range'}; ` +
+      `${r.dryRun ? 'would fill' : 'filled'} ${r.filled} row(s), ${r.alreadyFilled} already had tokens, ${r.skipped.length} skipped, ${r.refused.length} day(s) refused`,
+    ...r.prices.map((p) => `  prices ${p.coingeckoId}: ${p.rows} hourly row(s) in ${p.requests} request(s)${p.reachedDay ? `, from ${p.reachedDay}` : ''}${p.failures.map((f) => `; FAILED ${f}`).join('')}`),
+    ...r.refused.map((x) => `  REFUSED ${x.day}: ${x.reason}`),
+    ...r.skipped.map((x) => `  skipped ${x.day} ${x.metricKey}: ${x.reason}`),
+    ...r.notes.map((n) => `  note: ${n}`),
+  ];
+}
+
+function compareLines(assetId: string, days: number, rows: UsdComparison[]): string[] {
+  if (rows.length === 0) return [`${assetId.toUpperCase()}: no USD flow metric`];
+  return [
+    `${assetId.toUpperCase()} legacy USD vs hourly buckets, ${days} days (within the hourly series; beyond it apart, plan correction 13)`,
+    ...rows.flatMap((r) => [
+      `  ${r.metric}: ${r.hourlyCovered} day(s) within: legacy ${usd(r.sumLegacy)} vs hourly ${usd(r.sumHourly)} (${pct(r.gapPct)}), day gap p50 ${pct(r.p50DayGapPct)} p90 ${pct(r.p90DayGapPct)}` +
+        `${r.usdNative > 0 ? ` (${r.usdNative} dollar-native)` : ''}`,
+      `    beyond: ${r.beyondHourly} day(s): legacy ${usd(r.beyond.sumLegacy)} vs hourly ${usd(r.beyond.sumHourly)} (${pct(r.beyond.gapPct)}); ` +
+        `keep value: ${r.unpriced} unpriced, ${r.noTokens} without tokens, ${r.noHourly} without hourly buckets`,
+    ]),
+  ];
+}
 
 export function registerData(program: Command, ctx: CliContext): void {
   const data = program.command('data').description('enter, confirm, and inspect observations');
@@ -139,6 +176,37 @@ export function registerData(program: Command, ctx: CliContext): void {
       output(ctx, opts.json, assetId ? results[0] : results, () =>
         results.length === 0 ? ['no asset defines a source; nothing to fetch'] : results.flatMap(fetchSummary),
       );
+    });
+
+  data
+    .command('backfill-tokens <asset>')
+    .description('fill token amounts and hourly buckets on transfer-scan rows written before 0005, by re-scanning each day; never changes value or adds a row; --dry-run writes nothing')
+    .option('--metric <key>', 'only this transfer_flow metric (repeatable)', collect, [])
+    .option('--days <n>', 'days back from now (default: from the oldest stored row)')
+    .option('--dry-run', 're-scan and report what would be filled; write nothing, fetch no prices')
+    .option('--json', 'JSON output')
+    .action(async (assetId: string, opts: { metric: string[]; days?: string; dryRun?: boolean; json?: boolean }) => {
+      const days = positiveDays(opts.days, '--days');
+      const loaded = loadAsset(ctx.configRoot, assetId);
+      const deps = ingestDepsFor(ctx);
+      const run = (db: Parameters<typeof backfillTokens>[0]) =>
+        backfillTokens(db, loaded, deps, { metrics: opts.metric, days, dryRun: opts.dryRun, onProgress: (line) => ctx.stderr?.(line) });
+      const result = await withDb(ctx, async (db) =>
+        opts.dryRun ? await run(db) : await withRunLock(db, assetId, lockHolder('orion data backfill-tokens'), ctx.now(), async () => await run(db)),
+      );
+      output(ctx, opts.json, result, () => backfillTokenLines(result));
+    });
+
+  data
+    .command('compare-usd <asset>')
+    .description('per USD flow metric: the stored USD (value) vs the hourly token buckets x hourly prices (flow_usd_v), days within and beyond the hourly series apart; read-only')
+    .option('--days <n>', 'window in days, ending now', '91')
+    .option('--json', 'JSON output')
+    .action(async (assetId: string, opts: { days: string; json?: boolean }) => {
+      const days = positiveDays(opts.days, '--days')!;
+      const { config } = loadAsset(ctx.configRoot, assetId);
+      const rows = await withDb(ctx, (db) => compareUsd(db, config, days, { now: ctx.now() }));
+      output(ctx, opts.json, rows, () => compareLines(assetId, days, rows));
     });
 
   data

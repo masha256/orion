@@ -31,12 +31,14 @@ const NOT_CARRIED = [
 ];
 /** 0002_daemon's tables: not in SQLite, not carried; checked in tests/db/daemonSchema.test.ts. */
 const DAEMON = ['asset_registry', 'asset_state_events', 'daemon_heartbeat', 'day_blocks', 'jobs', 'latest_levels', 'snapshots_out', 'watch_state'];
-/** Phase 2's tables (0003 check_results): not in SQLite, not carried; checked in tests/db/pg/migrate.test.ts. */
-const PHASE2 = ['check_results'];
+/** Phase 2's tables (0003 check_results, 0005 tokens and prices): not in SQLite, not carried; checked in tests/db/pg/migrate.test.ts. */
+const PHASE2 = ['check_results', 'prices', 'tokens'];
 /** 0004_provenance's columns on observations: not in SQLite, never carried (the importer leaves them null). */
 const PROVENANCE_COLUMNS = [
   'method', 'source_type', 'chain', 'locator', 'block_from', 'block_to', 'tx_count', 'tx_refs', 'tx_digest', 'response_digest', 'inputs',
   'formula', 'coverage', 'code_version', 'config_hash',
+  // 0005_tokens_prices: the token columns, also never carried (null on imported history until data backfill-tokens).
+  'token_ref', 'amount', 'hourly_amounts',
 ];
 
 let config: DatabaseConfig;

@@ -1,3 +1,4 @@
+import { solanaTokenRef } from '../../db/prices.js';
 import { parseMarketChart } from '../flow.js';
 import { coingeckoBase, coingeckoHeaders } from '../sources/coingecko.js';
 import { ownerBalance, solanaRpcUrl, tokenSupply } from '../transport/solana.js';
@@ -140,7 +141,9 @@ async function supplyBurnDaily(ctx: SourceContext, params: Record<string, unknow
     }
   }
 
-  const points: { day: string; value: number }[] = [];
+  // Chain days carry the supply drop in tokens as `amount` (spec §4; no hourly buckets: a supply reading has no
+  // transfers to place in hours). History days are DefiLlama dollars and carry none (never converted, decision 1).
+  const points: { day: string; value: number; amount?: number }[] = [];
   let fromChain = 0;
   let fromHistory = 0;
   const unpriced: string[] = [];
@@ -149,8 +152,8 @@ async function supplyBurnDaily(ctx: SourceContext, params: Record<string, unknow
     const p = price.get(day);
     const tokens = onchain.get(day);
     if (tokens !== undefined) {
-      if (unit === 'tokens') points.push({ day, value: tokens });
-      else if (p !== undefined) points.push({ day, value: tokens * p });
+      if (unit === 'tokens') points.push({ day, value: tokens, amount: tokens });
+      else if (p !== undefined) points.push({ day, value: tokens * p, amount: tokens });
       else {
         unpriced.push(day);
         continue;
@@ -178,6 +181,7 @@ async function supplyBurnDaily(ctx: SourceContext, params: Record<string, unknow
     kind: 'daily_series',
     points,
     detail: `solana supply drop of ${mint} (${unit}): ${fromChain} days from ${readings.length} getTokenSupply readings${hist}${miss}; supply now ${now.amount.toFixed(0)} at slot ${now.slot}`,
+    token: { tokenRef: solanaTokenRef(mint), symbol: text(params, 'mint', 'token') === 'token' ? ctx.asset.symbol : text(params, 'mint', 'token'), decimals: null, coingeckoId: priceId },
   };
 }
 

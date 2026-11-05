@@ -2,6 +2,8 @@ import type { AssetConfig } from '../config/schema.js';
 import type { Db } from '../db/connection.js';
 import type { SourceOutcome } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations } from '../db/observations.js';
+import { upsertToken, type TokenInfo } from '../db/prices.js';
+import { seriesTokens } from './apiFlow.js';
 import { fetchedProvenance } from '../provenance/locator.js';
 import { responseDigest } from '../provenance/types.js';
 import { MS_PER_DAY } from '../types.js';
@@ -41,6 +43,8 @@ export interface PeriodicArgs {
   outcome: SourceOutcome;
   validate: (value: number) => string | null;
   raise: (a: Omit<RaisedAnomaly, 'id' | 'status'>) => Promise<void>;
+  /** What the payments are in ('usd' for Hyperliquid's USDC: amount = value); absent: no token columns. */
+  token?: TokenInfo;
 }
 
 const daysBetween = (from: string, to: string) => Math.round((dayStartMs(to) - dayStartMs(from)) / MS_PER_DAY);
@@ -60,8 +64,10 @@ export async function writePeriodicPayments(args: PeriodicArgs): Promise<Written
   });
   /** `h` is the transaction's handle on a real run, the database itself on a dry run (which writes nothing). */
   const write = async (h: Db) => {
+    if (!dryRun && args.token && rows.some(({ p, observedAt }) => stored.get(observedAt) !== p.value)) await upsertToken(h, args.token);
     for (const { p, periodDays, observedAt } of rows) {
       if (stored.get(observedAt) === p.value) continue;
+      const tokens = seriesTokens(args.token, p);
       const observationId = dryRun
         ? null
         : (await insertObservation(h, {
@@ -71,6 +77,7 @@ export async function writePeriodicPayments(args: PeriodicArgs): Promise<Written
               // The ledger entries the payment sums (null when the source exposes none).
               responseDigest: responseDigest(p.slice),
             }),
+            ...(tokens ? { tokens } : {}),
           })).id;
       written.push({ metricKey, value: p.value, observedAt, periodDays, source: 'api', observationId });
     }

@@ -6,6 +6,7 @@ import type { HttpTransport } from './transport/http.js';
 import type { BlockRef, RpcTransport } from './transport/rpc.js';
 import type { Observation } from '../db/observations.js';
 import type { Json } from '../provenance/types.js';
+import type { TokenInfo } from '../db/prices.js';
 
 /**
  * `slice`: the raw response sub-tree a value was read from (the day's chart entry, the market row's fields), as the API
@@ -18,6 +19,8 @@ export interface DailyPoint {
   day: string;
   value: number;
   slice?: Json;
+  /** The day's amount in the series' `token` when it differs from `value` (Solana's supply drop priced in USD). */
+  amount?: number;
 }
 
 /** `month` is 'YYYY-MM'. */
@@ -41,9 +44,9 @@ export interface ScheduleStepReading {
 export type SourceValue =
   | { kind: 'level'; value: number; observedAt: string; source: 'onchain' | 'api'; detail: string; slice?: Json }
   | { kind: 'schedule_steps'; steps: ScheduleStepReading[]; source: 'onchain' | 'api'; detail: string }
-  | { kind: 'daily_series'; points: DailyPoint[]; detail: string }
+  | { kind: 'daily_series'; points: DailyPoint[]; detail: string; token?: TokenInfo }
   | { kind: 'monthly_series'; points: MonthlyPoint[]; detail: string }
-  | { kind: 'periodic_payments'; payments: PeriodicPayment[]; due: PeriodDue[]; payers: string[]; expectedPayers: string[]; detail: string };
+  | { kind: 'periodic_payments'; payments: PeriodicPayment[]; due: PeriodDue[]; payers: string[]; expectedPayers: string[]; detail: string; token?: TokenInfo };
 
 /**
  * One lump payment for a known coverage period (HYPE's USDC reserve yield: 30 days, paid 8 days after the period ends).
