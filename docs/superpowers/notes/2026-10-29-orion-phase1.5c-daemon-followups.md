@@ -150,7 +150,12 @@ RESTARTED line and a single re-run.
   wrappers, archive the final SQLite file read-only (`orion-final-<stamp>.db`, chmod 400, local + Spaces) with
   `signals.jsonl`, and rewrite the `orion` skill for the server. Fallback for the first week: stop the prod daemon and
   re-enable the Hermes jobs on the archived copy (`docs/ops/hermes-daily-job.md`).
-- **The prod data route (final review I-2).** No importer ships to the server (`tools/import-sqlite` is not packed, its
+- **The prod data route (final review I-2): RESOLVED 2026-11-05 (Mike: go).** Picked the second option: `orion-remote
+  load-prod --stdin <sha256>` (prod-only) + the `staging_refresh` job's prod mode, which restores only
+  `incoming/prod-initial-load.dump` and only into a prod with no observations and no fetch runs (no new job kind, no
+  migration). Steps in `docs/ops/deploy.md` "Prod's one-time initial load". Needs Mike's `orion-host.sh` re-run (root
+  installs orion-remote). Original note:
+  **The prod data route (final review I-2).** No importer ships to the server (`tools/import-sqlite` is not packed, its
   `better-sqlite3`/`tsx` are dev dependencies, venus has no toolchain), and `refresh-staging --stdin` is stage-only.
   Before prod, pick one: an `orion db import-sqlite` in the release (built `dist/`, `better-sqlite3` as an optional prod
   dependency or a prebuilt binary), or a prod verb that restores a dump proven on uranus (the same filtered,

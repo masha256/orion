@@ -839,6 +839,36 @@ class VerbTests(RemoteCase):
         self.assertEqual(self.calls('node')[0]['incoming'], {self.DUMP_NAME: '0o600'})
         self.assertEqual(self.incoming(), [])
 
+    # ---- load-prod --stdin (I-2: prod's one-time initial load at cutover) -------------------------------------------
+
+    def test_load_prod_stdin_uploads_to_its_own_file_and_runs_the_job_on_prod(self):
+        self.behave(job_states=['queued', 'done'])
+        data = self.DUMP
+        rc, out, err = self.remote(f'load-prod --stdin {hashlib.sha256(data).hexdigest()}', stdin=data, user='orion-prod')
+        self.assertEqual(rc, 0, err)
+        argvs = self.node_argv()
+        self.assertEqual(argvs[0], ['job', 'run-now', 'staging_refresh', '--by', 'raymond', '--json'])
+        for c in self.calls('node'):
+            self.assertEqual(c['incoming'], {'prod-initial-load.dump': '0o600'})
+            self.assertEqual(c['env']['ORION_ENV'], 'prod')
+        self.assertEqual(json.loads(out)['status'], 'done')
+        self.assertEqual(self.incoming(), [])
+        self.assertTrue(self.log_lines()[-1].endswith(' orion-prod load-prod 3 ok'))
+
+    def test_load_prod_is_prod_only_and_checks_its_upload(self):
+        self.behave(job_states=['done'])
+        sha = hashlib.sha256(self.DUMP).hexdigest()
+        rc, _out, err = self.remote(f'load-prod --stdin {sha}', stdin=self.DUMP, user='orion-stage')
+        self.assertEqual(rc, 64)
+        self.assertIn('prod-only', err)
+        for cmd in ('load-prod', 'load-prod --stdin', f'load-prod {sha}', 'load-prod --stdin xyz'):
+            self.assertEqual(self.remote(cmd, stdin=self.DUMP, user='orion-prod')[0], 64, cmd)
+        rc, _out, err = self.remote(f'load-prod --stdin {"0" * 64}', stdin=self.DUMP, user='orion-prod')
+        self.assertEqual(rc, 1)
+        self.assertIn('sha256 mismatch', err)
+        self.assertEqual(self.calls('node'), [])
+        self.assertEqual(self.incoming(), [])
+
     def test_reconcile_allow_retire_needs_yes_and_prints_the_diff_first(self):
         self.behave(diff={'added': [], 'missing': ['aero', 'cake', 'crv'], 'returned': [], 'configChanged': []})
         rc, out, err = self.remote('reconcile --allow-retire')

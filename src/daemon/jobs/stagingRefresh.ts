@@ -38,11 +38,21 @@ export const DEFAULT_REFRESH_DUMP = '/home/orion-refresh/latest.dump';
  * UPLOADED_DUMP names the same path (tests/release/orionRemote.test.ts).
  */
 export const UPLOADED_DUMP = join('incoming', 'staging-refresh.dump');
+/**
+ * Prod's one-time initial load (the cutover data route, 1.5c final review I-2): `orion-remote load-prod --stdin
+ * <sha256>` puts a dump proven on the dev host here (`~/home/incoming/prod-initial-load.dump`, 600) and runs this job
+ * on prod. It is restored by the same steps as a staging refresh (filtered list, schema check, one transaction,
+ * registry reconciliation), but only while prod holds no data yet (no `observations` and no `fetch_runs` row), so it
+ * can never overwrite a live prod. The file is removed afterwards, whatever the outcome. orion-remote's
+ * PROD_LOAD_DUMP names the same path (tests/release/orionRemote.test.ts).
+ */
+export const PROD_LOAD_DUMP = join('incoming', 'prod-initial-load.dump');
 /** The dump is written daily at 08:30 UTC; one older than this means the dump timer stopped. */
 export const REFRESH_DUMP_MAX_AGE_MS = 36 * 3_600_000;
 /** pg_restore must be at least the dump's pg_dump version: the server's own binaries, PATH when absent. */
 export const PG_BIN_DIR = '/usr/lib/postgresql/18/bin';
 export const STAGING_ROLE = 'orion_stage';
+export const PROD_ROLE = 'orion_prod';
 const RESTORE_TIMEOUT_MS = 2 * 3_600_000;
 const READ_TIMEOUT_MS = 10 * 60_000;
 const KILL_GRACE_MS = 10_000;
@@ -61,7 +71,7 @@ export type CommandRunner = (
 
 export interface StagingRefreshOptions {
   run?: CommandRunner;
-  /** `pg_restore --role`; tests use the test role. */
+  /** `pg_restore --role`; tests use the test role. Default: orion_stage on stage, orion_prod on prod. */
   role?: string;
   /** The directory holding pg_restore; '' = PATH. Default PG_BIN_DIR when it has pg_restore. */
   pgBin?: string;
@@ -228,11 +238,42 @@ type Check = { ok: true } | { ok: false; error: string };
  * --single-transaction` of the filtered list (a failure rolls back: staging is unchanged), registry reconciliation
  * from the release's YAML, and a migration status check. Posts `ORION STAGING REFRESH done: ...` or `ORION ALERT ...`.
  * It runs as one job at priority 5, so the single worker runs nothing else meanwhile.
+ *
+ * On prod the job is the one-time initial load only: without `<ORION_HOME>/incoming/prod-initial-load.dump` it is
+ * `skipped` (`not stage`) as before; with it, it fails (`ORION ALERT prod initial_load: prod already holds data ...`)
+ * unless prod has no observations and no fetch runs, then restores the file by the same steps as `--role=orion_prod`
+ * (`result.source`: `initial_load`; posts `ORION PROD INITIAL LOAD done: ...`) and removes it.
  */
 export function makeStagingRefreshHandler(o: StagingRefreshOptions = {}): JobHandler {
   const run = o.run ?? runCommand;
-  const role = o.role ?? STAGING_ROLE;
+  const consume = (ctx: JobContext, file: string): void => {
+    // Consumed: never restored a second time, and never left to raise the weekly job's "older than 36 h".
+    try {
+      unlinkSync(file);
+    } catch (err) {
+      ctx.log(`the uploaded dump ${file} could not be removed: ${(err as Error).message}`);
+    }
+  };
   return async (_job, ctx): Promise<JobOutcome> => {
+    if (ctx.env === 'prod') {
+      const load = join(ctx.paths.home, PROD_LOAD_DUMP);
+      if (!existsSync(load)) {
+        ctx.log('not stage: skipped (on prod this job only runs the one-time initial load, from load-prod --stdin)');
+        return { status: 'skipped', result: { reason: 'not stage' } };
+      }
+      try {
+        const held = await ctx.db.one<{ obs: string | number; runs: string | number }>(
+          'SELECT (SELECT count(*) FROM observations) AS obs, (SELECT count(*) FROM fetch_runs) AS runs');
+        const obs = Number(held?.obs ?? 0);
+        const runs = Number(held?.runs ?? 0);
+        if (obs > 0 || runs > 0) {
+          return await failJob(ctx, `prod already holds data (${obs} observations, ${runs} fetch runs): the initial load only runs into an empty prod; nothing restored`, { source: 'initial_load' });
+        }
+        return await refresh(ctx, load, 'initial_load');
+      } finally {
+        consume(ctx, load);
+      }
+    }
     if (ctx.env !== 'stage') {
       ctx.log('not stage: skipped (the refresh only ever restores into staging)');
       return { status: 'skipped', result: { reason: 'not stage' } };
@@ -242,16 +283,12 @@ export function makeStagingRefreshHandler(o: StagingRefreshOptions = {}): JobHan
     try {
       return await refresh(ctx, uploaded, 'upload');
     } finally {
-      // Consumed: never restored a second time by the weekly job, and never left to raise its "older than 36 h".
-      try {
-        unlinkSync(uploaded);
-      } catch (err) {
-        ctx.log(`the uploaded dump ${uploaded} could not be removed: ${(err as Error).message}`);
-      }
+      consume(ctx, uploaded);
     }
   };
 
-  async function refresh(ctx: JobContext, dump: string, source: 'prod' | 'upload'): Promise<JobOutcome> {
+  async function refresh(ctx: JobContext, dump: string, source: 'prod' | 'upload' | 'initial_load'): Promise<JobOutcome> {
+    const role = o.role ?? (ctx.env === 'prod' ? PROD_ROLE : STAGING_ROLE);
     const fail = async (error: string, result: Record<string, unknown> = {}): Promise<JobOutcome> => await failJob(ctx, error, { ...result, source });
     let mtime: Date;
     try {
@@ -277,7 +314,7 @@ export function makeStagingRefreshHandler(o: StagingRefreshOptions = {}): JobHan
     const { url, password } = splitPassword(urlRaw);
     const bin = o.pgBin ?? (existsSync(join(PG_BIN_DIR, 'pg_restore')) ? PG_BIN_DIR : '');
     const pgRestore = bin ? join(bin, 'pg_restore') : 'pg_restore';
-    const env: Record<string, string> = { PATH: process.env.PATH ?? '/usr/bin:/bin', PGAPPNAME: 'orion staging_refresh' };
+    const env: Record<string, string> = { PATH: process.env.PATH ?? '/usr/bin:/bin', PGAPPNAME: source === 'initial_load' ? 'orion initial_load' : 'orion staging_refresh' };
     if (process.env.HOME) env.HOME = process.env.HOME;
     if (password !== null) env.PGPASSWORD = password;
     const schema = ctx.db.schema;
@@ -336,8 +373,9 @@ export function makeStagingRefreshHandler(o: StagingRefreshOptions = {}): JobHan
     if (status.pending.length > 0 || status.state === 'changed') {
       return await fail(`restored, but the schema is ${status.state} (pending ${status.pending.map((p) => p.id).join(', ') || 'none'})`, base);
     }
-    const what = source === 'upload' ? `the uploaded dump (${dumpMtime})` : dumpMtime;
-    const res = await ctx.notify.post(`ORION STAGING REFRESH done: restored ${what}, ${tables.length} tables`);
+    const what = source === 'prod' ? dumpMtime : `the uploaded dump (${dumpMtime})`;
+    const head = source === 'initial_load' ? 'ORION PROD INITIAL LOAD done' : 'ORION STAGING REFRESH done';
+    const res = await ctx.notify.post(`${head}: restored ${what}, ${tables.length} tables`);
     if (!res.ok) ctx.log('the done line was not delivered');
     return { status: 'done', result: { ...base, reconciled, delivered: res.ok } };
   }
@@ -357,7 +395,7 @@ function checkSameSchema(prod: { id: number; sha256: string }[], stage: { id: nu
 /** Posts the one ALERT line (the fenced notifier drops it once the job was aborted) and fails the job (no retry). */
 async function failJob(ctx: JobContext, error: string, result: Record<string, unknown> = {}): Promise<JobOutcome> {
   ctx.log(error);
-  const res = await ctx.notify.post(`ORION ALERT stage staging_refresh: ${error}`);
+  const res = await ctx.notify.post(ctx.env === 'prod' ? `ORION ALERT prod initial_load: ${error}` : `ORION ALERT stage staging_refresh: ${error}`);
   return { status: 'failed', result: { ...result, delivered: res.ok }, error };
 }
 

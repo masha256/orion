@@ -33,6 +33,9 @@ undrains and restarts the daemon, logs `recovered ...` to deploys.log and prints
   job run-now <kind> [asset] [--slot <iso>] | sql-ro <query> (prod: orion db query-ro as orion_prod_ro, never psql) | refresh-staging (stage) | reconcile --allow-retire [--yes]
   refresh-staging --stdin <sha256> (stage) a pg_dump -Fc dump on stdin (8 GB cap) -> ~/home/incoming/staging-refresh.dump
                                   (600), sha256 checked; the daemon's staging_refresh job restores it, then it is removed
+  load-prod --stdin <sha256>      (prod) the cutover's one-time initial load: the same upload, to
+                                  ~/home/incoming/prod-initial-load.dump; the daemon's staging_refresh job restores it on prod
+                                  only while prod holds no observations and no fetch runs, then it is removed
 
 Test hooks (scripts/provision/test/test_orion_remote.py): only when ORION_REMOTE_TEST=1 and the uid is not 0,
 ORION_REMOTE_TEST_USER (the Unix user), ORION_REMOTE_TEST_BIN (a directory with fake node, npm, pg_dump, pg_isready,
@@ -69,6 +72,8 @@ REFRESH_TIMEOUT_S = 3 * 3600.0  # the job's pg_restore may take 2 h (src/daemon/
 # refresh-staging --stdin's file, under $HOME: <ORION_HOME>/incoming/staging-refresh.dump, where the staging_refresh
 # job looks for an upload (src/daemon/jobs/stagingRefresh.ts UPLOADED_DUMP; tests/release/orionRemote.test.ts checks it).
 UPLOADED_DUMP = ('home', 'incoming', 'staging-refresh.dump')
+# load-prod --stdin's file (prod's one-time initial load, I-2): src/daemon/jobs/stagingRefresh.ts PROD_LOAD_DUMP.
+PROD_LOAD_DUMP = ('home', 'incoming', 'prod-initial-load.dump')
 PG_CUSTOM_MAGIC = b'PGDMP'
 SQL_OUTPUT_CAP = 1024 * 1024
 DRAIN_WAIT = '30m'
@@ -465,21 +470,38 @@ def v_refresh_staging(env, args):
     need_current(env)
     lock = deploy_lock(env)
     try:
-        return refresh_from_stdin(env, o['sha256'])
+        return refresh_from_stdin(env, o['sha256'], UPLOADED_DUMP)
     finally:
         lock.close()
 
 
-def refresh_from_stdin(env, want):
+def v_load_prod(env, args):
+    """I-2: prod's one-time initial load at cutover, from a dump proven on uranus. The daemon's job refuses it once prod
+    holds any observation or fetch run, so this can never overwrite a live prod."""
+    usage = 'load-prod --stdin <sha256> (a pg_dump -Fc dump on stdin)'
+    o = parse(args, [('sha256', pattern(SHA_RE, 'sha256'), False)], {'--stdin': None}, usage=usage)
+    if env.name != 'prod':
+        raise Refused('load-prod is prod-only (staging: refresh-staging --stdin)')
+    if not o.get('stdin') or 'sha256' not in o:
+        raise Refused(f'usage: {usage}')
+    need_current(env)
+    lock = deploy_lock(env)
+    try:
+        return refresh_from_stdin(env, o['sha256'], PROD_LOAD_DUMP)
+    finally:
+        lock.close()
+
+
+def refresh_from_stdin(env, want, target):
     """I-1/I-2: staging's data from a dump proven elsewhere. The dump (pg_dump -Fc) is read from stdin into
     ~/home/incoming/staging-refresh.dump (600, the dir 700) with its sha256 checked, then the daemon's own
     staging_refresh job restores it (the same filtered list, schema check, single transaction and Slack line as the
     weekly refresh) and removes it. Waits for the job; prints it; exit 0 only when it is done. The file is removed
     here too, whatever happens: a job that has not started by then finds no upload (and no prod dump on staging)."""
-    incoming = env.path(*UPLOADED_DUMP[:-1])
+    incoming = env.path(*target[:-1])
     os.makedirs(incoming, mode=0o700, exist_ok=True)
     os.chmod(incoming, 0o700)
-    dump = env.path(*UPLOADED_DUMP)
+    dump = env.path(*target)
     partial = dump + '.partial'
     try:
         for p in (partial, dump):  # an earlier upload whose session died: never restored
@@ -1004,6 +1026,7 @@ VERBS = {
     'job': v_job,
     'sql-ro': v_sql_ro,
     'refresh-staging': v_refresh_staging,
+    'load-prod': v_load_prod,
     'reconcile': v_reconcile,
 }
 

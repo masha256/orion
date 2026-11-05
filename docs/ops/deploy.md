@@ -174,6 +174,26 @@ it passes the report says `SOAK OK: staging ran <tag> through the scheduled nigh
 `--no-soak` skips the gate for a hotfix and prints `SOAK SKIPPED (--no-soak)` in the report. Prod is not deployed before
 cutover, and never without Mike's go.
 
+### Prod's one-time initial load (cutover, I-2)
+
+Prod's data arrives the way staging's first data did: imported and proven on uranus (step 2 of the first staging
+deploy, the same commands with `P=.../prod-import-<stamp>`), dumped with `pg_dump -Fc -n orion`, then sent with
+`load-prod` instead of `refresh-staging`:
+
+```
+PR='ssh -i ~/.ssh/orion-prod_ed25519 -o IdentitiesOnly=yes orion-prod@192.168.0.12'
+$PR load-prod --stdin "$(sha256sum "$P/latest.dump" | cut -d' ' -f1)" < "$P/latest.dump"
+```
+
+`load-prod` is prod-only and checks the sha256 and the `PGDMP` header like `refresh-staging --stdin`. It writes
+`~/home/incoming/prod-initial-load.dump` and runs the daemon's `staging_refresh` job, which on prod does only this:
+restore that file (the same filtered list, schema-equality check and single transaction, as `orion_prod`), and only
+while prod has no `observations` and no `fetch_runs` row. A prod that holds data refuses it before any restore
+(`ORION ALERT prod initial_load: prod already holds data ...`), so the verb can never overwrite a live prod. The file is
+removed afterwards. #orion-ops: `ORION PROD INITIAL LOAD done: restored the uploaded dump (<mtime>), 10 tables`. Then
+the same verification as staging (`report yield` per asset `cmp` against `$P/ref`, anomalies, proposals), then
+`asset activate` x13. The cutover order stays deploy -> load -> activate (final review I-1).
+
 ## 4. Breaking migrations
 
 A migration whose first line is `-- breaking` (it drops or rewrites data) gets its own release with nothing else in it.
@@ -219,6 +239,7 @@ ssh orion-<env> logs [n]              # daemon.log
 ssh orion-<env> jobs [--since <iso>]
 ssh orion-stage refresh-staging       # restore prod's latest dump into staging now (docs/ops/daemon.md)
 ssh orion-stage refresh-staging --stdin <sha256> < x.dump   # restore an uploaded pg_dump -Fc dump; waits for the job
+ssh orion-prod load-prod --stdin <sha256> < x.dump          # prod's one-time initial load (empty prod only); waits for the job
 ```
 
 If an orion-remote call died between drain and restart (ssh dropped), the next call of any verb recovers: it undrains,

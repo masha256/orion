@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { UPLOADED_DUMP } from '../../src/daemon/jobs/stagingRefresh.js';
+import { PROD_LOAD_DUMP, UPLOADED_DUMP } from '../../src/daemon/jobs/stagingRefresh.js';
 import { JOB_KINDS } from '../../src/db/jobs.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -37,5 +37,9 @@ describe('orion-remote', () => {
     const u = /^UPLOADED_DUMP = \(([^)]*)\)/m.exec(src);
     expect(u).not.toBeNull();
     expect(u![1]!.split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter((s) => s !== '')).toEqual(['home', ...UPLOADED_DUMP.split('/')]);
+    // load-prod --stdin writes prod's initial-load dump where the job looks for it on prod.
+    const p = /^PROD_LOAD_DUMP = \(([^)]*)\)/m.exec(src);
+    expect(p).not.toBeNull();
+    expect(p![1]!.split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter((s) => s !== '')).toEqual(['home', ...PROD_LOAD_DUMP.split('/')]);
   });
 });

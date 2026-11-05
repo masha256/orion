@@ -7,7 +7,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { OrionEnv } from '../../src/cli/paths.js';
 import { defaultHandlers, type JobContext } from '../../src/daemon/daemon.js';
 import {
-  DEFAULT_REFRESH_DUMP, ENV_LOCAL_TABLES, makeStagingRefreshHandler, PG_BIN_DIR, REFRESH_DUMP_MAX_AGE_MS, UPLOADED_DUMP,
+  DEFAULT_REFRESH_DUMP, ENV_LOCAL_TABLES, makeStagingRefreshHandler, PG_BIN_DIR, PROD_LOAD_DUMP, REFRESH_DUMP_MAX_AGE_MS, UPLOADED_DUMP,
   type CommandRunner,
 } from '../../src/daemon/jobs/stagingRefresh.js';
 import { openDb, type OrionDb } from '../../src/db/connection.js';
@@ -301,6 +301,56 @@ describe('stagingRefresh', () => {
     const out3 = await makeStagingRefreshHandler({ run: f3.run })(job, world({ dump: prodDump, root }).ctx);
     expect(out3).toMatchObject({ status: 'done', result: { source: 'prod' } });
     expect(f3.calls.at(-1)!.at(-1)).toBe(prodDump);
+  });
+
+  it('stagingRefresh: on prod, only the one-time initial load (load-prod --stdin) runs, and only into an empty prod', async () => {
+    expect(PROD_LOAD_DUMP).toBe(join('incoming', 'prod-initial-load.dump'));
+    const root = configRoot();
+    const load = join(root, PROD_LOAD_DUMP);
+    mkdirSync(join(root, 'incoming'), { mode: 0o700 });
+    const upload = (): void => {
+      writeFileSync(load, 'PGDMP initial', { mode: 0o600 });
+      const t = new Date(Date.parse(NOW) - 60_000);
+      utimesSync(load, t, t);
+    };
+    // A staging-style upload on prod is never read.
+    writeFileSync(join(root, UPLOADED_DUMP), 'PGDMP staging', { mode: 0o600 });
+
+    // 1. No initial-load file: skipped as before, nothing run.
+    const f0 = fakeRunner({ schema: db().schema });
+    const out0 = await makeStagingRefreshHandler({ run: f0.run })(job, world({ env: 'prod', root }).ctx);
+    expect(out0).toEqual({ status: 'skipped', result: { reason: 'not stage' } });
+    expect(f0.calls).toEqual([]);
+
+    // 2. An empty prod (registry rows only, as after the daemon's first start): restored as orion_prod's role, then removed.
+    await insertRegistryRow(db(), 'mini', 'inactive', 'h-prod', { at: '2026-11-01T00:00:00.000Z', by: 'daemon', reason: 'first start', releaseTag: null });
+    upload();
+    const f = fakeRunner({ schema: db().schema });
+    const w = world({ env: 'prod', root, dump: null });
+    const out = await makeStagingRefreshHandler({ run: f.run, role: undefined })(job, w.ctx);
+    expect(out).toMatchObject({ status: 'done', result: { source: 'initial_load', tables: PROD_DATA_TABLES.length } });
+    expect(f.calls).toHaveLength(3);
+    for (const c of f.calls) expect(c.at(-1)).toBe(load);
+    expect(restoreCalls(f)[0]).toContain('--role=orion_prod');
+    const mtime = new Date(Date.parse(NOW) - 60_000).toISOString();
+    expect(w.posts).toEqual([`ORION PROD INITIAL LOAD done: restored the uploaded dump (${mtime}), ${PROD_DATA_TABLES.length} tables`]);
+    expect(existsSync(load)).toBe(false);
+    expect(existsSync(join(root, UPLOADED_DUMP))).toBe(true);
+    // The env-local tables stay out of the prod restore list too.
+    expect(f.restoreList()!.split('\n').filter((l) => / TABLE DATA \S+ (jobs|asset_registry|daemon_heartbeat) /.test(l))).toEqual([]);
+
+    // 3. A prod that holds data: refused before any pg_restore call, alerted as prod, and the file is removed.
+    await db().run(`INSERT INTO fetch_runs (asset_id, started_at, ended_at, outcome, detail_json) VALUES ('mini', '2026-11-05T00:00:00Z', '2026-11-05T00:01:00Z', 'ok', '{}')`);
+    upload();
+    const f2 = fakeRunner({ schema: db().schema });
+    const w2 = world({ env: 'prod', root, dump: null });
+    const out2 = await makeStagingRefreshHandler({ run: f2.run })(job, w2.ctx);
+    expect(out2).toMatchObject({ status: 'failed', result: { source: 'initial_load' } });
+    expect((out2 as { error?: string }).error).toMatch(/^prod already holds data \(0 observations, 1 fetch runs\)/);
+    expect(f2.calls).toEqual([]);
+    expect(w2.posts).toHaveLength(1);
+    expect(w2.posts[0]).toMatch(/^ORION ALERT prod initial_load: prod already holds data/);
+    expect(existsSync(load)).toBe(false);
   });
 
   it('stagingRefresh: a password in ORION_DATABASE_URL goes to PGPASSWORD, never on argv', async () => {

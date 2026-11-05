@@ -138,6 +138,7 @@ confirm|reject <id> | approve <id> [note] | decline|ack|resolve <id> <note>
 job run-now <kind> [asset] [--slot <iso>]   # enqueues; nightly_report needs --slot (the slot to report again)
 refresh-staging          # stage only: job run-now staging_refresh
 refresh-staging --stdin <sha256> < dump   # stage only: restore an uploaded pg_dump -Fc dump (below); waits for the job
+load-prod --stdin <sha256> < dump         # prod only, once: the cutover's initial load into an empty prod (deploy.md)
 sql-ro "<one SELECT>"    # prod only: orion db query-ro as orion_prod_ro (read-only, 30 s, one statement, no backslash)
 ```
 
@@ -162,6 +163,8 @@ own lines (`job <id> refresh lit: ...`). A job's full result is in `jobs` (`resu
 | `ORION ALERT <env> disclosure_watch exit <code>: <stderr line>` | disclosure_watch | the scan crashed or timed out (2 h) |
 | `ORION STAGING REFRESH done: restored <dump mtime>, <n> tables` | staging_refresh | staging holds prod's data as of that dump |
 | `ORION STAGING REFRESH done: restored the uploaded dump (<mtime>), <n> tables` | staging_refresh | the dump sent with `refresh-staging --stdin` is restored |
+| `ORION PROD INITIAL LOAD done: restored the uploaded dump (<mtime>), <n> tables` | staging_refresh (prod) | the dump sent with `load-prod --stdin` is restored into the empty prod |
+| `ORION ALERT prod initial_load: prod already holds data ...` | staging_refresh (prod) | refused: prod has observations or fetch runs, nothing restored |
 | `ORION ALERT stage staging_refresh: <reason>` | staging_refresh | below |
 
 Silence means broken: the dead-man ping is withheld whenever a post is undelivered, the nightly report could not be
