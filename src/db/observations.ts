@@ -355,3 +355,8 @@ export async function fillObservationTokens(db: Db, id: number, tokens: Observat
   );
   return r.rowCount === 1;
 }
+
+/** Whether the row is still active (neither superseded nor rejected); false when there is no such row. */
+export async function isActiveObservation(db: Db, id: number): Promise<boolean> {
+  return (await db.one<{ id: number }>(`SELECT id FROM observations WHERE id = $1 AND ${ACTIVE}`, [id])) !== undefined;
+}

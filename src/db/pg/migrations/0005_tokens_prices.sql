@@ -34,7 +34,12 @@ ALTER TABLE observations
   ADD COLUMN amount double precision,
   ADD COLUMN hourly_amounts jsonb;
 
--- Per active flow row (period_days set): the USD re-priced from the hourly token buckets, beside `value` (legacy_usd).
+-- Per active USD flow row (a `flow_usd.*` metric with period_days set; every USD flow metric is named so, and only
+-- they are: tests/db/prices.test.ts pins the rule, so legacy_usd is always dollars and a `flow_tokens.*` count never
+-- appears): the USD re-priced from the hourly token buckets, beside `value` (legacy_usd).
+-- Hour h (1-based in the jsonb array) starts at observed_at - 24 hours + (h - 1) hours: fixed-length intervals, never
+-- calendar-day arithmetic, so the buckets do not depend on the session TimeZone (a `- 1 day` in America/Los_Angeles is
+-- 25 hours on 2026-11-01).
 -- An hour's price is the newest `prices` row of the token at or before the hour's start, by source priority (coingecko
 -- first), and no more than 6 hours old: an older row is a gap in the series, never a price. An hour with a zero amount
 -- needs no price. `usd` is what a reader would use and `usd_basis` labels it:
@@ -72,14 +77,14 @@ LEFT JOIN LATERAL (
     count(*) FILTER (WHERE b.amt <> 0 AND p.price_usd IS NULL) AS hours_missing
   FROM (
     SELECT e.txt::double precision AS amt,
-      o.observed_at - make_interval(days => 1) + make_interval(hours => (e.i - 1)::int) AS hour_start
+      o.observed_at - interval '24 hours' + (e.i - 1) * interval '1 hour' AS hour_start
     FROM jsonb_array_elements_text(o.hourly_amounts) WITH ORDINALITY AS e(txt, i)
   ) b
   LEFT JOIN LATERAL (
     SELECT pr.price_usd FROM prices pr
-    WHERE pr.token_ref = o.token_ref AND pr.ts <= b.hour_start AND pr.ts >= b.hour_start - make_interval(hours => 6)
+    WHERE pr.token_ref = o.token_ref AND pr.ts <= b.hour_start AND pr.ts >= b.hour_start - interval '6 hours'
     ORDER BY CASE WHEN pr.source = 'coingecko' THEN 0 ELSE 1 END, pr.ts DESC
     LIMIT 1
   ) p ON true
 ) h ON o.hourly_amounts IS NOT NULL
-WHERE o.superseded_by IS NULL AND o.status <> 'rejected' AND o.period_days IS NOT NULL;
+WHERE o.superseded_by IS NULL AND o.status <> 'rejected' AND o.period_days IS NOT NULL AND starts_with(o.metric_key, 'flow_usd.');

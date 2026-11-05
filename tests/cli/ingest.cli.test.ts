@@ -23,6 +23,18 @@ async function orion(...args: string[]): Promise<string> {
   return lines.join('\n');
 }
 
+/** As `orion`, also returning every exit code the command set. */
+async function orionExit(...args: string[]): Promise<{ out: string; exitCodes: number[] }> {
+  const lines: string[] = [];
+  const exitCodes: number[] = [];
+  const ctx = testCliContext(home, {
+    stdout: (l) => lines.push(l), now: () => NOW, ingestDeps: () => h.deps, stderr: (l) => stderr.push(l), setExitCode: (c) => exitCodes.push(c),
+  });
+  const h = harness(testDb(), { routes });
+  await buildProgram(ctx).parseAsync(args, { from: 'user' });
+  return { out: lines.join('\n'), exitCodes };
+}
+
 beforeEach(async () => {
   home = mkdtempSync(join(tmpdir(), 'orion-ingest-cli-'));
   routes = {};
@@ -153,5 +165,18 @@ describe('orion data backfill-tokens / compare-usd', () => {
     expect(cmp.map((r: { metric: string }) => r.metric)).toEqual(['flow_usd.fees', 'flow_usd.fees_programmatic']);
     expect(cmp[0]).toMatchObject({ days: 3, hourlyCovered: 3, sumLegacy: 0, sumHourly: 0, beyondHourly: 0, noTokens: 0 });
     expect(await orion('data', 'compare-usd', 'mini')).toMatch(/flow_usd\.fees: 3 day\(s\) within: legacy 0\.00 vs hourly 0\.00/);
+  });
+
+  it('backfill-tokens exits non-zero when a day was refused (and 0 otherwise)', async () => {
+    await orion('data', 'fetch', 'mini', '--json');
+    await testDb().run('UPDATE observations SET token_ref = NULL, amount = NULL, hourly_amounts = NULL');
+    const ok = await orionExit('data', 'backfill-tokens', 'mini', '--days', '3', '--metric', 'flow_usd.fees_programmatic', '--json');
+    expect(JSON.parse(ok.out)).toMatchObject({ refused: [] });
+    expect(ok.exitCodes).toEqual([]);
+    // The stored token twin of one day no longer matches the chain (0 tokens): that day is refused.
+    await testDb().run("UPDATE observations SET value = 4 WHERE metric_key = 'flow_tokens.fees' AND observed_at = '2026-09-18T00:00:00Z' AND superseded_by IS NULL");
+    const bad = await orionExit('data', 'backfill-tokens', 'mini', '--days', '3', '--json');
+    expect(JSON.parse(bad.out).refused).toEqual([{ day: '2026-09-17', reason: expect.stringMatching(/stored 4, re-scanned 0/) }]);
+    expect(bad.exitCodes).toEqual([1]);
   });
 });

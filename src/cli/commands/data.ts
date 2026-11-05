@@ -53,7 +53,7 @@ function backfillTokenLines(r: BackfillTokensResult): string[] {
   return [
     `${r.assetId.toUpperCase()} backfill-tokens${r.dryRun ? ' (dry run: nothing was written)' : ''}: ${r.range ? `${r.range.from} to ${r.range.to}` : 'no range'}; ` +
       `${r.dryRun ? 'would fill' : 'filled'} ${r.filled} row(s), ${r.alreadyFilled} already had tokens, ${r.skipped.length} skipped, ${r.refused.length} day(s) refused`,
-    ...r.prices.map((p) => `  prices ${p.coingeckoId}: ${p.rows} hourly row(s) in ${p.requests} request(s)${p.reachedDay ? `, from ${p.reachedDay}` : ''}${p.failures.map((f) => `; FAILED ${f}`).join('')}`),
+    ...r.prices.map((p) => `  prices ${p.coingeckoId} (${p.tokenRefs.join(', ')}): ${p.rows} hourly row(s) in ${p.requests} request(s)${p.reachedDay ? `, from ${p.reachedDay}` : ''}${p.failures.map((f) => `; FAILED ${f}`).join('')}`),
     ...r.refused.map((x) => `  REFUSED ${x.day}: ${x.reason}`),
     ...r.skipped.map((x) => `  skipped ${x.day} ${x.metricKey}: ${x.reason}`),
     ...r.notes.map((n) => `  note: ${n}`),
@@ -66,7 +66,7 @@ function compareLines(assetId: string, days: number, rows: UsdComparison[]): str
     `${assetId.toUpperCase()} legacy USD vs hourly buckets, ${days} days (within the hourly series; beyond it apart, plan correction 13)`,
     ...rows.flatMap((r) => [
       `  ${r.metric}: ${r.hourlyCovered} day(s) within: legacy ${usd(r.sumLegacy)} vs hourly ${usd(r.sumHourly)} (${pct(r.gapPct)}), day gap p50 ${pct(r.p50DayGapPct)} p90 ${pct(r.p90DayGapPct)}` +
-        `${r.usdNative > 0 ? ` (${r.usdNative} dollar-native)` : ''}`,
+        `${r.usdNative > 0 ? ` (${r.usdNative} dollar-native)` : ''}${r.legacyZeroDays > 0 ? `; ${r.legacyZeroDays} day(s) with legacy 0 and hourly not 0, counted at 100%` : ''}`,
       `    beyond: ${r.beyondHourly} day(s): legacy ${usd(r.beyond.sumLegacy)} vs hourly ${usd(r.beyond.sumHourly)} (${pct(r.beyond.gapPct)}); ` +
         `keep value: ${r.unpriced} unpriced, ${r.noTokens} without tokens, ${r.noHourly} without hourly buckets`,
     ]),
@@ -180,8 +180,8 @@ export function registerData(program: Command, ctx: CliContext): void {
 
   data
     .command('backfill-tokens <asset>')
-    .description('fill token amounts and hourly buckets on transfer-scan rows written before 0005, by re-scanning each day; never changes value or adds a row; --dry-run writes nothing')
-    .option('--metric <key>', 'only this transfer_flow metric (repeatable)', collect, [])
+    .description('fill token amounts on flow rows written before 0005: transfer scans re-scanned by day (hourly buckets), first-party dollar series as token usd (amount = value); never changes value or adds a row; exits 1 when a day was refused; --dry-run writes nothing')
+    .option('--metric <key>', 'only this transfer_flow metric or first-party dollar series (repeatable)', collect, [])
     .option('--days <n>', 'days back from now (default: from the oldest stored row)')
     .option('--dry-run', 're-scan and report what would be filled; write nothing, fetch no prices')
     .option('--json', 'JSON output')
@@ -195,6 +195,8 @@ export function registerData(program: Command, ctx: CliContext): void {
         opts.dryRun ? await run(db) : await withRunLock(db, assetId, lockHolder('orion data backfill-tokens'), ctx.now(), async () => await run(db)),
       );
       output(ctx, opts.json, result, () => backfillTokenLines(result));
+      // A refused day is the Step 5 stop rule: scripted runs fail closed on it.
+      if (result.refused.length > 0) ctx.setExitCode?.(1);
     });
 
   data

@@ -153,6 +153,8 @@ const FILLS_PAGE = 2000;
 const fundBuysDaily: AdapterDef = {
   name: 'hype.fund_buys_daily',
   needsRpc: false,
+  // USDC spent, priced by the fills themselves: always dollars.
+  usdNative: () => true,
   async run(ctx, params) {
     const user = ctx.contract(text(params, 'fund', 'assistance_fund'));
     const pair = text(params, 'pair', '');
@@ -217,16 +219,20 @@ const fundBuysDaily: AdapterDef = {
  *   treasury shows up.
  */
 const LEDGER_PAGE = 2000;
+const reserveYieldToken = (params: Record<string, unknown>): string => text(params, 'token', 'USDC');
+/** USDC payments are dollars as the ledger reports them. */
+const reserveYieldUsdNative = (params: Record<string, unknown>): boolean => reserveYieldToken(params) === 'USDC';
 const reserveYieldPayments: AdapterDef = {
   name: 'hype.reserve_yield_payments',
   needsRpc: false,
+  usdNative: reserveYieldUsdNative,
   async run(ctx, params) {
     const interest = ctx.contract(text(params, 'interest', 'system_interest')).toLowerCase();
     const fund = ctx.contract(text(params, 'fund', 'assistance_fund')).toLowerCase();
     const treasuries = (Array.isArray(params.treasury) ? params.treasury : [text(params, 'treasury', '')])
       .filter((n): n is string => typeof n === 'string' && n !== '')
       .map((n) => ctx.contract(n).toLowerCase());
-    const token = text(params, 'token', 'USDC');
+    const token = reserveYieldToken(params);
     const started = text(params, 'started', '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(started)) throw new Error('params.started (the activation day, YYYY-MM-DD) is required');
     const interval = number(params, 'interval_days', 30);
@@ -292,7 +298,7 @@ const reserveYieldPayments: AdapterDef = {
       kind: 'periodic_payments', payments, due, payers: [...payers].sort(), expectedPayers: treasuries.sort(),
       detail: `hyperliquid userNonFundingLedgerUpdates ${interest} -> ${fund} ${token}, ${interval}-day periods from ${started}, paid ${lag} days after`,
       // USDC payments: dollars as the ledger reports them (token 'usd', spec §4).
-      ...(token === 'USDC' ? { token: USD_TOKEN } : {}),
+      ...(reserveYieldUsdNative(params) ? { token: USD_TOKEN } : {}),
     };
   },
 };

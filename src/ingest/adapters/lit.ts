@@ -28,6 +28,12 @@ function amount(v: unknown, what: string): number {
   return n;
 }
 
+const treasuryBuysUnit = (params: Record<string, unknown>): string => text(params, 'unit', 'usd');
+/** USDC spent (unit usd) is dollars Lighter reports; LIT bought is not. */
+const treasuryBuysUsdNative = (params: Record<string, unknown>): boolean => treasuryBuysUnit(params) === 'usd';
+/** Lighter reports every exchangeMetrics kind but `buyback` (LIT) in dollars. */
+const exchangeFeesUsdNative = (params: Record<string, unknown>): boolean => Array.isArray(params.kinds) && !params.kinds.includes('buyback');
+
 /**
  * USDC the treasury account spent per completed UTC day buying LIT (`unit: usd`; or the LIT bought, `unit: tokens`): sum of price x size over its trades on `market` where
  * it is the bid. The trades endpoint pages newest first (100 a page, `next_cursor`), so the read walks back from now
@@ -41,7 +47,7 @@ async function treasuryBuysDaily(ctx: SourceContext, params: Record<string, unkn
   const market = number(params, 'market', -1);
   if (market < 0) throw new Error('params.market (the LIT/USDC spot market id, e.g. 2049) is required');
   const days = ctx.backfillDays ?? number(params, 'days', 7);
-  const unit = text(params, 'unit', 'usd');
+  const unit = treasuryBuysUnit(params);
   if (unit !== 'usd' && unit !== 'tokens') throw new Error(`params.unit must be usd or tokens, not ${unit}`);
   // About 430 treasury trades a day on 2026-10-16 (4.3 pages); the cap allows ten times that before it fails the read.
   const maxPages = number(params, 'max_pages_per_day', 50) * days + 20;
@@ -101,7 +107,7 @@ async function treasuryBuysDaily(ctx: SourceContext, params: Record<string, unkn
   // USDC spent is a dollar amount Lighter reports (token 'usd', spec §4); LIT bought gets no token ref here.
   return {
     kind: 'daily_series', points, detail: `lighter trades account ${account} market ${market} ${unit === 'usd' ? 'buys' : 'LIT bought'} (${trades} trades, ${pages} pages${short}${sold})`,
-    ...(unit === 'usd' ? { token: USD_TOKEN } : {}),
+    ...(treasuryBuysUsdNative(params) ? { token: USD_TOKEN } : {}),
   };
 }
 
@@ -322,7 +328,7 @@ async function exchangeFeesDaily(ctx: SourceContext, params: Record<string, unkn
   // Lighter reports every kind but `buyback` (LIT) in dollars: such a series is token 'usd' (spec §4).
   return {
     kind: 'daily_series', points, detail: `lighter exchangeMetrics ${new URL(api).host} ${kinds.join('+')} (${points.length} days)${heldNote}`,
-    ...(kinds.includes('buyback') ? {} : { token: USD_TOKEN }),
+    ...(exchangeFeesUsdNative(params) ? { token: USD_TOKEN } : {}),
   };
 }
 
@@ -480,13 +486,14 @@ async function stakingPool(ctx: SourceContext, params: Record<string, unknown>):
 }
 
 export const litAdapters: AdapterDef[] = [
-  { name: 'lit.treasury_buys_daily', needsRpc: false, run: treasuryBuysDaily },
+  { name: 'lit.treasury_buys_daily', needsRpc: false, run: treasuryBuysDaily, usdNative: treasuryBuysUsdNative },
   {
     name: 'lit.exchange_fees_daily',
     needsRpc: false,
     paramsDoc: `kinds: string[] (required, no duplicates; each one of ${EXCHANGE_KINDS.join(', ')}): Lighter exchangeMetrics kinds summed per UTC day; api?: string (default ${DEFAULT_API}; the Robinhood instance is https://api.rh.lighter.xyz/api/v1); days?: 1..30 (default 7; the run's --backfill-days overrides it)`,
     validateParams: validateExchangeFeesParams,
     run: exchangeFeesDaily,
+    usdNative: exchangeFeesUsdNative,
   },
   {
     name: 'lit.app_fee_share',

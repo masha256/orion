@@ -35,7 +35,7 @@ export const BACKFILL_BATCH_ROWS = 1000;
 const DEFILLAMA_HOSTS: ReadonlySet<string> = new Set(['api.llama.fi', 'coins.llama.fi', 'pro-api.llama.fi', 'yields.llama.fi']);
 
 /** The first URL in a source detail on a DefiLlama host, or null. */
-function defillamaUrlOf(detail: string | null): string | null {
+export function defillamaUrlOf(detail: string | null): string | null {
   for (const [u] of (detail ?? '').matchAll(/\bhttps?:\/\/[^\s"'<>]+/g)) {
     try {
       if (DEFILLAMA_HOSTS.has(new URL(u).hostname)) return u;

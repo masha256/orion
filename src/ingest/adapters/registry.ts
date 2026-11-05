@@ -23,6 +23,12 @@ export interface AdapterDef {
    * `solana.token_supply`'s readings). A reconciliation check refuses two sides joined by it (spec §5, circular checks).
    */
   computedFrom?: string[];
+  /**
+   * True when, with these params, the adapter's series is dollars a first-party API reports (token 'usd', spec §4): the
+   * run returns `token: USD_TOKEN` exactly then. The token backfill reads it to fill rows written before 0005 with
+   * amount = value and no request (ruling R18).
+   */
+  usdNative?(params: Record<string, unknown>): boolean;
 }
 
 const ADAPTERS = new Map<string, AdapterDef>();

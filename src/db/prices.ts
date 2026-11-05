@@ -91,6 +91,20 @@ export async function upsertPrices(db: Db, tokenRef: string, source: string, row
   return result.rowCount;
 }
 
+/**
+ * The hours (ms) in [fromMs, toMs) that already have a `source` price under EVERY one of `tokenRefs`: hours a fetch
+ * need not ask for again.
+ */
+export async function storedPriceHours(db: Db, tokenRefs: string[], source: string, fromMs: number, toMs: number): Promise<Set<number>> {
+  if (tokenRefs.length === 0) return new Set();
+  const rows = await db.all<{ ts: string }>(
+    `SELECT ts FROM prices WHERE token_ref = ANY($1::text[]) AND source = $2 AND ts >= $3 AND ts < $4
+     GROUP BY ts HAVING count(DISTINCT token_ref)::float8 = $5`,
+    [tokenRefs, source, new Date(fromMs).toISOString(), new Date(toMs).toISOString(), new Set(tokenRefs).size],
+  );
+  return new Set(rows.map((r) => new Date(r.ts).getTime()));
+}
+
 export interface StoredPrice {
   tokenRef: string;
   ts: string;
@@ -115,9 +129,15 @@ export interface GapStats {
   sumHourly: number;
   /** (sumHourly / sumLegacy - 1) x 100; null when sumLegacy is 0. */
   gapPct: number | null;
-  /** Per-day |hourly - legacy| / |legacy| x 100, nearest-rank percentiles; null with no day (a day with legacy 0 counts 0 when hourly is 0 too). */
+  /**
+   * Per-day |hourly - legacy| / |legacy| x 100, nearest-rank percentiles over every day; null with no day. A day whose
+   * legacy USD is 0 counts 0 when hourly is 0 too, else 100 (the whole hourly amount is the gap): such a day is the
+   * discrepancy a gate must see, so it is never left out.
+   */
   p50DayGapPct: number | null;
   p90DayGapPct: number | null;
+  /** Days whose legacy USD is 0 but whose hourly USD is not (each counted at 100 in the percentiles). */
+  legacyZeroDays: number;
 }
 
 export interface UsdComparison extends GapStats {
@@ -149,12 +169,12 @@ function gapStats(rows: { legacy: number; hourly: number }[]): GapStats {
   const sumLegacy = rows.reduce((s, r) => s + r.legacy, 0);
   const sumHourly = rows.reduce((s, r) => s + r.hourly, 0);
   const dayGaps = rows
-    .map((r) => (r.legacy === 0 ? (r.hourly === 0 ? 0 : null) : (Math.abs(r.hourly - r.legacy) / Math.abs(r.legacy)) * 100))
-    .filter((g): g is number => g !== null)
+    .map((r) => (r.legacy === 0 ? (r.hourly === 0 ? 0 : 100) : (Math.abs(r.hourly - r.legacy) / Math.abs(r.legacy)) * 100))
     .sort((a, b) => a - b);
   return {
     days: rows.length, sumLegacy, sumHourly, gapPct: sumLegacy === 0 ? null : (sumHourly / sumLegacy - 1) * 100,
     p50DayGapPct: percentile(dayGaps, 0.5), p90DayGapPct: percentile(dayGaps, 0.9),
+    legacyZeroDays: rows.filter((r) => r.legacy === 0 && r.hourly !== 0).length,
   };
 }
 

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { insertObservation } from '../../src/db/observations.js';
 import { compareUsd, evmTokenRef, listPrices, upsertPrices, upsertToken, USD_TOKEN } from '../../src/db/prices.js';
@@ -117,6 +118,37 @@ describe('flow_usd_v', () => {
       assetId: 'crv', metricKey: 'total_supply', observedAt: '2026-10-01T12:00:00Z', value: 1, source: 'onchain', fetchedAt: '2026-10-01T12:00:00Z', provenance: TEST_PROVENANCE,
     });
     expect(await view(lvl.id)).toBeUndefined();
+    // A token flow is not in the view: its value is tokens, and legacy_usd must be dollars.
+    const tokensRow = await flowRow('2026-10-01', 3.5, { amount: 3.5, hourly }, { metricKey: 'flow_tokens.fees' });
+    expect(await view(tokensRow.id)).toBeUndefined();
+  });
+
+  it('flow_usd_v hour starts do not depend on the session TimeZone (DST change day 2026-11-01)', async () => {
+    await upsertToken(testDb(), TOKEN);
+    // Every hour of 2026-11-01 at 10 + hour, and 99 in the last hour of the day before: an hour bucket priced one hour
+    // early (calendar-day arithmetic in America/Los_Angeles, where 2026-11-01 has 25 hours) would take a different price.
+    await upsertPrices(testDb(), REF, 'coingecko', [...dayPrices('2026-10-31', () => 99), ...dayPrices('2026-11-01', (h) => 10 + h)], '2026-11-02T00:00:00Z');
+    const hourly = Array.from({ length: 24 }, (_, h) => (h === 0 ? 1 : h === 1 ? 2 : h === 23 ? 3 : 0));
+    const row = await flowRow('2026-11-01', 120, { amount: 6, hourly });
+    const expected = { usd: 1 * 10 + 2 * 11 + 3 * 33, usd_basis: 'hourly', hours_priced: 24, hours_needed: 3 };
+    expect(await view(row.id)).toMatchObject(expected);
+    const underLa = await testDb().tx(async (t) => {
+      await t.run("SET LOCAL TIME ZONE 'America/Los_Angeles'");
+      return await t.one<{ usd: number; usd_basis: string; hours_priced: number; hours_needed: number }>(
+        'SELECT usd, usd_basis, hours_priced, hours_needed FROM flow_usd_v WHERE id = $1', [row.id],
+      );
+    });
+    expect(underLa).toMatchObject(expected);
+  });
+});
+
+describe('the flow_usd_v naming rule', () => {
+  it('every USD flow metric of every asset is named flow_usd.* and every flow_usd.* metric is USD (the view selects by name)', async () => {
+    const { listAssetIds, loadAsset } = await import('../../src/config/load.js');
+    const root = fileURLToPath(new URL('../..', import.meta.url));
+    const flows = listAssetIds(root).flatMap((id) => Object.entries(loadAsset(root, id).config.metrics).filter(([, d]) => d.type === 'flow').map(([k, d]) => ({ id, k, unit: d.unit })));
+    expect(flows.length).toBeGreaterThan(50);
+    expect(flows.filter((f) => f.k.startsWith('flow_usd.') !== (f.unit === 'usd'))).toEqual([]);
   });
 });
 
@@ -154,5 +186,17 @@ describe('compareUsd', () => {
     // A shorter window leaves the old days out.
     const [recent] = await compareUsd(testDb(), { id: 'crv', metrics: { 'flow_usd.fees': { type: 'flow', unit: 'usd' } } }, 20, { now: new Date('2026-11-05T12:00:00Z') });
     expect(recent).toMatchObject({ days: 4, hourlyCovered: 3, beyondHourly: 0, unpriced: 0, noTokens: 1 });
+  });
+
+  it('compare-usd counts a day whose legacy USD is 0 in the day-gap percentiles (100% when hourly is not 0)', async () => {
+    await upsertToken(testDb(), TOKEN);
+    const hourly = (tokens: number) => Array.from({ length: 24 }, (_, h) => (h === 12 ? tokens : 0));
+    const fetchedAt = '2026-11-05T06:00:00Z';
+    for (const day of ['2026-10-20', '2026-10-21', '2026-10-22']) await upsertPrices(testDb(), REF, 'coingecko', dayPrices(day, () => 10), fetchedAt);
+    await flowRow('2026-10-20', 100, { amount: 10, hourly: hourly(10) }, { fetchedAt }); // 0%
+    await flowRow('2026-10-21', 0, { amount: 0, hourly: hourly(0) }, { fetchedAt }); // 0 vs 0: 0%
+    await flowRow('2026-10-22', 0, { amount: 1, hourly: hourly(1) }, { fetchedAt }); // 0 vs 10: 100%
+    const [row] = await compareUsd(testDb(), { id: 'crv', metrics: { 'flow_usd.fees': { type: 'flow', unit: 'usd' } } }, 30, { now: new Date('2026-11-05T12:00:00Z') });
+    expect(row).toMatchObject({ hourlyCovered: 3, sumLegacy: 100, sumHourly: 110, p50DayGapPct: 0, p90DayGapPct: 100, legacyZeroDays: 1 });
   });
 });

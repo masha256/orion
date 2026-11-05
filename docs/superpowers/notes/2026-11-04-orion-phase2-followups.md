@@ -313,3 +313,29 @@ the row's `fetched_at`, so the legacy USD was priced at hourly points; dollar-na
 legacy vs sum hourly, gap %, and nearest-rank p50/p90 of the per-day |hourly - legacy| / legacy; days beyond (legacy
 priced at daily points) reported apart in `beyond`; `unpriced` (an hour with an amount has no price: keeps value),
 `noTokens`, `noHourly` counted. The G2 table (Step 5, controller) comes from this.
+
+### Task 7 review fix round 1 (controller rulings)
+- `flow_usd_v` is timezone-independent: hour h of a row starts at `observed_at - interval '24 hours' + (h - 1) * interval
+  '1 hour'` (the first version used `- make_interval(days => 1)`, calendar arithmetic in the session TimeZone: on
+  2026-11-01 under America/Los_Angeles every bucket was priced one hour early). Pinned by a test that reads the view
+  under `SET LOCAL TIME ZONE 'America/Los_Angeles'` on that day.
+- `flow_usd_v` lists only `flow_usd.*` rows, so `legacy_usd` is always dollars. The view selects by name because the DB
+  has no units: a test pins that every USD flow metric of every asset is named `flow_usd.*` and only those are.
+- `backfill-tokens` fetches one market_chart range per CoinGecko id per run (yCRV's crvusd once, not once per ref),
+  only for the hours of days that still have a row to fill and that are not already stored under every ref priced at
+  the id; the rows are upserted under each of those refs. A re-run with nothing pending makes no CoinGecko request.
+  The JSON's `prices[]` is now one entry per id with `tokenRefs[]` (was one per `tokenRef`).
+- `backfill-tokens` exits 1 when any day was refused (the Step 5 stop rule fails closed in scripts).
+- `compare-usd` day-gap percentiles count every day: a day with legacy 0 and hourly not 0 counts as 100% (counted in
+  `legacyZeroDays`), legacy 0 and hourly 0 as 0%.
+- A row superseded or rejected between the backfill's read and its day transaction is listed in `skipped`
+  ("superseded or rejected during the run"), not counted as already filled.
+- R18: `backfill-tokens` also fills the first-party dollar rows written before 0005 (Lighter exchangeMetrics kinds
+  except `buyback`, Lighter treasury buys `unit: usd`, Hyperliquid fund fills, Hyperliquid USDC payments): `token_ref
+  'usd'`, `amount = value`, `hourly_amounts` null, no request of any kind, same guard (`amount IS NULL` and active), one
+  transaction per day under the asset lock. Which series qualify is the adapter's own `usdNative(params)` declaration,
+  the same predicate its run uses to return `token: USD_TOKEN`. Only `api` rows the series wrote are filled: a manual
+  row or a history row whose detail names a DefiLlama host is skipped and listed. HYPE (no RPC) runs it with no RPC.
+- Accepted (ruling, not fixed): a transfer-scan member with no `flow_tokens.*` twin (the CRV family, AERO, cvxCRV, the
+  yCRV share members) is filled unverified. If its allowlist or `from_ignore` changed after the row was written, the
+  current config's tokens sit beside the old config's `value`; compare-usd's per-day p90 is the only net.
