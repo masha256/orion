@@ -4,7 +4,7 @@ import { listAssetIds, loadAsset, type LoadedAsset } from '../../src/config/load
 import type { MetricDef } from '../../src/config/schema.js';
 import type { Db } from '../../src/db/connection.js';
 import { findAdapter } from '../../src/ingest/adapters/registry.js';
-import { backfillProvenance } from '../../src/provenance/backfill.js';
+import { BACKFILL_BATCH_ROWS, backfillProvenance, mapRow } from '../../src/provenance/backfill.js';
 import { sourceTypeOf } from '../../src/report/sourceTypes.js';
 import { useTestDb } from '../helpers/db.js';
 
@@ -140,5 +140,101 @@ describe('backfillProvenance', () => {
     expect(r.unmapped).toHaveLength(unmappable.length);
     expect(await db.all('SELECT * FROM observations ORDER BY id')).toEqual(before);
     expect(await db.one('SELECT count(*)::bigint AS n FROM observations WHERE method IS NOT NULL')).toEqual({ n: 0 });
+  });
+});
+
+/** 25,000 rows of crv price_usd as the old release wrote them (one per hour), in one statement. */
+async function seedMany(db: Db, n: number): Promise<void> {
+  await db.run(
+    `INSERT INTO observations (asset_id, metric_key, observed_at, period_days, value, source, source_detail, status, citation_url, quoted_text, fetched_at)
+     SELECT 'crv', 'price_usd', timestamptz '2020-01-01T00:00:00Z' + g * interval '1 hour', NULL, 0.5 + g, 'api',
+            'coingecko /coins/markets curve-dao-token.current_price', 'confirmed', NULL, NULL, timestamptz '2026-10-02T00:00:00Z'
+     FROM generate_series(1, $1::int) AS g`,
+    [n],
+  );
+}
+
+/** The database, with every transaction counted: rows it mapped, the lock it took; `crashAt` (1-based) throws at that tx's end. */
+function countingDb(db: Db, crashAt: number | null = null): { db: Db; txs: { rows: number; lockAsset: string | undefined }[] } {
+  const txs: { rows: number; lockAsset: string | undefined }[] = [];
+  const set = async (t: Db) => (await t.one<{ n: number }>('SELECT count(*)::bigint AS n FROM observations WHERE method IS NOT NULL'))!.n;
+  const wrapped = new Proxy(db, {
+    get(target, prop, receiver) {
+      if (prop === 'tx') {
+        return async <T>(fn: (t: Db) => Promise<T>, opts?: { lockAsset?: string }) =>
+          await target.tx(async (t) => {
+            const before = await set(t);
+            const r = await fn(t);
+            const rows = (await set(t)) - before;
+            txs.push({ rows, lockAsset: opts?.lockAsset });
+            if (txs.length === crashAt) throw new Error('crash mid-way');
+            return r;
+          }, opts);
+      }
+      const v = Reflect.get(target, prop, receiver) as unknown;
+      return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+    },
+  });
+  return { db: wrapped, txs };
+}
+
+describe('backfillProvenance: bounded transactions', () => {
+  it('writes at most 1,000 rows per transaction, each under the asset lock (25k rows: 25 batches)', async () => {
+    expect(BACKFILL_BATCH_ROWS).toBe(1000);
+    const base = testDb();
+    await seedMany(base, 25_000);
+    const { db, txs } = countingDb(base);
+    const r = await backfillProvenance(db, ASSETS);
+    expect(r.mapped).toEqual({ 'crv:price_usd': 25_000 });
+    expect(txs).toHaveLength(25);
+    expect(txs.every((t) => t.rows === 1000 && t.lockAsset === 'crv')).toBe(true);
+    expect(await base.one('SELECT count(*)::bigint AS n FROM observations WHERE method IS NULL')).toEqual({ n: 0 });
+  }, 60_000);
+
+  it('a crash mid-way leaves only whole batches, and a re-run maps the rest', async () => {
+    const base = testDb();
+    await seedMany(base, 25_000);
+    const { db } = countingDb(base, 3);
+    await expect(backfillProvenance(db, ASSETS)).rejects.toThrow('crash mid-way');
+    expect(await base.one('SELECT count(*)::bigint AS n FROM observations WHERE method IS NOT NULL')).toEqual({ n: 2000 });
+    const again = countingDb(base);
+    const r = await backfillProvenance(again.db, ASSETS);
+    expect(r.alreadySet).toBe(2000);
+    expect(r.mapped).toEqual({ 'crv:price_usd': 23_000 });
+    expect(again.txs.map((t) => t.rows)).toEqual(Array.from({ length: 23 }, () => 1000));
+    expect(await base.one('SELECT count(*)::bigint AS n FROM observations WHERE method IS NULL')).toEqual({ n: 0 });
+  }, 60_000);
+});
+
+describe('mapRow', () => {
+  const crv = ASSETS.find((a) => a.config.id === 'crv')!;
+  const row = (over: Partial<Parameters<typeof mapRow>[0]>) => ({ id: 1, asset_id: 'crv', metric_key: 'price_usd', source: 'api', source_detail: null, citation_url: null, ...over });
+
+  it('a chain level written as "block N: <detail>" (an RPC adapter) gets block_from = block_to = N', () => {
+    expect(mapRow(row({ metric_key: 'emission_rate_annual', source: 'onchain', source_detail: 'block 456: rate 1.5 CRV/s' }), crv)).toMatchObject({ blockFrom: 456, blockTo: 456 });
+    expect(mapRow(row({ metric_key: 'total_supply', source: 'onchain', source_detail: 'block 789' }), crv)).toMatchObject({ blockFrom: 789, blockTo: 789 });
+    expect(mapRow(row({ metric_key: 'total_supply', source: 'onchain', source_detail: 'block 789x' }), crv)).toMatchObject({ blockFrom: null, blockTo: null });
+  });
+
+  it('an api row whose source_detail names a DefiLlama host is third_party, whatever the metric reads now', () => {
+    const scanned = Object.keys(crv.config.metrics).find((k) => crv.config.metrics[k].source?.type === 'transfer_flow')!;
+    for (const url of [
+      'https://api.llama.fi/summary/fees/curve-dex?dataType=dailyRevenue',
+      'https://coins.llama.fi/prices/current/ethereum:0xd533a949740bb3306d119cc777fa900ba034cd52',
+      'https://pro-api.llama.fi/0123456789abcdef0123456789abcdef/api/fees',
+      'https://yields.llama.fi/pools',
+    ]) {
+      const m = mapRow(row({ metric_key: scanned, source_detail: `${url} path.x` }), crv);
+      expect(m, url).toMatchObject({ method: 'measured', sourceType: 'third_party', chain: null });
+      expect(JSON.stringify(m)).not.toContain('0123456789abcdef0123456789abcdef');
+    }
+    // An api row on a metric that is first party now (Lighter's own API adapter), written from DefiLlama.
+    const lit = ASSETS.find((a) => a.config.id === 'lit')!;
+    expect(sourceTypeOf(lit.config.metrics['flow_usd.fees_core'], lit.config.metrics)).toBe('first_party_api');
+    expect(mapRow(row({ asset_id: 'lit', metric_key: 'flow_usd.fees_core', source_detail: 'https://api.llama.fi/summary/fees/lighter?dataType=dailyFees' }), lit)).toMatchObject({
+      method: 'measured', sourceType: 'third_party', locator: { endpoint: 'https://api.llama.fi/summary/fees/lighter?dataType=dailyFees' },
+    });
+    // Another host: labelled by the current source, as before.
+    expect(mapRow(row({ metric_key: scanned, source_detail: 'https://api.example.test/x path.x' }), crv)).toMatchObject({ sourceType: 'first_party_api' });
   });
 });

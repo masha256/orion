@@ -5,6 +5,7 @@ import { confirmObservation, getObservationsByIds, insertObservation, listActive
 import { describeSources } from '../../ingest/describe.js';
 import { hasSources } from '../../ingest/plan.js';
 import { fetchAsset, type FetchResult } from '../../ingest/run.js';
+import { confirmConfigHash } from '../../provenance/configHash.js';
 import { disclosedProvenance } from '../../provenance/locator.js';
 import { OrionError, type ObservationSource } from '../../types.js';
 import { fetchSummary, ingestDepsFor, output, parseNumber, withDb, type CliContext } from '../util.js';
@@ -94,7 +95,7 @@ export function registerData(program: Command, ctx: CliContext): void {
       const o = await withDb(ctx, async (db) => {
         const [row] = await getObservationsByIds(db, [n]);
         if (!row) throw new OrionError('observation_not_found', `no observation with id ${n}`);
-        return await confirmObservation(db, n, ctx.now().toISOString(), { approvedBy: 'user (data confirm)', configHash: loadAsset(ctx.configRoot, row.assetId).hash });
+        return await confirmObservation(db, n, ctx.now().toISOString(), { approvedBy: 'user (data confirm)', configHash: confirmConfigHash(ctx.configRoot, row.assetId) });
       });
       output(ctx, opts.json, o, () => [`confirmed as #${o.id}: ${o.metricKey} = ${o.value}`]);
     });

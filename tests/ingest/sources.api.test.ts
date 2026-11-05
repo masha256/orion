@@ -135,8 +135,8 @@ describe('defillama source', () => {
     const [out] = await handler.fetch([req('flow_usd.burn', source, 'cross_check', 5)], sourceCtx({ http }));
     if (!out.ok || out.value.kind !== 'daily_series') throw new Error('expected a daily series');
     expect(out.value.points).toHaveLength(286);
-    expect(out.value.points[0]).toEqual({ day: '2025-12-08', value: 64402 });
-    expect(out.value.points.at(-1)).toEqual({ day: '2026-09-19', value: 14949 });
+    expect(out.value.points[0]).toMatchObject({ day: '2025-12-08', value: 64402 });
+    expect(out.value.points.at(-1)).toMatchObject({ day: '2026-09-19', value: 14949 });
     const august = out.value.points.filter((p) => p.day.startsWith('2026-08'));
     expect(august).toHaveLength(31);
     expect(august.reduce((s, p) => s + p.value, 0)).toBe(697337);

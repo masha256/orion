@@ -8,6 +8,7 @@ import { decideAnomaly, getAnomaly } from '../db/anomalies.js';
 import type { Db } from '../db/connection.js';
 import { confirmObservation, getObservationsByIds, insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
 import { decideProposal, getProposal, type Proposal } from '../db/proposals.js';
+import { confirmConfigHash } from '../provenance/configHash.js';
 import { disclosedProvenance } from '../provenance/locator.js';
 import { OrionError, type PathSegment } from '../types.js';
 import { canonicalJson } from '../util/canonical.js';
@@ -85,7 +86,7 @@ export async function approveProposal(
         if (!active) stale(id, `observation ${change.observationId} is no longer active`);
         if (change.kind === 'confirm_observation') {
           if (o.status !== 'provisional') stale(id, `observation ${o.id} is already ${o.status}`);
-          const by = { approvedBy: `user (proposal #${id})`, configHash: loadAsset(configRoot, p.assetId).hash };
+          const by = { approvedBy: `user (proposal #${id})`, configHash: confirmConfigHash(configRoot, p.assetId) };
           result = { kind: 'observation', observationId: (await confirmObservation(t, o.id, nowIso, by)).id, action: 'confirmed' };
         } else {
           await rejectObservation(t, o.id);

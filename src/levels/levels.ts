@@ -83,7 +83,6 @@ function readsChain(asset: AssetConfig, metricKey: string): boolean {
   return s !== undefined && (isChainSource(s) || (s.type === 'adapter' && getAdapter(s.name).needsRpc));
 }
 
-/** One row per metric read: a level's reading; for a schedule, its newest step at or before `now` (none: no row). */
 /** A level's rung and scrubbed locator, from the asset config (the same mapping the observation writers use). */
 function levelProvenance(asset: AssetConfig, metricKey: string): Pick<LatestLevel, 'sourceType' | 'locator'> {
   const def = asset.metrics[metricKey];
@@ -91,6 +90,7 @@ function levelProvenance(asset: AssetConfig, metricKey: string): Pick<LatestLeve
   return { sourceType: sourceTypeOf(def, asset.metrics), locator: scrubLocator(locatorOfSource(asset, metricKey, def.source)) };
 }
 
+/** One row per metric read: a level's reading; for a schedule, its newest step at or before `now` (none: no row). */
 export function toLatestLevels(asset: AssetConfig, written: WrittenObservation[], now: Date, jobId: number | null, block: BlockRef | null): LatestLevel[] {
   const byMetric = new Map<string, WrittenObservation>();
   for (const w of written) {

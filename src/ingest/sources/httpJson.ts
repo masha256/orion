@@ -1,3 +1,4 @@
+import { asJson } from '../../provenance/types.js';
 import { failed, level, narrow, type ReadingResult, type SourceHandler } from '../types.js';
 import { toFiniteNumber } from '../units.js';
 
@@ -32,11 +33,12 @@ export const httpJsonSource: SourceHandler = {
         results.push(failed(fetched.error));
         continue;
       }
-      const raw = toFiniteNumber(readPath(fetched.body, s.path));
+      const at = readPath(fetched.body, s.path);
+      const raw = toFiniteNumber(at);
       results.push(
         raw === null
           ? failed(`http_json: "${s.path}" is not a finite number in ${s.url}`)
-          : level((s.scale * raw) / 10 ** s.decimals, ctx.nowIso, 'api', `${s.url} ${s.path}`),
+          : level((s.scale * raw) / 10 ** s.decimals, ctx.nowIso, 'api', `${s.url} ${s.path}`, asJson(at)),
       );
     }
     return results;

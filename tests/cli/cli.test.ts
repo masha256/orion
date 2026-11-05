@@ -168,6 +168,28 @@ describe('orion cli', () => {
     });
   });
 
+  it('data confirm works when the asset YAML is gone or invalid: config hash "unloaded"', async () => {
+    const yaml = join(home, 'assets', 'mini.yaml');
+    for (const [what, damage] of [['gone', () => rmSync(yaml)], ['invalid', () => writeFileSync(yaml, 'id: mini\nmetrics: [not, a, map]\n')]] as const) {
+      writeFileSync(yaml, MINI_ASSET_YAML);
+      // A provisional row with provenance keeps its own config hash; one written before 0004 has none to keep.
+      const p = JSON.parse(await orion('data', 'set', 'mini', 'revenue_run_rate_usd', '1200', '--at', what === 'gone' ? '2026-06-20' : '2026-06-22', '--provisional', '--citation', 'https://example.com/post', '--json'));
+      const [{ configHash }] = await getProvenanceByIds(testDb(), [p.id]);
+      const old = await testDb().run<{ id: number }>(
+        `INSERT INTO observations (asset_id, metric_key, observed_at, period_days, value, source, source_detail, status, citation_url, quoted_text, fetched_at)
+         VALUES ($1, $2, $3, NULL, $4, 'manual', NULL, 'provisional', 'https://example.com/post', NULL, $3) RETURNING id`,
+        ['mini', 'staked_supply', what === 'gone' ? '2026-06-21T00:00:00.000Z' : '2026-06-23T00:00:00.000Z', 80],
+      );
+      damage();
+      const c = JSON.parse(await orion('data', 'confirm', String(p.id), '--json'));
+      expect(c, what).toMatchObject({ status: 'confirmed', value: 1200 });
+      expect((await getProvenanceByIds(testDb(), [c.id]))[0], what).toMatchObject({ method: 'disclosed', configHash });
+      const c2 = JSON.parse(await orion('data', 'confirm', String(old.rows[0]!.id), '--json'));
+      expect(c2, what).toMatchObject({ status: 'confirmed', value: 80 });
+      expect((await getProvenanceByIds(testDb(), [c2.id]))[0], what).toMatchObject({ method: 'disclosed', configHash: 'unloaded' });
+    }
+  });
+
   it('guards the inbox when a stored proposal has a shape the schema does not expect', async () => {
     await orion('inbox', 'mini'); // creates the database
     await testDb().run("INSERT INTO proposals (asset_id, persona, agent_run_id, kind, change_json, filed_against_json, rationale, evidence_json, effect_json, status, created_at) VALUES ('mini', 'analyst', NULL, 'config', '{}', '{}', 'r', '[]', '{\"weird\": 1}', 'pending', $1)", [AS_OF]);

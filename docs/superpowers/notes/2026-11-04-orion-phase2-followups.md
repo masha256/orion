@@ -225,7 +225,11 @@ Built: migration 0004 (expand-only: every column nullable; `tx_count` bigint per
 config (rung = `sourceTypeOf`, the report's own mapping; method measured / derived / disclosed for constants; CAIP-2
 chain; locator per source type), plus what the read measured: a transfer scan's `block_from/to` (= `source_detail.blocks`)
 and its counted `txhash:logIndex` refs (first 50 of the sorted list, `tx_digest` = sha256 of the JSON of the full sorted
-list); a chain level's block; an API row's `response_digest` (sha256 of the normalized point it is); a derived row's
+list); a chain level's block; an API row's `response_digest` (sha256 of the key-sorted raw response slice the value was
+read from: a DefiLlama chart entry, the coingecko row's id + field, an http_json path's value, a defillama_share
+category's rows, Lighter's exchangeMetrics rows / bought trades of the day, Hyperliquid's fund fills of the day / the
+ledger sends of a payment; null where a source exposes none: the Hyperliquid and Lighter levels that combine several
+replies or read a JS bundle); a derived row's
 `formula` (`flow_annualized@1`) and `inputs` (`[{metric, from, to}]`). `code_version` = RELEASE.commit, else `dev`;
 `config_hash` = the loaded asset hash. Values, `source` and `source_detail` are written exactly as before.
 
@@ -235,12 +239,16 @@ Conventions chosen (review):
   when disclosed). `data set` without `--citation` is now refused (`citation_required`); the README line says so. A
   correction row typed in without a citation (as AERO's 2026-09-09 manual day may be) can no longer be entered that way.
 - Locators never hold a key (`scrubLocator`, applied by the builders and again in `insertObservation` and
-  `upsertLatestLevels`): query keys named key / apikey / api_key / api-key / token / dkey or ending in key / token /
-  secret are dropped, user info and fragments are dropped, every non-version path segment on a known keyed RPC host
-  (Alchemy, Infura, drpc, publicnode, QuickNode, Ankr, Blast, Chainstack, Helius, NodeReal, GetBlock) is dropped, a
-  key-shaped last segment after `/vN/` on any host and any 20+ character segment with a digit are dropped; URLs inside
-  text are scrubbed too. The test fixture is the fake key of `tests/ingest/rpc.test.ts`, read from that file.
-- `confirm` copies the provisional row's provenance and adds `approved_by` / `approved_at` to a disclosure locator.
+  `upsertLatestLevels`). Secrets go by context, not by a name's suffix: URL query parameters named key / apikey /
+  api_key (api-key) / token / access_token / secret (any case) and drpc's dkey; locator object keys named
+  authorization / password / secret / api_key / apikey, and every key inside a `headers` or `auth` object (a plain
+  `token: "USDC"` param stays). User info and fragments are dropped, every non-version path segment on a known keyed
+  RPC host (Alchemy, Infura, drpc, publicnode, QuickNode, Ankr, Blast, Chainstack, Helius, NodeReal, GetBlock) is
+  dropped, a key-shaped last segment after `/vN/` on any host and any 20+ character segment with a digit are dropped,
+  except an EVM address or hash (`0x` + 40 or 64 hex) off the keyed hosts; URLs inside text are scrubbed too. The test fixture is the fake key of `tests/ingest/rpc.test.ts`, read from that file.
+- `confirm` copies the provisional row's provenance and adds `approved_by` / `approved_at` to a disclosure locator. It
+  never needs the asset YAML: a provisional row written before 0004 gets `config_hash` = `unloaded` when the YAML is
+  gone or invalid (`data confirm`, a `confirm_observation` approval).
 - Income statement v2 `provenance` reads the rows when every stored day a revenue line reads has a mapped row
   (`basis: 'observations'`): `methods` splits each metric line's annualized amount by its rows' method (a manual day is
   disclosed; a periodic stream's provisional tail is derived; a derived/estimate line stays derived), `daysMeasured`
@@ -252,7 +260,10 @@ Conventions chosen (review):
 History backfill: `orion db backfill-provenance [--dry-run] [--json]` maps rows with no provenance by plan correction 1
 (`src/provenance/backfill.ts` lists the rules): `code_version` = `config_hash` = `pre-v2`; unmappable rows are listed with
 a reason (`unknown_asset`, `unknown_metric`, `manual_without_citation`, `no_source_in_config`, `no_source_type`,
-`source_changed`) and never written. The dry run on the proof copy (controller, Step 4) records the per-metric mapped
+`source_changed`) and never written. An `api` row whose `source_detail` names a DefiLlama host (api / coins / pro-api /
+yields.llama.fi) is `third_party` whatever its metric reads now; `block N` and `block N: <detail>` give block_from =
+block_to = N. Writes are bounded: at most 1,000 rows per transaction (one set-based UPDATE), each under the asset lock;
+a crash leaves whole batches and a re-run resumes (`method IS NULL`). The dry run on the proof copy (controller, Step 4) records the per-metric mapped
 counts and the full unmapped list here; a non-empty unmapped list goes to Mike (the fix is a rule).
 
 Review Focus 5: the importer inserts named columns, so on a schema at 0004 the provenance columns stay null and the

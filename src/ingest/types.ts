@@ -5,11 +5,19 @@ import { OrionError } from '../types.js';
 import type { HttpTransport } from './transport/http.js';
 import type { BlockRef, RpcTransport } from './transport/rpc.js';
 import type { Observation } from '../db/observations.js';
+import type { Json } from '../provenance/types.js';
+
+/**
+ * `slice`: the raw response sub-tree a value was read from (the day's chart entry, the market row's fields), as the API
+ * wrote it. The writer stores its digest as `response_digest` (spec §3); a source that cannot expose it leaves it unset,
+ * and the row's digest is null.
+ */
 
 /** `day` is the UTC day ('YYYY-MM-DD') the value covers. */
 export interface DailyPoint {
   day: string;
   value: number;
+  slice?: Json;
 }
 
 /** `month` is 'YYYY-MM'. */
@@ -22,6 +30,7 @@ export interface MonthlyPoint {
 export interface ScheduleStepReading {
   value: number;
   observedAt: string;
+  slice?: Json;
 }
 
 /**
@@ -30,7 +39,7 @@ export interface ScheduleStepReading {
  * coded halving): the step in force first, then each later step, every one written as its own observation.
  */
 export type SourceValue =
-  | { kind: 'level'; value: number; observedAt: string; source: 'onchain' | 'api'; detail: string }
+  | { kind: 'level'; value: number; observedAt: string; source: 'onchain' | 'api'; detail: string; slice?: Json }
   | { kind: 'schedule_steps'; steps: ScheduleStepReading[]; source: 'onchain' | 'api'; detail: string }
   | { kind: 'daily_series'; points: DailyPoint[]; detail: string }
   | { kind: 'monthly_series'; points: MonthlyPoint[]; detail: string }
@@ -48,6 +57,8 @@ export interface PeriodicPayment {
   /** When it was paid (ISO), and the day it was due. */
   paidAt: string;
   dueDay: string;
+  /** The ledger entries summed into the payment. */
+  slice?: Json;
 }
 
 /** A completed coverage period with no payment yet, and the day it falls due. */
@@ -63,8 +74,8 @@ export function failed(error: string): ReadingResult {
   return { ok: false, error };
 }
 
-export function level(value: number, observedAt: string, source: 'onchain' | 'api', detail: string): ReadingResult {
-  return { ok: true, value: { kind: 'level', value, observedAt, source, detail } };
+export function level(value: number, observedAt: string, source: 'onchain' | 'api', detail: string, slice?: Json): ReadingResult {
+  return { ok: true, value: { kind: 'level', value, observedAt, source, detail, ...(slice !== undefined ? { slice } : {}) } };
 }
 
 export interface SourceRequest {

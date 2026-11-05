@@ -68,7 +68,8 @@ export async function writePeriodicPayments(args: PeriodicArgs): Promise<Written
             assetId: asset.id, metricKey, observedAt, periodDays, value: p.value, source: 'api',
             sourceDetail: `${args.detail}; covers ${p.from} to ${p.to}, paid ${p.paidAt}`, fetchedAt: nowIso,
             provenance: fetchedProvenance({ config: asset, hash: args.configHash }, metricKey, {
-              responseDigest: responseDigest({ metric: metricKey, from: p.from, to: p.to, value: p.value, paidAt: p.paidAt }),
+              // The ledger entries the payment sums (null when the source exposes none).
+              responseDigest: responseDigest(p.slice),
             }),
           })).id;
       written.push({ metricKey, value: p.value, observedAt, periodDays, source: 'api', observationId });

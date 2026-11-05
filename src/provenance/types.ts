@@ -68,10 +68,16 @@ export function txRefsProvenance(refs: readonly string[]): Pick<Provenance, 'txC
   };
 }
 
-/** sha256 of a normalized (key-sorted) JSON value: an API row's response slice. */
-export function responseDigest(slice: Json): string {
-  return sha256(JSON.stringify(sortKeys(slice)));
+/**
+ * response_digest: sha256 of the normalized (key-sorted) raw response slice the value was read from; null when the
+ * source did not expose one.
+ */
+export function responseDigest(slice: Json | undefined): string | null {
+  return slice === undefined ? null : sha256(JSON.stringify(sortKeys(slice)));
 }
+
+/** An API reply's sub-tree as JSON (a parsed reply already is; `undefined` becomes null). */
+export const asJson = (v: unknown): Json => (v === undefined ? null : (v as Json));
 
 function sortKeys(v: Json): Json {
   if (Array.isArray(v)) return v.map(sortKeys);

@@ -1,3 +1,4 @@
+import { asJson } from '../../provenance/types.js';
 import { OrionError } from '../../types.js';
 import { failed, level, narrow, type SourceHandler } from '../types.js';
 import { toFiniteNumber } from '../units.js';
@@ -51,7 +52,8 @@ export const coingeckoSource: SourceHandler = {
       if (!row) return failed(`coingecko: no market row for id "${s.id}"`);
       const value = toFiniteNumber(row[FIELD[s.field]]);
       if (value === null) return failed(`coingecko: ${s.id}.${FIELD[s.field]} is not a finite number`);
-      return level(value, ctx.nowIso, 'api', `coingecko /coins/markets ${s.id}.${FIELD[s.field]}`);
+      // The slice: the market row's id and the field read.
+      return level(value, ctx.nowIso, 'api', `coingecko /coins/markets ${s.id}.${FIELD[s.field]}`, { id: s.id, [FIELD[s.field]]: asJson(row[FIELD[s.field]]) });
     });
   },
 };

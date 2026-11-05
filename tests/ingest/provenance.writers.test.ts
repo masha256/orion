@@ -6,6 +6,7 @@ import type { Db } from '../../src/db/connection.js';
 import { emptySourceOutcome } from '../../src/db/fetchRuns.js';
 import { getProvenanceByIds, insertObservation, listActiveObservations, type NewObservation } from '../../src/db/observations.js';
 import { writeApiFlow } from '../../src/ingest/apiFlow.js';
+import { writePeriodicPayments } from '../../src/ingest/periodic.js';
 import { scanFlowGroup } from '../../src/ingest/flow.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset } from '../../src/ingest/run.js';
@@ -67,16 +68,39 @@ describe('provenance: every writer fills it', () => {
     const days = ['2026-09-16', '2026-09-17', '2026-09-18'];
     const r = await writeApiFlow({
       db: testDb(), asset: lit.config, configHash: lit.hash, metricKey: 'flow_usd.fees_core', scanKey: 'adapter:lit.exchange_fees_daily>flow_usd.fees_core',
-      points: days.map((day, i) => ({ day, value: 1000 + i })), detail: 'lighter exchangeMetrics mainnet.zklighter.elliot.ai maker_fee+taker_fee (3 days)', now: NOW,
+      // The first two days carry the API's own row for the day; the third none (an adapter that cannot expose it).
+      points: days.map((day, i) => ({ day, value: 1000 + i, ...(i < 2 ? { slice: { maker_fee: { timestamp: Date.parse(day) / 1000, data: 1000 + i } } } : {}) })), detail: 'lighter exchangeMetrics mainnet.zklighter.elliot.ai maker_fee+taker_fee (3 days)', now: NOW,
       backfillDays: 3, rescan: false, adopt: false, dryRun: false, outcome: emptySourceOutcome('adapter:lit.exchange_fees_daily'), validate: () => null,
     });
     expect(r.written).toHaveLength(3);
     const p = await stored(testDb(), 'lit', 'flow_usd.fees_core');
     expect(p).toMatchObject({ method: 'measured', sourceType: 'first_party_api', chain: null, configHash: lit.hash, locator: { adapter: 'lit.exchange_fees_daily' } });
-    expect(p.responseDigest).toMatch(/^[0-9a-f]{64}$/);
-    // Each day's digest is its own slice.
+    // The digest is of the raw response slice (key-sorted), not of Orion's parsed value; no slice, no digest.
     const ids = (await listActiveObservations(testDb(), 'lit', 'flow_usd.fees_core')).map((o) => o.id);
-    expect(new Set((await getProvenanceByIds(testDb(), ids)).map((x) => x.responseDigest)).size).toBe(3);
+    expect((await getProvenanceByIds(testDb(), ids)).map((x) => x.responseDigest)).toEqual([
+      sha256(`{"maker_fee":{"data":1000,"timestamp":${Date.parse(days[0]!) / 1000}}}`),
+      sha256(`{"maker_fee":{"data":1001,"timestamp":${Date.parse(days[1]!) / 1000}}}`),
+      null,
+    ]);
+  });
+
+  it('periodic payment row: response_digest of the ledger entries paid, none without them', async () => {
+    const hype = loadAsset(ROOT, 'hype');
+    const entry = { time: Date.parse('2026-08-09T10:00:00Z'), hash: '0xabc', delta: { type: 'send', token: 'USDC', amount: '1000.5' } };
+    await writePeriodicPayments({
+      db: testDb(), asset: hype.config, configHash: hype.hash, metricKey: 'flow_usd.reserve_yield',
+      payments: [
+        { from: '2026-07-01', to: '2026-07-30', value: 1000.5, paidAt: '2026-08-09T10:00:00.000Z', dueDay: '2026-08-08', slice: [entry] },
+        { from: '2026-07-31', to: '2026-08-29', value: 900, paidAt: '2026-09-08T10:00:00.000Z', dueDay: '2026-09-07' },
+      ],
+      due: [], payers: [], expectedPayers: [], detail: 'ledger', now: NOW, dryRun: false, outcome: emptySourceOutcome('adapter:hype.reserve_yield_payments'),
+      validate: () => null, raise: async () => undefined,
+    });
+    const ids = (await listActiveObservations(testDb(), 'hype', 'flow_usd.reserve_yield')).map((o) => o.id);
+    expect((await getProvenanceByIds(testDb(), ids)).map((x) => x.responseDigest)).toEqual([
+      sha256(`[{"delta":{"amount":"1000.5","token":"USDC","type":"send"},"hash":"0xabc","time":${entry.time}}]`),
+      null,
+    ]);
   });
 
   it('defillama row: third_party', async () => {
@@ -92,7 +116,13 @@ describe('provenance: every writer fills it', () => {
       method: 'measured', sourceType: 'third_party', chain: null,
       locator: { endpoint: 'https://api.llama.fi/summary/fees/hyperliquid', request: { dataType: 'dailyHoldersRevenue' } },
     });
-    expect(p.responseDigest).toMatch(/^[0-9a-f]{64}$/);
+    // Each day's digest is that day's totalDataChart entry.
+    const rows = await listActiveObservations(h.db, 'hype', 'flow_usd.buyback');
+    const digests = (await getProvenanceByIds(h.db, rows.map((o) => o.id))).map((x) => x.responseDigest);
+    expect(digests).toEqual(rows.map((o) => {
+      const day = addDays(o.observedAt.slice(0, 10), -1);
+      return sha256(JSON.stringify([unix(day), day === '2026-09-17' ? 130 : 140]));
+    }));
   });
 
   it('derived flow_annualized: inputs + formula \'flow_annualized@1\'', async () => {
@@ -115,7 +145,7 @@ describe('provenance: every writer fills it', () => {
     const supply = await stored(h.db, 'mini', 'total_supply');
     expect(supply).toMatchObject({ method: 'measured', sourceType: 'contract_state', chain: 'eip155:8453', blockFrom: expect.any(Number) });
     expect(supply.blockTo).toBe(supply.blockFrom);
-    expect((await stored(h.db, 'mini', 'price_usd'))).toMatchObject({ sourceType: 'market_data', responseDigest: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    expect((await stored(h.db, 'mini', 'price_usd'))).toMatchObject({ sourceType: 'market_data', responseDigest: sha256('{"current_price":10,"id":"mini-token"}') });
   });
 
   it('disclosure row: method disclosed, citation required', async () => {

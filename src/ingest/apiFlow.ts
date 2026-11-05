@@ -82,7 +82,7 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
   const lastCompleteDay = addDays(utcDay(args.now.getTime()), -1);
   const windowStart = utcDay(args.now.getTime() - args.backfillDays * MS_PER_DAY);
   const cursor = await getCursor(db, asset.id, args.scanKey);
-  const byDay = new Map(args.points.map((p) => [p.day, p.value]));
+  const byDay = new Map(args.points.map((p) => [p.day, p]));
   const stored = await storedApiDays(db, asset.id, metricKey);
   // The days to read: with a cursor, the last revisionDays written days (a revised value supersedes the day's row) plus
   // any GAP day inside the backfill window, one by one: a day the series had not aggregated when the cursor passed it
@@ -159,7 +159,8 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
     }
     for (const day of days) {
       if (manualDays.has(day)) continue;
-      const value = byDay.get(day);
+      const point = byDay.get(day);
+      const value = point?.value;
       if (value === undefined) {
         skipped.push(day);
         continue;
@@ -182,8 +183,8 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
       if (!dryRun) {
         observationId = (await insertObservation(h, {
           assetId: asset.id, metricKey, observedAt, periodDays: 1, value, source: 'api', sourceDetail: args.detail, fetchedAt: nowIso,
-          // The slice of the response this row is: the series' point for the day.
-          provenance: fetchedProvenance({ config: asset, hash: args.configHash }, metricKey, { responseDigest: responseDigest({ metric: metricKey, day, value }) }),
+          // The raw slice of the response the day's value was read from (null when the source exposes none).
+          provenance: fetchedProvenance({ config: asset, hash: args.configHash }, metricKey, { responseDigest: responseDigest(point!.slice) }),
         })).id;
       }
       result.written.push({ metricKey, value, observedAt, periodDays: 1, source: 'api', observationId });

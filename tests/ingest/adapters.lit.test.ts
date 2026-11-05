@@ -8,6 +8,8 @@ import { sourceCtx } from '../helpers/sourceCtx.js';
 const NOW = '2026-10-16T12:00:00.000Z';
 const API = 'https://mainnet.zklighter.elliot.ai/api/v1';
 const DAY = 86_400_000;
+/** The points without their response slices (tests/ingest/responseSlice.test.ts covers those). */
+const dayValues = (points: { day: string; value: number }[]) => points.map(({ day, value }) => ({ day, value }));
 const today = Date.parse('2026-10-16T00:00:00Z');
 
 interface Trade { timestamp: number; price: string; size: string; bid_account_id: number; ask_account_id: number; market_id: number }
@@ -279,7 +281,7 @@ describe("LIT exchange fees per UTC day, from Lighter's exchangeMetrics", () => 
 
   it('sums the kinds per UTC day and drops today', async () => {
     const v = await series(read({ maker_fee: metrics(5, (a) => 100 * a), taker_fee: metrics(5, (a) => a) }, { kinds: ['maker_fee', 'taker_fee'], days: 5 }).result);
-    expect(v.points).toEqual([5, 4, 3, 2, 1].map((a) => ({ day: dayOf(today23 - a * DAY), value: 101 * a })));
+    expect(dayValues(v.points)).toEqual([5, 4, 3, 2, 1].map((a) => ({ day: dayOf(today23 - a * DAY), value: 101 * a })));
     expect(v.points.some((p) => p.day === '2026-10-23')).toBe(false);
     expect(v.detail).toBe('lighter exchangeMetrics mainnet.zklighter.elliot.ai maker_fee+taker_fee (5 days)');
   });
@@ -312,7 +314,7 @@ describe("LIT exchange fees per UTC day, from Lighter's exchangeMetrics", () => 
   it("holds back the newest listed day when a kind has no row for today yet (it may still be partial)", async () => {
     // taker_fee lists through yesterday but not today: yesterday may still be open on Lighter's side.
     const v = await series(read({ maker_fee: metrics(5, () => 10), taker_fee: metrics(5, () => 1, [0]) }, { kinds: ['maker_fee', 'taker_fee'], days: 5 }).result);
-    expect(v.points).toEqual([5, 4, 3, 2].map((a) => ({ day: dayOf(today23 - a * DAY), value: 11 })));
+    expect(dayValues(v.points)).toEqual([5, 4, 3, 2].map((a) => ({ day: dayOf(today23 - a * DAY), value: 11 })));
     expect(v.points.some((p) => p.day === '2026-10-22')).toBe(false);
     expect(v.detail).toBe('lighter exchangeMetrics mainnet.zklighter.elliot.ai maker_fee+taker_fee (4 days); newest day held back (no row for today yet)');
   });
@@ -320,19 +322,19 @@ describe("LIT exchange fees per UTC day, from Lighter's exchangeMetrics", () => 
   it('a held-back newest day moves the window back a day, so days: 1 returns the day before instead of refusing', async () => {
     const held = { maker_fee: metrics(5, () => 10), taker_fee: metrics(5, (a) => a, [0]) };
     const one = await series(read(held, { kinds: ['maker_fee', 'taker_fee'], days: 1 }).result);
-    expect(one.points).toEqual([{ day: dayOf(today23 - 2 * DAY), value: 12 }]);
+    expect(dayValues(one.points)).toEqual([{ day: dayOf(today23 - 2 * DAY), value: 12 }]);
     expect(one.detail).toBe('lighter exchangeMetrics mainnet.zklighter.elliot.ai maker_fee+taker_fee (1 days); newest day held back (no row for today yet)');
     // days: 2 returns two completed days, ending the day before the held one.
     const two = await series(read(held, { kinds: ['maker_fee', 'taker_fee'], days: 2 }).result);
     expect(two.points.map((p) => p.day)).toEqual([dayOf(today23 - 3 * DAY), dayOf(today23 - 2 * DAY)]);
     // Nothing held back: days: 1 is yesterday.
     const plain = await series(read({ maker_fee: metrics(5, () => 10) }, { kinds: ['maker_fee'], days: 1 }).result);
-    expect(plain.points).toEqual([{ day: '2026-10-22', value: 10 }]);
+    expect(dayValues(plain.points)).toEqual([{ day: '2026-10-22', value: 10 }]);
   });
 
   it('with a row for today on every kind, nothing is held back', async () => {
     const v = await series(read({ maker_fee: metrics(5, () => 10), taker_fee: metrics(5, () => 1) }, { kinds: ['maker_fee', 'taker_fee'], days: 5 }).result);
-    expect(v.points.at(-1)).toEqual({ day: '2026-10-22', value: 11 });
+    expect(dayValues(v.points).at(-1)).toEqual({ day: '2026-10-22', value: 11 });
     expect(v.points.length).toBe(5);
     expect(v.detail).not.toContain('held back');
   });

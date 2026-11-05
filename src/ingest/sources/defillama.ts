@@ -1,3 +1,4 @@
+import type { Json } from '../../provenance/types.js';
 import { utcDay } from '../time.js';
 import { narrow, type DailyPoint, type ReadingResult, type SourceHandler } from '../types.js';
 
@@ -19,7 +20,7 @@ export const defillamaSource: SourceHandler = {
         if (typeof ts !== 'number' || typeof usd !== 'number' || !Number.isFinite(ts) || !Number.isFinite(usd)) {
           throw new Error(`defillama: malformed totalDataChart entry ${JSON.stringify(entry)}`);
         }
-        return { day: utcDay(ts * 1000), value: usd };
+        return { day: utcDay(ts * 1000), value: usd, slice: entry as Json };
       });
       results.push({ ok: true, value: { kind: 'daily_series', points, detail: url } });
     }

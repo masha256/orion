@@ -9,7 +9,7 @@ import { emptySourceOutcome, insertFetchRun, recentSourceStatuses, type FetchOut
 import { insertObservation, listActiveObservations } from '../db/observations.js';
 import { latestLevel } from '../observations/select.js';
 import { fetchedProvenance } from '../provenance/locator.js';
-import { responseDigest, type Provenance } from '../provenance/types.js';
+import { responseDigest, type Json, type Provenance } from '../provenance/types.js';
 import type { SourceType } from '../report/sourceTypes.js';
 import { MS_PER_DAY, OrionError, STD_METRICS } from '../types.js';
 import { getAdapter } from './adapters/registry.js';
@@ -168,10 +168,11 @@ function readsChain(batch: SourceBatch): boolean {
 export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: FetchDeps, opts: FetchOptions = {}): Promise<FetchResult> {
   const asset = loaded.config;
   /** A fetched row's provenance: config rung, locator and chain, plus what this read measured. */
-  const provenanceOf = (metricKey: string, slice: { observedAt: string; value: number; detail?: string }, extra: Partial<Provenance> = {}): Provenance => {
+  const provenanceOf = (metricKey: string, read: { slice?: Json }, extra: Partial<Provenance> = {}): Provenance => {
     const p = fetchedProvenance(loaded, metricKey, extra);
     const atBlock = block !== null && readsChainAt(asset.metrics[metricKey]) ? { blockFrom: Number(block.number), blockTo: Number(block.number) } : {};
-    const digest = API_TYPES.has(p.sourceType) ? { responseDigest: responseDigest({ metric: metricKey, observedAt: slice.observedAt, value: slice.value, detail: slice.detail ?? null }) } : {};
+    // The raw response slice the value was read from; a source that exposes none (a combined read) leaves it null.
+    const digest = API_TYPES.has(p.sourceType) ? { responseDigest: responseDigest(read.slice) } : {};
     return { ...p, ...atBlock, ...digest };
   };
   if (!hasSources(asset)) throw new OrionError('no_sources', `assets/${asset.id}.yaml defines no metric source; there is nothing to fetch`);
@@ -325,7 +326,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
             ? null
             : (await insertObservation(db, {
                 assetId: asset.id, metricKey: r.metricKey, observedAt, value: step.value, source, sourceDetail: detail, fetchedAt: startedAt,
-                provenance: provenanceOf(r.metricKey, { observedAt, value: step.value, detail }),
+                provenance: provenanceOf(r.metricKey, step),
               })).id;
           written.push({ metricKey: r.metricKey, value: step.value, observedAt, periodDays: null, source, observationId });
         }

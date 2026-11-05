@@ -21,7 +21,30 @@ import { PRE_V2, type Locator, type ProvenanceMethod } from './types.js';
  *    a derived row's formula from `derived <name>(...)`.
  * 5. Otherwise the source changed since the row was written. An `api` row is `third_party` when the current source is
  *    third party (DefiLlama), else `first_party_api` (measured, locator = the URL it names, scrubbed); an `onchain` row is `source_changed`.
+ * An `api` row whose `source_detail` names a DefiLlama host (DEFILLAMA_HOSTS) is `third_party` whatever the metric reads
+ * now: when the metric's current source is not third party, rule 5 applies with the DefiLlama URL as the locator.
+ *
+ * Writes are bounded: at most BACKFILL_BATCH_ROWS rows per transaction, each under the asset's lock, one set-based
+ * UPDATE per batch. A crash leaves whole batches only, and a re-run skips them (`method IS NULL`).
  */
+
+/** Rows written per transaction: the asset's lock is held for one batch, never for its whole history. */
+export const BACKFILL_BATCH_ROWS = 1000;
+
+/** DefiLlama's API hosts: a history row read from one is third party, whatever its metric reads now. */
+const DEFILLAMA_HOSTS: ReadonlySet<string> = new Set(['api.llama.fi', 'coins.llama.fi', 'pro-api.llama.fi', 'yields.llama.fi']);
+
+/** The first URL in a source detail on a DefiLlama host, or null. */
+function defillamaUrlOf(detail: string | null): string | null {
+  for (const [u] of (detail ?? '').matchAll(/\bhttps?:\/\/[^\s"'<>]+/g)) {
+    try {
+      if (DEFILLAMA_HOSTS.has(new URL(u).hostname)) return u;
+    } catch {
+      // not a URL
+    }
+  }
+  return null;
+}
 
 export interface BackfillOptions {
   dryRun?: boolean;
@@ -95,7 +118,8 @@ function blocksOf(detail: string | null): { blockFrom: number | null; blockTo: n
   } catch {
     // not JSON
   }
-  const m = /^block (\d+)$/.exec(detail);
+  // A contract read writes `block N`; an RPC adapter's level `block N: <what it read>` (adapters/chain.ts).
+  const m = /^block (\d+)(?::|$)/.exec(detail);
   return m ? { blockFrom: Number(m[1]), blockTo: Number(m[1]) } : { blockFrom: null, blockTo: null };
 }
 
@@ -116,6 +140,10 @@ export function mapRow(row: Row, loaded: LoadedAsset | undefined): Mapped | { re
   if (row.source !== 'onchain' && row.source !== 'api') return { reason: 'unknown_source' };
   if (def.source === undefined) return { reason: 'no_source_in_config' };
   const writes = writtenSource(def, metrics);
+  const llama = row.source === 'api' ? defillamaUrlOf(row.source_detail) : null;
+  if (llama !== null && sourceTypeOf(def, metrics) !== 'third_party') {
+    return { method: 'measured', sourceType: 'third_party', chain: null, blockFrom: null, blockTo: null, formula: null, locator: { endpoint: scrubUrl(llama) } };
+  }
   if (writes === 'either' || writes === row.source) {
     const sourceType = sourceTypeOf(def, metrics);
     if (sourceType === null) return { reason: 'no_source_type' };
@@ -136,8 +164,9 @@ export function mapRow(row: Row, loaded: LoadedAsset | undefined): Mapped | { re
 }
 
 /**
- * Maps every row that has no provenance. A dry run writes nothing. Each asset's rows are updated in one transaction under
- * the asset's lock; a row that gained provenance meanwhile (`method IS NOT NULL`) is left alone.
+ * Maps every row that has no provenance. A dry run writes nothing. Rows are written in batches of at most
+ * BACKFILL_BATCH_ROWS, one transaction per batch under the asset's lock; a row that gained provenance meanwhile
+ * (`method IS NOT NULL`) is left alone, so a re-run after a crash resumes where the last whole batch ended.
  */
 export async function backfillProvenance(db: Db, assets: LoadedAsset[], opts: BackfillOptions = {}): Promise<BackfillResult> {
   const byId = new Map(assets.map((a) => [a.config.id, a]));
@@ -155,23 +184,29 @@ export async function backfillProvenance(db: Db, assets: LoadedAsset[], opts: Ba
     }
     const key = `${row.asset_id}:${row.metric_key}`;
     result.mapped[key] = (result.mapped[key] ?? 0) + 1;
-    perAsset.set(row.asset_id, [...(perAsset.get(row.asset_id) ?? []), { row, m }]);
+    let list = perAsset.get(row.asset_id);
+    if (list === undefined) perAsset.set(row.asset_id, (list = []));
+    list.push({ row, m });
   }
   if (result.dryRun) return result;
   for (const [assetId, list] of perAsset) {
-    await db.tx(
-      async (t) => {
-        for (const { row, m } of list) {
+    for (let i = 0; i < list.length; i += BACKFILL_BATCH_ROWS) {
+      const batch = list.slice(i, i + BACKFILL_BATCH_ROWS).map(({ row, m }) => ({
+        id: row.id, method: m.method, source_type: m.sourceType, chain: m.chain, locator: m.locator, block_from: m.blockFrom, block_to: m.blockTo, formula: m.formula,
+      }));
+      await db.tx(
+        async (t) => {
           await t.run(
-            `UPDATE observations SET method = $2, source_type = $3, chain = $4, locator = $5::jsonb, block_from = $6, block_to = $7, formula = $8,
-               code_version = $9, config_hash = $9
-             WHERE id = $1 AND method IS NULL`,
-            [row.id, m.method, m.sourceType, m.chain, JSON.stringify(m.locator), m.blockFrom, m.blockTo, m.formula, PRE_V2],
+            `UPDATE observations o SET method = m.method, source_type = m.source_type, chain = m.chain, locator = m.locator, block_from = m.block_from,
+               block_to = m.block_to, formula = m.formula, code_version = $2, config_hash = $2
+             FROM jsonb_to_recordset($1::jsonb) AS m(id bigint, method text, source_type text, chain text, locator jsonb, block_from bigint, block_to bigint, formula text)
+             WHERE o.id = m.id AND o.method IS NULL`,
+            [JSON.stringify(batch), PRE_V2],
           );
-        }
-      },
-      { lockAsset: assetId },
-    );
+        },
+        { lockAsset: assetId },
+      );
+    }
   }
   return result;
 }

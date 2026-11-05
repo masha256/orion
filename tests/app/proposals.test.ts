@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -6,7 +6,7 @@ import { approveProposal, rejectProposal } from '../../src/app/proposals.js';
 import type { ReleaseInfo } from '../../src/cli/paths.js';
 import { loadAsset } from '../../src/config/load.js';
 import { decideAnomaly, getAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
-import { getObservationsByIds, insertObservation, listActiveObservations } from '../../src/db/observations.js';
+import { getObservationsByIds, getProvenanceByIds, insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { getProposal, insertProposal, type NewProposal, type ProposalChange } from '../../src/db/proposals.js';
 import type { OrionError } from '../../src/types.js';
 import { AGENT_ASSET_YAML, agentWorld, type AgentWorld } from '../helpers/agentWorld.js';
@@ -106,6 +106,24 @@ describe('approving observation proposals', () => {
     expect((await getObservationsByIds(w.db, [w.ids.price_usd]))[0].status).toBe('rejected');
     const again = await file({ kind: 'reject_observation', observationId: w.ids.price_usd, note: 'again' }, { status: 'confirmed', active: true });
     expect(await codeOf(() => approve(again.id))).toBe('stale_proposal');
+  });
+
+  it('confirm_observation works when the asset YAML is gone or invalid: config hash "unloaded"', async () => {
+    for (const [what, damage] of [['gone', () => rmSync(yamlPath)], ['invalid', () => writeFileSync(yamlPath, 'id: mini\nmetrics: [not, a, map]\n')]] as const) {
+      writeFileSync(yamlPath, AGENT_ASSET_YAML.trimStart());
+      // A provisional row written before 0004 (no provenance): the confirm builds one under the config hash.
+      const provisional = await w.db.run<{ id: number }>(
+        `INSERT INTO observations (asset_id, metric_key, observed_at, period_days, value, source, source_detail, status, citation_url, quoted_text, fetched_at)
+         VALUES ($1, $2, $3, NULL, $4, 'manual', NULL, 'provisional', 'https://example.com/post', NULL, $3) RETURNING id`,
+        ['mini', 'staked_supply', what === 'gone' ? '2026-06-29T12:00:00.000Z' : '2026-06-29T13:00:00.000Z', 80],
+      );
+      const p = await file({ kind: 'confirm_observation', observationId: Number(provisional.rows[0]!.id), note: 'n' }, { status: 'provisional', active: true });
+      damage();
+      const confirmed = await approve(p.id);
+      expect(confirmed.result, what).toMatchObject({ kind: 'observation', action: 'confirmed' });
+      const id = (confirmed.result as { observationId: number }).observationId;
+      expect((await getProvenanceByIds(w.db, [id]))[0], what).toMatchObject({ configHash: 'unloaded' });
+    }
   });
 
   it('refuses a stored proposal whose observation or anomaly belongs to another asset (tx_asset_mismatch), and changes nothing', async () => {

@@ -1,4 +1,5 @@
-import type { SourceContext, SourceValue } from '../types.js';
+import type { Json } from '../../provenance/types.js';
+import type { DailyPoint, PeriodicPayment, SourceContext, SourceValue } from '../types.js';
 import { toFiniteNumber } from '../units.js';
 import { number, text } from './chain.js';
 import type { AdapterDef } from './registry.js';
@@ -21,7 +22,11 @@ const EXPONENT = 0.5;
 const infoUrl = (ctx: SourceContext, params: Record<string, unknown>): string =>
   text(params, 'url', ctx.asset.external_ids.hyperliquid_info ?? DEFAULT_INFO_URL);
 
-/** A level stamped at fetch time: the API reports the present, not a block. */
+/**
+ * A level stamped at fetch time: the API reports the present, not a block. These levels carry no response slice (each
+ * combines several replies: the spot meta and clearinghouse balances, every validator's stake), so their rows'
+ * response_digest is null.
+ */
 const api = (ctx: SourceContext, value: number, detail: string): SourceValue => ({ kind: 'level', value, observedAt: ctx.nowIso, source: 'api', detail });
 
 /** The API writes amounts as decimal strings; a missing or non-numeric field fails the read by name. */
@@ -155,6 +160,8 @@ const fundBuysDaily: AdapterDef = {
     const nowMs = Date.parse(ctx.nowIso);
     const todayStart = Math.floor(nowMs / 86_400_000) * 86_400_000;
     const sums = new Map<string, number>();
+    /** Each day's slice for its response digest: the fund's buy fills on the pair that day, as the API listed them. */
+    const used = new Map<string, Json[]>();
     let fills = 0;
     for (let d = days; d >= 1; d--) {
       const start = todayStart - d * 86_400_000;
@@ -171,6 +178,9 @@ const fundBuysDaily: AdapterDef = {
           lastTime = Math.max(lastTime, t);
           if (f.coin !== pair || f.side !== 'B' || t < start || t >= end) continue;
           sums.set(day, (sums.get(day) ?? 0) + amount(f.px, 'a fill price') * amount(f.sz, 'a fill size'));
+          let list = used.get(day);
+          if (list === undefined) used.set(day, (list = []));
+          list.push(f as Json);
           fills++;
         }
         if (reply.length < FILLS_PAGE) break;
@@ -180,10 +190,10 @@ const fundBuysDaily: AdapterDef = {
     // A day with no fill is a real zero only when the API returned something for the days around it: the fund buys
     // every day, so an empty day inside the API's memory is written as 0 and an empty run fails the read.
     if (fills === 0) throw new Error(`userFillsByTime: no ${pair} buy fill by the fund in the last ${days} days`);
-    const points: { day: string; value: number }[] = [];
+    const points: DailyPoint[] = [];
     for (let d = days; d >= 1; d--) {
       const day = new Date(todayStart - d * 86_400_000).toISOString().slice(0, 10);
-      points.push({ day, value: sums.get(day) ?? 0 });
+      points.push({ day, value: sums.get(day) ?? 0, slice: used.get(day) ?? [] });
     }
     // Drop leading empty days: before the API's memory, not zero buys.
     while (points.length > 0 && points[0].value === 0) points.shift();
@@ -245,7 +255,8 @@ const reserveYieldPayments: AdapterDef = {
       const toMs = fromMs + (interval - 1) * DAY;
       return { from: dayOf(fromMs), to: dayOf(toMs), dueMs: toMs + (1 + lag) * DAY };
     };
-    const sums = new Map<number, { value: number; lastMs: number }>();
+    /** Each period's sends, for the payment's response digest (the ledger entries summed into it). */
+    const sums = new Map<number, { value: number; lastMs: number; entries: Json[] }>();
     const payers = new Set<string>();
     for (const e of entries) {
       const d = e.delta as Record<string, unknown> | undefined;
@@ -258,18 +269,21 @@ const reserveYieldPayments: AdapterDef = {
       if (src !== interest || dst !== fund) continue;
       const k = Math.floor((t - periodOf(0).dueMs) / (interval * DAY));
       if (k < 0) continue; // before the first due day: not a period payment
-      const s = sums.get(k) ?? { value: 0, lastMs: 0 };
-      sums.set(k, { value: s.value + value, lastMs: Math.max(s.lastMs, t) });
+      let s = sums.get(k);
+      if (s === undefined) sums.set(k, (s = { value: 0, lastMs: 0, entries: [] }));
+      s.value += value;
+      s.lastMs = Math.max(s.lastMs, t);
+      s.entries.push(e as Json);
     }
 
-    const payments: { from: string; to: string; value: number; paidAt: string; dueDay: string }[] = [];
+    const payments: PeriodicPayment[] = [];
     const due: { from: string; to: string; dueDay: string }[] = [];
     for (let k = 0; ; k++) {
       const p = periodOf(k);
       if (p.to >= today) break; // the period is not over yet
       const s = sums.get(k);
       const settled = s !== undefined && dayOf(s.lastMs) < today;
-      if (settled) payments.push({ from: p.from, to: p.to, value: s.value, paidAt: new Date(s.lastMs).toISOString(), dueDay: dayOf(p.dueMs) });
+      if (settled) payments.push({ from: p.from, to: p.to, value: s.value, paidAt: new Date(s.lastMs).toISOString(), dueDay: dayOf(p.dueMs), slice: s.entries });
       else due.push({ from: p.from, to: p.to, dueDay: dayOf(p.dueMs) });
     }
     return {

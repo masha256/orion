@@ -1,4 +1,5 @@
-import type { SourceContext, SourceValue } from '../types.js';
+import type { Json } from '../../provenance/types.js';
+import type { DailyPoint, SourceContext, SourceValue } from '../types.js';
 import { toFiniteNumber } from '../units.js';
 import { number, text } from './chain.js';
 import type { AdapterDef } from './registry.js';
@@ -8,6 +9,12 @@ import type { AdapterDef } from './registry.js';
  * on the LIT/USDC spot market (2049) every day with part of the trading fees (Mike, 2026-10-16: the holder flow is read
  * from Lighter's own data, not DefiLlama). The bought LIT is withdrawn to L1 and an equal count is burned from the
  * ecosystem reserve each quarter, so on a total-supply basis the buys are a buyback-and-burn (discretionary).
+ */
+
+/*
+ * Response slices (response_digest, spec §3): the daily series carry each day's raw slice (the trades bought, each kind's
+ * exchangeMetrics row). The levels carry none, so their rows' response_digest is null: the unlocks sum a dataset's
+ * tranches, the app fee share is read from a JS bundle (not JSON), the staking pool combines two replies.
  */
 
 const DEFAULT_API = 'https://mainnet.zklighter.elliot.ai/api/v1';
@@ -41,6 +48,8 @@ async function treasuryBuysDaily(ctx: SourceContext, params: Record<string, unkn
   const todayStart = Math.floor(Date.parse(ctx.nowIso) / MS_PER_DAY) * MS_PER_DAY;
   const windowStart = todayStart - days * MS_PER_DAY;
   const buys = new Map<string, number>();
+  /** Each day's slice for its response digest: the account's buys that day, as Lighter listed them. */
+  const bought = new Map<string, Json[]>();
   let sells = 0;
   let trades = 0;
   let reachedStart = false;
@@ -68,6 +77,9 @@ async function treasuryBuysDaily(ctx: SourceContext, params: Record<string, unkn
       if (amount(t.bid_account_id, 'a trade bid_account_id') === account) {
         const day = new Date(ts).toISOString().slice(0, 10);
         buys.set(day, (buys.get(day) ?? 0) + (unit === 'usd' ? usd : size));
+        let list = bought.get(day);
+        if (list === undefined) bought.set(day, (list = []));
+        list.push(t as Json);
       } else if (amount(t.ask_account_id, 'a trade ask_account_id') === account) sells += usd;
     }
     cursor = typeof reply.next_cursor === 'string' && reply.next_cursor !== '' ? reply.next_cursor : null;
@@ -77,11 +89,11 @@ async function treasuryBuysDaily(ctx: SourceContext, params: Record<string, unkn
 
   // The API's memory ended before the window began: the oldest day it returned is partial, so start the day after it.
   const firstMs = reachedStart ? windowStart : Math.floor(oldestSeen / MS_PER_DAY) * MS_PER_DAY + MS_PER_DAY;
-  const points: { day: string; value: number }[] = [];
+  const points: DailyPoint[] = [];
   // The treasury buys every day (146 of 146 days to 2026-10-16), so a day inside the walk with no buy is a real zero.
   for (let ms = firstMs; ms < todayStart; ms += MS_PER_DAY) {
     const day = new Date(ms).toISOString().slice(0, 10);
-    points.push({ day, value: buys.get(day) ?? 0 });
+    points.push({ day, value: buys.get(day) ?? 0, slice: bought.get(day) ?? [] });
   }
   const sold = sells > 0 ? `; SOLD ${sells.toFixed(0)} USD of LIT (not netted)` : '';
   const short = reachedStart ? '' : `; history ends ${new Date(oldestSeen).toISOString().slice(0, 10)}`;
@@ -240,13 +252,14 @@ async function exchangeFeesDaily(ctx: SourceContext, params: Record<string, unkn
   const days = ctx.backfillDays ?? number(params, 'days', 7);
   const todayStart = Math.floor(Date.parse(ctx.nowIso) / MS_PER_DAY) * MS_PER_DAY;
 
-  const perKind = new Map<string, { byDay: Map<number, number>; firstMs: number }>();
+  const perKind = new Map<string, { byDay: Map<number, number>; rows: Map<number, Json>; firstMs: number }>();
   /** Newest listed days of kinds with no row for today yet: that day may still be partial, so the run leaves it out. */
   const heldBack = new Set<number>();
   for (const kind of kinds) {
     const reply = (await ctx.http.getJson(`${api}/exchangeMetrics?period=all&kind=${encodeURIComponent(kind)}`)) as { metrics?: unknown };
     if (!reply || !Array.isArray(reply.metrics)) throw new Error(`exchangeMetrics ${kind}: Lighter's reply has no metrics list`);
     const byDay = new Map<number, number>();
+    const rows = new Map<number, Json>();
     let firstMs = Number.POSITIVE_INFINITY;
     let newestMs = Number.NEGATIVE_INFINITY;
     let hasToday = false;
@@ -262,13 +275,14 @@ async function exchangeFeesDaily(ctx: SourceContext, params: Record<string, unkn
       // Two rows for one day are an API fault: summing them would overstate revenue, keeping either one is a guess.
       if (byDay.has(ms)) throw new Error(`exchangeMetrics ${kind}: ${day} listed twice`);
       byDay.set(ms, amount(m.data, `exchangeMetrics ${kind}: the data of ${day}`));
+      rows.set(ms, m as Json);
       firstMs = Math.min(firstMs, ms);
       newestMs = Math.max(newestMs, ms);
     }
     // A kind with no completed row would count 0 on every day and understate the total: refuse it.
     if (firstMs === Number.POSITIVE_INFINITY) throw new Error(`exchangeMetrics ${kind}: no completed day listed`);
     if (!hasToday) heldBack.add(newestMs);
-    perKind.set(kind, { byDay, firstMs });
+    perKind.set(kind, { byDay, rows, firstMs });
   }
 
   const earliest = Math.min(...[...perKind.values()].map((k) => k.firstMs));
@@ -278,7 +292,7 @@ async function exchangeFeesDaily(ctx: SourceContext, params: Record<string, unkn
   const yesterday = todayStart - MS_PER_DAY;
   const windowEnd = heldBack.has(yesterday) ? yesterday : todayStart;
   const windowStart = windowEnd - days * MS_PER_DAY;
-  const points: { day: string; value: number }[] = [];
+  const points: DailyPoint[] = [];
   let held = false;
   for (let ms = Math.max(windowStart, earliest); ms < todayStart; ms += MS_PER_DAY) {
     if (heldBack.has(ms)) {
@@ -287,13 +301,16 @@ async function exchangeFeesDaily(ctx: SourceContext, params: Record<string, unkn
     }
     const day = new Date(ms).toISOString().slice(0, 10);
     let value = 0;
+    /** The day's slice for its response digest: each kind's exchangeMetrics row for the day. */
+    const slice: Record<string, Json> = {};
     for (const [kind, k] of perKind) {
       if (ms < k.firstMs) continue;
       const v = k.byDay.get(ms);
       if (v === undefined) throw new Error(`exchangeMetrics ${kind}: ${day} missing`);
       value += v;
+      slice[kind] = k.rows.get(ms)!;
     }
-    points.push({ day, value });
+    points.push({ day, value, slice });
   }
   if (points.length === 0) throw new Error(`exchangeMetrics ${kinds.join('+')}: no completed day in the last ${days} days`);
   const heldNote = held ? '; newest day held back (no row for today yet)' : '';

@@ -35,9 +35,50 @@ describe('scrubLocator', () => {
     for (const k of ['key', 'api_key', 'api-key', 'API_KEY', 'access_token', 'dkey']) {
       expect(scrubUrl(`https://api.example.test/x?${k}=s3cret&dataType=dailyFees`), k).toBe('https://api.example.test/x?dataType=dailyFees');
     }
-    expect(scrubLocator({ endpoint: 'https://h.test/p?apikey=s3cret', request: { token: 's3cret', type: 'meta' } })).toEqual({ endpoint: 'https://h.test/p', request: { type: 'meta' } });
+    expect(scrubLocator({ endpoint: 'https://h.test/p?apikey=s3cret', request: { type: 'meta' } })).toEqual({ endpoint: 'https://h.test/p', request: { type: 'meta' } });
     // Not a URL: left alone.
     expect(scrubUrl('totalSupply()')).toBe('totalSupply()');
+  });
+});
+
+describe('scrubLocator: secrets dropped by context, not by key suffix', () => {
+  it('URL query parameters named key, apikey, api_key, token, access_token, secret go (any case); a look-alike name stays', () => {
+    for (const k of ['key', 'KEY', 'apikey', 'ApiKey', 'api_key', 'token', 'Token', 'access_token', 'ACCESS_TOKEN', 'secret']) {
+      expect(scrubUrl(`https://api.example.test/x?${k}=s3cret&dataType=dailyFees`), k).toBe('https://api.example.test/x?dataType=dailyFees');
+    }
+    // Not a credential by name: kept.
+    expect(scrubUrl('https://api.example.test/x?market_key=2049&token_id=7&kind=maker_fee')).toBe('https://api.example.test/x?market_key=2049&token_id=7&kind=maker_fee');
+  });
+
+  it('a contract address in a URL path is kept; a keyed RPC path segment is not', () => {
+    const address = '0x0d0105d2b5d0cd2f1f3e3e2b5bd6e1c5f6a3c9d1';
+    expect(scrubUrl(`https://api.example.test/v1/token/${address}`)).toBe(`https://api.example.test/v1/token/${address}`);
+    expect(scrubUrl(`https://coins.llama.fi/prices/current/ethereum:${address}`)).toBe(`https://coins.llama.fi/prices/current/ethereum:${address}`);
+    expect(scrubUrl(ALCHEMY)).toBe('https://eth-mainnet.g.alchemy.com/v2');
+  });
+
+  it('object keys authorization, password, secret, api_key, apikey go, and every key inside headers/auth; a plain token field (a symbol) stays', () => {
+    const scrubbed = scrubLocator({
+      adapter: 'hype.reserve_yield_payments',
+      params: { token: 'USDC', senders: { token: '0x0d0105d2b5d0cd2f1f3e3e2b5bd6e1c5f6a3c9d1' }, api_key: 's3cret' },
+      Authorization: 'Bearer s3cret', password: 's3cret', secret: 's3cret', apikey: 's3cret',
+      headers: { 'x-cg-pro-api-key': 's3cret', accept: 'application/json' },
+      auth: { user: 'u', pass: 's3cret' },
+      request: { access_key: 'kept-by-name' },
+    });
+    expect(scrubbed).toEqual({
+      adapter: 'hype.reserve_yield_payments',
+      params: { token: 'USDC', senders: { token: '0x0d0105d2b5d0cd2f1f3e3e2b5bd6e1c5f6a3c9d1' } },
+      headers: {}, auth: {},
+      request: { access_key: 'kept-by-name' },
+    });
+    expect(JSON.stringify(scrubbed)).not.toContain('s3cret');
+  });
+
+  it('HYPE flow_usd.reserve_yield keeps params.token: "USDC" in its locator', () => {
+    const hype = loadAsset(ROOT, 'hype');
+    const p = fetchedProvenance(hype, 'flow_usd.reserve_yield');
+    expect((p.locator.params as Record<string, unknown>).token).toBe('USDC');
   });
 });
 

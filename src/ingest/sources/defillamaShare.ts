@@ -1,3 +1,4 @@
+import { asJson, type Json } from '../../provenance/types.js';
 import { failed, level, narrow, type ReadingResult, type SourceHandler } from '../types.js';
 import { DEFILLAMA_API } from './defillama.js';
 
@@ -37,8 +38,13 @@ export const defillamaShareSource: SourceHandler = {
       let total = 0;
       let mine = 0;
       let found = false;
+      /** The slice: the category's rows, with the fields read. */
+      const used: Json[] = [];
       for (const row of rows) {
         if (row === null || typeof row !== 'object' || row.category !== s.category) continue;
+        const picked: Record<string, Json> = {};
+        for (const k of ['slug', 'parentProtocol', 'category', field] as const) if (row[k] !== undefined) picked[k] = asJson(row[k]);
+        used.push(picked);
         const v = amount(row[field]);
         total += v;
         if ((row.parentProtocol ?? row.slug) === s.parent) {
@@ -51,7 +57,7 @@ export const defillamaShareSource: SourceHandler = {
       } else if (!found) {
         results.push(failed(`defillama_share: parent ${s.parent} not found in category "${s.category}" of ${url}`));
       } else {
-        results.push(level(mine / total, ctx.nowIso, 'api', `${url}: ${s.parent} ${field} ${mine} / category "${s.category}" ${total}`));
+        results.push(level(mine / total, ctx.nowIso, 'api', `${url}: ${s.parent} ${field} ${mine} / category "${s.category}" ${total}`, used));
       }
     }
     return results;
