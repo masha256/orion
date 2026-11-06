@@ -99,10 +99,33 @@ describe('report blocks', () => {
     noBlock.holder_yield = null;
     noBlock.checks_error = 'boom <@U1>';
     expect(formatAssetBlock(run({}, noBlock))).toEqual({ lines: ['DECISIONS', 'nothing to decide', `ALERT MINI checks unavailable: ${slackClean('boom <@U1>')}`], alert: true });
-    // Checks that ran (even a breach, which the inbox carries) are no alert of their own.
+    // Checks that ran clean (or incomplete) are no alert of their own.
     const ran = cleanReport();
-    ran.checks = [{ id: 'splitter', type: 'sum', status: 'ok', gap_pct: 0 }];
+    ran.checks = [{ id: 'splitter', type: 'sum', status: 'ok', gap_pct: 0 }, { id: 'staker_share', type: 'parameter', status: 'incomplete', gap_pct: null }];
     expect(formatAssetBlock(run({}, ran)).alert).toBe(false);
+  });
+
+  it('format: a breached check makes the block an alert and prints one line per breached check (I1, plan correction 12)', () => {
+    const report = cleanReport();
+    report.checks = [
+      { id: 'splitter', type: 'sum', status: 'breach', gap_pct: 0.012345 },
+      { id: 'two_ways', type: 'two_path', status: 'ok', gap_pct: 0 },
+      { id: 'staker_share', type: 'parameter', status: 'breach', gap_pct: 40 },
+    ];
+    const out = formatAssetBlock(run({}, report));
+    expect(out.alert).toBe(true);
+    expect(out.lines).toEqual([
+      'DECISIONS', 'nothing to decide', HOLDER_BLOCK[0],
+      'ALERT MINI check breach: splitter (sum) day 2026-11-02 gap 0.01235%',
+      'ALERT MINI check breach: staker_share (parameter) day 2026-11-02 gap 40%',
+      ...HOLDER_BLOCK.slice(1),
+    ]);
+    // A re-tick of a day already breached raises no new anomaly, but the stored breach still alerts.
+    expect(report.ingest!.anomalies_raised).toEqual([]);
+    // A breach whose gap is not a number prints n/a.
+    const nan = cleanReport();
+    nan.checks = [{ id: 'splitter', type: 'sum', status: 'breach', gap_pct: null }];
+    expect(formatAssetBlock(run({}, nan)).lines).toContain('ALERT MINI check breach: splitter (sum) day 2026-11-02 gap n/a');
   });
 
   it('format: failed sources, raised anomalies, degrading inbox anomalies, job failures and flags are alerts; only flagged fetch lines print', () => {

@@ -7,15 +7,19 @@ import type { Json, Locator } from './types.js';
 
 /**
  * Secrets are dropped by context, not by a name's suffix (a `token` param holding a symbol is not a secret):
- * - URL query parameters named key, apikey, api_key, token, access_token, secret (any case; `api-key` is api_key), and
- *   drpc's `dkey`;
- * - locator object keys named authorization, password, secret, api_key, apikey, and every key inside a `headers` or
- *   `auth` object.
+ * - URL query parameters named key, apikey, api_key, token, access_token, secret, x_cg_demo_api_key, x_cg_pro_api_key,
+ *   x-api-key, auth_token, access_key, password, auth, authorization (any case; `-` and `_` are ignored, so `api-key` is
+ *   api_key), and drpc's `dkey`;
+ * - locator object keys named authorization, password, secret, api_key, apikey, access_token, private_key, api_token
+ *   (same matching), and the whole value of a `headers` or `auth` key: an object or array emptied, a string blanked.
  */
 const normalized = (name: string): string => name.toLowerCase().replace(/[-_]/g, '');
-const SECRET_QUERY_KEYS: ReadonlySet<string> = new Set(['key', 'apikey', 'token', 'accesstoken', 'secret', 'dkey']);
-const SECRET_OBJECT_KEYS: ReadonlySet<string> = new Set(['authorization', 'password', 'secret', 'apikey']);
-/** Objects whose every key is a credential (or may be): emptied. */
+const SECRET_QUERY_KEYS: ReadonlySet<string> = new Set([
+  'key', 'apikey', 'token', 'accesstoken', 'secret', 'dkey',
+  'xcgdemoapikey', 'xcgproapikey', 'xapikey', 'authtoken', 'accesskey', 'password', 'auth', 'authorization',
+]);
+const SECRET_OBJECT_KEYS: ReadonlySet<string> = new Set(['authorization', 'password', 'secret', 'apikey', 'accesstoken', 'privatekey', 'apitoken']);
+/** Keys whose whole value is a credential (or may be): emptied, whatever its shape. */
 const CREDENTIAL_OBJECTS: ReadonlySet<string> = new Set(['headers', 'auth']);
 /** A URL query parameter that carries a credential. */
 export const isSecretQueryKey = (name: string): boolean => SECRET_QUERY_KEYS.has(normalized(name));
@@ -66,7 +70,7 @@ export function scrubUrl(text: string): string {
   return u.toString();
 }
 
-/** The locator with every credential removed: secret keys dropped, headers/auth emptied, every URL string scrubbed (recursively). */
+/** The locator with every credential removed: secret keys dropped, headers/auth values emptied, every URL string scrubbed (recursively). */
 export function scrubLocator(l: Locator): Locator {
   return scrubJson(l) as Locator;
 }
@@ -76,6 +80,13 @@ export function scrubText(text: string): string {
   return text.replace(/\b(?:https?|wss?):\/\/[^\s"'<>]+/g, (u) => scrubUrl(u));
 }
 
+/** A `headers`/`auth` value with nothing left in it, of the same shape (a scalar other than a string is no credential). */
+function emptied(v: Json): Json {
+  if (Array.isArray(v)) return [];
+  if (v !== null && typeof v === 'object') return {};
+  return typeof v === 'string' ? '' : v;
+}
+
 function scrubJson(v: Json): Json {
   if (typeof v === 'string') return scrubText(v);
   if (Array.isArray(v)) return v.map(scrubJson);
@@ -83,7 +94,7 @@ function scrubJson(v: Json): Json {
     const out: Record<string, Json> = {};
     for (const [k, x] of Object.entries(v)) {
       if (isSecretName(k)) continue;
-      out[k] = CREDENTIAL_OBJECTS.has(k.toLowerCase()) && x !== null && typeof x === 'object' && !Array.isArray(x) ? {} : scrubJson(x);
+      out[k] = CREDENTIAL_OBJECTS.has(k.toLowerCase()) ? emptied(x) : scrubJson(x);
     }
     return out;
   }

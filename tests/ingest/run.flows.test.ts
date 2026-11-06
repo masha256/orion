@@ -57,6 +57,39 @@ describe('fetchAsset: flows', () => {
     expect(await listActiveObservations(h.db, 'mini', 'flow_usd.fees')).toHaveLength(3);
   });
 
+  // Final review (T7b deferred): R20 on an incremental run. A --metric run without --backfill-days on a group that already
+  // has a cursor scans on from the cursor, writes only the listed member's new day, and leaves the cursor; the next full
+  // fetch then writes that day for every member, with one active row per day in each (no gap, no duplicate).
+  it('an incremental --metric run on a group with a cursor writes only the listed member and leaves the cursor', async () => {
+    const db = testDb();
+    const group = ['flow_usd.fees', 'flow_tokens.fees', 'flow_usd.fees_programmatic'];
+    const h = harness(db, { logs: [log('2026-09-17T12:00:00Z', POOL, 4n, 0)] });
+    await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
+    const scanKey = buildPlan(h.loaded.config).flowGroups[0]!.scanKey;
+    const cursor = await getCursor(db, 'mini', scanKey);
+    expect(cursor).toMatchObject({ lastDay: '2026-09-18' });
+
+    // A day later: the chain has a new day (2026-09-19) with a transfer.
+    const next = new Date(Date.parse('2026-09-20T12:00:00.000Z'));
+    const h2 = harness(db, { now: next, logs: [log('2026-09-17T12:00:00Z', POOL, 4n, 0), log('2026-09-19T12:00:00Z', POOL, 3n, 1)] });
+    const r = await fetchAsset(h2.db, h2.loaded, h2.deps.now(), h2.deps, { metrics: ['flow_tokens.fees'] });
+    expect(r.written.filter((w) => w.periodDays === 1).map((w) => [w.metricKey, w.observedAt, w.value])).toEqual([['flow_tokens.fees', '2026-09-20T00:00:00.000Z', 3]]);
+    expect(source(r, FLOW_ID).notes.join(' ')).toMatch(/--metric: wrote only flow_tokens\.fees; flow_usd\.fees, flow_usd\.fees_programmatic share this scan/);
+    expect(await getCursor(db, 'mini', scanKey)).toEqual(cursor);
+    expect(await listActiveObservations(db, 'mini', 'flow_tokens.fees')).toHaveLength(4);
+    for (const m of ['flow_usd.fees', 'flow_usd.fees_programmatic']) expect(await listActiveObservations(db, 'mini', m), m).toHaveLength(3);
+
+    // The next full fetch resumes from the unmoved cursor: 2026-09-19 for every member, the listed one superseded in place.
+    const full = await fetchAsset(h2.db, h2.loaded, h2.deps.now(), h2.deps);
+    expect(new Set(full.written.filter((w) => w.periodDays === 1).map((w) => `${w.metricKey}@${w.observedAt}`))).toEqual(new Set(group.map((m) => `${m}@2026-09-20T00:00:00.000Z`)));
+    expect(await getCursor(db, 'mini', scanKey)).toMatchObject({ lastDay: '2026-09-19' });
+    for (const m of group) {
+      const rows = await listActiveObservations(db, 'mini', m);
+      expect(rows.map((o) => o.observedAt), m).toEqual(['2026-09-17', '2026-09-18', '2026-09-19', '2026-09-20'].map((d) => `${d}T00:00:00.000Z`));
+    }
+    expect((await listActiveObservations(db, 'mini', 'flow_tokens.fees')).map((o) => o.value)).toEqual([0, 4, 0, 3]);
+  });
+
   it('passes --adopt and --dry-run through to the scan', async () => {
     const h = harness(testDb());
     await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-18', periodDays: 30, value: 5000, source: 'manual', fetchedAt: '2026-09-18T00:00:00Z' });

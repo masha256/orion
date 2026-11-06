@@ -231,6 +231,9 @@ describe('assets/ycrv.yaml', () => {
     const full = new Date(NOW.getTime() + 7_200_000);
     const again = await fetchAsset(w.db, { config, hash: 'test' }, full, w.deps, { backfillDays: 3 });
     expect(members.filter((m) => again.written.filter((x) => x.metricKey === m).length === 3)).toEqual([...members]);
+    // One active row per day in every member, the listed ones included: the full fetch superseded their rescanned days.
+    for (const m of members) expect(await rows(m), m).toHaveLength(100);
+    for (const m of listed) expect((await rows(m)).map((o) => [o.observedAt, o.value]), m).toEqual(before[m].map((o) => [o.observedAt, o.value]));
     const gross = await rows('flow_usd.yearn_gross');
     expect(gross.slice(97).every((o) => o.fetchedAt === full.toISOString())).toBe(true);
     expect(gross.map((o) => o.value)).toEqual(before['flow_usd.yearn_gross'].map((o) => o.value));

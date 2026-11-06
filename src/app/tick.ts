@@ -99,11 +99,14 @@ export async function tickAsset(db: OrionDb, loaded: LoadedAsset, deps: TickDeps
 
       // ---- checks ----
       // The reconciliation checks for the report's day, from stored rows (spec §5): stored, and a breach opens an advisory
-      // check_breach anomaly. No agent run, ever. A failure here is reported, never fatal: the report above stands.
+      // check_breach anomaly (listed in `ingest.anomalies_raised`, so the block is an alert). No agent run, ever. A failure
+      // here is reported, never fatal: the report above stands.
       try {
         if (resolveChecks(asset).length === 0) return;
         const results = await evaluateChecks(db, asset, report.holder_yield.day, { now: started });
-        await recordChecks(db, asset.id, results, deps.now().toISOString());
+        const raised = await recordChecks(db, asset.id, results, deps.now().toISOString());
+        // I1 (plan correction 12): a breach's check_breach anomaly is one this tick raised, so the nightly block alerts.
+        if (report.ingest) report.ingest.anomalies_raised.push(...raised.filter((a) => a.status === 'open').map((a) => ({ id: a.id, kind: a.kind, metric: a.metricKey, severity: a.severity })));
         report.checks = results.map((r) => ({ id: r.checkId, type: r.type as CheckType, status: r.status, gap_pct: r.gapPct }));
       } catch (err) {
         report.checks_error = message(err).slice(0, 300);

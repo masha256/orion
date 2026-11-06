@@ -90,6 +90,9 @@ describe('tickAsset', () => {
     const stored = await h.db.all<{ check_id: string; day: string; status: string }>('SELECT check_id, day, status FROM check_results ORDER BY check_id');
     expect(stored).toEqual([{ check_id: 'staker_share', day: '2026-09-18', status: 'breach' }, { check_id: 'two_ways', day: '2026-09-18', status: 'ok' }]);
     expect(report.inbox.anomalies).toEqual([expect.objectContaining({ kind: 'check_breach', metric: '', severity: 'advisory', occurrences: 1, reading: expect.objectContaining({ check_id: 'staker_share', check_type: 'parameter', day: '2026-09-18', lhs: 0.3, rhs: 0.5 }) })]);
+    // I1 (plan correction 12): the breach's anomaly is one the tick raised, so the nightly block is an ALERT.
+    const breachId = report.inbox.anomalies[0]!.id;
+    expect(report.ingest!.anomalies_raised).toEqual([{ id: breachId, kind: 'check_breach', metric: '', severity: 'advisory' }]);
     expect(await agentRuns()).toBe(0);
     // The report reads the stored results back.
     const yr = await loadHolderYieldReport(h.db, h.loaded.config, undefined, { legacy: true });

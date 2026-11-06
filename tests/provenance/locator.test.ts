@@ -75,6 +75,25 @@ describe('scrubLocator: secrets dropped by context, not by key suffix', () => {
     expect(JSON.stringify(scrubbed)).not.toContain('s3cret');
   });
 
+  // Task 6 deferred minor (final fix wave): the wider credential names.
+  it('query names x_cg_demo_api_key, x_cg_pro_api_key, x-api-key, auth_token, access_key, password, auth, authorization go (any case)', () => {
+    for (const k of ['x_cg_demo_api_key', 'x_cg_pro_api_key', 'x-cg-pro-api-key', 'x-api-key', 'X-API-Key', 'auth_token', 'access_key', 'Access-Key', 'password', 'auth', 'authorization', 'Authorization']) {
+      expect(scrubUrl(`https://api.example.test/x?${k}=s3cret&dataType=dailyFees`), k).toBe('https://api.example.test/x?dataType=dailyFees');
+    }
+    expect(scrubUrl('https://api.example.test/x?author=7&auth_mode=none')).toBe('https://api.example.test/x?author=7&auth_mode=none');
+  });
+
+  it('object keys access_token, privateKey, apiToken go (any case); string- and array-valued headers/auth are emptied; params.token stays', () => {
+    const scrubbed = scrubLocator({
+      params: { token: 'USDC', access_token: 's3cret', ACCESS_TOKEN: 's3cret' },
+      privateKey: 's3cret', PRIVATEKEY: 's3cret', private_key: 's3cret', apiToken: 's3cret', api_token: 's3cret',
+      headers: 'x-api-key: s3cret',
+      nested: { auth: 'Bearer s3cret', Headers: [['x-api-key', 's3cret']], kept: 'ok' },
+    });
+    expect(scrubbed).toEqual({ params: { token: 'USDC' }, headers: '', nested: { auth: '', Headers: [], kept: 'ok' } });
+    expect(JSON.stringify(scrubbed)).not.toContain('s3cret');
+  });
+
   it('HYPE flow_usd.reserve_yield keeps params.token: "USDC" in its locator', () => {
     const hype = loadAsset(ROOT, 'hype');
     const p = fetchedProvenance(hype, 'flow_usd.reserve_yield');

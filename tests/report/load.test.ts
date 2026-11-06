@@ -6,7 +6,7 @@ import type { Db } from '../../src/db/connection.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { addDays } from '../../src/ingest/time.js';
 import { holderYieldReport } from '../../src/report/holderYield.js';
-import { lastCompleteReportDay, loadHolderYieldReport, yieldReport } from '../../src/report/load.js';
+import { defaultDayFlowMetrics, lastCompleteReportDay, loadHolderYieldReport, reportFlowMetrics, yieldReport } from '../../src/report/load.js';
 import { MINI_ASSET_YAML, MINI_REPORT_YAML, seedMiniReport } from '../helpers/assets.js';
 import { useTestDb } from '../helpers/db.js';
 import { ALL_ASSETS, repoAsset, syntheticInput } from '../helpers/syntheticReport.js';
@@ -48,6 +48,39 @@ describe('lastCompleteReportDay', () => {
     expect(r.day).toBe('2026-10-09');
     expect(r.income!.revenue.annualized).toBeCloseTo(2 * 365);
     expect(r.income!.payoutRatio).toBeCloseTo(1);
+  });
+
+  // Final review M4: the default day is v1's exactly. Metrics only income_statement reads (yCRV's by-sender flows) never
+  // gate it; the v2 statement flags their missing days instead.
+  it('reads the v1 report flows only, for all 13 assets', () => {
+    for (const id of ALL_ASSETS) {
+      const asset = repoAsset(id);
+      expect(defaultDayFlowMetrics(asset), id).toEqual(reportFlowMetrics({ ...asset, income_statement: undefined }));
+    }
+  });
+
+  it('yCRV before its by-sender flows exist: the default day is v1\'s, and v2 flags the missing days', async () => {
+    const asset = repoAsset('ycrv');
+    const v1Metrics = reportFlowMetrics({ ...asset, income_statement: undefined });
+    const v2Only = reportFlowMetrics(asset).filter((m) => !v1Metrics.includes(m));
+    expect(v2Only).toEqual(['flow_usd.yearn_gross_fees', 'flow_usd.yearn_gross_incentives']);
+    const db = testDb();
+    for (const m of v1Metrics) {
+      for (let i = 0; i < 200; i++) {
+        const day = addDays('2026-10-10', -i);
+        await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'ycrv', metricKey: m, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value: 10, source: 'onchain', fetchedAt: '2026-10-11T00:00:00.000Z' });
+      }
+    }
+    expect(await lastCompleteReportDay(db, asset)).toBe('2026-10-10');
+    const r = await loadHolderYieldReport(db, asset, undefined, { legacy: true });
+    expect(r.day).toBe('2026-10-10');
+    // The legacy object is v1's for that day (the input v1 reads is the same with or without the v2-only series).
+    const { incomeStatement, ...legacy } = r as typeof r & { incomeStatement?: unknown };
+    const v1 = await loadHolderYieldReport(db, { ...asset, income_statement: undefined }, undefined, { legacy: true });
+    expect(JSON.stringify(legacy)).toBe(JSON.stringify(v1));
+    const is = incomeStatement as { revenue: { annualized: number | null }; flags: string[] };
+    expect(is.revenue.annualized).toBeNull(); // fees_rev reads flow_usd.yearn_gross_fees: no day yet
+    expect(is.flags).toEqual(expect.arrayContaining([expect.stringMatching(/apportion mix n\/a: ybs_payout, treasury \(a day of flow_usd\.yearn_gross_fees or flow_usd\.yearn_gross is missing\)/)]));
   });
 
   it('is null while any report flow has no row', async () => {

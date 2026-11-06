@@ -10,8 +10,9 @@ import { holderYieldReport, type DayProvenance, type HolderYieldReport, type Rep
 import { incomeStatementV2, type IsV2 } from './incomeStatement.js';
 
 /**
- * Every flow metric the report reads: the holder flows, plus revenue and volume, then the income statement v2's (which
- * reads the same series for all 13 assets today, so the default report day does not move).
+ * Every flow metric the report reads: the holder flows, plus revenue and volume, then the income statement v2's (the
+ * same series for 12 assets; yCRV adds its two by-sender flows). The default report day reads only v1's
+ * (`defaultDayFlowMetrics`), so v2-only series never move it.
  */
 export function reportFlowMetrics(asset: AssetConfig): string[] {
   const r = asset.reporting;
@@ -93,14 +94,24 @@ async function dailyOf(db: Db, assetId: string, metricKey: string): Promise<Map<
 }
 
 /**
- * The newest day that every flow the report reads has (holder flows, income lines, volume): the default day a report
- * covers. A series that runs a day ahead of another (HYPE's buybacks vs its revenue proxy) must not leave the slower one
- * blank in the report.
+ * The flows that set the default report day: the v1 report's (holder flows, income lines, revenue streams, volume,
+ * burned tokens), never a metric only `income_statement` reads (final review M4: yCRV's by-sender flows). So during the
+ * legacy release the default day is v1's exactly, and a v2-only series with no row for that day shows as the
+ * statement's own missing-day flag rather than holding the whole report back.
+ */
+export function defaultDayFlowMetrics(asset: AssetConfig): string[] {
+  return reportFlowMetrics({ ...asset, income_statement: undefined });
+}
+
+/**
+ * The newest day that every flow `defaultDayFlowMetrics` names has: the default day a report covers. A series that runs
+ * a day ahead of another (HYPE's buybacks vs its revenue proxy) must not leave the slower one blank in the report.
  */
 export async function lastCompleteReportDay(db: Db, asset: AssetConfig): Promise<string | null> {
   let last: string | null = null;
-  const periodic = periodicMetrics(asset);
-  for (const metric of reportFlowMetrics(asset)) {
+  // v1's periodic streams (M4: a statement-only periodic setting must not change which v1 flows gate the day).
+  const periodic = periodicMetrics({ ...asset, income_statement: undefined });
+  for (const metric of defaultDayFlowMetrics(asset)) {
     if (periodic.has(metric)) continue;
     const days = [...(await dailyOf(db, asset.id, metric)).keys()].sort();
     const d = days.at(-1);
@@ -151,8 +162,17 @@ function statementOf(input: ReportInput, v1: HolderYieldReport): { incomeStateme
 export function yieldReport(input: ReportInput, opts: { legacy: true }): HolderYieldReport;
 export function yieldReport(input: ReportInput, opts?: ReportOptions): YieldReport | HolderYieldReport;
 export function yieldReport(input: ReportInput, opts: ReportOptions = {}): YieldReport | HolderYieldReport {
+  return assembleReport(input, opts);
+}
+
+/** `yieldReport`, or with `v2ReadError` (a v2-only DB read threw, M3): the statement is not computed and carries that error. */
+function assembleReport(input: ReportInput, opts: ReportOptions, v2ReadError?: string): YieldReport | HolderYieldReport {
   const v1 = holderYieldReport(input);
-  const withIs = input.asset.income_statement ? statementOf(input, v1) : {};
+  const withIs = !input.asset.income_statement
+    ? {}
+    : v2ReadError !== undefined
+      ? { incomeStatement: null, incomeStatementError: v2ReadError.slice(0, 300) }
+      : statementOf(input, v1);
   if (opts.legacy) return { ...v1, ...withIs };
   return { asset: v1.asset, day: v1.day, windowDays: v1.windowDays, price: v1.price, marketCap: v1.marketCap, fdv: v1.fdv, ...withIs, notes: v1.notes };
 }
@@ -219,11 +239,22 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
     provisional.set(m, p.provisional);
     daily.set(m, p.days);
   }
-  // The checks the tick stored for this day (v2 only: the legacy object never carries them).
-  const checks = asset.income_statement ? await listCheckResults(db, asset.id, target) : [];
-  // The provenance of every day the daily series hold (v2 only), for the statement's provenance from observations.
-  const provenance = asset.income_statement ? await provenanceByDay(db, asset.id, [...daily.keys()], periodic) : undefined;
-  return yieldReport({ asset, day: target, daily, provisional, levels, ...(checks.length > 0 ? { checks } : {}), ...(provenance ? { provenance } : {}) }, opts);
+  // The v2-only reads, inside C4's isolation (M3): a throw here gives `incomeStatement: null` and its message, and never
+  // fails the legacy report, the tick's holder_yield or the snapshot.
+  let checks: Awaited<ReturnType<typeof listCheckResults>> = [];
+  let provenance: Map<string, Map<string, DayProvenance>> | undefined;
+  let v2ReadError: string | undefined;
+  if (asset.income_statement) {
+    try {
+      // The checks the tick stored for this day (v2 only: the legacy object never carries them).
+      checks = await listCheckResults(db, asset.id, target);
+      // The provenance of every day the daily series hold (v2 only), for the statement's provenance from observations.
+      provenance = await provenanceByDay(db, asset.id, [...daily.keys()], periodic);
+    } catch (err) {
+      v2ReadError = `income statement inputs unavailable: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+  return assembleReport({ asset, day: target, daily, provisional, levels, ...(checks.length > 0 ? { checks } : {}), ...(provenance ? { provenance } : {}) }, opts, v2ReadError);
 }
 
 /**
