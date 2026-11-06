@@ -371,6 +371,7 @@ def old_side(root):
         },
         "revenue": None,
         "volume": {"annualized": 2.2},
+        "buckets": {"burn": None, "hold": None, "cash": {"gross": 1.5, "net": 1.5}},
     }
     lit = {
         "asset": "lit",
@@ -387,7 +388,25 @@ def old_side(root):
     }
     for obj in (sdcrv, ycrv, lit):
         (old / f"{obj['asset']}.json").write_text(js_json(obj))
+    new = old.parent / "new"
+    new.mkdir()
+    (new / "ycrv.json").write_text(js_json(ycrv_new(YCRV_MIX)))
     return old
+
+
+# Task 7b: the new side's yCRV apportion mix (fees / gross), and its incentives twin.
+YCRV_MIX = 0.25
+
+
+def ycrv_new(mix, incentives_mix=None):
+    inc = 1 - mix if incentives_mix is None and isinstance(mix, (int, float)) else incentives_mix
+    return {
+        "asset": "ycrv",
+        "incomeStatement": {
+            "holders": {"lines": [{"id": "ybs_payout", "apportion": {"mix": mix}}]},
+            "belowLine": {"lines": [{"id": "incentives_to_holders", "apportion": {"mix": inc}}]},
+        },
+    }
 
 
 class ExpectedTest(unittest.TestCase):
@@ -399,9 +418,14 @@ class ExpectedTest(unittest.TestCase):
             self.assertEqual(exp["sdcrv"]["incomeStatement.belowLine.toHolders"], 1.7)
             self.assertEqual(exp["sdcrv"]["incomeStatement.operatingCosts.annualized"], 0.12)
             self.assertAlmostEqual(exp["sdcrv"]["incomeStatement.ratios.payoutRatio"], (0.6 + 0.3) / (3.6 - 1.7), places=15)
-            self.assertEqual(exp["ycrv"]["incomeStatement.revenue.annualized"], 2.2)
+            m = YCRV_MIX
+            # Task 7b: revenue is the fees share of the gross; the incentives share of the payouts is below the line.
+            self.assertEqual(exp["ycrv"]["incomeStatement.revenue.annualized"], 2.2 * m)
             # R6: the st-yCRV fee is not in the v2 statement, so unreconciled never subtracts it.
-            self.assertAlmostEqual(exp["ycrv"]["incomeStatement.unreconciled.annualized"], 2.2 - 1.5 - 0.6, places=15)
+            self.assertAlmostEqual(exp["ycrv"]["incomeStatement.unreconciled.annualized"], 2.2 * m - 1.5 * m - 0.6 * m, places=15)
+            self.assertEqual(exp["ycrv"]["incomeStatement.belowLine.toHolders"], 1.5 * (1 - m))
+            self.assertEqual(exp["ycrv"]["incomeStatement.holderFlow.gross"], 1.5)
+            self.assertEqual(exp["ycrv"]["incomeStatement.holderFlow.net"], 1.5)
             self.assertAlmostEqual(exp["lit"]["incomeStatement.revenue.annualized"], 41.19 + (16.16 - 8.08), places=12)
             self.assertEqual(exp["lit"]["incomeStatement.costOfRevenue.annualized"], 16.16 * 0.5)
             self.assertEqual(exp["lit"]["incomeStatement.grossProfit.annualized"], 41.19)
@@ -409,8 +433,9 @@ class ExpectedTest(unittest.TestCase):
     def test_ycrv_styc_separate_adds_the_styc_fee_line(self):
         with tempfile.TemporaryDirectory() as d:
             exp = expected.expected_values(old_side(d), ycrv_styc_separate=True)
-            self.assertAlmostEqual(exp["ycrv"]["incomeStatement.revenue.annualized"], 2.3, places=15)
-            self.assertAlmostEqual(exp["ycrv"]["incomeStatement.unreconciled.annualized"], 2.3 - 1.5 - 0.6 - 0.1, places=15)
+            m = YCRV_MIX
+            self.assertAlmostEqual(exp["ycrv"]["incomeStatement.revenue.annualized"], 2.2 * m + 0.1, places=15)
+            self.assertAlmostEqual(exp["ycrv"]["incomeStatement.unreconciled.annualized"], 2.2 * m + 0.1 - 1.5 * m - 0.6 * m - 0.1, places=15)
 
     def test_ycrv_unreconciled_reads_the_ybs_payout_and_treasury_lines_not_the_protocol_total(self):
         """R6: a protocol total that differs from treasury (+ styc_fee) must not leak into unreconciled."""
@@ -421,11 +446,55 @@ class ExpectedTest(unittest.TestCase):
             obj["income"]["holders"]["annualized"] = 9.9
             (old / "ycrv.json").write_text(js_json(obj))
             exp = expected.expected_values(old)
-            self.assertAlmostEqual(exp["ycrv"]["incomeStatement.unreconciled.annualized"], 2.2 - 1.5 - 0.6, places=15)
+            m = YCRV_MIX
+            self.assertAlmostEqual(exp["ycrv"]["incomeStatement.unreconciled.annualized"], 2.2 * m - 1.5 * m - 0.6 * m, places=15)
             obj["income"]["lines"] = [l for l in obj["income"]["lines"] if l["id"] != "treasury"]
             (old / "ycrv.json").write_text(js_json(obj))
             with self.assertRaises(expected.ExpectedError):
                 expected.expected_values(old)
+
+    def test_ycrv_mix_is_read_from_the_new_side_and_must_lie_in_0_1(self):
+        """Task 7b: the mix comes from the new side's apportion detail; missing, null or outside (0, 1) refuses."""
+        for bad in (None, "0.25", True, 0, 1, 1.2, -0.1):
+            with tempfile.TemporaryDirectory() as d:
+                old = old_side(d)
+                (old.parent / "new" / "ycrv.json").write_text(js_json(ycrv_new(bad, 0.75)))
+                with self.assertRaises(expected.ExpectedError, msg=repr(bad)):
+                    expected.expected_values(old)
+        with tempfile.TemporaryDirectory() as d:
+            old = old_side(d)
+            obj = ycrv_new(YCRV_MIX)
+            del obj["incomeStatement"]["holders"]["lines"][0]["apportion"]
+            (old.parent / "new" / "ycrv.json").write_text(js_json(obj))
+            with self.assertRaises(expected.ExpectedError):
+                expected.expected_values(old)
+        with tempfile.TemporaryDirectory() as d:
+            old = old_side(d)
+            (old.parent / "new" / "ycrv.json").unlink()
+            with self.assertRaises(expected.ExpectedError):
+                expected.expected_values(old)
+
+    def test_ycrv_senders_must_partition_the_gross(self):
+        """Task 7b stop rule: fees mix + incentives mix must be 1 within 1e-9 (an unlisted sender otherwise)."""
+        with tempfile.TemporaryDirectory() as d:
+            old = old_side(d)
+            (old.parent / "new" / "ycrv.json").write_text(js_json(ycrv_new(0.25, 0.75 + 2e-9)))
+            with self.assertRaisesRegex(expected.ExpectedError, "differ from 1"):
+                expected.expected_values(old)
+            (old.parent / "new" / "ycrv.json").write_text(js_json(ycrv_new(0.25, 0.75 + 5e-10)))
+            self.assertEqual(expected.expected_values(old)["ycrv"]["incomeStatement.revenue.annualized"], 2.2 * 0.25)
+
+    def test_cli_new_side_option(self):
+        with tempfile.TemporaryDirectory() as d:
+            old = old_side(d)
+            other = Path(d) / "elsewhere"
+            other.mkdir()
+            (other / "ycrv.json").write_text(js_json(ycrv_new(0.5)))
+            (old.parent / "new" / "ycrv.json").unlink()
+            r = subprocess.run([sys.executable, str(HERE / "expected.py"), str(old), "--new", str(other)], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            written = json.loads((old.parent / "expected.json").read_text())
+            self.assertEqual(written["ycrv"]["incomeStatement.revenue.annualized"], 2.2 * 0.5)
 
     def test_cli_writes_expected_json_beside_old(self):
         with tempfile.TemporaryDirectory() as d:

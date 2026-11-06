@@ -81,7 +81,9 @@ describe('assets/ycrv.yaml', () => {
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/ycrv.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('7c686726688bdcae558109e929798a27c33581484bcb18c99761b4074e7c0f0b');
+    // Re-pinned 2026-11-05: the splitter's gross by sender (yearn_gross_fees, yearn_gross_incentives) and the vote
+    // incentives below the line by apportion (Phase 2 Task 7b, Mike G1).
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('fad4f446d24f9734608fc150828ddadfbbd893bd2082eac655201c1e3cd114d8');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -91,12 +93,38 @@ describe('assets/ycrv.yaml', () => {
       category: 'liquid_locker',
       scope: 'complete',
       window_days: 91,
-      revenue: ['yearn_gross'],
+      revenue: ['fees_rev'],
       holders: ['ybs_payout'],
       protocol: ['treasury'],
-      checks: ['splitter'],
+      below_line: ['incentives_to_holders', 'incentives_to_protocol'],
+      checks: ['splitter', 'gross_by_sender'],
       of: {},
     });
+  });
+
+  it('Task 7b: the auctioned vote incentives are below the line, each paid flow apportioned by the sender mix', () => {
+    const is = config.income_statement!;
+    expect(is.revenue).toEqual([{ id: 'fees_rev', label: expect.any(String), metric: 'flow_usd.yearn_gross_fees' }]);
+    const fees = { by: 'flow_usd.yearn_gross_fees', total: 'flow_usd.yearn_gross' };
+    const incentives = { by: 'flow_usd.yearn_gross_incentives', total: 'flow_usd.yearn_gross' };
+    expect(is.holders![0]).toMatchObject({ id: 'ybs_payout', metric: 'flow_usd.fees', apportion: fees, bucket: 'cash', haircut: 0 });
+    expect(is.protocol![0]).toMatchObject({ id: 'treasury', metric: 'flow_usd.yearn_revenue', apportion: fees });
+    expect(is.below_line).toEqual([
+      {
+        id: 'incentives_to_holders', to: 'holders', metric: 'flow_usd.fees', apportion: incentives, bucket: 'cash', haircut: 0, recipient_base: 'staked',
+        valued_per: 'recipients', capture_rule: 'programmatic', note: 'auctioned third-party vote incentives (Yearn FeeBurner)',
+      },
+      { id: 'incentives_to_protocol', to: 'protocol', metric: 'flow_usd.yearn_revenue', apportion: incentives, note: 'auctioned third-party vote incentives (Yearn FeeBurner)' },
+    ]);
+    expect(is.checks).toEqual([
+      { id: 'splitter', type: 'sum', total: ['flow_usd.yearn_gross'], parts: ['ybs_payout', 'incentives_to_holders', 'treasury', 'incentives_to_protocol'], tolerance_pct: 2 },
+      { id: 'gross_by_sender', type: 'sum', total: ['flow_usd.yearn_gross'], parts: ['flow_usd.yearn_gross_fees', 'flow_usd.yearn_gross_incentives'], tolerance_pct: 0.000001 },
+    ]);
+    // the two by-sender flows are report-only and copy yearn_gross's source, each counting one sender
+    for (const [k, sender] of [['flow_usd.yearn_gross_fees', 'voter'], ['flow_usd.yearn_gross_incentives', 'fee_burner']] as const) {
+      expect(config.metrics[k], k).toMatchObject({ type: 'flow', unit: 'usd', cadence: 'daily', staleness_days: 10, monitor_only: true });
+      expect(config.metrics[k]!.source, k).toEqual({ ...config.metrics['flow_usd.yearn_gross']!.source, count_from: [sender] });
+    }
   });
 
   it('plans one transfer scan of vault shares, converted at the share price', () => {
@@ -112,7 +140,12 @@ describe('assets/ycrv.yaml', () => {
       // Report-only: Yearn's revenue (vault shares into its treasury vault) and the gross crvUSD into the splitter.
       [{ metricKey: 'flow_usd.yearn_revenue', unit: 'usd', countFrom: [C.splitter.toLowerCase(), C.receiver.toLowerCase()], priceCoingeckoId: 'crvusd', sharePrice: { address: C.yv_crvusd.toLowerCase(), functionName: 'pricePerShare', decimals: 18 } }],
       [{ metricKey: 'flow_usd.yearn_styc_fee', unit: 'usd', countFrom: [C.st_ycrv.toLowerCase()], priceCoingeckoId: 'yearn-crv', sharePrice: { address: C.st_ycrv.toLowerCase(), functionName: 'pricePerShare', decimals: 18 } }],
-      [{ metricKey: 'flow_usd.yearn_gross', unit: 'usd', countFrom: [C.voter.toLowerCase(), C.fee_burner.toLowerCase()], priceCoingeckoId: 'crvusd', sharePrice: null }],
+      // One scan of the splitter's crvUSD: the gross and (Task 7b) the gross by sender, each counting one sender.
+      [
+        { metricKey: 'flow_usd.yearn_gross', unit: 'usd', countFrom: [C.voter.toLowerCase(), C.fee_burner.toLowerCase()], priceCoingeckoId: 'crvusd', sharePrice: null },
+        { metricKey: 'flow_usd.yearn_gross_fees', unit: 'usd', countFrom: [C.voter.toLowerCase()], priceCoingeckoId: 'crvusd', sharePrice: null },
+        { metricKey: 'flow_usd.yearn_gross_incentives', unit: 'usd', countFrom: [C.fee_burner.toLowerCase()], priceCoingeckoId: 'crvusd', sharePrice: null },
+      ],
     ]);
     expect(plan.derived).toEqual([]);
   });
@@ -136,6 +169,13 @@ describe('assets/ycrv.yaml', () => {
     // Each payout: 25,000 shares x 1.159 crvUSD per share x 0.9991 USD.
     expect(fees.find((o) => o.value > 0)!.value).toBeCloseTo(25_000 * 1.159 * 0.9991, 6);
     expect(await rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
+    // Task 7b: the gross by sender is backfilled with the gross (one scan), and the senders partition it day by day.
+    const gross = await rows('flow_usd.yearn_gross');
+    const byDay = async (m: string) => new Map((await rows(m)).map((o) => [o.observedAt, o.value] as const));
+    const [gf, gi] = [await byDay('flow_usd.yearn_gross_fees'), await byDay('flow_usd.yearn_gross_incentives')];
+    expect(gross).toHaveLength(100);
+    expect([gf.size, gi.size]).toEqual([100, 100]);
+    for (const o of gross) expect(gf.get(o.observedAt)! + gi.get(o.observedAt)!, o.observedAt).toBe(o.value);
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
   });
 

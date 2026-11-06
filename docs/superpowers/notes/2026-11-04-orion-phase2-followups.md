@@ -339,3 +339,38 @@ priced at daily points) reported apart in `beyond`; `unpriced` (an hour with an 
 - Accepted (ruling, not fixed): a transfer-scan member with no `flow_tokens.*` twin (the CRV family, AERO, cvxCRV, the
   yCRV share members) is filled unverified. If its allowlist or `from_ignore` changed after the row was written, the
   current config's tokens sit beside the old config's `value`; compare-usd's per-day p90 is the only net.
+
+## Task 7b: yCRV vote incentives below the line (Mike G1)
+- Revenue = the veCRV fees Yearn's voter sends the splitter (`flow_usd.yearn_gross_fees`, line `fees_rev`); the
+  auctioned third-party vote incentives Yearn's FeeBurner sells into crvUSD (`flow_usd.yearn_gross_incentives`) are below
+  the line, as sdCRV's bribes (spec rule 3). 93 days to 2026-11-04: fees $140,085 (25%), incentives $420,855 (75%).
+- Generic mechanism, no yCRV code: `apportion: { by, total }` on a use or below-line line with a `metric` carries that
+  flow x (window sum of `by` / window sum of `total`) (ruling R14, formula `apportion_by_mix@1`, method `derived`; the
+  line's JSON carries `apportion: { by, total, mix, bySum, totalSum, formula }`). A flow may be read by more than one
+  line only as an apportion set: one total, distinct `by`, and a `sum` check total = [total], parts = the by series
+  (metric keys, or the revenue lines reading them) must exist, so the set splits the flow whole. Refused at load
+  otherwise, as is apportion without a metric or with `paid_metric`.
+- Holder flow reads an apportion set whose lines all reach holders alike (one bucket, haircut, recipient base) as its
+  whole flow, once: `holderFlow.gross`/`net`, buckets, yields and growth equal v1's to the bit; only `fromRevenue` vs
+  `fromBelowLine` moves. Line by line, the set's figures sum to the flow within float rounding (1e-15 relative).
+- No mix (the total's window sum is 0, or a day of `by` or `total` is missing): the lines are null, flagged
+  `apportion mix n/a: <ids> (<reason>)`, never divided by zero; holder flow keeps the whole flow.
+- Growth of an apportioned line applies the current window's mix to both windows (the mix is not re-measured for the
+  prior window), so its growth is its flow's growth.
+- Sum check parts may now be a line id or a metric key. An apportioned line in a sum check must come with every line of
+  its set (they read the flow once, factor 1): yCRV `splitter` = gross vs [ybs_payout, incentives_to_holders, treasury,
+  incentives_to_protocol] = gross vs flow_usd.fees + flow_usd.yearn_revenue, the same comparison as before. New check
+  `gross_by_sender`: gross vs fees + incentives, tolerance 0.000001 percent.
+- The two by-sender flows copy `flow_usd.yearn_gross`'s source (same token, sink and `from_allowlist [voter,
+  fee_burner]`) with `count_from: [voter]` / `[fee_burner]`, so all three are members of ONE scan (one cursor, one
+  pricing pass) and partition the gross by construction; separate allowlists would be a second scan priced at another
+  time, and their sum could drift from the stored gross by CoinGecko revisions alone. Consequence for rollout: the
+  members share a cursor, so the new series start empty and need `data fetch ycrv --metric flow_usd.yearn_gross_fees
+  --metric flow_usd.yearn_gross_incentives --backfill-days 100` (on the proof copy, then staging and prod at rollout).
+  That rescan re-writes the scan's other member, `flow_usd.yearn_gross`, for the same 100 days (same transfers; a value
+  moves only if CoinGecko revised crvUSD's hourly prices). Until the backfill, yCRV's v2 revenue and apportioned lines
+  are null (a missing day) and its default report day waits on the new series.
+- R14's approximation: the splitter sends 87.3 percent of fees but 78.0 percent of incentives to YBS, so splitting the
+  measured payouts by the sender mix understates from-revenue holder flow (and overstates below-line) slightly.
+  R14 error on real data: (controller)
+

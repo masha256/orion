@@ -19,8 +19,12 @@ const Metrics = z.array(z.string()).min(1);
 
 const base = { id: CheckId, tolerance_pct: Tolerance };
 
-/** A measured total vs the sum of the statement lines it splits into (a missed recipient, a new split). */
-export const SumCheckSchema = z.strictObject({ ...base, type: z.literal('sum'), total: Metrics, parts: z.array(CheckId).min(1), window_days: WindowDays.optional() });
+/**
+ * A measured total vs the sum of the statement lines (or flow metrics) it splits into (a missed recipient, a new split).
+ * A part is a line id or a metric key; an apportioned line is named with every line of its set (Task 7b), which together
+ * read its flow once.
+ */
+export const SumCheckSchema = z.strictObject({ ...base, type: z.literal('sum'), total: Metrics, parts: z.array(z.string().regex(/^[a-z0-9_.]+$/)).min(1), window_days: WindowDays.optional() });
 /** A share read from the protocol daily vs the share a line assumes (a fee-split change). */
 export const ParameterCheckSchema = z.strictObject({ ...base, type: z.literal('parameter'), metric: z.string(), expected: z.number().finite() });
 /** The day's change in an account's balance vs measured inflows less outflows (missed senders, dropped logs). */
@@ -138,11 +142,37 @@ function resolveAll(asset: CheckAsset): { checks: ResolvedCheck[]; problems: str
     }
     return t;
   };
+  // Apportion sets (Task 7b): the lines that read one flow, each with a share that moves with the window's mix.
+  const lines = [...(is.cost_of_revenue ?? []), ...(is.holders ?? []), ...(is.protocol ?? []), ...(is.operating_costs ?? []), ...(is.below_line ?? [])];
+  const setOf = (id: string): string[] | null => {
+    const l = lines.find((x) => x.id === id);
+    if (l?.apportion === undefined || l.metric === undefined) return null;
+    return lines.filter((x) => x.apportion !== undefined && x.metric === l.metric && x.apportion.total === l.apportion!.total).map((x) => x.id);
+  };
+  const sumPart = (c: { id: string; parts: string[] }, id: string, done: Set<string>): Term | null => {
+    const isLine = [...is.revenue, ...lines].some((x) => x.id === id);
+    if (!isLine) {
+      if (asset.metrics[id] !== undefined) return { metric: id, factor: 1 };
+      problems.push(`check ${c.id} part "${id}" is not a line id or a metric`);
+      return null;
+    }
+    const set = setOf(id);
+    if (set === null) return part(c, id);
+    // A whole set reads its flow once (factor 1); a part of one would carry a factor that moves with the mix.
+    if (!set.every((x) => c.parts.includes(x))) {
+      problems.push(`check ${c.id} part "${id}" is apportioned: list every line of its set (${set.join(', ')}) or none`);
+      return null;
+    }
+    if (set.some((x) => done.has(x))) return null;
+    set.forEach((x) => done.add(x));
+    return { metric: lines.find((x) => x.id === id)!.metric!, factor: 1, line: set.join('+') };
+  };
   for (const c of is.checks ?? []) {
     const common = { id: c.id, tolerancePct: c.tolerance_pct, auto: false };
     switch (c.type) {
       case 'sum': {
-        const parts = c.parts.map((p) => part(c, p)).filter((t): t is Term => t !== null);
+        const done = new Set<string>();
+        const parts = c.parts.map((p) => sumPart(c, p, done)).filter((t): t is Term => t !== null);
         out.push({ ...common, type: 'sum', total: terms(c.total), parts, windowDays: c.window_days ?? 1 });
         break;
       }

@@ -47,6 +47,14 @@ export function syntheticInput(asset: AssetConfig, day = SYNTHETIC_DAY): ReportI
     daily.set(m, series);
     if (periodic.has(m)) provisional.set(m, new Set([0, 1, 2, 3].map((i) => addDays(day, -i))));
   });
+  // A sum check over flow metrics alone partitions its total (yCRV's gross by sender, Task 7b): the total is the parts'
+  // sum each day, as the one scan writes them, so an apportion mix lies in (0, 1).
+  for (const c of asset.income_statement?.checks ?? []) {
+    if (c.type !== 'sum' || c.total.length !== 1 || !c.parts.every((p) => asset.metrics[p] !== undefined && daily.has(p))) continue;
+    const sum = new Map<string, number>();
+    for (const d of daily.get(c.parts[0]!)!.keys()) sum.set(d, c.parts.reduce((s, p) => s + (daily.get(p)!.get(d) ?? 0), 0));
+    daily.set(c.total[0]!, sum);
+  }
   const extra: Record<string, number | null> = {};
   for (const x of asset.reporting?.extra_cash ?? []) extra[x.metric] = 4_321_000;
   for (const b of asset.income_statement?.below_line ?? []) if (b.run_rate) extra[b.run_rate] = 4_321_000;

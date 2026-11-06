@@ -115,7 +115,9 @@ describe('parity map (ruling R7)', () => {
 });
 
 /** The Reclassification Table (plan Global Constraints), from the v1 report, keyed by expected.py's paths. */
-function reclassExpected(id: string, v1: HolderYieldReport): Record<string, number> {
+const YCRV_MIX_PATH = 'incomeStatement.holders.lines[id=ybs_payout].apportion.mix';
+
+function reclassExpected(id: string, v1: HolderYieldReport, v2: IsV2): Record<string, number> {
   const line = (l: string) => num(v1, `income.lines[id=${l}].annualized`);
   if (id === 'sdcrv') {
     const revenue = num(v1, 'income.revenue.annualized') - line('vote_incentives');
@@ -127,9 +129,17 @@ function reclassExpected(id: string, v1: HolderYieldReport): Record<string, numb
     };
   }
   if (id === 'ycrv') {
-    // Ruling R6: no st-yCRV line in v2, so unreconciled = revenue - ybs_payout - treasury.
-    const revenue = num(v1, 'volume.annualized');
-    return { 'incomeStatement.revenue.annualized': revenue, 'incomeStatement.unreconciled.annualized': revenue - line('ybs_payout') - line('treasury') };
+    // Task 7b (Mike G1): revenue is the fees share of the gross, the vote incentives' share of the payouts is below the
+    // line; the mix is read from the new side (expected.py does the same). Ruling R6: no st-yCRV line in v2.
+    const mix = num({ incomeStatement: v2 }, YCRV_MIX_PATH);
+    const revenue = num(v1, 'volume.annualized') * mix;
+    return {
+      'incomeStatement.revenue.annualized': revenue,
+      'incomeStatement.unreconciled.annualized': revenue - line('ybs_payout') * mix - line('treasury') * mix,
+      'incomeStatement.belowLine.toHolders': line('ybs_payout') * (1 - mix),
+      'incomeStatement.holderFlow.gross': num(v1, 'buckets.cash.gross'),
+      'incomeStatement.holderFlow.net': num(v1, 'buckets.cash.net'),
+    };
   }
   const gross = num(v1, 'revenue.streams[id=robinhood].grossAnnualized');
   const net = num(v1, 'revenue.streams[id=robinhood].annualized');
@@ -143,7 +153,7 @@ function reclassExpected(id: string, v1: HolderYieldReport): Record<string, numb
 describe('the three reclassified assets', () => {
   it.each(['sdcrv', 'ycrv', 'lit'])('%s matches the Reclassification Table at rel 1e-12', (id) => {
     const { v1, v2 } = reports(id);
-    const expected = reclassExpected(id, v1);
+    const expected = reclassExpected(id, v1, v2);
     for (const [path, want] of Object.entries(expected)) expect(rel(num({ incomeStatement: v2 }, path), want), `${id} ${path}`).toBeLessThanOrEqual(REL);
   });
 
@@ -152,8 +162,16 @@ describe('the three reclassified assets', () => {
     const paths = [...new Set([...py.matchAll(/"(incomeStatement\.[A-Za-z.]+)"/g)].map((m) => m[1]))];
     expect(paths.sort()).toEqual([
       'incomeStatement.belowLine.toHolders', 'incomeStatement.costOfRevenue.annualized', 'incomeStatement.grossProfit.annualized',
+      'incomeStatement.holderFlow.gross', 'incomeStatement.holderFlow.net',
       'incomeStatement.operatingCosts.annualized', 'incomeStatement.ratios.payoutRatio', 'incomeStatement.revenue.annualized', 'incomeStatement.unreconciled.annualized',
     ]);
+    // yCRV's mix (Task 7b) is read from the new side by that exact path.
+    expect(py).toContain(`"${YCRV_MIX_PATH}"`);
+    const { v2: y } = reports('ycrv');
+    const mix = getPath({ incomeStatement: y }, YCRV_MIX_PATH);
+    expect(mix).toEqual(expect.any(Number));
+    expect(mix as number).toBeGreaterThan(0);
+    expect(mix as number).toBeLessThan(1);
     for (const id of ['sdcrv', 'ycrv', 'lit']) {
       const { v2 } = reports(id);
       for (const p of paths) expect(typeof getPath({ incomeStatement: v2 }, p), `${id} ${p}`).toBe('number');

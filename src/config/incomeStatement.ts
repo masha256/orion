@@ -23,6 +23,12 @@ const CategorySchema = z.enum(['dex', 'perp_dex', 'launchpad', 'cdp_stablecoin',
 const CostToSchema = z.enum(['lps', 'lenders', 'savers', 'builders', 'referrers', 'partners', 'creators', 'deployers', 'node_operators', 'other']);
 /** A fixed contractual ratio of a measured revenue line (Convex's caller fee: 5 percent of the 10 percent lock line). */
 const EstimateSchema = z.strictObject({ of: LineId, ratio: z.number().positive().max(10) });
+/**
+ * Apportion by mix (Task 7b, ruling R14): the line carries its `metric` x (window sum of `by` / window sum of `total`).
+ * Lines reading one flow with complementary `by` series (a set) split it whole: yCRV's payouts between users' fees and
+ * auctioned vote incentives by the splitter's sender mix.
+ */
+const ApportionSchema = z.strictObject({ by: z.string(), total: z.string() });
 
 /**
  * A revenue line, with exactly one value source: `metric` (a flow; `settlement` daily or periodic, `started` dating a young
@@ -57,6 +63,7 @@ const useShape = {
   share_metric: z.string().optional(),
   estimate: EstimateSchema.optional(),
   not_measured: z.string().min(1).optional(),
+  apportion: ApportionSchema.optional(),
 };
 export const IsUseLineSchema = z.strictObject(useShape);
 
@@ -74,7 +81,10 @@ export const IsHolderLineSchema = z.strictObject({
 /** What users paid that goes to the supply side and partners. */
 export const IsCostLineSchema = z.strictObject({ ...useShape, to: CostToSchema });
 
-/** Income not paid by users: exactly one of `metric` (a flow), `run_rate` (a level in USD/yr) or `not_measured`. */
+/**
+ * Income not paid by users: exactly one of `metric` (a flow, optionally apportioned), `run_rate` (a level in USD/yr) or
+ * `not_measured`.
+ */
 export const IsBelowLineSchema = z.strictObject({
   id: LineId,
   label: z.string().optional(),
@@ -82,6 +92,7 @@ export const IsBelowLineSchema = z.strictObject({
   metric: z.string().optional(),
   run_rate: z.string().optional(),
   not_measured: z.string().min(1).optional(),
+  apportion: ApportionSchema.optional(),
   to: z.enum(['holders', 'protocol']),
   bucket: BucketSchema.optional(),
   haircut: Haircut.optional(),
@@ -122,6 +133,7 @@ export type IsHolderLine = z.infer<typeof IsHolderLineSchema>;
 export type IsCostLine = z.infer<typeof IsCostLineSchema>;
 export type IsBelowLine = z.infer<typeof IsBelowLineSchema>;
 export type IsCheck = z.infer<typeof IsCheckSchema>;
+export type IsApportion = z.infer<typeof ApportionSchema>;
 
 type AnyUseLine = IsUseLine | IsHolderLine | IsCostLine;
 type UseSection = 'cost_of_revenue' | 'holders' | 'protocol' | 'operating_costs';
@@ -135,7 +147,8 @@ const present = (line: object, keys: string[]): string[] => keys.filter((k) => (
  * sections (strictly: a use line never reuses its revenue line's id), metric types and references, a
  * disclosed revenue line alone, remainder only on an empty section, burns at haircut 0, a capture rule on every measured
  * below-line line to holders, and no series read twice (a use of a revenue series goes through `of`; a `paid_metric` is
- * read by no other line). The shared reporting keys are checked in schema.ts. Messages are prefixed.
+ * read by no other line; a flow split by `apportion` is read only by its set, whose by series a sum check proves partition
+ * its total). The shared reporting keys are checked in schema.ts. Messages are prefixed.
  */
 export function incomeStatementIssues(asset: CheckAsset): string[] {
   const is = asset.income_statement;
@@ -167,11 +180,25 @@ export function incomeStatementIssues(asset: CheckAsset): string[] {
 
   // Which line reads each series: revenue first, so a use or below_line reading a revenue series gets its own message.
   const revenueMetric = new Map<string, string>();
-  const readBy = new Map<string, string>();
-  const read = (m: string, where: string) => {
+  const readBy = new Map<string, { where: string; apportion?: IsApportion }>();
+  // A series read by more than one line only as an apportion set (Task 7b): every reader apportions it.
+  const apportionSets = new Map<string, { where: string; id: string; apportion: IsApportion }[]>();
+  const read = (m: string, where: string, apportion?: IsApportion) => {
     const first = readBy.get(m);
-    if (first !== undefined) issue(`metric "${m}" is read by two lines (${first} and ${where})`);
-    else readBy.set(m, where);
+    if (first !== undefined && (first.apportion === undefined || apportion === undefined)) issue(`metric "${m}" is read by two lines (${first.where} and ${where})`);
+    else if (first === undefined) readBy.set(m, { where, ...(apportion ? { apportion } : {}) });
+  };
+  /** An apportioned line: its by and total are flows (not the same one), its value source a metric, no paid_metric. */
+  const apportioned = (l: { id: string; metric?: string; apportion?: IsApportion }, w: string) => {
+    if (l.apportion === undefined) return;
+    if (l.metric === undefined) {
+      issue(`${w} takes apportion only with a metric (the flow it splits)`);
+      return;
+    }
+    flow(l.apportion.by, `${w} apportion by`);
+    flow(l.apportion.total, `${w} apportion total`);
+    if (l.apportion.by === l.apportion.total) issue(`${w} apportion by "${l.apportion.by}" is its total: the line would carry the whole flow`);
+    apportionSets.set(l.metric, [...(apportionSets.get(l.metric) ?? []), { where: w, id: l.id, apportion: l.apportion }]);
   };
 
   for (const r of is.revenue) {
@@ -215,8 +242,9 @@ export function incomeStatementIssues(asset: CheckAsset): string[] {
         flow(l.metric, `${w} metric`);
         const rev = revenueMetric.get(l.metric);
         if (rev !== undefined) issue(`${w} metric "${l.metric}" is revenue line ${rev}'s metric: use of: ${rev}`);
-        else read(l.metric, w);
+        else read(l.metric, w, l.apportion);
       }
+      apportioned(l, w);
       if (l.of !== undefined) {
         const rev = revById.get(l.of);
         if (rev === undefined) issue(`${w} of "${l.of}" is not a revenue line`);
@@ -231,6 +259,7 @@ export function incomeStatementIssues(asset: CheckAsset): string[] {
         if (h.valued_per === 'recipients' && h.recipient_base !== 'staked') issue(`${w} can be valued per recipients only with recipient_base staked`);
         if (h.paid_metric !== undefined) {
           flow(h.paid_metric, `${w} paid_metric`);
+          if (h.apportion !== undefined) issue(`${w} takes no paid_metric with apportion (holder flow reads the apportioned series)`);
           if (h.not_measured !== undefined) issue(`${w} takes no paid_metric when not_measured`);
         }
       }
@@ -244,8 +273,9 @@ export function incomeStatementIssues(asset: CheckAsset): string[] {
     if (b.metric !== undefined) {
       flow(b.metric, `${w} metric`);
       if (revenueMetric.has(b.metric)) issue(`${w} metric "${b.metric}" is a revenue metric: below-line income is what users did not pay`);
-      else read(b.metric, w);
+      else read(b.metric, w, b.apportion);
     }
+    apportioned(b, w);
     if (b.run_rate !== undefined) level(b.run_rate, `${w} run_rate`);
     if (b.to === 'holders') {
       const measured = b.metric !== undefined || b.run_rate !== undefined;
@@ -291,6 +321,40 @@ export function incomeStatementIssues(asset: CheckAsset): string[] {
     if (others.length > 0) issue(`${w} paid_metric "${h.paid_metric}" is also read by ${others.join(', ')}`);
   }
 
+  // Apportion sets (Task 7b): the lines reading one flow split it whole only when their by series partition one total, so
+  // holder flow, yields and buckets cannot move. Same total, distinct by, and a sum check total = [total], parts = the by
+  // series (as metrics or the lines reading them) proves the partition every day.
+  const sumChecks = (is.checks ?? []).filter((c) => c.type === 'sum');
+  const partMetric = (p: string): string | undefined => {
+    const r = revById.get(p);
+    if (r !== undefined) return r.metric;
+    return asset.metrics[p] !== undefined ? p : undefined;
+  };
+  for (const [m, set] of apportionSets) {
+    const total = set[0]!.apportion.total;
+    const other = set.find((x) => x.apportion.total !== total);
+    if (other !== undefined) {
+      issue(`apportion of "${m}": ${set[0]!.where} and ${other.where} name different totals`);
+      continue;
+    }
+    const byWhere = new Map<string, string>();
+    let twice = false;
+    for (const x of set) {
+      const first = byWhere.get(x.apportion.by);
+      if (first !== undefined) {
+        issue(`apportion of "${m}": by "${x.apportion.by}" is named twice (${first} and ${x.where})`);
+        twice = true;
+      } else byWhere.set(x.apportion.by, x.where);
+    }
+    if (twice) continue;
+    const bys = [...byWhere.keys()];
+    const same = (a: string[], b: string[]) => a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]);
+    const proven = sumChecks.some((c) => same(c.total, [total]) && same(c.parts.map((p) => partMetric(p) ?? `?${p}`), bys));
+    if (!proven) {
+      issue(`apportion of "${m}" by [${bys.join(', ')}] needs a sum check with total [${total}] and parts [${bys.join(', ')}] (the by series must partition the total)`);
+    }
+  }
+
   if (is.remainder !== undefined && (is[is.remainder] ?? []).length > 0) {
     issue(`remainder ${is.remainder} closes that section as revenue less the rest; list no ${is.remainder} line`);
   }
@@ -315,6 +379,7 @@ export interface ResolvedUse {
   derived?: { from: string; share: number; share_metric?: string };
   disclosed?: string;
   not_measured?: string;
+  apportion?: IsApportion;
 }
 
 const defined = <T extends object>(o: T): T => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
@@ -327,7 +392,7 @@ const defined = <T extends object>(o: T): T => Object.fromEntries(Object.entries
 export function resolveUse(def: IncomeStatementDef, line: AnyUseLine): ResolvedUse {
   const share = line.share ?? 1;
   if (line.of === undefined) {
-    return defined({ id: line.id, metric: line.metric, share, estimate: line.estimate, not_measured: line.not_measured });
+    return defined({ id: line.id, metric: line.metric, share, estimate: line.estimate, not_measured: line.not_measured, apportion: line.apportion });
   }
   const rev = def.revenue.find((r) => r.id === line.of);
   if (rev === undefined) throw new Error(`income_statement: ${line.id} of "${line.of}" is not a revenue line`);

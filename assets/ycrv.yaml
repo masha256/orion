@@ -148,6 +148,25 @@ metrics:
     staleness_days: 10
     monitor_only: true
     source: { type: transfer_flow, token: crvusd, to: splitter, from_allowlist: [ voter, fee_burner ], unit: usd, price_coingecko_id: crvusd }
+  # Report-only: flow_usd.yearn_gross by sender (Mike G1, Phase 2 Task 7b). Fees = the veCRV fees Yearn's voter claims
+  # (what users pay: revenue); incentives = the third-party vote incentives Yearn's FeeBurner auctions into crvUSD (below
+  # the line, as sdCRV's bribes). Same scan as yearn_gross (same token, sink and allowlist, one cursor and one pricing pass),
+  # each counting one sender (count_from), so fees + incentives = yearn_gross every day by construction (check
+  # gross_by_sender). 93 days to 2026-11-04: fees 25 percent, incentives 75 percent.
+  flow_usd.yearn_gross_fees:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: crvusd, to: splitter, from_allowlist: [ voter, fee_burner ], count_from: [ voter ], unit: usd, price_coingecko_id: crvusd }
+  flow_usd.yearn_gross_incentives:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 10
+    monitor_only: true
+    source: { type: transfer_flow, token: crvusd, to: splitter, from_allowlist: [ voter, fee_burner ], count_from: [ fee_burner ], unit: usd, price_coingecko_id: crvusd }
 
 holder_flows:
   # Paid only to staked yCRV (the unstaked share goes to Yearn's treasury), so valued per staked token.
@@ -170,17 +189,28 @@ reporting:
 
 # Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
 # reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+# Task 7b (Mike G1): revenue is the veCRV fees only; the auctioned vote incentives are below the line (spec rule 3, as
+# sdCRV's bribes). The splitter pays both on as one stream, so the measured YBS payouts and treasury take are each split
+# by the window's sender mix (apportion, ruling R14): fees / gross from revenue, incentives / gross below the line. The
+# splitter's own ratios differ by source (87.3 vs 78.0 percent to YBS), so from-revenue holder flow is slightly understated
+# (followups note); holder flow in total is the measured payouts, unchanged.
 income_statement:
   category: liquid_locker
   scope: complete
   window_days: 91
   # The st-yCRV performance fee is inside the YBS payouts (probe 2026-11-04): it is not a line here.
   revenue:
-    - { id: yearn_gross, label: "crvUSD into the splitter (veCRV fees and auctioned vote incentives)", metric: flow_usd.yearn_gross }
+    - { id: fees_rev, label: "veCRV fees Yearn's voter sends the splitter (crvUSD)", metric: flow_usd.yearn_gross_fees }
   holders:
-    - { id: ybs_payout, metric: flow_usd.fees, bucket: cash, haircut: 0, recipient_base: staked, valued_per: recipients, capture_rule: programmatic }
+    - { id: ybs_payout, metric: flow_usd.fees, apportion: { by: flow_usd.yearn_gross_fees, total: flow_usd.yearn_gross }, bucket: cash, haircut: 0, recipient_base: staked, valued_per: recipients, capture_rule: programmatic }
   protocol:
-    - { id: treasury, metric: flow_usd.yearn_revenue }
+    - { id: treasury, metric: flow_usd.yearn_revenue, apportion: { by: flow_usd.yearn_gross_fees, total: flow_usd.yearn_gross } }
+  below_line:
+    - { id: incentives_to_holders, to: holders, metric: flow_usd.fees, apportion: { by: flow_usd.yearn_gross_incentives, total: flow_usd.yearn_gross }, bucket: cash, haircut: 0, recipient_base: staked, valued_per: recipients, capture_rule: programmatic, note: "auctioned third-party vote incentives (Yearn FeeBurner)" }
+    - { id: incentives_to_protocol, to: protocol, metric: flow_usd.yearn_revenue, apportion: { by: flow_usd.yearn_gross_incentives, total: flow_usd.yearn_gross }, note: "auctioned third-party vote incentives (Yearn FeeBurner)" }
   checks:
-    - { id: splitter, type: sum, total: [ flow_usd.yearn_gross ], parts: [ ybs_payout, treasury ], tolerance_pct: 2 }
+    # Every line of each apportion set: together they read flow_usd.fees and flow_usd.yearn_revenue whole, as before.
+    - { id: splitter, type: sum, total: [ flow_usd.yearn_gross ], parts: [ ybs_payout, incentives_to_holders, treasury, incentives_to_protocol ], tolerance_pct: 2 }
+    # The two senders partition the gross (the apportion sets need it): one scan, so any gap is a data finding.
+    - { id: gross_by_sender, type: sum, total: [ flow_usd.yearn_gross ], parts: [ flow_usd.yearn_gross_fees, flow_usd.yearn_gross_incentives ], tolerance_pct: 0.000001 }
   volume: [ flow_usd.yearn_gross ]

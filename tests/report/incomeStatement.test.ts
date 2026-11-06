@@ -306,10 +306,13 @@ describe('listingBar (spec §2 deferral, D6)', () => {
 });
 
 describe('reportFlowMetrics with income_statement', () => {
-  it('adds no series for the 13 assets (the default report day does not move), in v1 order', () => {
+  it('adds no series for 12 of the 13 assets (the default report day does not move), in v1 order', () => {
     for (const id of ALL_ASSETS) {
       const asset = repoAsset(id);
-      expect(reportFlowMetrics(asset), id).toEqual(reportFlowMetrics({ ...asset, income_statement: undefined }));
+      const v1 = reportFlowMetrics({ ...asset, income_statement: undefined });
+      // Task 7b: yCRV's statement reads the splitter's gross by sender (revenue = the fees; the apportion mix). Both come
+      // from flow_usd.yearn_gross's own scan, so once backfilled they end on its day.
+      expect(reportFlowMetrics(asset), id).toEqual(id === 'ycrv' ? [...v1, 'flow_usd.yearn_gross_fees', 'flow_usd.yearn_gross_incentives'] : v1);
     }
   });
 

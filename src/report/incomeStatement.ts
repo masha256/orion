@@ -1,4 +1,4 @@
-import { resolveUse, type IsBucket, type IsHolderLine, type IsRevenueLine, type IsBelowLine, type IsCostLine, type IsUseLine, type CostTo, type IsCategory } from '../config/incomeStatement.js';
+import { resolveUse, type IsApportion, type IsBucket, type IsHolderLine, type IsRevenueLine, type IsBelowLine, type IsCostLine, type IsUseLine, type CostTo, type IsCategory } from '../config/incomeStatement.js';
 import type { AssetConfig, IncomeStatementDef, MetricDef, RecipientBase } from '../config/schema.js';
 import { addDays } from '../ingest/time.js';
 import { chainOfSource, locatorOfSource, provenanceLabel, scrubLocator } from '../provenance/locator.js';
@@ -29,6 +29,23 @@ import { crossCheckTypesOf, LISTING_RUNGS, sourceLabelOf, sourceTypeOf, type Sou
  */
 
 export type IsMethod = 'measured' | 'derived' | 'disclosed' | 'not_measured';
+
+/** The formula an apportioned line's figure comes from (Task 7b, ruling R14): its flow x the window's mix. */
+export const APPORTION_FORMULA = 'apportion_by_mix@1';
+
+/**
+ * An apportioned line's split (Task 7b): the line carries its flow x `mix`, where mix = `bySum` / `totalSum`, the window
+ * sums of the two series. Null mix (the total's window sum is 0, or a day of either is missing) leaves the line null and
+ * flagged; it is never divided by zero.
+ */
+export interface ApportionOut {
+  by: string;
+  total: string;
+  mix: number | null;
+  bySum: number | null;
+  totalSum: number | null;
+  formula: typeof APPORTION_FORMULA;
+}
 
 const BUCKETS: Bucket[] = ['burn', 'hold', 'cash'];
 
@@ -83,6 +100,8 @@ export interface IsUseLineOut {
   growth: Growth;
   note?: string;
   notMeasured?: string;
+  /** Present only on an apportioned line. */
+  apportion?: ApportionOut;
 }
 
 export interface IsCostLineOut extends IsUseLineOut {
@@ -137,6 +156,8 @@ export interface IsBelowLineOut {
   captureRule: IsBelowLine['capture_rule'] | null;
   note?: string;
   notMeasured?: string;
+  /** Present only on an apportioned line. */
+  apportion?: ApportionOut;
 }
 
 export interface UseSectionOut<L> {
@@ -372,20 +393,41 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
   const revenueMethod = (r: IsRevenueLine): IsMethod =>
     r.not_measured !== undefined ? 'not_measured' : r.disclosed !== undefined ? 'disclosed' : r.metric !== undefined ? 'measured' : 'derived';
 
-  /** A use line's value: its own metric, `of` a revenue line (times share), an estimate of one, or not measured. */
+  /** An apportioned line's split over the window (Task 7b): window sum of `by` / window sum of `total`, never over 0. */
+  const mixOf = (a: IsApportion): ApportionOut => {
+    const bySum = windowSum(daily, [a.by], day, W);
+    const totalSum = windowSum(daily, [a.total], day, W);
+    const mix = finite(bySum) && finite(totalSum) && totalSum !== 0 ? bySum / totalSum : null;
+    return { by: a.by, total: a.total, mix, bySum, totalSum, formula: APPORTION_FORMULA };
+  };
+  /** Why an apportioned line has no mix (null when it has one). */
+  const noMixReason = (x: ApportionOut): string | null =>
+    x.mix !== null ? null : x.bySum === null || x.totalSum === null ? `a day of ${x.by} or ${x.total} is missing` : `the window sum of ${x.total} is 0`;
+  /**
+   * The flow x the mix: one term weighted by the mix (its growth too: the window's mix applied to both windows). With no
+   * mix, a null level: the line, and every total built on it, is null (never zero-filled, never divided by zero).
+   */
+  const apportionValue = (metric: string, a: IsApportion): Value => {
+    const x = mixOf(a);
+    return x.mix === null ? { kind: 'level', value: null, note: `apportion mix n/a: ${noMixReason(x)}` } : { kind: 'terms', terms: [{ metric, w: x.mix, gw: x.mix }] };
+  };
+  const apportionMetrics = (a: IsApportion | undefined): string[] => (a === undefined ? [] : [a.by, a.total]);
+  /** A use line's value: its own metric (apportioned or whole), `of` a revenue line (times share), an estimate of one, or not measured. */
   const useValue = (l: IsUseLine | IsHolderLine | IsCostLine): Value => {
     const u = resolveUse(is, l);
     if (l.not_measured !== undefined) return { kind: 'nm', reason: l.not_measured };
     if (l.of !== undefined) return ratioOf(revenueValue(u.revenue!), u.share);
+    if (l.metric !== undefined && l.apportion !== undefined) return apportionValue(l.metric, l.apportion);
     if (l.metric !== undefined) return { kind: 'terms', terms: [{ metric: l.metric, w: 1, gw: 1 }] };
     return ratioOf(revenueValue(revenueById.get(l.estimate!.of)!), l.estimate!.ratio);
   };
   /** The metrics a use line reads: its own, or those of the revenue line it passes on or estimates from. */
   const useMetrics = (l: IsUseLine | IsHolderLine | IsCostLine): (string | undefined)[] =>
-    l.of !== undefined ? revenueMetrics(revenueById.get(l.of)!) : l.estimate !== undefined ? revenueMetrics(revenueById.get(l.estimate.of)!) : [l.metric];
+    l.of !== undefined ? revenueMetrics(revenueById.get(l.of)!) : l.estimate !== undefined ? revenueMetrics(revenueById.get(l.estimate.of)!) : [l.metric, ...apportionMetrics(l.apportion)];
   const useTypes = (l: IsUseLine | IsHolderLine | IsCostLine): SourceType[] => typesOf(useMetrics(l));
   const useMethod = (l: IsUseLine | IsHolderLine | IsCostLine): IsMethod => {
     if (l.not_measured !== undefined) return 'not_measured';
+    if (l.apportion !== undefined) return 'derived';
     if (l.of !== undefined) {
       const m = revenueMethod(revenueById.get(l.of)!);
       return m === 'measured' && (l.share ?? 1) !== 1 ? 'derived' : m;
@@ -496,6 +538,7 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     return {
       id: l.id, label: l.label ?? null, of: l.of ?? null, share: l.share ?? 1, method: useMethod(l), sourceTypes: useTypes(l),
       annualized: valueAnnual(v), growth: valueGrowth(v), ...(l.note ? { note: l.note } : {}), ...(l.not_measured !== undefined ? { notMeasured: l.not_measured } : {}),
+      ...(l.apportion !== undefined ? { apportion: mixOf(l.apportion) } : {}),
     };
   };
   const holderItems = (is.holders ?? []).map((l) => ({ id: l.id, v: useValue(l) }));
@@ -584,8 +627,11 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     base: RecipientBase;
     method: IsMethod;
     sourceTypes: SourceType[];
+    /** An apportioned line's set: the flow it splits and the total it is apportioned over. */
+    set?: { metric: string; total: string };
   }
-  const flowLine = (s: FlowSpec): HolderFlowLineOut & { terms: Term[] } => {
+  type FlowLine = HolderFlowLineOut & { terms: Term[]; set?: FlowSpec['set'] };
+  const flowLine = (s: FlowSpec): FlowLine => {
     const { v } = s;
     const gross = flowGross(v);
     const net = gross === null ? null : gross * (1 - s.haircut);
@@ -597,13 +643,15 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
       growth: v.kind === 'terms' ? growthOf(daily, terms.map((t) => t.metric), day, W, terms.map((t) => t.gw)) : v.kind === 'level' ? noSeries('a run-rate level: no daily series') : noSeries('not measured'),
       ...(v.kind === 'nm' ? { notMeasured: v.reason } : {}),
       terms,
+      ...(s.set ? { set: s.set } : {}),
     };
   };
-  const holderFlowLines: (HolderFlowLineOut & { terms: Term[] })[] = [];
+  const setOf = (metric: string | undefined, a: IsApportion | undefined): FlowSpec['set'] => (metric !== undefined && a !== undefined ? { metric, total: a.total } : undefined);
+  const holderFlowLines: FlowLine[] = [];
   const holderLines: IsHolderLineOut[] = (is.holders ?? []).map((l) => {
     const v = l.paid_metric !== undefined ? ({ kind: 'terms', terms: [{ metric: l.paid_metric, w: 1, gw: 1 }] } as Value) : useValue(l);
     const sourceTypes = uniq([...useTypes(l), ...typesOf([l.paid_metric])]);
-    const f = flowLine({ id: l.id, section: 'holders', v, bucket: l.bucket, haircut: l.haircut, base: l.recipient_base, method: useMethod(l), sourceTypes });
+    const f = flowLine({ id: l.id, section: 'holders', v, bucket: l.bucket, haircut: l.haircut, base: l.recipient_base, method: useMethod(l), sourceTypes, set: setOf(l.metric, l.apportion) });
     holderFlowLines.push(f);
     return {
       ...useLine(l), sourceTypes,
@@ -612,16 +660,25 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     };
   });
   const belowValue = (b: IsBelowLine): Value =>
-    b.not_measured !== undefined ? { kind: 'nm', reason: b.not_measured } : b.metric !== undefined ? { kind: 'terms', terms: [{ metric: b.metric, w: 1, gw: 1 }] } : { kind: 'level', value: lv.extra[b.run_rate!] ?? null, note: 'a run-rate level: no daily series' };
+    b.not_measured !== undefined
+      ? { kind: 'nm', reason: b.not_measured }
+      : b.metric !== undefined
+        ? b.apportion !== undefined
+          ? apportionValue(b.metric, b.apportion)
+          : { kind: 'terms', terms: [{ metric: b.metric, w: 1, gw: 1 }] }
+        : { kind: 'level', value: lv.extra[b.run_rate!] ?? null, note: 'a run-rate level: no daily series' };
   const belowLines: IsBelowLineOut[] = (is.below_line ?? []).map((b) => {
     const v = belowValue(b);
-    const method: IsMethod = b.not_measured !== undefined ? 'not_measured' : 'measured';
-    const sourceTypes = typesOf([b.metric, b.run_rate]);
-    if (b.to === 'holders') holderFlowLines.push(flowLine({ id: b.id, section: 'below_line', v, bucket: b.bucket ?? null, haircut: b.haircut ?? 0, base: b.recipient_base ?? 'all', method, sourceTypes }));
+    const method: IsMethod = b.not_measured !== undefined ? 'not_measured' : b.apportion !== undefined ? 'derived' : 'measured';
+    const sourceTypes = typesOf([b.metric, b.run_rate, ...apportionMetrics(b.apportion)]);
+    if (b.to === 'holders') {
+      holderFlowLines.push(flowLine({ id: b.id, section: 'below_line', v, bucket: b.bucket ?? null, haircut: b.haircut ?? 0, base: b.recipient_base ?? 'all', method, sourceTypes, set: setOf(b.metric, b.apportion) }));
+    }
     return {
       id: b.id, label: b.label ?? null, to: b.to, method, sourceTypes,
       annualized: valueAnnual(v), growth: valueGrowth(v), bucket: b.bucket ?? null, haircut: b.haircut ?? null, recipientBase: b.recipient_base ?? null,
       captureRule: b.capture_rule ?? null, ...(b.note ? { note: b.note } : {}), ...(b.not_measured !== undefined ? { notMeasured: b.not_measured } : {}),
+      ...(b.apportion !== undefined ? { apportion: mixOf(b.apportion) } : {}),
     };
   });
   /**
@@ -638,6 +695,34 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
   // A not_measured holders line leaves holder flow unknown (its totals and its bucket null); a not_measured below-line
   // line is listed and kept out of the measured sums (v1 has no such line, so AERO's totals stay v1's).
   const counted = holderFlowLines.filter((f) => f.notMeasured === undefined);
+  // What holder flow sums (Task 7b): each line, except that an apportion set whose lines all reach holders alike (one
+  // bucket, haircut and recipient base) counts as its whole flow, once: the set's lines split the flow between from
+  // revenue and below the line, and holder flow, its net, buckets, yields and growth stay those of the flow (v1's, to
+  // the bit). Set members are every apportioned line, in any section, reading the same flow over the same total.
+  const setKey = (x: { metric: string; total: string }) => `${x.metric}|${x.total}`;
+  const setSize = new Map<string, number>();
+  for (const l of [...(is.cost_of_revenue ?? []), ...(is.holders ?? []), ...(is.protocol ?? []), ...(is.operating_costs ?? []), ...(is.below_line ?? [])]) {
+    const k = setOf(l.metric, l.apportion);
+    if (k) setSize.set(setKey(k), (setSize.get(setKey(k)) ?? 0) + 1);
+  }
+  const units: FlowLine[] = [];
+  const collapsed = new Set<string>();
+  for (const f of counted) {
+    if (f.set === undefined) {
+      units.push(f);
+      continue;
+    }
+    const k = setKey(f.set);
+    if (collapsed.has(k)) continue;
+    const members = counted.filter((x) => x.set !== undefined && setKey(x.set) === k);
+    const alike = members.length === setSize.get(k) && members.every((x) => x.bucket === f.bucket && x.haircut === f.haircut && x.recipientBase === f.recipientBase);
+    if (!alike) {
+      units.push(f);
+      continue;
+    }
+    collapsed.add(k);
+    units.push(flowLine({ id: k, section: f.section, v: { kind: 'terms', terms: [{ metric: f.set.metric, w: 1, gw: 1 }] }, bucket: f.bucket, haircut: f.haircut, base: f.recipientBase, method: f.method, sourceTypes: f.sourceTypes }));
+  }
   const hfNm = holderFlowLines.filter((f) => f.notMeasured !== undefined).map((f) => f.id);
   const holdersNm = holderFlowLines.filter((f) => f.section === 'holders' && f.notMeasured !== undefined);
   const fromRevenueOf = (ls: typeof holderFlowLines): number | null => sumOrNull(ls.filter((f) => !f.fromBelowLine).map((f) => f.gross));
@@ -646,27 +731,28 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
   const byBucket = Object.fromEntries(
     BUCKETS.map((bk) => {
       const ls = counted.filter((f) => f.bucket === bk);
+      const us = units.filter((f) => f.bucket === bk);
       const nmHere = holdersNm.filter((f) => f.bucket === bk);
       if (ls.length === 0 && nmHere.length === 0) return [bk, null];
       const unknown = nmHere.length > 0;
       // A below-line line not measured names no bucket (AERO's bribes): it may land in any bucket.
       const below = holderFlowLines.filter((f) => f.fromBelowLine && (f.bucket === bk || (f.bucket === null && f.notMeasured !== undefined)));
       return [bk, {
-        gross: unknown ? null : sumOrNull(ls.map((f) => f.gross)), net: unknown ? null : sumOrNull(ls.map((f) => f.net)), yield: unknown ? null : sumOrNull(ls.map((f) => f.yield)),
+        gross: unknown ? null : sumOrNull(us.map((f) => f.gross)), net: unknown ? null : sumOrNull(us.map((f) => f.net)), yield: unknown ? null : sumOrNull(us.map((f) => f.yield)),
         fromRevenue: unknown ? null : fromRevenueOf(ls), fromBelowLine: fromBelowOf(below),
       }];
     }),
   ) as Record<Bucket, BucketFlow | null>;
-  const series = counted.filter((f) => f.terms.length > 0 && f.terms.every((t) => daily.has(t.metric)));
+  const series = units.filter((f) => f.terms.length > 0 && f.terms.every((t) => daily.has(t.metric)));
   const holderFlowGrowth =
     holdersNm.length > 0
       ? noSeries(`not measured: ${holdersNm.map((f) => f.id).join(', ')}`)
       : growthOf(daily, series.flatMap((f) => f.terms.map((t) => t.metric)), day, W, series.flatMap((f) => f.terms.map((t) => (1 - f.haircut) * t.gw)));
-  const hfNet = holdersNm.length > 0 ? null : sumOrNull(counted.map((f) => f.net));
+  const hfNet = holdersNm.length > 0 ? null : sumOrNull(units.map((f) => f.net));
   // Dilution in USD a year: annual supply growth x FDV = (emissions + releases) x price.
   const dilutionUsd = finite(legacy.yields.dilution) && finite(legacy.fdv) ? legacy.yields.dilution * legacy.fdv : null;
   const holderFlow: IsV2['holderFlow'] = {
-    gross: holdersNm.length > 0 ? null : sumOrNull(counted.map((f) => f.gross)),
+    gross: holdersNm.length > 0 ? null : sumOrNull(units.map((f) => f.gross)),
     net: hfNet,
     netOfDilution: finite(hfNet) && finite(dilutionUsd) ? hfNet - dilutionUsd : null,
     growth: holderFlowGrowth,
@@ -674,7 +760,7 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     fromRevenue: holdersNm.length > 0 ? null : fromRevenueOf(counted),
     fromBelowLine: fromBelowOf(holderFlowLines),
     notMeasured: hfNm,
-    lines: holderFlowLines.map(({ terms: _terms, ...f }) => f),
+    lines: holderFlowLines.map(({ terms: _terms, set: _set, ...f }) => f),
   };
 
   const holdersByBucket = Object.fromEntries(
@@ -779,13 +865,13 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     }
   }
   for (const b of is.below_line ?? []) {
-    tp(`below_line.${b.id}`, typesOf([b.metric, b.run_rate]));
-    tp(`below_line.${b.id}.cross_checks`, crossTypesOf([b.metric, b.run_rate]));
+    tp(`below_line.${b.id}`, typesOf([b.metric, b.run_rate, ...apportionMetrics(b.apportion)]));
+    tp(`below_line.${b.id}.cross_checks`, crossTypesOf([b.metric, b.run_rate, ...apportionMetrics(b.apportion)]));
   }
   const statementMetrics = uniq([
     ...is.revenue.flatMap((r) => [r.metric, r.derived?.from, r.derived?.share_metric, r.disclosed, r.cross_check]),
-    ...[...(is.cost_of_revenue ?? []), ...(is.holders ?? []), ...(is.protocol ?? []), ...(is.operating_costs ?? [])].flatMap((l) => [l.metric, l.share_metric, (l as IsHolderLine).paid_metric]),
-    ...(is.below_line ?? []).flatMap((b) => [b.metric, b.run_rate]),
+    ...[...(is.cost_of_revenue ?? []), ...(is.holders ?? []), ...(is.protocol ?? []), ...(is.operating_costs ?? [])].flatMap((l) => [l.metric, l.share_metric, (l as IsHolderLine).paid_metric, ...apportionMetrics(l.apportion)]),
+    ...(is.below_line ?? []).flatMap((b) => [b.metric, b.run_rate, ...apportionMetrics(b.apportion)]),
   ].filter((m): m is string => m !== undefined));
   /** A metric's label from its config, in the rows' `<rung>:<what>` form (a level has no daily rows to read it from). */
   const configLabel = (m: string): string | null => {
@@ -811,6 +897,14 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
   const useNm = [...holderItems, ...protocolItems, ...opexItems].filter((x) => x.v.kind === 'nm').map((x) => x.id);
   if (useNm.length > 0) flags.push(`not measured: ${useNm.join(', ')}`);
   if (belowNm.length > 0) flags.push(`below the line not measured: ${belowNm.join(', ')}`);
+  // An apportioned line with no mix (Task 7b), by reason: its figure is null, never a division by zero.
+  const noMix = new Map<string, string[]>();
+  for (const l of [...(is.cost_of_revenue ?? []), ...(is.holders ?? []), ...(is.protocol ?? []), ...(is.operating_costs ?? []), ...(is.below_line ?? [])]) {
+    if (l.apportion === undefined || l.metric === undefined) continue;
+    const why = noMixReason(mixOf(l.apportion));
+    if (why !== null) noMix.set(why, [...(noMix.get(why) ?? []), l.id]);
+  }
+  for (const [why, ids] of noMix) flags.push(`apportion mix n/a: ${ids.join(', ')} (${why})`);
   if (holdersAgg.nm.length > 0) flags.push(`payout ratio n/a: holders not measured: ${holdersAgg.nm.join(', ')}`);
   else if (!gpMeasured && costAgg.nm.length > 0) flags.push('payout ratio on revenue: cost of revenue not measured');
   // A data gap (a measured line missing a day) is not a line nobody measures: say which.
@@ -885,7 +979,8 @@ export function listingBar(asset: AssetConfig): { ok: boolean; failing: { line: 
     const revMetrics = (r: IsRevenueLine): (string | undefined)[] => (r.estimate !== undefined ? revMetrics(byId.get(r.estimate.of)!) : [r.metric, r.derived?.from, r.disclosed]);
     for (const r of is.revenue) check(`revenue.${r.id}`, r.not_measured !== undefined ? [] : revMetrics(r));
     for (const h of is.holders ?? []) {
-      const own = h.not_measured !== undefined ? [] : h.of !== undefined ? revMetrics(byId.get(h.of)!) : h.estimate !== undefined ? revMetrics(byId.get(h.estimate.of)!) : [h.metric];
+      const own =
+        h.not_measured !== undefined ? [] : h.of !== undefined ? revMetrics(byId.get(h.of)!) : h.estimate !== undefined ? revMetrics(byId.get(h.estimate.of)!) : [h.metric, ...(h.apportion ? [h.apportion.by, h.apportion.total] : [])];
       check(`holders.${h.id}`, own.length === 0 ? [] : [...own, h.paid_metric]);
     }
   } else {

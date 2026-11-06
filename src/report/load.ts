@@ -28,15 +28,18 @@ export function reportFlowMetrics(asset: AssetConfig): string[] {
   return [...new Set([...asset.holder_flows.map((f) => f.metric), ...income, ...streams, ...(r?.volume ?? []), ...(r?.burned_tokens ?? []), ...statementFlowMetrics(asset)])];
 }
 
-/** The flow metrics `income_statement` reads (revenue, uses, paid_metric, below-line flows, check totals, volume, burned_tokens). */
+/**
+ * The flow metrics `income_statement` reads (revenue, uses, paid_metric, below-line flows, apportion by/total, check
+ * totals, volume, burned_tokens).
+ */
 function statementFlowMetrics(asset: AssetConfig): string[] {
   const is = asset.income_statement;
   if (!is) return [];
   const uses = [...(is.cost_of_revenue ?? []), ...(is.holders ?? []), ...(is.protocol ?? []), ...(is.operating_costs ?? [])];
   return [
     ...is.revenue.flatMap((l) => [l.metric, l.derived?.from, l.cross_check]),
-    ...uses.flatMap((l) => [l.metric, 'paid_metric' in l ? l.paid_metric : undefined]),
-    ...(is.below_line ?? []).map((b) => b.metric),
+    ...uses.flatMap((l) => [l.metric, 'paid_metric' in l ? l.paid_metric : undefined, l.apportion?.by, l.apportion?.total]),
+    ...(is.below_line ?? []).flatMap((b) => [b.metric, b.apportion?.by, b.apportion?.total]),
     // Only a sum check's totals: the other check types read their own series, which must never move the report day.
     ...(is.checks ?? []).flatMap((c) => (c.type === 'sum' ? c.total : [])),
     ...(is.volume ?? []),
