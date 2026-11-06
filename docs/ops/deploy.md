@@ -236,6 +236,86 @@ ssh orion-stage reconcile --allow-retire          # prints the diff, changes not
 ssh orion-stage reconcile --allow-retire --yes    # applies it; the daemon then starts on its next restart (30 s)
 ```
 
+## Phase 2 release (migrations 0003-0005)
+
+The first release after the cutover that carries Phase 2 (`feat/data-strategy`, rebased onto `main`): migrations
+`0003_checks.sql`, `0004_provenance.sql`, `0005_tokens_prices.sql` (all expand-only: new nullable columns, new tables, a
+view; `value` is still written), the income statement v2 beside the v1 report, and three one-time backfills. Deploy it
+only with Mike's go, never during the cutover soak. The steps below run in this order; each `orion ...` command is the
+release's CLI run on venus as the env's Unix user (Mike: `sudo -iu orion-<env>`), because `orion-remote` has no verb
+for them:
+
+```
+O='env ORION_ENV=<env> ORION_HOME=$HOME/home ORION_ENV_FILE=$HOME/shared/.env /opt/node-v26/bin/node $HOME/current/dist/cli/index.js'
+```
+
+1. **Before the deploy: the soak script.** `~/.hermes/profiles/raymond/scripts/orion-stage-soak.py` (Raymond's, outside
+   the repo) reads the v1 keys of `report yield`. From this release `report yield --json` prints the v2 object and the v1
+   keys need `--legacy`, which `orion-remote report yield` does not pass. Change the script before the staging deploy
+   (pass `--legacy` where it runs the CLI itself; read the v2 fields where it goes through `orion-remote`), or its parity
+   check fails on the first run.
+2. **Stage and prod migrate in the same release step.** `staging_refresh` refuses a dump whose migrations differ from
+   staging's (`schema mismatch: prod ..., staging ...; refresh after both run the same schema`), so between the staging
+   switch (stage at 0005) and the prod switch (prod at 0005) the weekly refresh (Sunday 10:30 UTC) refuses and alerts;
+   nothing is restored. Deploy stage, let it soak one scheduled nightly, then deploy prod as soon as the soak passes
+   (section 3), and plan the pair so no Sunday refresh falls between them where possible:
+   ```
+   scripts/release/deploy.sh stage <tag>        # switch runs db migrate: applied [3,4,5]
+   ssh orion-stage status                       # current <tag>; then, on venus: $O db status (current 5, pending none)
+   ```
+   Steps 3-5 run on staging right after its switch, before its first nightly (02:45 UTC), and again on prod right after
+   prod's switch, before prod's first nightly (00:45 UTC).
+3. **Provenance history** (Task 6): dry run first, then the real run.
+   ```
+   $O db backfill-provenance --dry-run --json > ~/home/backfill-provenance-dry.json
+   $O db backfill-provenance --json
+   ```
+   The dry run's unmapped list must be exactly the 18 rows of ruling R17 (all `source = manual` without a citation; ids
+   as in the 2026-11-05 proof copy, check them against the dry run): AERO `flow_usd.fees` 2026-09-10, ids 11831
+   (confirmed) and 515 (rejected), Mike's DefiLlama-artifact correction; VVV ids 1-16 from the 2026-09-18 research pass
+   (5 rejected burn rows, 11 confirmed seeds of levels read on chain, from the Venice API or blog). They stay unmapped
+   (`method` null) until Mike rules on R17 at G2; any other unmapped row: stop. The real run writes at most 1,000 rows
+   per transaction under each asset's lock and resumes on a re-run (`method IS NULL`).
+4. **yCRV by-sender flows** (Task 7b, R20), right after the deploy and before the first nightly:
+   ```
+   $O data fetch ycrv --metric flow_usd.yearn_gross_fees --metric flow_usd.yearn_gross_incentives --backfill-days 183
+   ```
+   It scans `flow_usd.yearn_gross`'s shared transfer scan but writes only the two listed series (R20): `yearn_gross`'s
+   rows and the scan cursor are left as they are. 183 days so v2 revenue growth (91 days vs the prior 91) is measured
+   from the first report (review M2). Without it the legacy report and the default day are unaffected (the default day
+   is v1's, review M4), but yCRV's v2 revenue and apportioned lines stay null with `apportion mix n/a` until the window
+   fills. Days more than 90 back are priced from CoinGecko daily points (correction 13).
+5. **Token amounts** (Task 7, R18): one asset at a time, outside 05:00-06:30 PT and clear of the env's nightly slot.
+   `exit 1` means a day was refused (its re-scanned tokens differ from a stored `flow_tokens.*` twin): stop there and
+   report it, do not run the next asset.
+   ```
+   for a in cake crv cvxcrv hype link lit sdcrv sky uni vvv ycrv; do
+     $O data backfill-tokens $a --json > ~/home/backfill-tokens-$a.json || { echo "STOP: $a exit $?"; break; }
+   done
+   ```
+   AERO and PUMP have no transfer scan or first-party dollar series to fill (`not_a_transfer_flow`). It never changes
+   `value` or adds a row; a re-run resumes (rows that already have tokens are counted, not rewritten). Timing on the
+   rehearsal: Base ~11 s a day for VVV's 3 members; one market_chart range per CoinGecko id per run.
+6. **G2 comparison** (read-only), per asset, after step 5:
+   ```
+   for a in aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv; do $O data compare-usd $a --days 91 --json > ~/home/compare-usd-$a.json; done
+   ```
+   The stored USD (`value`) vs the hourly token buckets x hourly prices (`flow_usd_v`), per metric; it feeds Mike's G2
+   per-metric comparison.
+
+**Rollback** (section 5) to the previous release is allowed: the schema stays at 0005 and that release runs on it
+(expand-only; its writers insert named columns, so the new columns stay null). What it leaves behind, and what to run
+after rolling forward again:
+- Its `latest_levels` upsert does not write `source_type`/`locator`, so a level it updates keeps the newer release's
+  provenance, now stale (the `levels` snapshot body shows it) until the newer release's next levels run rewrites it
+  (Task 6 M6).
+- Rows it writes have no provenance and no token columns: after rolling forward, run step 3 (dry run, then real) and
+  step 5 again, the second pass for those rows.
+- It does not know yCRV's two by-sender series, so its scans advance the shared cursor without them: after rolling
+  forward, run step 4 again with `--backfill-days` covering the rollback days (183 is enough for any rollback shorter
+  than that).
+- It stores no check results, so the days it covered have none; the newer release evaluates only the report day.
+
 ## Other verbs a deploy may need
 
 ```

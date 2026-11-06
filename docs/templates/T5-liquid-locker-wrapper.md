@@ -34,7 +34,10 @@ flow is read by an **apportion set** (Task 7b): one line per source, `apportion:
 ## Checks
 
 - `sum` `splitter`: the splitter's gross vs every line of both apportion sets (they read each flow once).
-- `sum` `gross_by_sender`: the gross vs the fee and incentive series (one scan: any gap is a data finding).
+- `sum` `gross_by_sender`: the gross vs the fee and incentive series. An invariant guard, not a data check: the three
+  series are members of one scan, so it holds by construction and fails only if the scan planning changes (a member
+  moved to its own scan, an allowlist sender with no by series). It cannot catch an unlisted sender: all three
+  exclude one alike.
 - `balance`: the distributor's balance vs payouts in − out — needs `balance_delta` (Phase 3) for a reward token with
   no transfer to scan.
 

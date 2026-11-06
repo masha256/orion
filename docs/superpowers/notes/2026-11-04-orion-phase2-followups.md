@@ -142,7 +142,8 @@ Open for Mike at G1:
 
 Built: `income_statement.checks` takes all eight types (`src/checks/schema.ts`), results are stored per (asset, check,
 day) in `check_results` (migration 0003), a breach opens one advisory `check_breach` anomaly per check (dedupe = check
-id; no agent run: anomalies wake nothing since Phase 1), and the tick evaluates the report day's checks after the
+id; no agent run: anomalies wake nothing since Phase 1) and makes the asset's nightly block an ALERT with one line per
+breached check (final review I1, plan correction 12; see "Final review fix wave" below), and the tick evaluates the report day's checks after the
 holder-yield report, inside the run lock (`checks` in the tick report; v2 `incomeStatement.checks` reads the stored
 rows). A side with no row for the day is `incomplete`, never a breach. Circular checks are refused at load: the same
 series on both sides, an adapter `computedFrom` the other side's adapter (set on `solana.supply_burn_daily`), a derived
@@ -240,9 +241,11 @@ Conventions chosen (review):
   correction row typed in without a citation (as AERO's 2026-09-09 manual day may be) can no longer be entered that way.
 - Locators never hold a key (`scrubLocator`, applied by the builders and again in `insertObservation` and
   `upsertLatestLevels`). Secrets go by context, not by a name's suffix: URL query parameters named key / apikey /
-  api_key (api-key) / token / access_token / secret (any case) and drpc's dkey; locator object keys named
-  authorization / password / secret / api_key / apikey, and every key inside a `headers` or `auth` object (a plain
-  `token: "USDC"` param stays). User info and fragments are dropped, every non-version path segment on a known keyed
+  api_key (api-key) / token / access_token / secret / x_cg_demo_api_key / x_cg_pro_api_key / x-api-key / auth_token /
+  access_key / password / auth / authorization (any case; `-` and `_` ignored) and drpc's dkey; locator object keys
+  named authorization / password / secret / api_key / apikey / access_token / private_key / api_token (same matching),
+  and the whole value of a `headers` or `auth` key (an object or array emptied, a string blanked; final fix wave). A
+  plain `token: "USDC"` param stays. User info and fragments are dropped, every non-version path segment on a known keyed
   RPC host (Alchemy, Infura, drpc, publicnode, QuickNode, Ankr, Blast, Chainstack, Helius, NodeReal, GetBlock) is
   dropped, a key-shaped last segment after `/vN/` on any host and any 20+ character segment with a digit are dropped,
   except an EVM address or hash (`0x` + 40 or 64 hex) off the keyed hosts; URLs inside text are scrubbed too. The test fixture is the fake key of `tests/ingest/rpc.test.ts`, read from that file.
@@ -371,18 +374,29 @@ priced at daily points) reported apart in `beyond`; `unpriced` (an hour with an 
   windowed check is refused.
 - The two by-sender flows copy `flow_usd.yearn_gross`'s source (same token, sink and `from_allowlist [voter,
   fee_burner]`) with `count_from: [voter]` / `[fee_burner]`, so all three are members of ONE scan (one cursor, one
-  pricing pass) and partition the gross by construction; separate allowlists would be a second scan priced at another
-  time, and their sum could drift from the stored gross by CoinGecko revisions alone. Consequence for rollout: the
+  pricing pass) and partition the gross by construction for the rows one scan wrote; separate allowlists would be a
+  second scan priced at another time, and their sum could drift from the stored gross by CoinGecko revisions alone.
+  That holds only for rows written by one scan (final review M1): R20-backfilled history is not. The rollout rescan
+  writes only the two by-sender series, priced at backfill time (CoinGecko daily points for days more than 90 back,
+  correction 13), while the stored `yearn_gross` rows keep their write-time prices. On backfilled days Σfees + Σinc
+  differs from Σgross by those price revisions (crvUSD, so small), the two apportion mixes need not sum to exactly 1,
+  and the set's lines need not sum to the flow within 1e-15 for the backfilled windows. `gross_by_sender` is
+  evaluated only for the report day, so it never sees those days; holder flow is unaffected (the set collapses to the
+  whole flow). The controller measures Σfees + Σinc vs Σgross over the current and prior windows in the G2 rehearsal. Consequence for rollout: the
   members share a cursor, so the new series start empty and need `data fetch ycrv --metric flow_usd.yearn_gross_fees
-  --metric flow_usd.yearn_gross_incentives --backfill-days 100` (on the proof copy, then staging and prod at rollout).
+  --metric flow_usd.yearn_gross_incentives --backfill-days 183` (on the proof copy, then staging and prod at rollout;
+  183, not 100, so v2 revenue growth, 91 days vs the prior 91, is measured from the first report: final review M2).
   Since ruling R20 that rescan writes only the two listed series: `flow_usd.yearn_gross`, the scan's other member, keeps
   its rows (id, value, fetched_at), so the rollout backfill cannot move the gross. Until the backfill, yCRV's v2 revenue and apportioned lines
-  are null (a missing day) and its default report day waits on the new series.
-- Rollout ordering (fix round 1, M-4): until both new flows are backfilled, yCRV has NO default report day at all:
-  `report yield ycrv` without `--day` (v2 AND `--legacy`, which the staging soak script reads) and the snapshot have no
-  day to report, because `lastCompleteReportDay` needs every report series. The rollout therefore runs the 100-day
-  backfill of the two flows right after the deploy, before the first nightly (refresh, report, snapshot) on the new
-  release.
+  are null (a missing day), flagged `apportion mix n/a: ... (a day of ... is missing)`.
+- Rollout ordering (fix round 1, M-4; corrected by the final fix wave, review M4): the default report day is v1's
+  exactly. `lastCompleteReportDay` reads only the v1 report flows (`defaultDayFlowMetrics`), so the two v2-only
+  by-sender series never hold yCRV's default day back: `report yield ycrv` without `--day` (v2 and `--legacy`) and the
+  snapshot report the same day the previous release would, and the v2 statement shows the missing days as its own
+  flag. The first nightly fetch writes yesterday for every member of the shared scan, so the flag clears for the report
+  day after it; the window figures (revenue, growth) stay null until the history is there. The rollout still runs the
+  183-day backfill of the two flows right after the deploy, before the first nightly, so the first v2 report on the
+  new release is complete (docs/ops/deploy.md, "Phase 2 release").
 - R14's approximation: the splitter sends 87.3 percent of fees but 78.0 percent of incentives to YBS, so splitting the
   measured payouts by the sender mix understates from-revenue holder flow (and overstates below-line) slightly.
   R14 error on real data: (controller)
@@ -431,3 +445,72 @@ priced at daily points) reported apart in `beyond`; `unpriced` (an hour with an 
   (HYPE), Lighter's four hosts (LIT), Venice (VVV), Jupiter (PUMP), Llama Airforce (CRV; spec D4: no stated licence).
   An `unknown` blocks only the Phase 5 export of the assets that read it, never ingest. Open for a human: read each
   terms page, fill the TERMS entry (URL, verdict, date), regenerate. Dune is not read by any asset, so it has no row.
+
+
+## Final review fix wave (controller rulings on the final whole-branch review)
+- I1 (plan correction 12): a check breach makes the asset's nightly block an ALERT. The tick adds the `check_breach`
+  anomalies `recordChecks` raised to `ingest.anomalies_raised`, and `isAlert` also counts any `checks[]` entry with
+  status `breach` (a re-tick of a day already breached raises no new anomaly but still alerts). The block prints one
+  `ALERT <SYM> check breach: <id> (<type>) day <report day> gap <pct>%` line per breached check, after the holder-yield
+  block's first line. No tolerance changed: sdCRV's dust breach (R15) now alerts on its days until Mike decides
+  `tolerance_abs` at G2.
+- M3: `listCheckResults` and the provenance read (`provenanceByDay`) run inside C4's isolation. A throw there gives
+  `incomeStatement: null` and `incomeStatementError: income statement inputs unavailable: <msg>`; the legacy report,
+  the tick's `holder_yield` (`statement_error`) and the snapshot never fail because of them.
+- M4: the default report day reads only the v1 report flows (`defaultDayFlowMetrics` = `reportFlowMetrics` without
+  `income_statement`, with v1's periodic streams), so it equals the previous release's for all 13 assets; v2-only series
+  (yCRV's by-sender flows) show as the statement's missing-day flag instead.
+- Scrub coverage (Task 6 deferred minor): see the Task 6 section's credential list.
+- M1 (note wording, Task 7b section), M2 (`--backfill-days 183`, in the runbook), M5 (T5 template line 37), the two T7b
+  tests (an incremental `--metric` run on a group with a cursor; yCRV R20 step 3 checks every member's active row count).
+- Phase 2 release runbook: `docs/ops/deploy.md`, "Phase 2 release (migrations 0003-0005)"; pointer from
+  `docs/ops/postgres.md`. `orion-remote` has no verb for `db backfill-provenance`, `data fetch`, `data backfill-tokens`
+  or `data compare-usd`, so the runbook has Mike run them as the env user; a remote verb for them is open below.
+
+### Open items
+For Mike at G2:
+- R15 / review M4 of Task 5: dust breaches on relative-only `sum`/`two_path` gaps (sdCRV $0.05) now alert (I1); decide
+  `tolerance_abs` (a schema change and a hash move) or accept the alerts.
+- R17: the 18 unmapped provenance rows (AERO correction day, VVV seeds); `db backfill-provenance` is re-runnable once a
+  rule is chosen.
+- Review M6: the `levels` snapshot body gained `sourceType`/`locator` per level (P2 approved the `full` body only):
+  confirm, or drop the two keys from `levelsBody` until Phase 5.
+- G2 rehearsal (controller): Σfees + Σinc vs Σgross on yCRV after the 183-day backfill, current and prior windows
+  (M1); one N-1 write (old release's `data fetch` on a cheap asset, `db status`) on the 0005 proof copy, and a real
+  `pg_dump -Fc` + `planRestore` + `pg_restore -L` of the filtered TOC into a scratch schema (M7).
+- `data set` now requires `--citation` for every metric (spec §3): operator behaviour change, G2 sign-off.
+
+Rollout (before Phase 2 reaches staging):
+- `orion-stage-soak.py` reads the v1 report keys; `orion-remote report yield` passes no `--legacy` (runbook step 1).
+- A remote verb (or a `job run-now` kind) for the three one-time backfills, so a release step needs no `sudo -iu`.
+
+Can wait (final review triage), by phase:
+
+| Origin | Item | Phase |
+|---|---|---|
+| T0 M4 | proof `out`/homes not confined to `$TMPDIR` | Task 11 proof (harness hardening) |
+| T0 M6 | proof `ok` read by grep | Task 11 proof |
+| T0 M7 | proof refusal paths untested | Task 11 proof |
+| T0 | coverage check doesn't require the 13 named assets (the count >= 13 rule already fails short runs) | Task 11 |
+| T1 | `paid_metric` guard untested for share_metric/run_rate readers | Phase 3 (unreachable by a flow today) |
+| T4 M2 | Slack yields/multiples lines mix v1 and v2 sources | Task 11 (removing v1 resolves it) |
+| T4 M3 | fragile CLI text assertion `tests/cli/cli.test.ts:1089` | Task 11 (rewrites the text output) |
+| T3/4 M-a | `ratioOf` drops disclosed growth on estimate/of lines | Phase 3 (unreachable) |
+| T3/4 M-b | `sourceLabelOf` not given asset metrics | Phase 3 (latent label) |
+| T3/4 M-c | listing bar uses third_party inheritance | report-only; consistent with M4 |
+| T3/4 M-d | 'missing day' flag fires on a null cost level | Task 11 |
+| T5 M2 | price cross-check record matched by sourceId + label, not contract | Phase 3 (when llama price checks are replaced) |
+| T5 M3 | UNI/LINK/CAKE price checks duplicate the existing cross-check | Phase 3 |
+| T5 | circular rule doesn't follow mixed derived-of-adapter chains | Phase 3, before the first such check is wired |
+| T6 M6 | after a rollback N-1's latest_levels upsert leaves stale provenance | documented in the runbook's rollback note |
+| T7 | backfillPrices may refetch an id for a ref with no day to fill | quota only |
+| T7 | one contiguous range refetches stored hours between gaps | quota only |
+| T7 | R18 uses the current config's `usdNative` for history | same class as accepted M3; compare-usd p90 is the net |
+| T9 | no drift test on copied adapter URLs | Phase 3 |
+| T9 | unknown adapter/derived names pass the template test | Phase 3 |
+| T9 | no-URL test checks TERMS, not generated output | Phase 5 export |
+| T9 | fallback hosts (Base/Solana public RPC, pro-api.coingecko.com) not register rows | Phase 5, before the export reads the register |
+| T9 | 'date checked' on quoted rows | Phase 5 |
+
+Dropped (final review triage): T0 M2, M3, M8, `get_path` and ids containing `.`; T2 statementShape ids/of-only pins
+and the disclosure.e2e `preApprovalLitYaml` NOTE_NOW; T9 CoinGecko note wording.

@@ -96,6 +96,11 @@ orion db migrate --breaking       # also applies a file whose first line is `-- 
 `orion init` creates only `assets/`, `personas/` and `skills/`; it does not touch the database. A new home is set
 up with `.env` (URL + schema), then `orion db migrate`.
 
+The Phase 2 release adds `0003_checks`, `0004_provenance` and `0005_tokens_prices`. Prod and stage must apply them in
+the same release step (`staging_refresh` refuses a dump whose migrations differ), and the release needs three one-time
+backfills after its switch (`db backfill-provenance`, the yCRV by-sender `data fetch`, `data backfill-tokens`): the
+ordered commands and the rollback note are in `docs/ops/deploy.md`, "Phase 2 release (migrations 0003-0005)".
+
 ## Importing a SQLite `.backup` and proving the copy (`tools/import-sqlite`)
 
 The tool is dev-only. It runs with `npx tsx` from the worktree and is not built into `dist/`. It reads a **copy** of
