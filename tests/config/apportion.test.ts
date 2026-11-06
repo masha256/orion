@@ -104,6 +104,49 @@ describe('income_statement apportion: schema', () => {
     expect(bySender.type === 'sum' && bySender.parts.map((t) => [t.metric, t.factor])).toEqual([['flow_usd.gross_fees', 1], ['flow_usd.gross_incentives', 1]]);
   });
 
+  // Fix round 1, I-1: the `by` series decides the side. Swapping the by series would publish the user-paid share below
+  // the line and the third-party share as "from revenue" with every check still passing.
+  it('refuses swapped by series: a below_line by that a revenue line reads, a use-line by that no revenue line reads', () => {
+    const o = lockerObject();
+    const is = o.income_statement;
+    for (const l of [is.holders[0], is.protocol[0]]) l.apportion.by = 'flow_usd.gross_incentives';
+    for (const l of is.below_line) l.apportion.by = 'flow_usd.gross_fees';
+    refused(o, /below_line\.incentives_to_holders apportion by "flow_usd\.gross_fees" is read by revenue line fees_rev: below-line income is what users did not pay/);
+    refused(o, /holders\.ybs_payout apportion by "flow_usd\.gross_incentives" is read by no revenue line: a use line's share is the share users paid/);
+    refused(o, /protocol\.treasury apportion by "flow_usd\.gross_incentives" is read by no revenue line/);
+    // one side alone is refused too
+    const below = lockerObject();
+    below.income_statement.below_line[0].apportion.by = 'flow_usd.gross_fees';
+    below.income_statement.holders[0].apportion.by = 'flow_usd.gross_incentives';
+    refused(below, /below_line\.incentives_to_holders apportion by "flow_usd\.gross_fees" is read by revenue line fees_rev/);
+  });
+
+  it('a revenue line reading the by series through derived counts as reading it (both sides)', () => {
+    const ok = lockerObject();
+    ok.income_statement.revenue[0] = { id: 'fees_rev', derived: { from: 'flow_usd.gross_fees', share: 1 } };
+    ok.income_statement.checks[1].parts = ['flow_usd.gross_fees', 'flow_usd.gross_incentives'];
+    expect(() => parse(ok)).not.toThrow();
+    const swapped = lockerObject();
+    swapped.income_statement.revenue[0] = { id: 'fees_rev', derived: { from: 'flow_usd.gross_fees', share: 1 } };
+    swapped.income_statement.holders[0].apportion.by = 'flow_usd.gross_incentives';
+    swapped.income_statement.below_line[0].apportion.by = 'flow_usd.gross_fees';
+    refused(swapped, /below_line\.incentives_to_holders apportion by "flow_usd\.gross_fees" is read by revenue line fees_rev/);
+  });
+
+  // Fix round 1, M-1: the partition proof must be daily and tight; a loose or windowed check proves nothing per day.
+  it('refuses a partition check that is not daily or not tight (tolerance_pct <= 0.000001)', () => {
+    const loose = lockerObject();
+    loose.income_statement.checks[1].tolerance_pct = 100;
+    refused(loose, /apportion of "flow_usd\.payout": partition check gross_by_sender must be daily \(window_days 1\) with tolerance_pct <= 0\.000001/);
+    const windowed = lockerObject();
+    windowed.income_statement.checks[1].window_days = 366;
+    refused(windowed, /partition check gross_by_sender must be daily/);
+    const daily = lockerObject();
+    daily.income_statement.checks[1].window_days = 1;
+    daily.income_statement.checks[1].tolerance_pct = 0.0000005;
+    expect(() => parse(daily)).not.toThrow();
+  });
+
   it('refuses a sum check part that is neither a line nor a metric', () => {
     const o = lockerObject();
     o.income_statement.checks[1].parts = ['flow_usd.gross_fees', 'flow_usd.nope'];

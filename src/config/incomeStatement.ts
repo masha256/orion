@@ -142,13 +142,17 @@ const USE_SECTIONS: UseSection[] = ['cost_of_revenue', 'holders', 'protocol', 'o
 /** The lines' own fields that are defined, counted by name (a parser that kept an absent key as undefined must not count). */
 const present = (line: object, keys: string[]): string[] => keys.filter((k) => (line as Record<string, unknown>)[k] !== undefined);
 
+/** The loosest tolerance (in %) a sum check proving an apportion set's partition may have: a rounding guard, not a band. */
+export const PARTITION_TOLERANCE_PCT = 0.000001;
+
 /**
  * The validation rules the schema cannot express (spec §6 + correction 6): one value source per line, ids unique across
  * sections (strictly: a use line never reuses its revenue line's id), metric types and references, a
  * disclosed revenue line alone, remainder only on an empty section, burns at haircut 0, a capture rule on every measured
  * below-line line to holders, and no series read twice (a use of a revenue series goes through `of`; a `paid_metric` is
- * read by no other line; a flow split by `apportion` is read only by its set, whose by series a sum check proves partition
- * its total). The shared reporting keys are checked in schema.ts. Messages are prefixed.
+ * read by no other line; a flow split by `apportion` is read only by its set, whose by series a daily, tight sum check
+ * proves partition its total, and whose by series put each line on its side: a use line's by is a revenue series, a
+ * below_line line's is not). The shared reporting keys are checked in schema.ts. Messages are prefixed.
  */
 export function incomeStatementIssues(asset: CheckAsset): string[] {
   const is = asset.income_statement;
@@ -189,7 +193,10 @@ export function incomeStatementIssues(asset: CheckAsset): string[] {
     else if (first === undefined) readBy.set(m, { where, ...(apportion ? { apportion } : {}) });
   };
   /** An apportioned line: its by and total are flows (not the same one), its value source a metric, no paid_metric. */
-  const apportioned = (l: { id: string; metric?: string; apportion?: IsApportion }, w: string) => {
+  // The by series decides the side (fix round 1, I-1): a use line (holders, protocol, cost, opex) carries the share users
+  // paid, so its by is a series a revenue line reads (metric or derived from); a below_line line carries what users did
+  // not pay, so its by is read by no revenue line. Swapping the by series is refused rather than published.
+  const apportioned = (l: { id: string; metric?: string; apportion?: IsApportion }, w: string, belowLine: boolean) => {
     if (l.apportion === undefined) return;
     if (l.metric === undefined) {
       issue(`${w} takes apportion only with a metric (the flow it splits)`);
@@ -198,6 +205,12 @@ export function incomeStatementIssues(asset: CheckAsset): string[] {
     flow(l.apportion.by, `${w} apportion by`);
     flow(l.apportion.total, `${w} apportion total`);
     if (l.apportion.by === l.apportion.total) issue(`${w} apportion by "${l.apportion.by}" is its total: the line would carry the whole flow`);
+    const rev = revenueMetric.get(l.apportion.by);
+    if (belowLine && rev !== undefined) {
+      issue(`${w} apportion by "${l.apportion.by}" is read by revenue line ${rev}: below-line income is what users did not pay`);
+    } else if (!belowLine && rev === undefined) {
+      issue(`${w} apportion by "${l.apportion.by}" is read by no revenue line: a use line's share is the share users paid (apportion a below_line line by it instead)`);
+    }
     apportionSets.set(l.metric, [...(apportionSets.get(l.metric) ?? []), { where: w, id: l.id, apportion: l.apportion }]);
   };
 
@@ -244,7 +257,7 @@ export function incomeStatementIssues(asset: CheckAsset): string[] {
         if (rev !== undefined) issue(`${w} metric "${l.metric}" is revenue line ${rev}'s metric: use of: ${rev}`);
         else read(l.metric, w, l.apportion);
       }
-      apportioned(l, w);
+      apportioned(l, w, false);
       if (l.of !== undefined) {
         const rev = revById.get(l.of);
         if (rev === undefined) issue(`${w} of "${l.of}" is not a revenue line`);
@@ -275,7 +288,7 @@ export function incomeStatementIssues(asset: CheckAsset): string[] {
       if (revenueMetric.has(b.metric)) issue(`${w} metric "${b.metric}" is a revenue metric: below-line income is what users did not pay`);
       else read(b.metric, w, b.apportion);
     }
-    apportioned(b, w);
+    apportioned(b, w, true);
     if (b.run_rate !== undefined) level(b.run_rate, `${w} run_rate`);
     if (b.to === 'holders') {
       const measured = b.metric !== undefined || b.run_rate !== undefined;
@@ -325,6 +338,7 @@ export function incomeStatementIssues(asset: CheckAsset): string[] {
   // holder flow, yields and buckets cannot move. Same total, distinct by, and a sum check total = [total], parts = the by
   // series (as metrics or the lines reading them) proves the partition every day.
   const sumChecks = (is.checks ?? []).filter((c) => c.type === 'sum');
+  const tightPartition = (c: (typeof sumChecks)[number]) => (c.window_days ?? 1) === 1 && c.tolerance_pct <= PARTITION_TOLERANCE_PCT;
   const partMetric = (p: string): string | undefined => {
     const r = revById.get(p);
     if (r !== undefined) return r.metric;
@@ -349,9 +363,12 @@ export function incomeStatementIssues(asset: CheckAsset): string[] {
     if (twice) continue;
     const bys = [...byWhere.keys()];
     const same = (a: string[], b: string[]) => a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]);
-    const proven = sumChecks.some((c) => same(c.total, [total]) && same(c.parts.map((p) => partMetric(p) ?? `?${p}`), bys));
-    if (!proven) {
+    const proving = sumChecks.filter((c) => same(c.total, [total]) && same(c.parts.map((p) => partMetric(p) ?? `?${p}`), bys));
+    if (proving.length === 0) {
       issue(`apportion of "${m}" by [${bys.join(', ')}] needs a sum check with total [${total}] and parts [${bys.join(', ')}] (the by series must partition the total)`);
+    } else if (!proving.some(tightPartition)) {
+      // Fix round 1, M-1: a loose or windowed check would accept by series that do not partition the total day by day.
+      issue(`apportion of "${m}": partition check ${proving.map((c) => c.id).join(', ')} must be daily (window_days 1) with tolerance_pct <= ${PARTITION_TOLERANCE_PCT.toFixed(6)}`);
     }
   }
 

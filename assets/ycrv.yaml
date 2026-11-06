@@ -151,8 +151,8 @@ metrics:
   # Report-only: flow_usd.yearn_gross by sender (Mike G1, Phase 2 Task 7b). Fees = the veCRV fees Yearn's voter claims
   # (what users pay: revenue); incentives = the third-party vote incentives Yearn's FeeBurner auctions into crvUSD (below
   # the line, as sdCRV's bribes). Same scan as yearn_gross (same token, sink and allowlist, one cursor and one pricing pass),
-  # each counting one sender (count_from), so fees + incentives = yearn_gross every day by construction (check
-  # gross_by_sender). 93 days to 2026-11-04: fees 25 percent, incentives 75 percent.
+  # each counting one sender (count_from), so fees + incentives = yearn_gross every day by construction, within float
+  # rounding (check gross_by_sender). 93 days to 2026-11-04: fees 25 percent, incentives 75 percent.
   flow_usd.yearn_gross_fees:
     type: flow
     unit: usd
@@ -211,6 +211,9 @@ income_statement:
   checks:
     # Every line of each apportion set: together they read flow_usd.fees and flow_usd.yearn_revenue whole, as before.
     - { id: splitter, type: sum, total: [ flow_usd.yearn_gross ], parts: [ ybs_payout, incentives_to_holders, treasury, incentives_to_protocol ], tolerance_pct: 2 }
-    # The two senders partition the gross (the apportion sets need it): one scan, so any gap is a data finding.
+    # The two senders partition the gross (the apportion sets need it, daily and tight). An invariant guard, not a data
+    # check: the three series are members of one scan, so it holds by construction and fails only if the scan planning
+    # changes (a member moved to its own scan, or an allowlist sender with no by series). It cannot catch an unlisted
+    # sender, which all three series exclude alike.
     - { id: gross_by_sender, type: sum, total: [ flow_usd.yearn_gross ], parts: [ flow_usd.yearn_gross_fees, flow_usd.yearn_gross_incentives ], tolerance_pct: 0.000001 }
   volume: [ flow_usd.yearn_gross ]

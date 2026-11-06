@@ -175,7 +175,12 @@ describe('assets/ycrv.yaml', () => {
     const [gf, gi] = [await byDay('flow_usd.yearn_gross_fees'), await byDay('flow_usd.yearn_gross_incentives')];
     expect(gross).toHaveLength(100);
     expect([gf.size, gi.size]).toEqual([100, 100]);
-    for (const o of gross) expect(gf.get(o.observedAt)! + gi.get(o.observedAt)!, o.observedAt).toBe(o.value);
+    // Within rounding, not exact: each member sums its own transfers in log order, so on a day with interleaved senders
+    // fees + incentives can differ from the gross by an ULP (fix round 1, M-3).
+    for (const o of gross) {
+      const sum = gf.get(o.observedAt)! + gi.get(o.observedAt)!;
+      expect(Math.abs(sum - o.value), o.observedAt).toBeLessThanOrEqual(1e-12 * Math.max(Math.abs(o.value), Number.MIN_VALUE));
+    }
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
   });
 

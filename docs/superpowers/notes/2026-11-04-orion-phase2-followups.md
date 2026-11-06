@@ -360,7 +360,15 @@ priced at daily points) reported apart in `beyond`; `unpriced` (an hour with an 
 - Sum check parts may now be a line id or a metric key. An apportioned line in a sum check must come with every line of
   its set (they read the flow once, factor 1): yCRV `splitter` = gross vs [ybs_payout, incentives_to_holders, treasury,
   incentives_to_protocol] = gross vs flow_usd.fees + flow_usd.yearn_revenue, the same comparison as before. New check
-  `gross_by_sender`: gross vs fees + incentives, tolerance 0.000001 percent.
+  `gross_by_sender`: gross vs fees + incentives, tolerance 0.000001 percent. It is an invariant guard, not a data check
+  (fix round 1, M-2): the three series are members of one scan, so it holds by construction (within float rounding) and
+  fails only if the scan planning changes (a member moved to its own scan, or an allowlist sender with no by series). It
+  cannot catch an unlisted sender: all three series exclude one alike.
+- Fix round 1 (review I-1, M-1): the `by` series decides an apportioned line's side. A holders/protocol/cost/opex line's
+  `by` must be read by a revenue line (its `metric` or `derived.from`); a below_line line's `by` must be read by none.
+  Swapping the by series (the user-paid share below the line) is refused at load, in config proposals too. The sum check
+  proving a set's partition must be daily (`window_days` 1 or absent) with `tolerance_pct` <= 0.000001; a looser or
+  windowed check is refused.
 - The two by-sender flows copy `flow_usd.yearn_gross`'s source (same token, sink and `from_allowlist [voter,
   fee_burner]`) with `count_from: [voter]` / `[fee_burner]`, so all three are members of ONE scan (one cursor, one
   pricing pass) and partition the gross by construction; separate allowlists would be a second scan priced at another
@@ -370,6 +378,11 @@ priced at daily points) reported apart in `beyond`; `unpriced` (an hour with an 
   That rescan re-writes the scan's other member, `flow_usd.yearn_gross`, for the same 100 days (same transfers; a value
   moves only if CoinGecko revised crvUSD's hourly prices). Until the backfill, yCRV's v2 revenue and apportioned lines
   are null (a missing day) and its default report day waits on the new series.
+- Rollout ordering (fix round 1, M-4): until both new flows are backfilled, yCRV has NO default report day at all:
+  `report yield ycrv` without `--day` (v2 AND `--legacy`, which the staging soak script reads) and the snapshot have no
+  day to report, because `lastCompleteReportDay` needs every report series. The rollout therefore runs the 100-day
+  backfill of the two flows right after the deploy, before the first nightly (refresh, report, snapshot) on the new
+  release.
 - R14's approximation: the splitter sends 87.3 percent of fees but 78.0 percent of incentives to YBS, so splitting the
   measured payouts by the sender mix understates from-revenue holder flow (and overstates below-line) slightly.
   R14 error on real data: (controller)
