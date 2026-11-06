@@ -410,6 +410,8 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       ...(deps.dayBlocks ? { dayBlocks: deps.dayBlocks(asset.ingest!.chain_id) } : {}),
       backfillDays: opts.backfillDays ?? asset.ingest!.backfill_days, rescan: opts.backfillDays !== undefined,
       adopt: opts.adopt ?? false, dryRun, onProgress: opts.onProgress,
+      // R20: --metric writes only the listed metrics; buildPlan pulled the rest of the scan in so it runs once.
+      ...(opts.metrics && opts.metrics.length > 0 ? { only: new Set(opts.metrics) } : {}),
     });
     outcomes.set(group.sourceId, scan.outcome);
     written.push(...scan.written);

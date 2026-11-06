@@ -79,7 +79,9 @@ export function buildPlan(asset: AssetConfig, opts: { metrics?: string[] } = {})
     // A transfer_flow metric shares its scan cursor (fetch_cursors, keyed by scanKey) with every other
     // metric fed by the same token/sink/allowlist scan: the scan reads the same days for all of them at
     // the same cost. Narrowing to just one member would advance the shared cursor past days the other
-    // members never got, leaving permanent gaps in them. So requesting one member pulls in the rest.
+    // members never got, leaving permanent gaps in them. So requesting one member pulls in the rest: the scan and its
+    // pricing run once for all of them. Only the listed members are written, though (ruling R20): scanFlowGroup gets the
+    // listed set and leaves the cursor where it was while any member is withheld.
     const membersByScanKey = new Map<string, string[]>();
     for (const [metricKey, def] of Object.entries(asset.metrics)) {
       const s = def.source;

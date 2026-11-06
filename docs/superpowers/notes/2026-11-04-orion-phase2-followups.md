@@ -375,8 +375,8 @@ priced at daily points) reported apart in `beyond`; `unpriced` (an hour with an 
   time, and their sum could drift from the stored gross by CoinGecko revisions alone. Consequence for rollout: the
   members share a cursor, so the new series start empty and need `data fetch ycrv --metric flow_usd.yearn_gross_fees
   --metric flow_usd.yearn_gross_incentives --backfill-days 100` (on the proof copy, then staging and prod at rollout).
-  That rescan re-writes the scan's other member, `flow_usd.yearn_gross`, for the same 100 days (same transfers; a value
-  moves only if CoinGecko revised crvUSD's hourly prices). Until the backfill, yCRV's v2 revenue and apportioned lines
+  Since ruling R20 that rescan writes only the two listed series: `flow_usd.yearn_gross`, the scan's other member, keeps
+  its rows (id, value, fetched_at), so the rollout backfill cannot move the gross. Until the backfill, yCRV's v2 revenue and apportioned lines
   are null (a missing day) and its default report day waits on the new series.
 - Rollout ordering (fix round 1, M-4): until both new flows are backfilled, yCRV has NO default report day at all:
   `report yield ycrv` without `--day` (v2 AND `--legacy`, which the staging soak script reads) and the snapshot have no
@@ -386,6 +386,23 @@ priced at daily points) reported apart in `beyond`; `unpriced` (an hour with an 
 - R14's approximation: the splitter sends 87.3 percent of fees but 78.0 percent of incentives to YBS, so splitting the
   measured payouts by the sender mix understates from-revenue holder flow (and overstates below-line) slightly.
   R14 error on real data: (controller)
+
+## Ruling R20: `--metric` writes only the listed metrics on a shared scan
+- `data fetch <a> --metric <k>...` still pulls every member of a listed transfer_flow's scan into the plan, so the scan
+  (one cursor key, one `eth_getLogs` pass, one pricing pass) runs once. Only the listed members' rows are inserted; the
+  other members' rows are neither inserted nor superseded, their manual rows are not adopted, and the fetch outcome notes
+  `--metric: wrote only ...; ... share this scan and were left untouched`. Values written for listed metrics are the same
+  as before (the scan counts every member exactly as before).
+- While a member is withheld the shared cursor does not move (`fetch_cursors` untouched), so the next full fetch scans
+  those days for every member and no member is left with a gap. Cost: that full fetch re-writes the listed members' rows
+  for the days past the old cursor once more (same transfers, same prices unless CoinGecko revised them).
+- Before R20 a narrowed fetch wrote every member and advanced the cursor (2026-09-19 ingestion fix wave). Callers checked
+  (`--metric` / `metrics:` in src, tools, scripts, docs/ops, tests): none in src/tools/scripts/docs/ops depends on the
+  old behaviour. `data backfill-tokens --metric` already filled only the listed members. `levels` passes level metrics
+  on a dry run. Asset tests' onboarding backfills (pump, link, sky) pass unchanged;
+  `tests/ingest/run.flows.test.ts` pinned the old behaviour and now pins R20 (writes one member, cursor untouched, the
+  next full fetch fills the rest). Past followups notes (LIT 2026-10-23, dominance, window-91) name `--metric` fetches
+  of API series or derived levels, which share no transfer scan and are unaffected.
 
 ## Task 9: onboarding templates and the sources register
 - `docs/templates/T1-*.md` .. `T10-*.md` (+ README): one per spec §9 row, each with its lines and rungs, the addresses

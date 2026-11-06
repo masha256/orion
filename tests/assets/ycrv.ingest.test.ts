@@ -41,7 +41,7 @@ function saturdays(): string[] {
 const PAYOUT = 25_000n;
 const PPS = 1_159_000_000_000_000_000n; // 1.159 crvUSD per share, read live 2026-10-09
 
-function world() {
+function world(extraLogs: { iso: string; from: string; tokens: bigint }[] = []) {
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'yearn-crv', symbol: 'ycrv', current_price: 0.18345, market_cap: 13.2e6, circulating_supply: 71_960_697, total_supply: 71_960_697 }],
     'https://api.coingecko.com/api/v3/coins/crvusd/market_chart': crvusdChart,
@@ -64,7 +64,10 @@ function world() {
       [callKey(C.crvusd, 'decimals')]: 18n, // the report-only gross scan
       [callKey(C.st_ycrv, 'decimals')]: 18n, // the report-only st-yCRV fee scan
     },
-    logs: saturdays().map((iso, i) => ({ blockNumber: blockAt(iso), logIndex: 0, txHash: `0x${i.toString(16)}`, from: C.receiver, value: PAYOUT * E18 })),
+    logs: [
+      ...saturdays().map((iso, i) => ({ blockNumber: blockAt(iso), logIndex: 0, txHash: `0x${i.toString(16)}`, from: C.receiver, value: PAYOUT * E18 })),
+      ...extraLogs.map((l, i) => ({ blockNumber: blockAt(l.iso), logIndex: 1, txHash: `0xe${i.toString(16)}`, from: l.from, value: l.tokens * E18 })),
+    ].sort((a, b) => (a.blockNumber < b.blockNumber ? -1 : a.blockNumber > b.blockNumber ? 1 : a.logIndex - b.logIndex)),
   });
   const deps: FetchDeps = { http, rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW };
   return { db: testDb(), deps, http, rpc };
@@ -182,6 +185,55 @@ describe('assets/ycrv.yaml', () => {
       expect(Math.abs(sum - o.value), o.observedAt).toBeLessThanOrEqual(1e-12 * Math.max(Math.abs(o.value), Number.MIN_VALUE));
     }
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
+  });
+
+  // Ruling R20: the rollout backfill of the two by-sender flows shares yearn_gross's scan, and must not rewrite it.
+  it('--metric on a shared scan writes only the listed members; yearn_gross rows are left untouched', async () => {
+    const w = world([
+      { iso: '2026-10-01T09:00:00Z', from: C.voter, tokens: 1_000n }, // outside the 3-day rescan
+      { iso: '2026-10-06T09:00:00Z', from: C.voter, tokens: 2_000n },
+      { iso: '2026-10-07T08:00:00Z', from: C.fee_burner, tokens: 6_000n },
+      { iso: '2026-10-07T10:00:00Z', from: C.voter, tokens: 1_500n },
+      { iso: '2026-10-08T11:00:00Z', from: C.fee_burner, tokens: 5_000n },
+    ]);
+    const rows = async (m: string) => (await listActiveObservations(w.db, 'ycrv', m)).map((o) => ({ id: o.id, observedAt: o.observedAt, value: o.value, fetchedAt: o.fetchedAt }));
+    const members = ['flow_usd.yearn_gross', 'flow_usd.yearn_gross_fees', 'flow_usd.yearn_gross_incentives'] as const;
+    const listed = ['flow_usd.yearn_gross_fees', 'flow_usd.yearn_gross_incentives'];
+
+    // 1. A fetch without --metric writes every member of the scan, as before.
+    await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
+    const before = Object.fromEntries(await Promise.all(members.map(async (m) => [m, await rows(m)] as const)));
+    for (const m of members) expect(before[m], m).toHaveLength(100);
+    expect(before['flow_usd.yearn_gross'].filter((o) => o.value > 0).map((o) => o.observedAt)).toEqual(
+      ['2026-10-02', '2026-10-07', '2026-10-08', '2026-10-09'].map((d) => `${d}T00:00:00.000Z`),
+    );
+
+    // 2. The rollout-style backfill of the two listed metrics, 3 days, an hour later.
+    const later = new Date(NOW.getTime() + 3_600_000);
+    const r = await fetchAsset(w.db, { config, hash: 'test' }, later, w.deps, { metrics: listed, backfillDays: 3 });
+    expect(new Set(r.written.map((x) => x.metricKey))).toEqual(new Set(listed));
+    const scan = r.sources.find((x) => x.metricsWritten.includes('flow_usd.yearn_gross_fees'))!;
+    expect(scan.metricsWritten.sort()).toEqual([...listed].sort());
+    expect(scan.notes.join(' ')).toMatch(/--metric: wrote only flow_usd\.yearn_gross_fees, flow_usd\.yearn_gross_incentives; flow_usd\.yearn_gross share this scan/);
+    // Every yearn_gross row is the same row: id, value and fetched_at.
+    expect(await rows('flow_usd.yearn_gross')).toEqual(before['flow_usd.yearn_gross']);
+    // The listed metrics: the 3 rescanned days are new rows (fetched now) with the same values; older days untouched.
+    for (const m of listed) {
+      const after = await rows(m);
+      expect(after.slice(0, 97), m).toEqual(before[m].slice(0, 97));
+      expect(after.slice(97).map((o) => [o.observedAt, o.value]), m).toEqual(before[m].slice(97).map((o) => [o.observedAt, o.value]));
+      expect(after.slice(97).every((o) => o.fetchedAt === later.toISOString() && !before[m].some((b) => b.id === o.id)), m).toBe(true);
+    }
+    const fees = await rows('flow_usd.yearn_gross_fees');
+    expect(fees.slice(97).map((o) => o.value)).toEqual([2_000 * 0.9991, 1_500 * 0.9991, 0].map((v) => expect.closeTo(v, 9)));
+
+    // 3. A later full fetch still writes every member (the cursor did not move past the withheld member's days).
+    const full = new Date(NOW.getTime() + 7_200_000);
+    const again = await fetchAsset(w.db, { config, hash: 'test' }, full, w.deps, { backfillDays: 3 });
+    expect(members.filter((m) => again.written.filter((x) => x.metricKey === m).length === 3)).toEqual([...members]);
+    const gross = await rows('flow_usd.yearn_gross');
+    expect(gross.slice(97).every((o) => o.fetchedAt === full.toISOString())).toBe(true);
+    expect(gross.map((o) => o.value)).toEqual(before['flow_usd.yearn_gross'].map((o) => o.value));
   });
 
   it('refuses to run without the Ethereum RPC URL', async () => {

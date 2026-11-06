@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { listAnomalies } from '../../src/db/anomalies.js';
+import { getCursor } from '../../src/db/fetchCursors.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
+import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps, type FetchResult } from '../../src/ingest/run.js';
 import { addDays } from '../../src/ingest/time.js';
 import type { TransferLog } from '../../src/ingest/transport/rpc.js';
@@ -69,14 +71,19 @@ describe('fetchAsset: flows', () => {
     expect(await listActiveObservations(h.db, 'mini', 'flow_usd.fees')).toHaveLength(3);
   });
 
-  it('a --metric narrowed to one member of a shared scan still advances the cursor for the whole group', async () => {
+  // Ruling R20: a --metric run scans the whole group once but writes only the listed members, and leaves the shared cursor
+  // alone, so the members it withheld get those days from the next full fetch (no gap in any member).
+  it('a --metric narrowed to one member of a shared scan writes only it and leaves the cursor for the whole group', async () => {
     const h = harness(testDb(), { logs: [log('2026-09-17T12:00:00Z', POOL, 4n, 0)] });
-    const narrowed = ['flow_usd.fees', 'flow_tokens.fees', 'flow_usd.fees_programmatic'];
+    const group = ['flow_usd.fees', 'flow_tokens.fees', 'flow_usd.fees_programmatic'];
     const first = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps, { metrics: ['flow_tokens.fees'] });
-    expect(new Set(first.written.filter((w) => w.periodDays === 1).map((w) => w.metricKey))).toEqual(new Set(narrowed));
-    await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps); // a normal fetch afterwards must find nothing left for any member to catch up on
-    for (const metricKey of narrowed) {
-      expect(await listActiveObservations(h.db, 'mini', metricKey)).toHaveLength(3);
+    expect(new Set(first.written.filter((w) => w.periodDays === 1).map((w) => w.metricKey))).toEqual(new Set(['flow_tokens.fees']));
+    expect(await listActiveObservations(h.db, 'mini', 'flow_tokens.fees')).toHaveLength(3);
+    for (const metricKey of ['flow_usd.fees', 'flow_usd.fees_programmatic']) expect(await listActiveObservations(h.db, 'mini', metricKey), metricKey).toEqual([]);
+    expect(await getCursor(h.db, 'mini', buildPlan(h.loaded.config).flowGroups[0]!.scanKey)).toBeNull();
+    await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps); // the next normal fetch fills every member's days
+    for (const metricKey of group) {
+      expect(await listActiveObservations(h.db, 'mini', metricKey), metricKey).toHaveLength(3);
     }
   });
 

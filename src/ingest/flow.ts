@@ -127,6 +127,13 @@ export interface FlowScanArgs {
   backfillDays: number;
   /** Ignore the cursor and scan `backfillDays` back again. Rows for the same day supersede the old ones. */
   rescan: boolean;
+  /**
+   * The metrics a `--metric` run listed (ruling R20). Unset: every member is written. Set: the scan and its pricing still
+   * run once for the whole group, but only listed members' rows are inserted (and only their manual rows adopted); the
+   * other members' rows are neither inserted nor superseded, and the shared cursor stays where it was, so the next full
+   * fetch scans those days for every member and none is left with a gap.
+   */
+  only?: ReadonlySet<string>;
   adopt: boolean;
   dryRun: boolean;
   onProgress?: (line: string) => void;
@@ -421,7 +428,10 @@ export async function openDayScanner(o: DayScannerArgs): Promise<DayScanner> {
 export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult> {
   const { db, asset, group, rpc, dryRun } = args;
   const outcome = emptySourceOutcome(group.sourceId);
-  const result: FlowScanResult = { outcome, written: [], unlisted: [], daily: new Map(group.members.map((m) => [m.metricKey, []])) };
+  // R20: the members this run writes. The scan counts every member (one pass), but a member left out is not written.
+  const writes = args.only ? group.members.filter((m) => args.only!.has(m.metricKey)) : group.members;
+  const withheld = group.members.filter((m) => !writes.includes(m)).map((m) => m.metricKey);
+  const result: FlowScanResult = { outcome, written: [], unlisted: [], daily: new Map(writes.map((m) => [m.metricKey, []])) };
   const nowIso = args.now.toISOString();
 
   try {
@@ -440,7 +450,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
 
     // 2. Conflicts with rows from other sources decide whether the group runs at all.
     const conflicts: FlowConflict[] = [];
-    for (const m of group.members) conflicts.push(...(await findFlowConflicts(db, asset.id, m.metricKey, rangeStartMs, rangeEndMs)));
+    for (const m of writes) conflicts.push(...(await findFlowConflicts(db, asset.id, m.metricKey, rangeStartMs, rangeEndMs)));
     outcome.conflicts = conflicts;
     const stuck = conflicts.filter((c) => !c.adoptable);
     if (conflicts.length > 0 && (!args.adopt || stuck.length > 0)) {
@@ -501,12 +511,12 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
         senders: Object.fromEntries([...scan.senders.entries()].sort(([a], [b]) => (a < b ? -1 : 1))),
         ...(scan.sharePrices.size > 0 ? { share_price: Object.fromEntries([...scan.sharePrices.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) } : {}),
       });
-      const ids = new Map<string, number | null>(group.members.map((m) => [m.metricKey, null]));
+      const ids = new Map<string, number | null>(writes.map((m) => [m.metricKey, null]));
       if (!dryRun) {
         // Under the asset's transaction lock: each insert reads for rows to supersede before it writes, so another
         // connection's write to the asset waits for this commit instead of landing in between.
         await db.tx(async (t) => {
-          for (const m of group.members) {
+          for (const m of writes) {
             for (const c of conflicts) {
               if (c.metricKey !== m.metricKey || retired.has(c.observationId)) continue;
               if (overlapMs(c, dayEndMs - MS_PER_DAY, dayEndMs) <= 0) continue;
@@ -526,10 +536,10 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
             });
             ids.set(m.metricKey, o.id);
           }
-          await advanceCursor(t, asset.id, group.scanKey, { lastBlock: Number(next.number) - 1, lastDay: day }, nowIso);
+          if (withheld.length === 0) await advanceCursor(t, asset.id, group.scanKey, { lastBlock: Number(next.number) - 1, lastDay: day }, nowIso);
         }, { lockAsset: asset.id });
       }
-      for (const m of group.members) {
+      for (const m of writes) {
         const value = sums.get(m.metricKey)!;
         result.written.push({ metricKey: m.metricKey, value, observedAt, periodDays: 1, source: 'onchain', observationId: ids.get(m.metricKey)! });
         result.daily.get(m.metricKey)!.push({ day, value });
@@ -539,7 +549,13 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
       from = next;
     }
 
-    outcome.metricsWritten = group.members.map((m) => m.metricKey).filter((k) => wroteAny.has(k));
+    outcome.metricsWritten = writes.map((m) => m.metricKey).filter((k) => wroteAny.has(k));
+    if (withheld.length > 0) {
+      outcome.notes.push(
+        `--metric: wrote only ${writes.map((m) => m.metricKey).join(', ') || 'none'}; ${withheld.join(', ')} share this scan and were left untouched, ` +
+          'and the scan cursor did not move, so the next full fetch scans these days for every member',
+      );
+    }
     const { ignored, mintsAttributed } = scanner;
     const parts = [
       ignored.zero > 0 ? `${ignored.zero} zero-amount` : '',
