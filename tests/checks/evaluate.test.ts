@@ -64,6 +64,35 @@ describe('checks', () => {
     expect((await byId(missingPart)).get('splitter')).toMatchObject({ status: 'breach', lhs: 1000, rhs: 900, gapPct: 10 });
   });
 
+  // Pre-G2 decision 1 (Mike, 2026-11-07): dust is not a breach. The CRV-family sum checks carry tolerance_abs $1, and a
+  // day breaches only past both tolerance_pct and $1 (the balance/supply checks' existing meaning).
+  it('sum: $1 absolute floor on the CRV-family sum checks (sdCRV 2026-08-31 dust is ok, $2 at 100% breaches)', async () => {
+    const day = '2026-08-31';
+    // The measured shape: CRV fee in $0.046, every part 0 (gap 100 percent).
+    await flow('sdcrv', 'flow_usd.sd_rev_crv', day, 0.046);
+    for (const m of ['flow_usd.sd_rev_crv_vesdt', 'flow_usd.sd_rev_crv_treasury', 'flow_usd.crv', 'flow_usd.sd_boost_delegation']) await flow('sdcrv', m, day, 0);
+    const dust = (await byId(asset('sdcrv'), day)).get('crv_fee')!;
+    expect(dust).toMatchObject({ type: 'sum', status: 'ok', lhs: 0.046, rhs: 0, gapPct: 100 });
+    expect(dust.detail).toMatchObject({ tolerance_pct: 2, tolerance_abs: 1 });
+
+    const d2 = '2026-09-01';
+    await flow('sdcrv', 'flow_usd.sd_rev_crv', d2, 2);
+    for (const m of ['flow_usd.sd_rev_crv_vesdt', 'flow_usd.sd_rev_crv_treasury', 'flow_usd.crv', 'flow_usd.sd_boost_delegation']) await flow('sdcrv', m, d2, 0);
+    expect((await byId(asset('sdcrv'), d2)).get('crv_fee')).toMatchObject({ status: 'breach', lhs: 2, rhs: 0, gapPct: 100 });
+
+    // A large day: $1 is nothing against a 10 percent gap, which still breaches.
+    await flow('crv', 'flow_usd.protocol_revenue', D, 1000);
+    await flow('crv', 'flow_usd.fees', D, 900);
+    await flow('crv', 'flow_usd.curve_treasury', D, 0);
+    expect((await byId(asset('crv'))).get('splitter')).toMatchObject({ status: 'breach', gapPct: 10 });
+
+    // Exactly the three CRV-family sum checks carry the floor; yCRV's partition guard keeps its 1e-6 percent alone.
+    const abs = (id: string) => Object.fromEntries((loadAsset(ROOT, id).config.income_statement?.checks ?? []).filter((c) => c.type === 'sum').map((c) => [c.id, (c as { tolerance_abs?: number }).tolerance_abs ?? null]));
+    expect(abs('crv')).toEqual({ splitter: 1 });
+    expect(abs('sdcrv')).toEqual({ crv_fee: 1 });
+    expect(abs('ycrv')).toEqual({ splitter: 1, gross_by_sender: null });
+  });
+
   it('parameter: LIT rh_revenue_share_app 0.5 vs 0.5 ok; 0.4 breaches', async () => {
     const lit = asset('lit');
     const auto = resolveChecks(lit).find((c) => c.id === 'robinhood_partner_share');

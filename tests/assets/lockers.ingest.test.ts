@@ -91,7 +91,7 @@ const CASES: Case[] = [
   },
   {
     id: 'sdcrv',
-    hash: '82060273f817de2dbd6aeca8afdbc452648dd96a22b14d24975aa7c670f42f4f',
+    hash: 'ab2018a4ae3205e2dc37bbe812e2b61e3a3a45dc6bfc7bb6962042a5f4174758',
     coingecko: 'stake-dao-crv',
     price: 0.1884,
     llamaPrice: 0.1832,

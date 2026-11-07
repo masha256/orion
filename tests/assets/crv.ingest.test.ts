@@ -91,7 +91,7 @@ describe('assets/crv.yaml', () => {
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('d86de62b9e69d39e50cc5ca78f1c49072b87c371a7feb8d96cd5e1e40694083d');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('dd2331c3efbb106f780d720f0e18a067658af84e35ef9023057b32d4a71cf70a');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

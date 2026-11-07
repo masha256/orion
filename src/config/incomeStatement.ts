@@ -144,6 +144,11 @@ const present = (line: object, keys: string[]): string[] => keys.filter((k) => (
 
 /** The loosest tolerance (in %) a sum check proving an apportion set's partition may have: a rounding guard, not a band. */
 export const PARTITION_TOLERANCE_PCT = 0.000001;
+/**
+ * The loosest absolute floor (series unit, USD) a partition check may add (M-1: <= 1e-6 % or <= $1). A day breaches only
+ * past both bands, so a wider floor would accept a non-partition on every small day.
+ */
+export const PARTITION_TOLERANCE_ABS = 1;
 
 /**
  * The validation rules the schema cannot express (spec §6 + correction 6): one value source per line, ids unique across
@@ -338,7 +343,8 @@ export function incomeStatementIssues(asset: CheckAsset): string[] {
   // holder flow, yields and buckets cannot move. Same total, distinct by, and a sum check total = [total], parts = the by
   // series (as metrics or the lines reading them) proves the partition every day.
   const sumChecks = (is.checks ?? []).filter((c) => c.type === 'sum');
-  const tightPartition = (c: (typeof sumChecks)[number]) => (c.window_days ?? 1) === 1 && c.tolerance_pct <= PARTITION_TOLERANCE_PCT;
+  const tightPartition = (c: (typeof sumChecks)[number]) =>
+    (c.window_days ?? 1) === 1 && c.tolerance_pct <= PARTITION_TOLERANCE_PCT && (c.tolerance_abs ?? 0) <= PARTITION_TOLERANCE_ABS;
   const partMetric = (p: string): string | undefined => {
     const r = revById.get(p);
     if (r !== undefined) return r.metric;
@@ -368,7 +374,7 @@ export function incomeStatementIssues(asset: CheckAsset): string[] {
       issue(`apportion of "${m}" by [${bys.join(', ')}] needs a sum check with total [${total}] and parts [${bys.join(', ')}] (the by series must partition the total)`);
     } else if (!proving.some(tightPartition)) {
       // Fix round 1, M-1: a loose or windowed check would accept by series that do not partition the total day by day.
-      issue(`apportion of "${m}": partition check ${proving.map((c) => c.id).join(', ')} must be daily (window_days 1) with tolerance_pct <= ${PARTITION_TOLERANCE_PCT.toFixed(6)}`);
+      issue(`apportion of "${m}": partition check ${proving.map((c) => c.id).join(', ')} must be daily (window_days 1) with tolerance_pct <= ${PARTITION_TOLERANCE_PCT.toFixed(6)} and tolerance_abs <= ${PARTITION_TOLERANCE_ABS}`);
     }
   }
 

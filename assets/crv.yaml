@@ -172,4 +172,5 @@ income_statement:
   below_line:
     - { id: vote_incentives, run_rate: vote_incentive_run_rate_usd, to: holders, bucket: cash, haircut: 0.03, recipient_base: locked, capture_rule: programmatic, note: "third parties paying veCRV voters" }
   checks:
-    - { id: splitter, type: sum, total: [ flow_usd.protocol_revenue ], parts: [ vecrv_fees, treasury ], tolerance_pct: 2 }
+    # tolerance_abs: dust is not a breach (Mike, pre-G2 decision 1): a day breaches past 2 percent AND $1.
+    - { id: splitter, type: sum, total: [ flow_usd.protocol_revenue ], parts: [ vecrv_fees, treasury ], tolerance_pct: 2, tolerance_abs: 1 }

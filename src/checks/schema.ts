@@ -24,7 +24,11 @@ const base = { id: CheckId, tolerance_pct: Tolerance };
  * A part is a line id or a metric key; an apportioned line is named with every line of its set (Task 7b), which together
  * read its flow once.
  */
-export const SumCheckSchema = z.strictObject({ ...base, type: z.literal('sum'), total: Metrics, parts: z.array(z.string().regex(/^[a-z0-9_.]+$/)).min(1), window_days: WindowDays.optional() });
+export const SumCheckSchema = z.strictObject({
+  ...base, type: z.literal('sum'), total: Metrics, parts: z.array(z.string().regex(/^[a-z0-9_.]+$/)).min(1), window_days: WindowDays.optional(),
+  // Pre-G2 decision 1 (Mike, 2026-11-07): an absolute floor in the series' unit (dust is not a breach), as balance/supply.
+  tolerance_abs: Tolerance.optional(),
+});
 /** A share read from the protocol daily vs the share a line assumes (a fee-split change). */
 export const ParameterCheckSchema = z.strictObject({ ...base, type: z.literal('parameter'), metric: z.string(), expected: z.number().finite() });
 /** The day's change in an account's balance vs measured inflows less outflows (missed senders, dropped logs). */
@@ -74,7 +78,7 @@ export interface Term {
 
 /** A check as evaluated: explicit or automatic, its line references resolved to series. */
 export type ResolvedCheck = { id: string; tolerancePct: number; auto: boolean } & (
-  | { type: 'sum'; total: Term[]; parts: Term[]; windowDays: number }
+  | { type: 'sum'; total: Term[]; parts: Term[]; windowDays: number; toleranceAbs: number | null }
   | { type: 'parameter'; metric: string; expected: number; line?: string }
   | { type: 'balance'; level: string; inflows: Term[]; outflows: Term[]; toleranceAbs: number | null }
   | { type: 'supply'; level: string; burns: Term[]; mints: Term[]; toleranceAbs: number | null }
@@ -173,7 +177,7 @@ function resolveAll(asset: CheckAsset): { checks: ResolvedCheck[]; problems: str
       case 'sum': {
         const done = new Set<string>();
         const parts = c.parts.map((p) => sumPart(c, p, done)).filter((t): t is Term => t !== null);
-        out.push({ ...common, type: 'sum', total: terms(c.total), parts, windowDays: c.window_days ?? 1 });
+        out.push({ ...common, type: 'sum', total: terms(c.total), parts, windowDays: c.window_days ?? 1, toleranceAbs: c.tolerance_abs ?? null });
         break;
       }
       case 'parameter':

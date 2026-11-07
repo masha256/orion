@@ -110,10 +110,11 @@ async function evaluateOne(db: Db, store: Store, asset: AssetConfig, c: Resolved
     case 'two_path':
     case 'coverage': {
       const [a, b] = c.type === 'sum' ? [c.total, c.parts] : c.type === 'two_path' ? [c.a, c.b] : [c.listed, c.total];
-      const detail = { ...tol, window_days: c.windowDays, lhs: a.map((t) => t.line ?? t.metric), rhs: b.map((t) => t.line ?? t.metric) };
+      const abs = c.type === 'sum' ? c.toleranceAbs : null;
+      const detail = { ...tol, ...(abs !== null ? { tolerance_abs: abs } : {}), window_days: c.windowDays, lhs: a.map((t) => t.line ?? t.metric), rhs: b.map((t) => t.line ?? t.metric) };
       const r = await windowSums(store, day, c.windowDays, [a, b]);
       if ('missing' in r) return incomplete({ ...detail, ...missingDetail(r.missing) });
-      return judged(r.sums[0]!, r.sums[1]!, c.tolerancePct, null, detail);
+      return judged(r.sums[0]!, r.sums[1]!, c.tolerancePct, abs, detail);
     }
     case 'parameter': {
       const o = await store.firstReading(c.metric, nextDayMs, 24);

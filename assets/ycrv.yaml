@@ -210,7 +210,8 @@ income_statement:
     - { id: incentives_to_protocol, to: protocol, metric: flow_usd.yearn_revenue, apportion: { by: flow_usd.yearn_gross_incentives, total: flow_usd.yearn_gross }, note: "auctioned third-party vote incentives (Yearn FeeBurner)" }
   checks:
     # Every line of each apportion set: together they read flow_usd.fees and flow_usd.yearn_revenue whole, as before.
-    - { id: splitter, type: sum, total: [ flow_usd.yearn_gross ], parts: [ ybs_payout, incentives_to_holders, treasury, incentives_to_protocol ], tolerance_pct: 2 }
+    # tolerance_abs: dust is not a breach (Mike, pre-G2 decision 1): past 2 percent AND $1. Not on gross_by_sender below.
+    - { id: splitter, type: sum, total: [ flow_usd.yearn_gross ], parts: [ ybs_payout, incentives_to_holders, treasury, incentives_to_protocol ], tolerance_pct: 2, tolerance_abs: 1 }
     # The two senders partition the gross (the apportion sets need it, daily and tight). An invariant guard, not a data
     # check: the three series are members of one scan, so it holds by construction and fails only if the scan planning
     # changes (a member moved to its own scan, or an allowlist sender with no by series). It cannot catch an unlisted

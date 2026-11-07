@@ -86,7 +86,7 @@ describe('assets/ycrv.yaml', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned 2026-11-05: the splitter's gross by sender (yearn_gross_fees, yearn_gross_incentives) and the vote
     // incentives below the line by apportion (Phase 2 Task 7b, Mike G1).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('fad4f446d24f9734608fc150828ddadfbbd893bd2082eac655201c1e3cd114d8');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('65cbdcb0ec4a593b9430d0e1e871cfebef2e3d44628b3ebb7662400ae8178b3c');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -120,7 +120,7 @@ describe('assets/ycrv.yaml', () => {
       { id: 'incentives_to_protocol', to: 'protocol', metric: 'flow_usd.yearn_revenue', apportion: incentives, note: 'auctioned third-party vote incentives (Yearn FeeBurner)' },
     ]);
     expect(is.checks).toEqual([
-      { id: 'splitter', type: 'sum', total: ['flow_usd.yearn_gross'], parts: ['ybs_payout', 'incentives_to_holders', 'treasury', 'incentives_to_protocol'], tolerance_pct: 2 },
+      { id: 'splitter', type: 'sum', total: ['flow_usd.yearn_gross'], parts: ['ybs_payout', 'incentives_to_holders', 'treasury', 'incentives_to_protocol'], tolerance_pct: 2, tolerance_abs: 1 },
       { id: 'gross_by_sender', type: 'sum', total: ['flow_usd.yearn_gross'], parts: ['flow_usd.yearn_gross_fees', 'flow_usd.yearn_gross_incentives'], tolerance_pct: 0.000001 },
     ]);
     // the two by-sender flows are report-only and copy yearn_gross's source, each counting one sender

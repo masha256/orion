@@ -147,6 +147,17 @@ describe('income_statement apportion: schema', () => {
     expect(() => parse(daily)).not.toThrow();
   });
 
+  // Pre-G2 decision 1: sum checks may set tolerance_abs; a partition check stays tight only with tolerance_abs <= $1
+  // (a breach needs both bands passed, so a wide tolerance_abs would accept a non-partition on every small day).
+  it('a partition check may carry tolerance_abs up to $1, no more', () => {
+    const floor = lockerObject();
+    floor.income_statement.checks[1].tolerance_abs = 1;
+    expect(() => parse(floor)).not.toThrow();
+    const wide = lockerObject();
+    wide.income_statement.checks[1].tolerance_abs = 1000;
+    refused(wide, /partition check gross_by_sender must be daily \(window_days 1\) with tolerance_pct <= 0\.000001 and tolerance_abs <= 1/);
+  });
+
   it('refuses a sum check part that is neither a line nor a metric', () => {
     const o = lockerObject();
     o.income_statement.checks[1].parts = ['flow_usd.gross_fees', 'flow_usd.nope'];
