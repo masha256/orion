@@ -30,8 +30,21 @@ migration may assume it ships in the cutover release.
 any prod fetch failure), Task 7b (yCRV option A) and Task 9; stop at G2. st-yCRV ruling R6 stands (fee out of the
 statement). Listing bar stays as built (revenue + holders + supply, D6). Task 3's silent-spec defaults accepted.
 
+**Pre-G2 decisions (Mike, 2026-11-07, "proceed and apply recommendations"; details in the followups note):**
+(1) the CRV-family `sum` checks (crv `splitter`, sdcrv `crv_fee`, ycrv `splitter`) get `tolerance_abs: 1` USD: a day
+breaches only past both tolerance_pct and $1 (the existing balance/supply meaning); yCRV `gross_by_sender` keeps 1e-6 %.
+(2) R17: pre-v2 manual rows without a citation are mapped on content: a "DefiLlama artifact" correction as `derived`
+(`manual_mean_of_neighbours@1`, inputs = the neighbouring days' rows in force), the research-pass seeds as legacy
+disclosures (`{note, legacy_seed: true}`, quoted_text = the note, citation null only on `pre-v2`); rejected rows alike.
+(3) `data set` keeps requiring `--citation`. (4) The release-2 backfills run as the env user (`sudo -iu orion-<env>`);
+`orion-remote` verbs for them are Phase 3. (5) R21: the runbook's command prefix is a shell function so `$HOME`
+expands. **P4 is lifted:** the Phase 1.5 cutover is done (prod releases `orion-2026.11.05.1` = f1d2a23,
+`orion-2026.11.07.1` = 895c8a1), and this branch is rebased on `origin/main` 895c8a1; staging deploys still need
+Mike's go.
+
 **Base:** `feat/data-strategy` = `feat/daemon` @ f5f36fa + 3 spec commits (tip fdbbbf3). Never rebase onto `main`, and
-never branch from it. `main` has no Postgres code, and Phase 1.5 merges into `main` only at the cutover.
+never branch from it. `main` has no Postgres code, and Phase 1.5 merges into `main` only at the cutover. (Until the
+cutover; since 2026-11-07 the base is `origin/main` 895c8a1, which holds the Phase 1.5 platform.)
 
 **Baseline (2026-11-04, this worktree @ fdbbbf3, node_modules -> `.worktrees/daemon/node_modules`):**
 `npx vitest run --maxWorkers=2` 113 files / 1207 tests passed in 66 s; `npm run typecheck` clean; no `t_*` schemas left

@@ -243,10 +243,13 @@ The first release after the cutover that carries Phase 2 (`feat/data-strategy`, 
 view; `value` is still written), the income statement v2 beside the v1 report, and three one-time backfills. Deploy it
 only with Mike's go, never during the cutover soak. The steps below run in this order; each `orion ...` command is the
 release's CLI run on venus as the env's Unix user (Mike: `sudo -iu orion-<env>`), because `orion-remote` has no verb
-for them:
+for them (Mike, pre-G2 decision 4: those verbs are Phase 3 work). Define this shell function first, in that login shell
+(`<env>` = `stage` or `prod`). A function, not a quoted variable: `$HOME` must expand when the command runs, and a
+variable's value is never re-expanded (`O='... $HOME/home ...'` passed the literal text `$HOME/home`):
 
 ```
-O='env ORION_ENV=<env> ORION_HOME=$HOME/home ORION_ENV_FILE=$HOME/shared/.env /opt/node-v26/bin/node $HOME/current/dist/cli/index.js'
+o() { ORION_ENV=<env> ORION_HOME="$HOME/home" ORION_ENV_FILE="$HOME/shared/.env" /opt/node-v26/bin/node "$HOME/current/dist/cli/index.js" "$@"; }
+type o                                         # prints the function; `o db status` must name current = 5
 ```
 
 1. **Before the deploy: the soak script.** `~/.hermes/profiles/raymond/scripts/orion-stage-soak.py` (Raymond's, outside
@@ -261,24 +264,26 @@ O='env ORION_ENV=<env> ORION_HOME=$HOME/home ORION_ENV_FILE=$HOME/shared/.env /o
    (section 3), and plan the pair so no Sunday refresh falls between them where possible:
    ```
    scripts/release/deploy.sh stage <tag>        # switch runs db migrate: applied [3,4,5]
-   ssh orion-stage status                       # current <tag>; then, on venus: $O db status (current 5, pending none)
+   ssh orion-stage status                       # current <tag>; then, on venus: o db status (current 5, pending none)
    ```
    Steps 3-5 run on staging right after its switch, before its first nightly (02:45 UTC), and again on prod right after
    prod's switch, before prod's first nightly (00:45 UTC).
 3. **Provenance history** (Task 6): dry run first, then the real run.
    ```
-   $O db backfill-provenance --dry-run --json > ~/home/backfill-provenance-dry.json
-   $O db backfill-provenance --json
+   o db backfill-provenance --dry-run --json > ~/home/backfill-provenance-dry.json
+   o db backfill-provenance --json
    ```
-   The dry run's unmapped list must be exactly the 18 rows of ruling R17 (all `source = manual` without a citation; ids
-   as in the 2026-11-05 proof copy, check them against the dry run): AERO `flow_usd.fees` 2026-09-10, ids 11831
-   (confirmed) and 515 (rejected), Mike's DefiLlama-artifact correction; VVV ids 1-16 from the 2026-09-18 research pass
-   (5 rejected burn rows, 11 confirmed seeds of levels read on chain, from the Venice API or blog). They stay unmapped
-   (`method` null) until Mike rules on R17 at G2; any other unmapped row: stop. The real run writes at most 1,000 rows
-   per transaction under each asset's lock and resumes on a re-run (`method IS NULL`).
+   The dry run's unmapped list must be empty. The 18 pre-v2 manual rows without a citation (ruling R17; on the
+   2026-11-05 proof copy: AERO `flow_usd.fees` 2026-09-10, ids 11831 confirmed and 515 rejected, Mike's DefiLlama-artifact
+   correction; VVV ids 1-16 from the 2026-09-18 research pass) are mapped by Mike's pre-G2 decision 2, on their content:
+   the correction as `derived` (`manual_mean_of_neighbours@1`, inputs = the rows in force on the day before and after),
+   the seeds as legacy disclosures (`disclosed`, locator `{note, legacy_seed: true}`, quoted_text = the note, no
+   citation). Any unmapped row (e.g. `correction_without_neighbours`): stop and bring it to Mike. The real run writes at
+   most 1,000 rows per transaction under each asset's lock and resumes on a re-run (`method IS NULL`); it never changes
+   `value`.
 4. **yCRV by-sender flows** (Task 7b, R20), right after the deploy and before the first nightly:
    ```
-   $O data fetch ycrv --metric flow_usd.yearn_gross_fees --metric flow_usd.yearn_gross_incentives --backfill-days 183
+   o data fetch ycrv --metric flow_usd.yearn_gross_fees --metric flow_usd.yearn_gross_incentives --backfill-days 183
    ```
    It scans `flow_usd.yearn_gross`'s shared transfer scan but writes only the two listed series (R20): `yearn_gross`'s
    rows and the scan cursor are left as they are. 183 days so v2 revenue growth (91 days vs the prior 91) is measured
@@ -290,7 +295,7 @@ O='env ORION_ENV=<env> ORION_HOME=$HOME/home ORION_ENV_FILE=$HOME/shared/.env /o
    report it, do not run the next asset.
    ```
    for a in cake crv cvxcrv hype link lit sdcrv sky uni vvv ycrv; do
-     $O data backfill-tokens $a --json > ~/home/backfill-tokens-$a.json || { echo "STOP: $a exit $?"; break; }
+     o data backfill-tokens $a --json > ~/home/backfill-tokens-$a.json || { echo "STOP: $a exit $?"; break; }
    done
    ```
    AERO and PUMP have no transfer scan or first-party dollar series to fill (`not_a_transfer_flow`). It never changes
@@ -298,7 +303,7 @@ O='env ORION_ENV=<env> ORION_HOME=$HOME/home ORION_ENV_FILE=$HOME/shared/.env /o
    rehearsal: Base ~11 s a day for VVV's 3 members; one market_chart range per CoinGecko id per run.
 6. **G2 comparison** (read-only), per asset, after step 5:
    ```
-   for a in aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv; do $O data compare-usd $a --days 91 --json > ~/home/compare-usd-$a.json; done
+   for a in aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv; do o data compare-usd $a --days 91 --json > ~/home/compare-usd-$a.json; done
    ```
    The stored USD (`value`) vs the hourly token buckets x hourly prices (`flow_usd_v`), per metric; it feeds Mike's G2
    per-metric comparison.

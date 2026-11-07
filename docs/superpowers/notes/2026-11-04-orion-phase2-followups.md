@@ -262,8 +262,9 @@ Conventions chosen (review):
 
 History backfill: `orion db backfill-provenance [--dry-run] [--json]` maps rows with no provenance by plan correction 1
 (`src/provenance/backfill.ts` lists the rules): `code_version` = `config_hash` = `pre-v2`; unmappable rows are listed with
-a reason (`unknown_asset`, `unknown_metric`, `manual_without_citation`, `no_source_in_config`, `no_source_type`,
-`source_changed`) and never written. An `api` row whose `source_detail` names a DefiLlama host (api / coins / pro-api /
+a reason (`unknown_asset`, `unknown_metric`, `manual_without_citation`, `correction_without_neighbours`,
+`no_source_in_config`, `no_source_type`, `source_changed`) and never written. Manual rows without a citation follow
+Mike's pre-G2 decision 2 (below). An `api` row whose `source_detail` names a DefiLlama host (api / coins / pro-api /
 yields.llama.fi) is `third_party` whatever its metric reads now; `block N` and `block N: <detail>` give block_from =
 block_to = N. Writes are bounded: at most 1,000 rows per transaction (one set-based UPDATE), each under the asset lock;
 a crash leaves whole batches and a re-run resumes (`method IS NULL`). The dry run on the proof copy (controller, Step 4) records the per-metric mapped
@@ -465,24 +466,52 @@ priced at daily points) reported apart in `beyond`; `unpriced` (an hour with an 
   tests (an incremental `--metric` run on a group with a cursor; yCRV R20 step 3 checks every member's active row count).
 - Phase 2 release runbook: `docs/ops/deploy.md`, "Phase 2 release (migrations 0003-0005)"; pointer from
   `docs/ops/postgres.md`. `orion-remote` has no verb for `db backfill-provenance`, `data fetch`, `data backfill-tokens`
-  or `data compare-usd`, so the runbook has Mike run them as the env user; a remote verb for them is open below.
+  or `data compare-usd`, so the runbook has Mike run them as the env user; remote verbs are Phase 3 (pre-G2 decision 4).
+
+## Pre-G2 decisions (Mike, 2026-11-07, "proceed and apply recommendations")
+1. **Dust is not a breach.** The CRV-family `sum` checks (crv `splitter`, sdcrv `crv_fee`, ycrv `splitter`) carry
+   `tolerance_abs: 1` (USD) beside `tolerance_pct: 2`. `sum` checks gained the optional key (no default, so no other
+   hash moved); its meaning is the one balance/supply checks already had in `src/checks/evaluate.ts` (`judged`): a day
+   breaches only past BOTH the relative tolerance and the absolute floor. sdCRV 2026-08-31 ($0.046 in, parts 0, gap
+   100%) is now `ok`; a $2 gap at 100% still breaches. yCRV's partition guard `gross_by_sender` keeps 1e-6 % and no
+   floor; the apportion validator now refuses a partition check with `tolerance_abs` > $1 (M-1: <= 1e-6 % or <= $1).
+   crv, sdcrv, ycrv hashes re-pinned. The v2 report's `checks[]` shows `tolerancePct` only (the floor is in each
+   stored result's `detail.tolerance_abs`).
+2. **R17, pre-v2 manual rows without a citation** (`src/provenance/backfill.ts` rule 2, on content, never ids; rejected
+   rows alike; values never change):
+   a. `source_detail` starting "DefiLlama artifact" (AERO `flow_usd.fees` 2026-09-10, ids 11831 / 515): `derived`,
+      source_type `derived`, formula `manual_mean_of_neighbours@1`, inputs = the metric's rows in force on the day
+      before and after (`{metric, observation_id, observed_at, value}`), locator `{note}`. A missing or ambiguous
+      neighbour leaves the row listed as `correction_without_neighbours`.
+   b. Any other (the VVV 2026-09-18 research-pass seeds, ids 1-16): `disclosed`, source_type `disclosure`, locator
+      `{note, legacy_seed: true}`, `quoted_text` = `source_detail` where it is null, `citation_url` null. A row with
+      neither a detail nor a quote stays `manual_without_citation` (nothing to quote).
+   The null citation is allowed only on `code_version = 'pre-v2'`: every new disclosed row still needs one
+   (`disclosedProvenance`). Task 10 (0006) must keep that exemption in any citation constraint it adds, e.g.
+   `CHECK (source_type <> 'disclosure' OR citation_url IS NOT NULL OR code_version = 'pre-v2')`.
+3. `data set` keeps requiring `--citation` (no change).
+4. The release-2 backfills run as the env user (`sudo -iu orion-<env>`), as the runbook says; `orion-remote` verbs for
+   them move to Phase 3 (table below).
+5. R21: the runbook's command prefix is a shell function `o() { ... }` (a quoted `O='... $HOME ...'` variable never
+   expanded `$HOME`); every use in the Phase 2 section is `o ...`.
+6. The P4 rule is lifted: the Phase 1.5 cutover is done (prod releases `orion-2026.11.05.1` = f1d2a23,
+   `orion-2026.11.07.1` = 895c8a1). Staging deploys of this branch still need Mike's go.
 
 ### Open items
 For Mike at G2:
-- R15 / review M4 of Task 5: dust breaches on relative-only `sum`/`two_path` gaps (sdCRV $0.05) now alert (I1); decide
-  `tolerance_abs` (a schema change and a hash move) or accept the alerts.
-- R17: the 18 unmapped provenance rows (AERO correction day, VVV seeds); `db backfill-provenance` is re-runnable once a
-  rule is chosen.
+- [DECIDED, pre-G2 1] R15 / review M4 of Task 5: `tolerance_abs: 1` on the CRV-family sum checks. `two_path` checks
+  have no floor (none breached on dust).
+- [DECIDED, pre-G2 2] R17: the 18 provenance rows are mapped by rule 2a/2b; the runbook's dry run expects an empty
+  unmapped list.
 - Review M6: the `levels` snapshot body gained `sourceType`/`locator` per level (P2 approved the `full` body only):
   confirm, or drop the two keys from `levelsBody` until Phase 5.
 - G2 rehearsal (controller): Σfees + Σinc vs Σgross on yCRV after the 183-day backfill, current and prior windows
   (M1); one N-1 write (old release's `data fetch` on a cheap asset, `db status`) on the 0005 proof copy, and a real
   `pg_dump -Fc` + `planRestore` + `pg_restore -L` of the filtered TOC into a scratch schema (M7).
-- `data set` now requires `--citation` for every metric (spec §3): operator behaviour change, G2 sign-off.
+- [DECIDED, pre-G2 3] `data set` requires `--citation` for every metric (spec §3): kept.
 
 Rollout (before Phase 2 reaches staging):
 - `orion-stage-soak.py` reads the v1 report keys; `orion-remote report yield` passes no `--legacy` (runbook step 1).
-- A remote verb (or a `job run-now` kind) for the three one-time backfills, so a release step needs no `sudo -iu`.
 
 Can wait (final review triage), by phase:
 
@@ -511,6 +540,7 @@ Can wait (final review triage), by phase:
 | T9 | no-URL test checks TERMS, not generated output | Phase 5 export |
 | T9 | fallback hosts (Base/Solana public RPC, pro-api.coingecko.com) not register rows | Phase 5, before the export reads the register |
 | T9 | 'date checked' on quoted rows | Phase 5 |
+| pre-G2 4 | `orion-remote` verbs (or `job run-now` kinds) for `db backfill-provenance`, `data fetch --backfill-days`, `data backfill-tokens`, `data compare-usd`, so a release step needs no `sudo -iu` | Phase 3 |
 
 Dropped (final review triage): T0 M2, M3, M8, `get_path` and ids containing `.`; T2 statementShape ids/of-only pins
 and the disclosure.e2e `preApprovalLitYaml` NOTE_NOW; T9 CoinGecko note wording.
