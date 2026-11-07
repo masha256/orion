@@ -143,6 +143,76 @@ describe('backfillProvenance', () => {
   });
 });
 
+/**
+ * Pre-G2 decision 2 (Mike, 2026-11-07): the pre-v2 manual rows without a citation, by their content (never by id).
+ * (a) Mike's DefiLlama-artifact correction (AERO flow_usd.fees 2026-09-10): derived, the mean of the neighbouring days.
+ * (b) the 2026-09-18 research-pass seeds (VVV): legacy disclosures, the note kept and quoted. (c) Rejected rows alike.
+ */
+describe('backfillProvenance: pre-v2 manual rows without a citation (pre-G2 decision 2)', () => {
+  const ARTIFACT = 'DefiLlama artifact: 2026-09-09 spike ruled an artifact by Mike, set to the mean of 09-08 and 09-10';
+  const SEED = 'research pass 2026-09-18: Venice blog, staking dashboard';
+  async function at(db: Db, r: { assetId: string; metricKey: string; observedAt: string; value: number; source: string; detail: string | null; status?: string; quoted?: string | null; periodDays?: number | null }): Promise<number> {
+    const res = await db.run<{ id: number }>(
+      `INSERT INTO observations (asset_id, metric_key, observed_at, period_days, value, source, source_detail, status, citation_url, quoted_text, fetched_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, $9, '2026-10-02T00:00:00.000Z') RETURNING id`,
+      [r.assetId, r.metricKey, r.observedAt, r.periodDays === undefined ? 1 : r.periodDays, r.value, r.source, r.detail, r.status ?? 'confirmed', r.quoted ?? null],
+    );
+    return Number(res.rows[0]!.id);
+  }
+  const llama = 'https://api.llama.fi/summary/fees/aerodrome?dataType=dailyFees';
+
+  it('maps the correction as derived over its neighbours and the seeds as legacy disclosures; values never change', async () => {
+    const db = testDb();
+    const prev = await at(db, { assetId: 'aero', metricKey: 'flow_usd.fees', observedAt: '2026-09-09T00:00:00.000Z', value: 100, source: 'api', detail: llama });
+    const spike = await at(db, { assetId: 'aero', metricKey: 'flow_usd.fees', observedAt: '2026-09-10T00:00:00.000Z', value: 9_000, source: 'api', detail: llama });
+    const next = await at(db, { assetId: 'aero', metricKey: 'flow_usd.fees', observedAt: '2026-09-11T00:00:00.000Z', value: 140, source: 'api', detail: llama });
+    // A superseded row on a neighbouring day is not an input: only the row in force is.
+    const oldNext = await at(db, { assetId: 'aero', metricKey: 'flow_usd.fees', observedAt: '2026-09-11T00:00:00.000Z', value: 139, source: 'api', detail: llama });
+    await db.run('UPDATE observations SET superseded_by = $1 WHERE id = $2', [next, oldNext]);
+    const rejectedFix = await at(db, { assetId: 'aero', metricKey: 'flow_usd.fees', observedAt: '2026-09-10T00:00:00.000Z', value: 125, source: 'manual', detail: ARTIFACT, status: 'rejected' });
+    const fix = await at(db, { assetId: 'aero', metricKey: 'flow_usd.fees', observedAt: '2026-09-10T00:00:00.000Z', value: 120, source: 'manual', detail: ARTIFACT });
+    await db.run('UPDATE observations SET superseded_by = $1 WHERE id = $2', [fix, spike]);
+    const seed = await at(db, { assetId: 'vvv', metricKey: 'staked_supply', observedAt: '2026-09-18T12:00:00.000Z', value: 3e7, source: 'manual', detail: SEED, periodDays: null });
+    const quoted = await at(db, { assetId: 'vvv', metricKey: 'total_supply', observedAt: '2026-09-18T12:00:00.000Z', value: 8e7, source: 'manual', detail: SEED, quoted: 'already quoted', periodDays: null });
+    const rejectedSeed = await at(db, { assetId: 'vvv', metricKey: 'flow_usd.burn', observedAt: '2026-09-18T00:00:00.000Z', value: 5, source: 'manual', detail: SEED, status: 'rejected' });
+    const values = async () => await db.all('SELECT id, value, source, source_detail, status, citation_url, superseded_by FROM observations ORDER BY id');
+    const before = await values();
+
+    const r = await backfillProvenance(db, ASSETS);
+    expect(r.unmapped).toEqual([]);
+    expect(await values()).toEqual(before);
+
+    const get = async (id: number) => (await db.one<Record<string, unknown>>(
+      'SELECT method, source_type, chain, locator, inputs, formula, quoted_text, citation_url, code_version, config_hash FROM observations WHERE id = $1', [id]))!;
+    const inputs = [
+      { metric: 'flow_usd.fees', observation_id: prev, observed_at: '2026-09-09T00:00:00.000Z', value: 100 },
+      { metric: 'flow_usd.fees', observation_id: next, observed_at: '2026-09-11T00:00:00.000Z', value: 140 },
+    ];
+    for (const id of [fix, rejectedFix]) {
+      expect(await get(id), `#${id}`).toEqual({
+        method: 'derived', source_type: 'derived', chain: null, locator: { note: ARTIFACT }, inputs, formula: 'manual_mean_of_neighbours@1',
+        quoted_text: null, citation_url: null, code_version: 'pre-v2', config_hash: 'pre-v2',
+      });
+    }
+    for (const id of [seed, rejectedSeed]) {
+      expect(await get(id), `#${id}`).toEqual({
+        method: 'disclosed', source_type: 'disclosure', chain: null, locator: { note: SEED, legacy_seed: true }, inputs: null, formula: null,
+        quoted_text: SEED, citation_url: null, code_version: 'pre-v2', config_hash: 'pre-v2',
+      });
+    }
+    expect(await get(quoted)).toMatchObject({ method: 'disclosed', locator: { note: SEED, legacy_seed: true }, quoted_text: 'already quoted' });
+  });
+
+  it('a correction with a neighbouring day missing stays listed (never guessed); a manual row with nothing to quote too', async () => {
+    const db = testDb();
+    await at(db, { assetId: 'aero', metricKey: 'flow_usd.fees', observedAt: '2026-09-09T00:00:00.000Z', value: 100, source: 'api', detail: llama });
+    const fix = await at(db, { assetId: 'aero', metricKey: 'flow_usd.fees', observedAt: '2026-09-10T00:00:00.000Z', value: 120, source: 'manual', detail: ARTIFACT });
+    const bare = await at(db, { assetId: 'vvv', metricKey: 'staked_supply', observedAt: '2026-09-18T12:00:00.000Z', value: 1, source: 'manual', detail: null, periodDays: null });
+    const r = await backfillProvenance(db, ASSETS);
+    expect(r.unmapped.map((u) => [u.id, u.reason])).toEqual([[fix, 'correction_without_neighbours'], [bare, 'manual_without_citation']]);
+  });
+});
+
 /** 25,000 rows of crv price_usd as the old release wrote them (one per hour), in one statement. */
 async function seedMany(db: Db, n: number): Promise<void> {
   await db.run(

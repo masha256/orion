@@ -3,18 +3,25 @@ import type { MetricDef } from '../config/schema.js';
 import type { Db } from '../db/connection.js';
 import { sourceTypeOf, typeOfSource, type SourceType } from '../report/sourceTypes.js';
 import { chainOfSource, locatorOfSource, methodOfSource, scrubLocator, scrubUrl } from './locator.js';
-import { PRE_V2, type Locator, type ProvenanceMethod } from './types.js';
+import { PRE_V2, type Json, type Locator, type ProvenanceMethod } from './types.js';
 
 /**
  * The history backfill (spec §3, plan correction 1): every row written before 0004 is mapped mechanically from its
  * `source` / `source_detail` columns and the asset YAML of this release (there is no `config_versions` table), with
- * `code_version` and `config_hash` = 'pre-v2'. Only the provenance columns are written, and only on rows that have none:
- * `value`, `source`, `source_detail`, `status` and every other column stay as they are. A row the rules cannot map is
- * listed, never guessed.
+ * `code_version` and `config_hash` = 'pre-v2'. Only the provenance columns are written (and a null quoted_text, rule
+ * 2b), and only on rows that have none: `value`, `source`, `source_detail`, `status`, `citation_url` and every other
+ * column stay as they are. A row the rules cannot map is listed, never guessed.
  *
  * The rules, in order:
  * 1. The asset and the metric must be in the YAML (else `unknown_asset` / `unknown_metric`).
- * 2. `manual`: disclosed, rung disclosure, locator = its citation; a manual row without a citation is `manual_without_citation`.
+ * 2. `manual`: disclosed, rung disclosure, locator = its citation. A manual row without a citation (pre-G2 decision 2,
+ *    Mike 2026-11-07; matched on content, never on ids; rejected rows alike):
+ *    a. `source_detail` starting "DefiLlama artifact" (a day Mike set to the mean of its neighbours): derived, rung
+ *       derived, formula `manual_mean_of_neighbours@1`, inputs = the metric's rows in force on the previous and next
+ *       day (by observed_at), locator {note}. A neighbour missing: `correction_without_neighbours`.
+ *    b. otherwise (the research-pass seeds): disclosed, rung disclosure, locator {note, legacy_seed: true}, quoted_text
+ *       = source_detail when it has none; citation_url stays null, which only `pre-v2` history may (a new disclosed
+ *       row still needs a citation: `disclosedProvenance`). Nothing to quote (no detail, no quote): `manual_without_citation`.
  * 3. `onchain` / `api` on a metric with no source in the YAML: `no_source_in_config`.
  * 4. A row whose `source` is what the metric's source writes (an adapter writes either): the metric's method, rung,
  *    chain and locator; `block_from/to` from `source_detail.blocks` (a transfer scan) or `block N` (a chain level);
@@ -75,6 +82,17 @@ interface Mapped {
   blockFrom: number | null;
   blockTo: number | null;
   formula: string | null;
+  /** A derived row's inputs (rule 2a). */
+  inputs?: Json | null;
+  /** Filled into quoted_text only where that is null (rule 2b). */
+  quotedText?: string | null;
+}
+
+/** A neighbouring day's row in force (rule 2a). */
+export interface NeighbourRow {
+  id: number;
+  observed_at: string;
+  value: number;
 }
 
 interface Row {
@@ -84,7 +102,15 @@ interface Row {
   source: string;
   source_detail: string | null;
   citation_url: string | null;
+  observed_at?: string;
+  period_days?: number | null;
+  quoted_text?: string | null;
 }
+
+/** Rule 2a's marker: Mike's correction of a DefiLlama day to the mean of its neighbours. */
+const CORRECTION_PREFIX = 'DefiLlama artifact';
+export const isNeighbourCorrection = (row: Pick<Row, 'source' | 'citation_url' | 'source_detail'>): boolean =>
+  row.source === 'manual' && !row.citation_url && (row.source_detail ?? '').startsWith(CORRECTION_PREFIX);
 
 /** What a source writes in the `source` column (an adapter returns its own, so either). */
 function writtenSource(def: MetricDef, metrics: Readonly<Record<string, MetricDef>>): 'onchain' | 'api' | 'either' {
@@ -124,13 +150,13 @@ function blocksOf(detail: string | null): { blockFrom: number | null; blockTo: n
 }
 
 /** The mapping of one row, or the reason it has none. */
-export function mapRow(row: Row, loaded: LoadedAsset | undefined): Mapped | { reason: string } {
+export function mapRow(row: Row, loaded: LoadedAsset | undefined, neighbours?: { prev: NeighbourRow | null; next: NeighbourRow | null }): Mapped | { reason: string } {
   if (loaded === undefined) return { reason: 'unknown_asset' };
   const metrics = loaded.config.metrics;
   const def = metrics[row.metric_key];
   if (def === undefined) return { reason: 'unknown_metric' };
   if (row.source === 'manual') {
-    if (!row.citation_url) return { reason: 'manual_without_citation' };
+    if (!row.citation_url) return manualWithoutCitation(row, neighbours);
     const proposedBy: Locator = row.source_detail?.startsWith('research:') ? { proposed_by: row.source_detail } : {};
     return {
       method: 'disclosed', sourceType: 'disclosure', chain: null, blockFrom: null, blockTo: null, formula: null,
@@ -163,6 +189,42 @@ export function mapRow(row: Row, loaded: LoadedAsset | undefined): Mapped | { re
   };
 }
 
+/** Rules 2a and 2b: a pre-v2 manual row without a citation. */
+function manualWithoutCitation(row: Row, neighbours: { prev: NeighbourRow | null; next: NeighbourRow | null } | undefined): Mapped | { reason: string } {
+  const none = { chain: null, blockFrom: null, blockTo: null } as const;
+  if (isNeighbourCorrection(row)) {
+    if (!neighbours?.prev || !neighbours.next) return { reason: 'correction_without_neighbours' };
+    const input = (n: NeighbourRow): Json => ({ metric: row.metric_key, observation_id: Number(n.id), observed_at: n.observed_at, value: n.value });
+    return {
+      ...none, method: 'derived', sourceType: 'derived', formula: 'manual_mean_of_neighbours@1',
+      locator: scrubLocator({ note: row.source_detail }), inputs: [input(neighbours.prev), input(neighbours.next)],
+    };
+  }
+  const note = row.source_detail ?? null;
+  const quote = row.quoted_text ?? null;
+  if (!note && !quote) return { reason: 'manual_without_citation' };
+  return {
+    ...none, method: 'disclosed', sourceType: 'disclosure', formula: null,
+    locator: scrubLocator({ note, legacy_seed: true }), ...(quote === null ? { quotedText: note } : {}),
+  };
+}
+
+/** The rows in force on the day before and after `row` (same metric and period), or null where there is not exactly one. */
+async function neighboursOf(db: Db, row: Row): Promise<{ prev: NeighbourRow | null; next: NeighbourRow | null }> {
+  const rows = await db.all<NeighbourRow & { side: string }>(
+    `SELECT id, observed_at, value, CASE WHEN observed_at < $3::timestamptz THEN 'prev' ELSE 'next' END AS side FROM observations
+     WHERE asset_id = $1 AND metric_key = $2 AND period_days IS NOT DISTINCT FROM $4::bigint AND superseded_by IS NULL AND status != 'rejected'
+       AND observed_at IN ($3::timestamptz - interval '1 day', $3::timestamptz + interval '1 day')
+     ORDER BY observed_at, id`,
+    [row.asset_id, row.metric_key, row.observed_at ?? null, row.period_days ?? null],
+  );
+  const one = (side: string): NeighbourRow | null => {
+    const xs = rows.filter((r) => r.side === side);
+    return xs.length === 1 ? { id: Number(xs[0]!.id), observed_at: xs[0]!.observed_at, value: xs[0]!.value } : null;
+  };
+  return { prev: one('prev'), next: one('next') };
+}
+
 /**
  * Maps every row that has no provenance. A dry run writes nothing. Rows are written in batches of at most
  * BACKFILL_BATCH_ROWS, one transaction per batch under the asset's lock; a row that gained provenance meanwhile
@@ -173,11 +235,11 @@ export async function backfillProvenance(db: Db, assets: LoadedAsset[], opts: Ba
   const result: BackfillResult = { dryRun: opts.dryRun === true, alreadySet: 0, mapped: {}, unmapped: [] };
   result.alreadySet = (await db.one<{ n: number }>('SELECT count(*)::bigint AS n FROM observations WHERE method IS NOT NULL'))?.n ?? 0;
   const rows = await db.all<Row>(
-    'SELECT id, asset_id, metric_key, source, source_detail, citation_url FROM observations WHERE method IS NULL ORDER BY asset_id, id',
+    'SELECT id, asset_id, metric_key, source, source_detail, citation_url, observed_at, period_days, quoted_text FROM observations WHERE method IS NULL ORDER BY asset_id, id',
   );
   const perAsset = new Map<string, { row: Row; m: Mapped }[]>();
   for (const row of rows) {
-    const m = mapRow(row, byId.get(row.asset_id));
+    const m = mapRow(row, byId.get(row.asset_id), isNeighbourCorrection(row) ? await neighboursOf(db, row) : undefined);
     if ('reason' in m) {
       result.unmapped.push({ id: row.id, assetId: row.asset_id, metricKey: row.metric_key, source: row.source, reason: m.reason });
       continue;
@@ -193,13 +255,15 @@ export async function backfillProvenance(db: Db, assets: LoadedAsset[], opts: Ba
     for (let i = 0; i < list.length; i += BACKFILL_BATCH_ROWS) {
       const batch = list.slice(i, i + BACKFILL_BATCH_ROWS).map(({ row, m }) => ({
         id: row.id, method: m.method, source_type: m.sourceType, chain: m.chain, locator: m.locator, block_from: m.blockFrom, block_to: m.blockTo, formula: m.formula,
+        inputs: m.inputs ?? null, quoted_text: m.quotedText ?? null,
       }));
       await db.tx(
         async (t) => {
           await t.run(
             `UPDATE observations o SET method = m.method, source_type = m.source_type, chain = m.chain, locator = m.locator, block_from = m.block_from,
-               block_to = m.block_to, formula = m.formula, code_version = $2, config_hash = $2
-             FROM jsonb_to_recordset($1::jsonb) AS m(id bigint, method text, source_type text, chain text, locator jsonb, block_from bigint, block_to bigint, formula text)
+               block_to = m.block_to, formula = m.formula, inputs = m.inputs, quoted_text = COALESCE(o.quoted_text, m.quoted_text), code_version = $2, config_hash = $2
+             FROM jsonb_to_recordset($1::jsonb) AS m(id bigint, method text, source_type text, chain text, locator jsonb, block_from bigint, block_to bigint, formula text,
+               inputs jsonb, quoted_text text)
              WHERE o.id = m.id AND o.method IS NULL`,
             [JSON.stringify(batch), PRE_V2],
           );
