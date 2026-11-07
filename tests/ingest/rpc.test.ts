@@ -74,6 +74,27 @@ describe('firstBlockAtOrAfter', () => {
     }
   });
 
+  it('finds day starts on both sides of a block-time change (Base: 2 s to 0.2 s at block ~53,556,072, 2026-11-05)', async () => {
+    // Measured 2026-11-06: 2.000 s/block before block 53,556,072 (2026-11-05T17:58:11Z), 0.200 s after. A search that
+    // trusted the nominal rate alone undershot 10x per step and gave up after 64 probes ("could not locate ...").
+    const S = 53_556_072n;
+    const tsS = Date.parse('2026-11-05T17:58:11Z') / 1000;
+    const timestampOf = (n: bigint): number => (n <= S ? tsS - Number(S - n) * 2 : tsS + Math.floor(Number(n - S) / 5));
+    const latestN = S + 5n * 120_000n; // ~1.4 days after the switch
+    const days = ['2026-10-20', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07'];
+    for (const blockTimeSec of [2, 0.2]) {
+      for (const d of days) {
+        const rpc = fakeRpc({ genesisTs: 0, latest: latestN, timestampOf, blockTimeSec });
+        const latest = await rpc.latestBlock();
+        const target = Date.parse(`${d}T00:00:00Z`) / 1000;
+        const found = await firstBlockAtOrAfter(rpc, target, latest, latest);
+        expect(found.timestamp, `${d} at ${blockTimeSec}`).toBeGreaterThanOrEqual(target);
+        expect(timestampOf(found.number - 1n), `${d} at ${blockTimeSec}`).toBeLessThan(target);
+        expect(rpc.stats.getBlock, `${d} at ${blockTimeSec}`).toBeLessThanOrEqual(40);
+      }
+    }
+  });
+
   it('refuses a target the chain has not reached', async () => {
     const rpc = fakeRpc({ genesisTs: 0, latest: 100n });
     const latest = await rpc.latestBlock();
@@ -83,7 +104,7 @@ describe('firstBlockAtOrAfter', () => {
 
 describe('createViemRpc', () => {
   it('supports Base, Ethereum and BNB Chain, each with its own log range and block time', () => {
-    expect(createViemRpc('http://localhost:1', 8453)).toMatchObject({ maxLogRange: 2000n, blockTimeSec: 2 });
+    expect(createViemRpc('http://localhost:1', 8453)).toMatchObject({ maxLogRange: 2000n, blockTimeSec: 0.2 });
     expect(createViemRpc('http://localhost:1', 1)).toMatchObject({ maxLogRange: 10_000n, blockTimeSec: 12 });
     expect(createViemRpc('http://localhost:1', 56)).toMatchObject({ maxLogRange: 50_000n, blockTimeSec: 0.45 });
     let err: OrionError | undefined;
@@ -99,7 +120,7 @@ describe('createViemRpc', () => {
 
 describe('the chain table', () => {
   it('gives Base a keyless default RPC and Ethereum and BNB Chain none', () => {
-    expect(CHAINS[8453]).toMatchObject({ name: 'Base', maxLogRange: 2000n, blockTimeSec: 2, defaultRpcUrl: 'https://mainnet.base.org' });
+    expect(CHAINS[8453]).toMatchObject({ name: 'Base', maxLogRange: 2000n, blockTimeSec: 0.2, defaultRpcUrl: 'https://mainnet.base.org', confirmations: 9000n });
     expect(CHAINS[1]).toMatchObject({ name: 'Ethereum', maxLogRange: 10_000n, blockTimeSec: 12, defaultRpcUrl: null });
     expect(CHAINS[56]).toMatchObject({ name: 'BNB Chain', maxLogRange: 50_000n, blockTimeSec: 0.45, defaultRpcUrl: null });
     expect(DEFAULT_RPC_URLS).toEqual({ 8453: 'https://mainnet.base.org' });

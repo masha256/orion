@@ -59,7 +59,7 @@ export interface RpcTransport {
   getReceiptLogs?(txHash: string): Promise<ReceiptLog[]>;
   /** Blocks one eth_getLogs call may span on this chain. Default MAX_LOG_RANGE (Base's cap). */
   readonly maxLogRange?: bigint;
-  /** Nominal seconds per block, for the block search's first estimate. Default 2 (Base). */
+  /** Nominal seconds per block, for the block search's first estimate. Default 2 when the transport states none. */
   readonly blockTimeSec?: number;
 }
 
@@ -100,9 +100,13 @@ export async function* getLogsChunked(
 }
 
 /**
- * The first block whose timestamp is at or after `targetTs`. Estimates from the anchor at
- * `blockTimeSec` per block (default: the transport's own, else 2), then corrects; it converges on irregular chains
- * too, just more slowly.
+ * The first block whose timestamp is at or after `targetTs`. The first probe is estimated from the anchor at
+ * `blockTimeSec` per block (default: the transport's own, else 2). After that the search keeps a bracket and estimates
+ * from the blocks it has seen, not from the nominal rate: between two known blocks it interpolates on their own rate,
+ * and while every probe is still at or after the target it steps back at least twice as far each time. A step that
+ * does not halve the bracket is followed by a bisection. So a chain whose block time changes (Base went from 2 s to
+ * 0.2 s at block ~53,556,072 on 2026-11-05) or halts is still found in a few dozen probes, and a regular chain in a
+ * handful.
  */
 export async function firstBlockAtOrAfter(
   rpc: RpcTransport,
@@ -114,23 +118,44 @@ export async function firstBlockAtOrAfter(
   if (latest.timestamp < targetTs) throw new Error(`no block at or after ${new Date(targetTs * 1000).toISOString()} yet`);
   const clamp = (n: bigint): bigint => (n < 0n ? 0n : n > latest.number ? latest.number : n);
   const estimateFrom = (b: BlockRef): bigint => b.number + BigInt(Math.round((targetTs - b.timestamp) / blockTimeSec));
+  /** Between a block before the target and one at or after it, on the rate those two blocks show. */
+  const interpolate = (a: BlockRef, z: BlockRef): bigint => {
+    const span = z.timestamp - a.timestamp;
+    if (span <= 0) return (a.number + z.number) / 2n;
+    return a.number + BigInt(Math.ceil(((targetTs - a.timestamp) / span) * Number(z.number - a.number)));
+  };
 
   // Bracket the answer: `lo` is the highest block known to be before the target, `hi` the lowest
-  // known to be at or after it. Probe the time-based estimate while it falls strictly inside the
-  // bracket; otherwise bisect. A pure estimate-and-jump search ping-pongs across a chain halt.
+  // known to be at or after it. Probe the estimate while it falls strictly inside the bracket and the last step
+  // halved it; otherwise bisect. A pure estimate-and-jump search ping-pongs across a chain halt.
   let lo: BlockRef | null = null;
   let hi: BlockRef = latest;
   let next = clamp(estimateFrom(anchor));
+  let lastWidth: bigint | null = null;
   for (let i = 0; i < 64; i++) {
     if (hi.number === 0n || (lo !== null && hi.number - lo.number === 1n)) return hi;
     const b = await rpc.getBlock(next);
+    const before = hi;
     if (b.timestamp < targetTs) lo = b;
     else hi = b;
     const lowest: bigint = lo === null ? 0n : lo.number + 1n;
     const highest: bigint = hi.number - 1n;
     if (lowest > highest) continue; // adjacent (or hi is block 0): the check at the top of the loop returns
-    const estimate = estimateFrom(b);
-    next = estimate >= lowest && estimate <= highest ? estimate : lo === null ? highest : (lowest + highest) / 2n;
+    let estimate: bigint;
+    if (lo !== null) {
+      estimate = interpolate(lo, hi);
+    } else {
+      estimate = estimateFrom(b);
+      // A second probe in a row at or after the target with nothing before it: the nominal rate overstates the
+      // block time, so step back at least twice as far as the last step did.
+      const moved = before.number - b.number;
+      if (hi === b && before !== latest && moved > 0n && estimate > b.number - 2n * moved) estimate = b.number - 2n * moved;
+      if (estimate < lowest) estimate = lowest;
+    }
+    const width = highest - lowest;
+    const slow = lo !== null && lastWidth !== null && width * 2n > lastWidth;
+    if (lo !== null) lastWidth = width;
+    next = !slow && estimate >= lowest && estimate <= highest ? estimate : lo === null ? highest : (lowest + highest) / 2n;
   }
   throw new Error(`could not locate the first block at or after ${new Date(targetTs * 1000).toISOString()}`);
 }
