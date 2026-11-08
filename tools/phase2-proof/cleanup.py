@@ -3,10 +3,10 @@
 
     cleanup.py <P>
 
-<P> is the directory snapshot.sh filled; <P>/schema names the schema in orion_dev. Refuses (exit 2, nothing touched)
+<P> is the directory prod_copy.py filled; <P>/schema names the schema in orion_dev. Refuses (exit 2, nothing touched)
 a <P> that is not strictly inside $TMPDIR, or a schema name not matching ^p2proof_[0-9a-z_]+$. Then runs
 `DROP SCHEMA IF EXISTS "<s>" CASCADE` with psql, checks the schema is gone, and removes <P> with shutil.rmtree.
-Without <P>/schema (snapshot.sh stopped before naming one) only <P> is removed.
+Without <P>/schema (prod_copy.py stopped before naming one) only <P> is removed.
 """
 import os
 import re

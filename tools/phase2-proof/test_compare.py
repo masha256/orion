@@ -307,6 +307,45 @@ class CompareTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertTrue(any(l.startswith("FAIL lit") and "incomeStatement.revenue.annualized" in l for l in lines), lines)
 
+    # G2 decision 2 (Mike, 2026-11-07): a residual field passes at rel <= 1e-12 OR abs <= $0.01; nothing else loosened.
+    def with_unreconciled(self, value):
+        self.with_income_statement()
+        obj = self.out.new_obj("ycrv")
+        obj["incomeStatement"]["unreconciled"] = {"annualized": value, "pct": -0.0001, "basis": "grossProfit"}
+        self.out.write("new", "ycrv.json", js_json(obj))
+
+    def test_the_residual_paths_are_listed_explicitly(self):
+        self.assertEqual(compare.RESIDUAL_USD_PATHS, ("incomeStatement.unreconciled.annualized",))
+        self.assertEqual(compare.RESIDUAL_ABS_USD, 0.01)
+
+    def test_g2_2_the_observed_unreconciled_pair_passes_on_the_cent_floor(self):
+        new, want = -88.17694701033179, -88.1769470104482
+        self.assertGreater(compare.rel_diff(new, want), compare.REL_TOL)  # it fails the relative test alone
+        self.with_unreconciled(new)
+        ok, lines = self.run_v2(reclass=self.reclass_map(ycrv={"incomeStatement.revenue.annualized": 100.0, "incomeStatement.unreconciled.annualized": want}))
+        self.assertTrue(ok, lines)
+
+    def test_g2_2_a_two_cent_unreconciled_gap_fails(self):
+        self.with_unreconciled(-88.15)
+        ok, lines = self.run_v2(reclass=self.reclass_map(ycrv={"incomeStatement.revenue.annualized": 100.0, "incomeStatement.unreconciled.annualized": -88.17}))
+        self.assertFalse(ok)
+        self.assertTrue(any(l.startswith("FAIL ycrv") and "unreconciled" in l for l in lines), lines)
+
+    def test_g2_2_the_floor_does_not_reach_other_fields(self):
+        self.with_income_statement(value=100.005)
+        ok, lines = self.run_v2(reclass=self.reclass_map(lit={"incomeStatement.revenue.annualized": 100.0}))
+        self.assertFalse(ok)
+        self.assertTrue(any(l.startswith("FAIL lit") for l in lines), lines)
+        # nor the parity map's (a revenue pair a fraction of a cent apart still fails)
+        ok, lines = self.run_v2(parity=self.parity_map(), reclass=self.reclass_map(**{a: {"incomeStatement.revenue.annualized": 100.005} for a in compare.RECLASS_ASSETS}))
+        self.assertFalse(ok)
+        self.assertTrue(any(l.startswith("FAIL aero") and "parity revenue" in l for l in lines), lines)
+
+    def test_g2_2_a_null_residual_still_needs_a_null_expectation(self):
+        self.with_unreconciled(None)
+        ok, _ = self.run_v2(reclass=self.reclass_map(ycrv={"incomeStatement.revenue.annualized": 100.0, "incomeStatement.unreconciled.annualized": 0.0}))
+        self.assertFalse(ok)
+
     def test_a_reclass_path_missing_on_the_new_side_fails(self):
         self.with_income_statement()
         ok, _ = self.run_v2(reclass=self.reclass_map(sdcrv={"incomeStatement.revenue.annualized": 100.0, "incomeStatement.belowLine.toHolders": 1.7}))
@@ -603,47 +642,6 @@ const args = process.argv.slice(2);
 if (args.includes('--help')) { process.stdout.write('Usage: orion report yield <asset> [--day <d>] [--json]\n'); process.exit(0); }
 process.stdout.write(JSON.stringify({ args }, null, 2) + '\n');
 """
-
-
-# A release CLI for snapshot.sh: `db migrate` exits 1 unless ORION_ENV_FILE is <ORION_HOME>/.env, else prints JSON.
-MIGRATE_CLI = STRICT_CLI.replace("if (args.includes('--help'))", "if (args[0] === 'db' && args[1] === 'migrate') { process.stdout.write(JSON.stringify({ applied: [] }) + '\\n'); process.exit(0); }\nif (args.includes('--help'))")
-
-
-class SnapshotTest(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def test_snapshot_sh_passes_orion_env_file_to_db_migrate(self):
-        import sqlite3
-        src = self.root / "src.db"
-        con = sqlite3.connect(src)
-        con.execute("create table t (x integer)")
-        con.commit()
-        con.close()
-        rel = self.root / "orion-new"
-        (rel / "dist" / "cli").mkdir(parents=True)
-        (rel / "RELEASE").write_text("{}")
-        (rel / "dist" / "cli" / "index.js").write_text(MIGRATE_CLI)
-        # A stub npx stops the script at the import step, so nothing reaches Postgres.
-        bin_ = self.root / "bin"
-        bin_.mkdir()
-        (bin_ / "npx").write_text("#!/bin/sh\necho stub-npx >\"$P2_TEST_NPX_LOG\"\nexit 1\n")
-        (bin_ / "npx").chmod(0o755)
-        log = self.root / "npx.log"
-        env = {k: v for k, v in os.environ.items() if not k.startswith("ORION_")}
-        env.update(TMPDIR=str(self.root), PATH=f"{bin_}:{env.get('PATH', '/usr/bin:/bin')}",
-                   P2_SOURCE_DB=str(src), P2_NEW_DIST=str(rel / "dist"), P2_TEST_NPX_LOG=str(log))
-        P = self.root / "p2"
-        r = subprocess.run(["bash", str(HERE / "snapshot.sh"), str(P)], capture_output=True, text=True, env=env)
-        self.assertNotEqual(r.returncode, 0)
-        self.assertNotIn("db migrate failed", r.stderr, (P / "migrate.stderr").read_text() if (P / "migrate.stderr").exists() else "")
-        self.assertIn("import failed", r.stderr)
-        self.assertEqual(json.loads((P / "migrate.json").read_text()), {"applied": []})
-        self.assertTrue(log.exists())
 
 
 class ReportsTest(unittest.TestCase):

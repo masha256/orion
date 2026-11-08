@@ -149,7 +149,7 @@ describe('backfillProvenance', () => {
  * (b) the 2026-09-18 research-pass seeds (VVV): legacy disclosures, the note kept and quoted. (c) Rejected rows alike.
  */
 describe('backfillProvenance: pre-v2 manual rows without a citation (pre-G2 decision 2)', () => {
-  const ARTIFACT = 'DefiLlama artifact: 2026-09-09 spike ruled an artifact by Mike, set to the mean of 09-08 and 09-10';
+  const ARTIFACT = 'DefiLlama artifact: 2026-09-10 spike ruled an artifact by Mike, set to the mean of 09-09 and 09-11';
   const SEED = 'research pass 2026-09-18: Venice blog, staking dashboard';
   async function at(db: Db, r: { assetId: string; metricKey: string; observedAt: string; value: number; source: string; detail: string | null; status?: string; quoted?: string | null; periodDays?: number | null }): Promise<number> {
     const res = await db.run<{ id: number }>(

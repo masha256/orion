@@ -15,6 +15,10 @@ reads both values from the reports; they must agree at rel <= 1e-12. A path miss
 null only when both are null.
 --reclass: {"<asset>": {"<dotted path>": expected}} (expected.py); each path, read on the new side (incomeStatement
 included), must equal the value at rel <= 1e-12.
+G2 decision 2 (Mike, 2026-11-07): a residual field (RESIDUAL_USD_PATHS: incomeStatement.unreconciled.annualized, a
+remainder in USD a year whose expected value is a difference of large terms) also passes at |new - expected| <= $0.01,
+in either map. Nothing else has the floor: unreconciled.pct is a share (no USD floor applies, and no map compares it),
+unreconciled.basis a string.
 Paths are dotted keys; a step `key[field=value]` selects the one element of the list at `key` whose `field` is `value`
 (e.g. `income.lines[id=vecrv_fees].annualized`); none or several matches is a missing path.
 Once any new-side report has `incomeStatement`, both maps are required and together must cover the 13 assets exactly
@@ -31,6 +35,9 @@ from pathlib import Path
 
 MIN_ASSETS = 13
 REL_TOL = 1e-12
+# G2 decision 2: the residual-type fields, listed explicitly, and their absolute floor in USD.
+RESIDUAL_USD_PATHS = ("incomeStatement.unreconciled.annualized",)
+RESIDUAL_ABS_USD = 0.01
 LIST_FILES = ("anomalies.json", "proposals.json")
 NOT_ASSETS = set(LIST_FILES) | {"expected.json", "parity.json"}
 PARITY_ASSETS = ("aero", "cake", "crv", "cvxcrv", "hype", "link", "pump", "sky", "uni", "vvv")
@@ -98,6 +105,19 @@ def rel_diff(a, b):
     if a == b:
         return 0.0
     return abs(a - b) / max(abs(a), abs(b))
+
+
+def within_tol(v2_path, got, want):
+    """(ok, reason detail): rel <= REL_TOL, or for a RESIDUAL_USD_PATHS field |got - want| <= RESIDUAL_ABS_USD."""
+    r = rel_diff(got, want)
+    if r <= REL_TOL:
+        return True, ""
+    if v2_path in RESIDUAL_USD_PATHS and is_num(got) and is_num(want):
+        gap = abs(got - want)
+        if gap <= RESIDUAL_ABS_USD:
+            return True, ""
+        return False, f"rel {r:.3g} > {REL_TOL:g} and abs {gap:.3g} > {RESIDUAL_ABS_USD:g} USD"
+    return False, f"rel {r:.3g} > {REL_TOL:g}"
 
 
 _MISSING = object()
@@ -181,9 +201,9 @@ def check_parity(asset, new_obj, old_obj, pairs):
         want = get_path(old_obj, v1_path)
         if want is _MISSING:
             return f"parity {label}: {v1_path} missing on the old side"
-        r = rel_diff(got, want)
-        if not r <= REL_TOL:
-            return f"parity {label}: new {v2_path} {json.dumps(got)} vs old {v1_path} {json.dumps(want)} (rel {r:.3g} > {REL_TOL:g})"
+        ok, why = within_tol(v2_path, got, want)
+        if not ok:
+            return f"parity {label}: new {v2_path} {json.dumps(got)} vs old {v1_path} {json.dumps(want)} ({why})"
     return None
 
 
@@ -194,9 +214,9 @@ def check_reclass(asset, new_obj, values):
         got = get_path(new_obj, path)
         if got is _MISSING:
             return f"reclass {path}: missing on the new side"
-        r = rel_diff(got, want)
-        if not r <= REL_TOL:
-            return f"reclass {path}: new {json.dumps(got)} vs expected {json.dumps(want)} (rel {r:.3g} > {REL_TOL:g})"
+        ok, why = within_tol(path, got, want)
+        if not ok:
+            return f"reclass {path}: new {json.dumps(got)} vs expected {json.dumps(want)} ({why})"
     return None
 
 

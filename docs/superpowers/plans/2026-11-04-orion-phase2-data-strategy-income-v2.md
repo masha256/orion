@@ -30,6 +30,10 @@ migration may assume it ships in the cutover release.
 any prod fetch failure), Task 7b (yCRV option A) and Task 9; stop at G2. st-yCRV ruling R6 stands (fee out of the
 statement). Listing bar stays as built (revenue + holders + supply, D6). Task 3's silent-spec defaults accepted.
 
+**Gate G2 signed off by Mike 2026-11-07** (USD basis: every metric with token buckets matched the stored USD at 0.000%
+over 91 days on a read-only prod copy; table in W/g2-usd-table.txt, W = `.superpowers/sdd/2026-11-04-orion-phase2-data-strategy-income-v2/`);
+**decision G2-2:** $0.01 absolute floor on residual reclass checks (`tools/phase2-proof/compare.py` `RESIDUAL_USD_PATHS`).
+
 **Pre-G2 decisions (Mike, 2026-11-07, "proceed and apply recommendations"; details in the followups note):**
 (1) the CRV-family `sum` checks (crv `splitter`, sdcrv `crv_fee`, ycrv `splitter`) get `tolerance_abs: 1` USD: a day
 breaches only past both tolerance_pct and $1 (the existing balance/supply meaning); yCRV `gross_by_sender` keeps 1e-6 %.
@@ -42,9 +46,10 @@ expands. **P4 is lifted:** the Phase 1.5 cutover is done (prod releases `orion-2
 `orion-2026.11.07.1` = 895c8a1), and this branch is rebased on `origin/main` 895c8a1; staging deploys still need
 Mike's go.
 
-**Base:** `feat/data-strategy` = `feat/daemon` @ f5f36fa + 3 spec commits (tip fdbbbf3). Never rebase onto `main`, and
-never branch from it. `main` has no Postgres code, and Phase 1.5 merges into `main` only at the cutover. (Until the
-cutover; since 2026-11-07 the base is `origin/main` 895c8a1, which holds the Phase 1.5 platform.)
+**Base:** before the Phase 1.5 cutover, `feat/data-strategy` stacked on `feat/daemon` (@ f5f36fa + 3 spec commits, tip
+fdbbbf3) and was never rebased onto `main`, because `main` had no Postgres code until Phase 1.5 merged at the cutover.
+Since the cutover (2026-11-07) `feat/daemon` is merged and the base is `origin/main` (895c8a1, which holds the Phase 1.5
+platform).
 
 **Baseline (2026-11-04, this worktree @ fdbbbf3, node_modules -> `.worktrees/daemon/node_modules`):**
 `npx vitest run --maxWorkers=2` 113 files / 1207 tests passed in 66 s; `npm run typecheck` clean; no `t_*` schemas left
