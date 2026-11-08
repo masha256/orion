@@ -140,8 +140,10 @@ in `orion_test`.
 ## Global Constraints
 
 - No live writes: never touch `/home/hermes/git/orion` (tree, `orion.db`, `.env`, `dist/`, `backups/`), prod on venus,
-  or `masha256/orion-data`. Read live only as `sqlite3 'file:/home/hermes/git/orion/orion.db?mode=ro'` (its `.backup`
-  included). No staging deploys from this plan before the Phase 1.5 cutover (P4); after it, only with Mike's go.
+  or `masha256/orion-data`. Read prod only through `sql-ro` (`tools/phase2-proof/prod_ro.py`, a READ ONLY transaction
+  as `orion_prod_ro`); since the cutover nothing reads the old SQLite database (Mike's rule; before it, live was read
+  as `sqlite3 'file:/home/hermes/git/orion/orion.db?mode=ro'`). No staging deploys from this plan before the Phase 1.5
+  cutover (P4); after it, only with Mike's go.
 - No analyst spend: never run `agent run`, `tick` with the agent, `bootstrap`, or a disclosure ingest without `--dry-run`.
 - Scratch homes: `ORION_HOME=<dir under $TMPDIR>` inline on every command. A `.env` copy has its `ORION_HOME=` line
   deleted, the home is removed with a `.py` `shutil.rmtree` at the end, and the live `.env` is never sourced.
@@ -153,8 +155,9 @@ in `orion_test`.
 - **Values unchanged.** Each task that touches the report ends with the cross-release proof, run by the controller:
   - The old side is the staging release `orion-2026.11.04.2` (`/home/hermes/orion-releases/orion-2026.11.04.2.tgz`,
     extracted under `$TMPDIR`). The new side is this branch built in its worktree.
-  - Both run against one `p2proof_*` schema, imported from a fresh `.backup` of live with `tools/import-sqlite` and
-    migrated by the new release (an older release opens a newer schema).
+  - Both run against one `p2proof_*` schema: a fresh read-only copy of prod (`tools/phase2-proof/prod_copy.py`, prod
+    read only through `sql-ro`; it replaced the SQLite `.backup` + `tools/import-sqlite` route at the cutover), migrated
+    by the new release (an older release opens a newer schema).
   - They run `report yield <a> --day D --json` (new side with `--legacy`) for all 13 assets, plus
     `data anomalies --all --json` and `proposals list --json`.
   - With `incomeStatement` deleted, every legacy JSON must be **byte-identical** to the old side for all 13 assets. Its

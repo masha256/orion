@@ -285,11 +285,28 @@ the newest `prices` row at or before the hour, coingecko first, at most 6 hours 
 `legacy_usd` = `value`, and `usd` / `usd_basis` = hourly | usd_native | legacy_unpriced | legacy_no_hourly |
 legacy_no_tokens). No report code reads the view; the report still reads `value` (Task 8 switches it after G2).
 **Task 8 (after G2, built):** income statement v2 reads the view (`src/report/load.ts` `statementSeries`): per day row
-`dailyOf` selects, the view's `usd` where `usd_basis` is hourly or usd_native, else `value`; each statement line carries
-`priceBasis` (`hourly` | `usd_native` | `legacy` | `mixed` over its window days, null without a daily USD series), and
-`incomeStatement.priceBasis.flows` says so. The legacy v1 keys (`--legacy`, the tick's v1 fields) keep reading `value`,
-byte for byte; the default report day is still chosen from `value` rows. Periodic streams (HYPE reserve yield) stay on
-`value`, labelled legacy. Snapshot `schema` stays 1.
+`dailyOf` selects, the view's `usd` where `usd_basis` is usd_native, or hourly on a row whose stored USD was itself
+hourly-priced at ingest (its day starts within `HOURLY_SERIES_DAYS` = 90 of its `fetched_at`: `pricedHourlyAtIngest`,
+`src/db/prices.ts`, the one rule `compare-usd`'s within/beyond split also uses), else `value`; each statement line
+carries `priceBasis` (`hourly` | `usd_native` | `legacy` | `mixed` over every day its figures read, the window and
+growth's prior window; null without a daily USD series), and `incomeStatement.priceBasis.flows` says so. The legacy v1
+keys (`--legacy`, the tick's v1 fields) keep reading `value`, byte for byte; the default report day is still chosen from
+`value` rows. Periodic streams (HYPE reserve yield) stay on `value`, labelled legacy. Snapshot `schema` stays 1.
+Task 8 review fix round 1 (controller rulings):
+- I-1: G2 signed off only the within days (0.000% vs stored), so v2 equals v2 before Task 8 on real data. The older
+  backfilled rows (`beyond`: priced from daily points at ingest, now fully covered by the hourly price backfill) stay on
+  their stored USD, labelled legacy. **Phase 3 option for Mike:** re-price the beyond rows at hourly prices. Measured on
+  a read-only prod copy, D-181..D-91 for D = 2026-11-05 (growth's prior window), Σ(hourly − stored) over the beyond rows:
+  vvv `flow_usd.burn` +15,002.12 (68 rows), uni `flow_usd.burn` +43,068.12, cake `flow_usd.burn` +55,417.09, cake
+  `flow_usd.treasury` +23,694.86, vvv `flow_usd.burn_programmatic` −28.54 (prior windows +0.3% to +1.9%); within rows 0.
+  It needs its own per-metric beyond table over 182 days and Mike's decision.
+- M-2 (no change): reconciliation checks stay on the stored `value` (`src/checks/evaluate.ts`) while v2 lines read the
+  view; within the hourly series hourly == stored at 0%, and beyond rows are legacy, so `incomeStatement.checks[].lhs/rhs`
+  reconcile the printed figures (yCRV `splitter`, `gross_by_sender`). Revisit if a later phase re-prices beyond rows or
+  the two bases part: then read checks from the statement's basis.
+- M-6 (deferred, Phase 3): `listFlowUsd` evaluates flow_usd_v over the asset's whole history (every row's 24 lateral
+  price lookups) in one query; bound it by `metric_key = ANY(...)` and `observed_at` (target − 2W − 1 .. target + 1) as
+  history grows.
 
 Dual write (values unchanged, plan correction 2):
 - Transfer scans (`src/ingest/flow.ts`): the per-day count moved into `openDayScanner`, shared with the backfill, so both
@@ -546,6 +563,8 @@ Can wait (final review triage), by phase:
 | T9 | no-URL test checks TERMS, not generated output | Phase 5 export |
 | T9 | fallback hosts (Base/Solana public RPC, pro-api.coingecko.com) not register rows | Phase 5, before the export reads the register |
 | T9 | 'date checked' on quoted rows | Phase 5 |
+| T8 M-6 | bound `listFlowUsd`'s flow_usd_v read by metric and `observed_at` (whole history today) | Phase 3 |
+| T8 I-1 | option: re-price the `beyond` (daily-priced backfill) rows at hourly prices (deltas in the Task 8 paragraph) | Phase 3, Mike's decision |
 | pre-G2 4 | `orion-remote` verbs (or `job run-now` kinds) for `db backfill-provenance`, `data fetch --backfill-days`, `data backfill-tokens`, `data compare-usd`, so a release step needs no `sudo -iu` | Phase 3 |
 
 Dropped (final review triage): T0 M2, M3, M8, `get_path` and ids containing `.`; T2 statementShape ids/of-only pins

@@ -8,8 +8,10 @@ P2_PROD_SSH holds the ssh arguments (identity, options, user@host), split like a
 the key is built in, and an empty P2_PROD_SSH is refused. `-o BatchMode=yes` is always added, so a missing key fails
 instead of prompting.
 
-orion-remote prints `{"rows": [...]}` (or `{"error": {...}}`) and caps its output at 1 MB: a reply cut at the cap is
-not JSON and raises `Unparseable`, which callers that page (prod_copy.fetch_by_id) answer by halving the page.
+orion-remote prints `{"rows": [...]}` (or `{"error": {...}}`) and caps its output at 1 MB: a reply cut at the cap exits
+0 with `orion-remote: output truncated at 1 MB` on stderr (and exactly 1 MB of stdout). Only that raises `Truncated`,
+which callers that page (prod_copy.fetch_by_id) answer by halving the page. Any other reply that is not JSON (an ssh or
+transport failure: exit 255 and no output, a non-zero exit, an empty reply) raises ProdRoError and is never retried.
 A `json_agg(...)` column arrives as a JSON STRING, not a list: `unwrap_rows` takes either.
 """
 import json
@@ -19,14 +21,17 @@ import subprocess
 import sys
 
 TIMEOUT_S = 120
+# orion-remote v_sql_ro (scripts/provision/files/orion-remote): SQL_OUTPUT_CAP and the stderr line it prints on a cut.
+OUTPUT_CAP_BYTES = 1024 * 1024
+TRUNCATION_MARKER = "orion-remote: output truncated at 1 MB"
 
 
 class ProdRoError(RuntimeError):
     pass
 
 
-class Unparseable(ProdRoError):
-    """sql-ro printed something that is not JSON: most often a reply truncated at orion-remote's 1 MB cap."""
+class Truncated(ProdRoError):
+    """sql-ro's reply was cut at orion-remote's 1 MB cap (exit 0, the stderr marker or exactly the cap's bytes)."""
 
 
 def quote_ident(name):
@@ -54,13 +59,23 @@ def ssh_argv(spec):
     return ["ssh", "-o", "BatchMode=yes", *shlex.split(spec)]
 
 
+def is_truncated(stdout, returncode, stderr):
+    """orion-remote cut the reply at its cap: exit 0 and its stderr marker, or exit 0 and exactly the cap's bytes."""
+    if returncode != 0 or not stdout:
+        return False
+    return TRUNCATION_MARKER in (stderr or "") or len(stdout.encode("utf-8")) >= OUTPUT_CAP_BYTES
+
+
 def parse_output(stdout, returncode, stderr):
-    """The rows of one sql-ro reply; Unparseable when not JSON, ProdRoError on an error document or no rows."""
+    """The rows of one sql-ro reply. Not JSON: Truncated when cut at the cap (is_truncated), else ProdRoError (ssh or
+    transport failure, never retried); ProdRoError on an error document or no rows."""
     try:
         doc = json.loads(stdout)
     except (json.JSONDecodeError, TypeError):
-        raise Unparseable(f"sql-ro: unparseable output (exit {returncode}, {len(stdout or '')} bytes): "
-                          f"{(stdout or '')[:200]!r} {(stderr or '')[:300]!r}") from None
+        detail = f"(exit {returncode}, {len(stdout or '')} bytes): {(stdout or '')[:200]!r} {(stderr or '')[:300]!r}"
+        if is_truncated(stdout, returncode, stderr):
+            raise Truncated(f"sql-ro: output truncated at the 1 MB cap {detail}") from None
+        raise ProdRoError(f"sql-ro: no JSON reply, ssh or transport failure {detail}") from None
     if isinstance(doc, dict) and doc.get("error") is not None:
         raise ProdRoError(f"sql-ro error: {json.dumps(doc['error'])[:500]}")
     if not isinstance(doc, dict) or not isinstance(doc.get("rows"), list):

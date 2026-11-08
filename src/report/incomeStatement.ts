@@ -14,9 +14,9 @@ import { crossCheckTypesOf, LISTING_RUNGS, sourceLabelOf, sourceTypeOf, type Sou
  * share is equal by construction (the parity map, PARITY below). `yields`, `dilution` and the supply line are copied
  * from the v1 report (spec §7 "as today").
  * Task 8 (after G2): the loader gives v2 its own daily series (`ReportInput.statementDaily`: tokens x hourly prices where a
- * row's hourly coverage is full, else the stored USD) and the v1 report it copies from is computed over those same series;
+ * row's hourly coverage is full and its stored USD was hourly-priced at ingest, else the stored USD) and the v1 report it copies from is computed over those same series;
  * the legacy v1 object keeps the stored `value`. So v2 and v1 then agree to the G2 deltas (float noise), not bit for bit.
- * Each line's `priceBasis` labels its window days.
+ * Each line's `priceBasis` labels the days it reads (the window and growth's prior window).
  *
  *   revenue        = Σ revenue lines
  *   gross profit   = revenue − Σ cost_of_revenue          (null if any cost line is not_measured)
@@ -36,9 +36,11 @@ import { crossCheckTypesOf, LISTING_RUNGS, sourceLabelOf, sourceTypeOf, type Sou
 export type IsMethod = 'measured' | 'derived' | 'disclosed' | 'not_measured';
 
 /**
- * Task 8: what a line's USD days in the window are priced on. One label when every day of every USD series the line
- * reads has it (`hourly`: tokens x hourly prices; `usd_native`: a first-party API's dollars; `legacy`: the stored USD),
- * `mixed` otherwise, null when the line reads no daily USD series (a level, a line not measured).
+ * Task 8: what a line's USD days are priced on, over every day its figures read: the window and growth's prior window
+ * (a line's growth reads the same series as its annualized figure, over both windows). One label when every such day of
+ * every USD series the line reads has it (`hourly`: tokens x hourly prices; `usd_native`: a first-party API's dollars;
+ * `legacy`: the stored USD), `mixed` otherwise, null when the line reads no daily USD series (a level, a line not
+ * measured).
  */
 export type LinePriceBasis = PriceBasis | 'mixed' | null;
 
@@ -502,12 +504,14 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     if (ms.length === 0) return null;
     return windowDaysList.filter((d) => ms.every((m) => rowProv!.get(m)?.get(d)?.method === 'measured')).length;
   };
-  // Task 8: the basis of a line's USD days in the window (the loader's `priceBasis`; absent, every day is the stored USD).
+  // Task 8: the basis of every USD day a line's figures read (the loader's `priceBasis`; absent, every day is the stored
+  // USD): the window and growth's prior window, since a line's growth reads the same series over both (fix round 1, M-1).
   const dayBasis = input.priceBasis;
+  const basisDaysList = Array.from({ length: 2 * W }, (_, i) => addDays(day, -i));
   const basisOf = (...vs: Value[]): LinePriceBasis => {
     const seen = new Set<PriceBasis>();
     for (const m of uniq(vs.flatMap(termMetrics)).filter((x) => x.startsWith('flow_usd.'))) {
-      for (const d of windowDaysList) if (input.daily.get(m)?.has(d) === true) seen.add(dayBasis?.get(m)?.get(d) ?? 'legacy');
+      for (const d of basisDaysList) if (input.daily.get(m)?.has(d) === true) seen.add(dayBasis?.get(m)?.get(d) ?? 'legacy');
     }
     return seen.size === 0 ? null : seen.size === 1 ? [...seen][0]! : 'mixed';
   };
@@ -969,7 +973,7 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
       price, metric: STD_METRICS.price, sourceType: priceDef ? sourceTypeOf(priceDef, asset.metrics) : null, source: priceDef ? sourceLabelOf(priceDef) : null,
       day, asOf: lv.asOf ?? null, flows: dayBasis === undefined
         ? "each flow day's USD at that day's price (the stored value)"
-        : "each flow day's USD from its tokens x hourly prices where every hour is priced, else the stored value (per line: priceBasis)",
+        : "each flow day's USD from its tokens x hourly prices where every hour is priced and the stored value was itself hourly-priced at ingest (the G2-signed days), else the stored value (per line: priceBasis)",
     },
     checks: (input.checks ?? []).map((c) => ({
       id: c.checkId, type: c.type, status: c.status, lhs: c.lhs, rhs: c.rhs, gapPct: c.gapPct,

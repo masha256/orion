@@ -101,8 +101,9 @@ async function dailyOf(db: Db, assetId: string, metricKey: string): Promise<Map<
 
 /**
  * Task 8 (after G2): income statement v2's daily series. The rows `dailyOf` reads (`rowsOf`: the same days), each valued from
- * flow_usd_v: tokens x hourly prices where every hour with an amount is priced, a first-party API's dollars where the
- * row is usd-native, else the stored `value`; `basis` says which per day. A metric that is not a USD flow (tokens, a
+ * flow_usd_v: tokens x hourly prices where every hour with an amount is priced and the row's stored USD was itself
+ * hourly-priced at ingest (`pricedHourlyAtIngest`: the G2-signed days), a first-party API's dollars where the row is
+ * usd-native, else the stored `value`; `basis` says which per day. A metric that is not a USD flow (tokens, a
  * level) is not in the view: its days keep `value` and get no basis. Periodic streams are left to `periodicDaily`
  * (stored value, basis legacy). The legacy (v1) report never calls this.
  */

@@ -14,7 +14,8 @@ Prod is only ever read through orion-remote's `sql-ro` verb (prod_ro.py: a READ 
   copy.json         per table: prod count, rows copied, local count; the observations per-asset sums, prod vs local
 Steps: migrate (old release) -> refuse unless local migration level = prod's and the table and column sets match ->
 truncate -> per table, page by id (`id > last and id <= top`, top = prod's max(id) read first, so rows the daemon adds
-meanwhile are left out; the page halves whenever a reply is cut at orion-remote's 1 MB cap), buffer the whole table and
+meanwhile are left out; the page halves only when a reply is cut at orion-remote's 1 MB cap, and an ssh or transport
+failure aborts), buffer the whole table and
 insert it in ONE transaction (observations.superseded_by references observations) -> local count must equal prod's
 count up to top -> sequences set to max -> observations per asset: count, sum(value order by id), max(id), prod vs
 local, must be equal (exactly: both sides add the same doubles in the same order). Any mismatch exits 1.
@@ -30,7 +31,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from prod_ro import ProdRoError, Unparseable, make_sql_ro, quote_ident, quote_literal, unwrap_rows  # noqa: E402
+from prod_ro import ProdRoError, Truncated, make_sql_ro, quote_ident, quote_literal, unwrap_rows  # noqa: E402
 
 DEV_URL = "postgresql://orion_dev@/orion_dev?host=/var/run/postgresql"
 SCHEMA_RE = re.compile(r"^p2proof_[0-9a-z_]+$")
@@ -60,13 +61,14 @@ def page_sql(table, last, top, limit):
 
 
 def fetch_by_id(sql_ro, table, top, page=FIRST_PAGE):
-    """Every prod row of `table` with id <= top, in id order. A page cut at the 1 MB cap (Unparseable) halves the page
-    size and is asked again; at one row it is refused. Other errors are not retried."""
+    """Every prod row of `table` with id <= top, in id order. A page cut at the 1 MB cap (Truncated) halves the page
+    size and is asked again; at one row it is refused. Other errors (an ssh or transport failure, an error document)
+    abort at once: never retried."""
     rows, last = [], -1
     while True:
         try:
             got = unwrap_rows(sql_ro(page_sql(table, last, top, page))[0]["j"])
-        except Unparseable:
+        except Truncated:
             if page == 1:
                 raise
             page = max(1, page // 2)

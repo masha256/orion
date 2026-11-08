@@ -157,16 +157,31 @@ export interface UsdComparison extends GapStats {
   noHourly: number;
 }
 
+/** CoinGecko answers `days=90` with hourly points (src/ingest/flow.ts loadPrices): older transfers were priced daily. */
+export const HOURLY_SERIES_DAYS = 90;
+
 /**
- * The basis a report figure is priced on (Task 8, after G2), as flow_usd_v reports it: `hourly` (every hour with an amount
- * priced: tokens x hourly prices), `usd_native` (a first-party API's dollars), else `legacy` (the stored USD: some hour
- * unpriced, no hourly buckets, or no tokens, e.g. DefiLlama and derived rows).
+ * Whether a daily row's stored USD (`value`) was priced from CoinGecko's hourly series at ingest: its day (observed_at
+ * less 24 h) starts no more than HOURLY_SERIES_DAYS before its fetched_at. Older rows (a backfill reaching past the
+ * hourly series) were priced from daily points (plan correction 13). The one rule for compareUsd's within/beyond split
+ * and for the report's basis.
+ */
+export function pricedHourlyAtIngest(observedAt: string, fetchedAt: string): boolean {
+  return Date.parse(observedAt) - 86_400_000 >= Date.parse(fetchedAt) - HOURLY_SERIES_DAYS * 86_400_000;
+}
+
+/**
+ * The basis a report figure is priced on (Task 8, after G2): `hourly` (flow_usd_v's tokens x hourly prices, every hour
+ * with an amount priced, on a row whose stored USD was itself hourly-priced at ingest), `usd_native` (a first-party API's
+ * dollars), else `legacy` (the stored USD: some hour unpriced, no hourly buckets, no tokens, e.g. DefiLlama and derived
+ * rows, or a row backfilled with daily prices, which G2 did not sign off at hourly prices).
  */
 export type PriceBasis = 'hourly' | 'usd_native' | 'legacy';
 
-/** flow_usd_v's `usd_basis` folded to the report's three labels. */
-export function priceBasisOf(usdBasis: string): PriceBasis {
-  return usdBasis === 'hourly' || usdBasis === 'usd_native' ? usdBasis : 'legacy';
+/** flow_usd_v's `usd_basis` and the row's ingest pricing (pricedHourlyAtIngest) folded to the report's three labels. */
+export function priceBasisOf(usdBasis: string, hourlyAtIngest: boolean): PriceBasis {
+  if (usdBasis === 'usd_native') return 'usd_native';
+  return usdBasis === 'hourly' && hourlyAtIngest ? 'hourly' : 'legacy';
 }
 
 /**
@@ -175,19 +190,17 @@ export function priceBasisOf(usdBasis: string): PriceBasis {
  * so the caller selects the rows exactly as it selects `value` rows. Read-only.
  */
 export async function listFlowUsd(db: Db, assetId: string): Promise<Map<number, { usd: number; basis: PriceBasis }>> {
-  const rows = await db.all<{ id: number; usd: number; legacy_usd: number; usd_basis: string }>(
-    'SELECT id, usd, legacy_usd, usd_basis FROM flow_usd_v WHERE asset_id = $1', [assetId],
+  const rows = await db.all<{ id: number; observed_at: string; fetched_at: string; usd: number; legacy_usd: number; usd_basis: string }>(
+    `SELECT v.id, v.observed_at, o.fetched_at, v.usd, v.legacy_usd, v.usd_basis
+     FROM flow_usd_v v JOIN observations o ON o.id = v.id WHERE v.asset_id = $1`, [assetId],
   );
   const out = new Map<number, { usd: number; basis: PriceBasis }>();
   for (const r of rows) {
-    const basis = priceBasisOf(r.usd_basis);
+    const basis = priceBasisOf(r.usd_basis, pricedHourlyAtIngest(r.observed_at, r.fetched_at));
     out.set(Number(r.id), { usd: basis === 'legacy' ? r.legacy_usd : r.usd, basis });
   }
   return out;
 }
-
-/** CoinGecko answers `days=90` with hourly points (src/ingest/flow.ts loadPrices): older transfers were priced daily. */
-export const HOURLY_SERIES_DAYS = 90;
 
 function percentile(sorted: number[], q: number): number | null {
   if (sorted.length === 0) return null;
@@ -239,8 +252,7 @@ export async function compareUsd(
       else if (r.usd_basis === 'legacy_no_tokens') noTokens++;
       else if (r.usd_basis === 'legacy_no_hourly') noHourly++;
       else {
-        const dayStartMs = Date.parse(r.observed_at) - 86_400_000;
-        const pricedDaily = r.usd_basis === 'hourly' && dayStartMs < Date.parse(r.fetched_at) - HOURLY_SERIES_DAYS * 86_400_000;
+        const pricedDaily = r.usd_basis === 'hourly' && !pricedHourlyAtIngest(r.observed_at, r.fetched_at);
         (pricedDaily ? beyond : within).push({ legacy: r.legacy_usd, hourly: r.usd });
         if (r.usd_basis === 'usd_native') usdNative++;
       }

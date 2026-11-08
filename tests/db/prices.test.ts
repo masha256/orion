@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { insertObservation } from '../../src/db/observations.js';
-import { compareUsd, evmTokenRef, listPrices, upsertPrices, upsertToken, USD_TOKEN } from '../../src/db/prices.js';
+import { compareUsd, evmTokenRef, HOURLY_SERIES_DAYS, listFlowUsd, listPrices, pricedHourlyAtIngest, upsertPrices, upsertToken, USD_TOKEN } from '../../src/db/prices.js';
 import { parseMarketChart } from '../../src/ingest/flow.js';
 import { COINGECKO_PRICE_SOURCE, fetchHourlyRange, hourlyPriceRows } from '../../src/prices/coingeckoHourly.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
@@ -149,6 +149,31 @@ describe('the flow_usd_v naming rule', () => {
     const flows = listAssetIds(root).flatMap((id) => Object.entries(loadAsset(root, id).config.metrics).filter(([, d]) => d.type === 'flow').map(([k, d]) => ({ id, k, unit: d.unit })));
     expect(flows.length).toBeGreaterThan(50);
     expect(flows.filter((f) => f.k.startsWith('flow_usd.') !== (f.unit === 'usd'))).toEqual([]);
+  });
+});
+
+describe('pricedHourlyAtIngest (correction 13: one rule for compareUsd and the report)', () => {
+  it('a day starting within HOURLY_SERIES_DAYS of its fetch was priced hourly at ingest; earlier, daily', () => {
+    expect(HOURLY_SERIES_DAYS).toBe(90);
+    const fetched = '2026-11-05T06:00:00Z';
+    // observed_at = day end; the day starts 24 h earlier. Boundary: start == fetched - 90 d is within.
+    expect(pricedHourlyAtIngest('2026-08-08T06:00:00Z', fetched)).toBe(true);
+    expect(pricedHourlyAtIngest('2026-08-08T05:59:59.999Z', fetched)).toBe(false);
+    expect(pricedHourlyAtIngest('2026-11-05T00:00:00Z', fetched)).toBe(true);
+    expect(pricedHourlyAtIngest('2026-07-02T00:00:00Z', fetched)).toBe(false);
+  });
+
+  it('listFlowUsd: a fully priced row fetched > 90 days after its day reads its stored USD, labelled legacy', async () => {
+    await upsertToken(testDb(), TOKEN);
+    const hourly = Array.from({ length: 24 }, (_, h) => (h === 12 ? 10 : 0));
+    await upsertPrices(testDb(), REF, 'coingecko', dayPrices('2026-07-01', () => 2), '2026-11-05T06:00:00Z');
+    await upsertPrices(testDb(), REF, 'coingecko', dayPrices('2026-10-20', () => 2), '2026-11-05T06:00:00Z');
+    const beyond = await flowRow('2026-07-01', 30, { amount: 10, hourly }, { fetchedAt: '2026-11-05T06:00:00Z' });
+    const within = await flowRow('2026-10-20', 30, { amount: 10, hourly }, { fetchedAt: '2026-11-05T06:00:00Z' });
+    expect((await view(beyond.id))!.usd_basis).toBe('hourly'); // the view alone cannot tell
+    const got = await listFlowUsd(testDb(), 'crv');
+    expect(got.get(beyond.id)).toEqual({ usd: 30, basis: 'legacy' });
+    expect(got.get(within.id)).toEqual({ usd: 20, basis: 'hourly' });
   });
 });
 

@@ -61,7 +61,7 @@ export interface ReportInput {
   provenance?: Map<string, Map<string, DayProvenance>>;
   /**
    * Task 8 (after G2), income statement v2 only: its daily series, priced from the stored tokens x hourly prices where a
-   * row's hourly coverage is full (flow_usd_v), else the stored USD. Absent: v2 reads `daily`. v1 always reads `daily`
+   * row's hourly coverage is full (flow_usd_v) and its stored USD was hourly-priced at ingest, else the stored USD. Absent: v2 reads `daily`. v1 always reads `daily`
    * (the stored `value`), so the legacy keys never move.
    */
   statementDaily?: Map<string, Map<string, number>>;

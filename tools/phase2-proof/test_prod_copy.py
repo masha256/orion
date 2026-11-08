@@ -60,12 +60,27 @@ class UnwrapTest(unittest.TestCase):
 
     def test_parse_output_reads_rows_and_refuses_errors_and_truncation(self):
         self.assertEqual(prod_ro.parse_output('{"rows": [{"n": 1}]}', 0, ""), [{"n": 1}])
-        with self.assertRaises(prod_ro.Unparseable):
-            prod_ro.parse_output('{"rows": [{"j": "[{\\"id\\": 1}, {\\"id', 0, "")  # cut at orion-remote's 1 MB cap
+        cut = '{"rows": [{"j": "[{\\"id\\": 1}, {\\"id'
+        with self.assertRaises(prod_ro.Truncated):  # cut at orion-remote's 1 MB cap: exit 0 and its stderr marker
+            prod_ro.parse_output(cut, 0, prod_ro.TRUNCATION_MARKER + "\n")
+        with self.assertRaises(prod_ro.Truncated):  # exit 0 and exactly the cap's bytes (the marker lost)
+            prod_ro.parse_output("x" * prod_ro.OUTPUT_CAP_BYTES, 0, "")
         with self.assertRaises(prod_ro.ProdRoError) as e:
             prod_ro.parse_output('{"error": {"code": "sql_error", "message": "permission denied"}}', 1, "")
-        self.assertNotIsInstance(e.exception, prod_ro.Unparseable)
+        self.assertNotIsInstance(e.exception, prod_ro.Truncated)
         self.assertIn("permission denied", str(e.exception))
+
+    def test_an_ssh_or_transport_failure_is_an_error_never_truncation(self):
+        for stdout, rc, stderr in (
+            ("", 255, "ssh: connect to host venus port 22: Connection refused"),  # ssh failed: exit 255, no output
+            ("", 0, ""),  # nothing at all
+            ('{"rows": [{"j": "[{', 1, ""),  # cut, but the remote exited non-zero
+            ('{"rows": [{"j": "[{', 0, ""),  # cut short of the cap with no marker
+        ):
+            with self.assertRaises(prod_ro.ProdRoError) as e:
+                prod_ro.parse_output(stdout, rc, stderr)
+            self.assertNotIsInstance(e.exception, prod_ro.Truncated, (stdout, rc))
+            self.assertIn(f"exit {rc}", str(e.exception))
 
     def test_sql_ro_calls_ssh_with_the_quoted_query(self):
         seen = []
@@ -81,7 +96,7 @@ class UnwrapTest(unittest.TestCase):
 
 
 class FakeProd:
-    """sql_ro over in-memory tables; a page whose JSON would exceed `cap` bytes comes back truncated (Unparseable)."""
+    """sql_ro over in-memory tables; a page whose JSON would exceed `cap` bytes comes back truncated (Truncated)."""
 
     def __init__(self, rows, cap=10**9):
         self.rows, self.cap, self.queries = rows, cap, []
@@ -95,7 +110,7 @@ class FakeProd:
         page = [r for r in self.rows if last < r["id"] <= top][:limit]
         text = json.dumps(page)
         if len(text) > self.cap:
-            raise prod_ro.Unparseable("sql-ro: unparseable output (truncated)")
+            raise prod_ro.Truncated("sql-ro: output truncated at the cap")
         return [{"j": text}]  # json_agg arrives as a string
 
 
@@ -121,8 +136,40 @@ class PagingTest(unittest.TestCase):
 
     def test_a_single_row_too_big_for_the_cap_is_refused(self):
         prod = FakeProd(self.rows(3, pad=500), cap=100)
-        with self.assertRaises(prod_ro.Unparseable):
+        with self.assertRaises(prod_ro.Truncated):
             prod_copy.fetch_by_id(prod, "t", top=3, page=4)
+
+    def test_an_ssh_failure_aborts_at_once_and_is_never_retried_as_truncation(self):
+        calls = []
+
+        def run(argv, **kw):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 255, stdout="", stderr="ssh: connect to host venus port 22: Connection refused")
+
+        sql_ro = prod_ro.make_sql_ro("orion-prod@host", run=run)
+        with self.assertRaises(prod_ro.ProdRoError) as e:
+            prod_copy.fetch_by_id(sql_ro, "t", top=3, page=16)
+        self.assertNotIsInstance(e.exception, prod_ro.Truncated)
+        self.assertIn("Connection refused", str(e.exception))
+        self.assertEqual(len(calls), 1)
+
+    def test_a_reply_cut_at_the_cap_over_ssh_halves_the_page(self):
+        rows = self.rows(3)
+        calls = []
+
+        def run(argv, **kw):
+            calls.append(argv[-1])
+            if len(calls) == 1:  # the first page is cut at the cap: exit 0, orion-remote's marker on stderr
+                return subprocess.CompletedProcess(argv, 0, stdout='{"rows": [{"j": "[{', stderr=prod_ro.TRUNCATION_MARKER + "\n")
+            import re
+            last, top, limit = (int(x) for x in re.search(r"where id > (-?\d+) and id <= (\d+) order by id limit (\d+)", argv[-1]).groups())
+            page = [r for r in rows if last < r["id"] <= top][:limit]
+            return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({"rows": [{"j": json.dumps(page)}]}), stderr="")
+
+        got = prod_copy.fetch_by_id(prod_ro.make_sql_ro("orion-prod@host", run=run), "t", top=3, page=16)
+        self.assertEqual([r["id"] for r in got], [1, 2, 3])
+        self.assertIn("limit 16", calls[0])
+        self.assertIn("limit 8", calls[1])
 
     def test_other_errors_are_not_retried(self):
         def broken(q):
