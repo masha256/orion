@@ -2,6 +2,7 @@ import type { AssetConfig } from '../config/schema.js';
 import type { Db } from '../db/connection.js';
 import { listCheckResults } from '../db/checkResults.js';
 import { listActiveObservations, listActiveProvenance } from '../db/observations.js';
+import { listFlowUsd, type PriceBasis } from '../db/prices.js';
 import { provenanceLabel } from '../provenance/locator.js';
 import { latestLevel } from '../observations/select.js';
 import { addDays, utcDay } from '../ingest/time.js';
@@ -83,14 +84,57 @@ export async function periodicDaily(db: Db, assetId: string, metricKey: string, 
   return { days, provisional };
 }
 
-/** A flow metric's stored daily rows (confirmed, active), keyed by the UTC day each covers. */
-async function dailyOf(db: Db, assetId: string, metricKey: string): Promise<Map<string, number>> {
-  const days = new Map<string, number>();
+/** The day rows `dailyOf` reads: confirmed, active, one day each, keyed by the UTC day each covers (the newest wins). */
+async function dayRows(db: Db, assetId: string, metricKey: string): Promise<Map<string, { id: number; value: number }>> {
+  const days = new Map<string, { id: number; value: number }>();
   for (const o of await listActiveObservations(db, assetId, metricKey)) {
     if (o.status !== 'confirmed' || o.periodDays !== 1) continue;
-    days.set(utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY), o.value);
+    days.set(utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY), { id: o.id, value: o.value });
   }
   return days;
+}
+
+/** A flow metric's stored daily rows (confirmed, active), keyed by the UTC day each covers: the stored `value` (v1). */
+async function dailyOf(db: Db, assetId: string, metricKey: string): Promise<Map<string, number>> {
+  return new Map([...(await dayRows(db, assetId, metricKey))].map(([d, r]) => [d, r.value]));
+}
+
+/**
+ * Task 8 (after G2): income statement v2's daily series. The rows `dailyOf` reads (`rowsOf`: the same days), each valued from
+ * flow_usd_v: tokens x hourly prices where every hour with an amount is priced, a first-party API's dollars where the
+ * row is usd-native, else the stored `value`; `basis` says which per day. A metric that is not a USD flow (tokens, a
+ * level) is not in the view: its days keep `value` and get no basis. Periodic streams are left to `periodicDaily`
+ * (stored value, basis legacy). The legacy (v1) report never calls this.
+ */
+async function statementSeries(
+  db: Db, assetId: string, metrics: string[], periodic: Set<string>, legacyDaily: Map<string, Map<string, number>>,
+  rowsOf: Map<string, Map<string, { id: number; value: number }>>,
+): Promise<{ daily: Map<string, Map<string, number>>; basis: Map<string, Map<string, PriceBasis>> }> {
+  const flowUsd = await listFlowUsd(db, assetId);
+  const daily = new Map<string, Map<string, number>>();
+  const basis = new Map<string, Map<string, PriceBasis>>();
+  for (const m of metrics) {
+    if (!m.startsWith('flow_usd.')) {
+      daily.set(m, legacyDaily.get(m) ?? new Map());
+      continue;
+    }
+    const b = new Map<string, PriceBasis>();
+    basis.set(m, b);
+    if (periodic.has(m)) {
+      const days = legacyDaily.get(m) ?? new Map<string, number>();
+      for (const d of days.keys()) b.set(d, 'legacy');
+      daily.set(m, days);
+      continue;
+    }
+    const days = new Map<string, number>();
+    for (const [d, r] of rowsOf.get(m) ?? new Map<string, { id: number; value: number }>()) {
+      const v = flowUsd.get(r.id);
+      days.set(d, v?.usd ?? r.value);
+      b.set(d, v?.basis ?? 'legacy');
+    }
+    daily.set(m, days);
+  }
+  return { daily, basis };
 }
 
 /**
@@ -152,7 +196,11 @@ export interface ReportOptions {
  */
 function statementOf(input: ReportInput, v1: HolderYieldReport): { incomeStatement: IsV2 } | { incomeStatement: null; incomeStatementError: string } {
   try {
-    return { incomeStatement: incomeStatementV2(input, v1) };
+    // Task 8: with its own daily series, v2 also takes the figures it copies from v1 (yields, dilution, supply) from a v1
+    // computation over those series, so the statement is on one basis; the legacy object keeps `daily` (`v1` here).
+    if (input.statementDaily === undefined) return { incomeStatement: incomeStatementV2(input, v1) };
+    const v2Input: ReportInput = { ...input, daily: input.statementDaily };
+    return { incomeStatement: incomeStatementV2(v2Input, holderYieldReport(v2Input)) };
   } catch (err) {
     return { incomeStatement: null, incomeStatementError: (err instanceof Error ? err.message : String(err)).slice(0, 300) };
   }
@@ -230,9 +278,12 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
   const periodic = periodicMetrics(asset);
   const provisional = new Map<string, Set<string>>();
   const daily = new Map<string, Map<string, number>>();
+  const rowsOf = new Map<string, Map<string, { id: number; value: number }>>();
   for (const m of reportFlowMetrics(asset)) {
     if (!periodic.has(m)) {
-      daily.set(m, await dailyOf(db, asset.id, m));
+      const rows = await dayRows(db, asset.id, m);
+      rowsOf.set(m, rows);
+      daily.set(m, new Map([...rows].map(([d, r]) => [d, r.value])));
       continue;
     }
     const p = await periodicDaily(db, asset.id, m, target);
@@ -243,6 +294,7 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
   // fails the legacy report, the tick's holder_yield or the snapshot.
   let checks: Awaited<ReturnType<typeof listCheckResults>> = [];
   let provenance: Map<string, Map<string, DayProvenance>> | undefined;
+  let statement: Awaited<ReturnType<typeof statementSeries>> | undefined;
   let v2ReadError: string | undefined;
   if (asset.income_statement) {
     try {
@@ -250,11 +302,19 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
       checks = await listCheckResults(db, asset.id, target);
       // The provenance of every day the daily series hold (v2 only), for the statement's provenance from observations.
       provenance = await provenanceByDay(db, asset.id, [...daily.keys()], periodic);
+      // Task 8 (after G2): the statement's series on the tokens x prices basis where hourly coverage is full.
+      statement = await statementSeries(db, asset.id, [...daily.keys()], periodic, daily, rowsOf);
     } catch (err) {
       v2ReadError = `income statement inputs unavailable: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
-  return assembleReport({ asset, day: target, daily, provisional, levels, ...(checks.length > 0 ? { checks } : {}), ...(provenance ? { provenance } : {}) }, opts, v2ReadError);
+  return assembleReport(
+    {
+      asset, day: target, daily, provisional, levels, ...(checks.length > 0 ? { checks } : {}), ...(provenance ? { provenance } : {}),
+      ...(statement ? { statementDaily: statement.daily, priceBasis: statement.basis } : {}),
+    },
+    opts, v2ReadError,
+  );
 }
 
 /**

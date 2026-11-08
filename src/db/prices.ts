@@ -157,6 +157,35 @@ export interface UsdComparison extends GapStats {
   noHourly: number;
 }
 
+/**
+ * The basis a report figure is priced on (Task 8, after G2), as flow_usd_v reports it: `hourly` (every hour with an amount
+ * priced: tokens x hourly prices), `usd_native` (a first-party API's dollars), else `legacy` (the stored USD: some hour
+ * unpriced, no hourly buckets, or no tokens, e.g. DefiLlama and derived rows).
+ */
+export type PriceBasis = 'hourly' | 'usd_native' | 'legacy';
+
+/** flow_usd_v's `usd_basis` folded to the report's three labels. */
+export function priceBasisOf(usdBasis: string): PriceBasis {
+  return usdBasis === 'hourly' || usdBasis === 'usd_native' ? usdBasis : 'legacy';
+}
+
+/**
+ * Per active USD flow row of the asset (flow_usd_v), the USD the report's income statement reads and its basis: the
+ * view's `usd` where the basis is hourly or usd_native, else the stored `value` (`legacy_usd`). Keyed by observation id,
+ * so the caller selects the rows exactly as it selects `value` rows. Read-only.
+ */
+export async function listFlowUsd(db: Db, assetId: string): Promise<Map<number, { usd: number; basis: PriceBasis }>> {
+  const rows = await db.all<{ id: number; usd: number; legacy_usd: number; usd_basis: string }>(
+    'SELECT id, usd, legacy_usd, usd_basis FROM flow_usd_v WHERE asset_id = $1', [assetId],
+  );
+  const out = new Map<number, { usd: number; basis: PriceBasis }>();
+  for (const r of rows) {
+    const basis = priceBasisOf(r.usd_basis);
+    out.set(Number(r.id), { usd: basis === 'legacy' ? r.legacy_usd : r.usd, basis });
+  }
+  return out;
+}
+
 /** CoinGecko answers `days=90` with hourly points (src/ingest/flow.ts loadPrices): older transfers were priced daily. */
 export const HOURLY_SERIES_DAYS = 90;
 

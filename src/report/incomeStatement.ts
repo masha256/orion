@@ -1,5 +1,6 @@
 import { resolveUse, type IsApportion, type IsBucket, type IsHolderLine, type IsRevenueLine, type IsBelowLine, type IsCostLine, type IsUseLine, type CostTo, type IsCategory } from '../config/incomeStatement.js';
 import type { AssetConfig, IncomeStatementDef, MetricDef, RecipientBase } from '../config/schema.js';
+import type { PriceBasis } from '../db/prices.js';
 import { addDays } from '../ingest/time.js';
 import { chainOfSource, locatorOfSource, provenanceLabel, scrubLocator } from '../provenance/locator.js';
 import { DAYS_PER_YEAR, STD_METRICS } from '../types.js';
@@ -12,6 +13,10 @@ import { crossCheckTypesOf, LISTING_RUNGS, sourceLabelOf, sourceTypeOf, type Sou
  * arithmetic (Σ window sum × weight, then × 365 / window), summed in YAML line order, so every figure the two statements
  * share is equal by construction (the parity map, PARITY below). `yields`, `dilution` and the supply line are copied
  * from the v1 report (spec §7 "as today").
+ * Task 8 (after G2): the loader gives v2 its own daily series (`ReportInput.statementDaily`: tokens x hourly prices where a
+ * row's hourly coverage is full, else the stored USD) and the v1 report it copies from is computed over those same series;
+ * the legacy v1 object keeps the stored `value`. So v2 and v1 then agree to the G2 deltas (float noise), not bit for bit.
+ * Each line's `priceBasis` labels its window days.
  *
  *   revenue        = Σ revenue lines
  *   gross profit   = revenue − Σ cost_of_revenue          (null if any cost line is not_measured)
@@ -29,6 +34,13 @@ import { crossCheckTypesOf, LISTING_RUNGS, sourceLabelOf, sourceTypeOf, type Sou
  */
 
 export type IsMethod = 'measured' | 'derived' | 'disclosed' | 'not_measured';
+
+/**
+ * Task 8: what a line's USD days in the window are priced on. One label when every day of every USD series the line
+ * reads has it (`hourly`: tokens x hourly prices; `usd_native`: a first-party API's dollars; `legacy`: the stored USD),
+ * `mixed` otherwise, null when the line reads no daily USD series (a level, a line not measured).
+ */
+export type LinePriceBasis = PriceBasis | 'mixed' | null;
 
 /** The formula an apportioned line's figure comes from (Task 7b, ruling R14): its flow x the window's mix. */
 export const APPORTION_FORMULA = 'apportion_by_mix@1';
@@ -67,6 +79,7 @@ export interface IsRevenueLineOut {
   label: string | null;
   method: IsMethod;
   sourceTypes: SourceType[];
+  priceBasis: LinePriceBasis;
   /** USD a year (a young stream at its run rate over its own days). Null when not measured or a day is missing. */
   annualized: number | null;
   /** The window's sum (USD; with a share or ratio applied, before the run-rate weight); null for a level. */
@@ -96,6 +109,7 @@ export interface IsUseLineOut {
   share: number;
   method: IsMethod;
   sourceTypes: SourceType[];
+  priceBasis: LinePriceBasis;
   annualized: number | null;
   growth: Growth;
   note?: string;
@@ -118,6 +132,8 @@ export interface HolderFlowLineOut {
   method: IsMethod;
   /** The rungs of the series the line reads (paid_metric included). */
   sourceTypes: SourceType[];
+  /** The basis of the series holder flow reads (paid_metric when set). */
+  priceBasis: LinePriceBasis;
   /** The series holder flow reads (null for a run-rate level or a line not measured). */
   metric: string | null;
   haircut: number;
@@ -148,6 +164,7 @@ export interface IsBelowLineOut {
   to: 'holders' | 'protocol';
   method: IsMethod;
   sourceTypes: SourceType[];
+  priceBasis: LinePriceBasis;
   annualized: number | null;
   growth: Growth;
   bucket: Bucket | null;
@@ -267,7 +284,7 @@ export interface IsV2 {
     source: string | null;
     day: string;
     asOf: string | null;
-    /** How the flows are priced: each day's USD at that day's price, as stored. */
+    /** How the flows are priced (each line's `priceBasis` says which basis its days are on). */
     flows: string;
   };
   /**
@@ -485,6 +502,15 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     if (ms.length === 0) return null;
     return windowDaysList.filter((d) => ms.every((m) => rowProv!.get(m)?.get(d)?.method === 'measured')).length;
   };
+  // Task 8: the basis of a line's USD days in the window (the loader's `priceBasis`; absent, every day is the stored USD).
+  const dayBasis = input.priceBasis;
+  const basisOf = (...vs: Value[]): LinePriceBasis => {
+    const seen = new Set<PriceBasis>();
+    for (const m of uniq(vs.flatMap(termMetrics)).filter((x) => x.startsWith('flow_usd.'))) {
+      for (const d of windowDaysList) if (input.daily.get(m)?.has(d) === true) seen.add(dayBasis?.get(m)?.get(d) ?? 'legacy');
+    }
+    return seen.size === 0 ? null : seen.size === 1 ? [...seen][0]! : 'mixed';
+  };
   const revLines: IsRevenueLineOut[] = is.revenue.map((r) => {
     const v = revenueValue(r);
     const metric = r.metric ?? r.derived?.from;
@@ -503,7 +529,7 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
       ws = Number.isNaN(s) ? null : s;
     }
     return {
-      id: r.id, label: r.label ?? null, method: revenueMethod(r), sourceTypes: revenueTypes(r),
+      id: r.id, label: r.label ?? null, method: revenueMethod(r), sourceTypes: revenueTypes(r), priceBasis: basisOf(v),
       annualized: valueAnnual(v), windowSum: ws, settlement: v.kind === 'terms' ? (r.settlement ?? 'daily') : null, started: r.started ?? null,
       daysMeasured: v.kind !== 'terms' ? null : basisObservations ? measuredDays(v) : daysIn(r.started), provisionalDays: pending(metric), coverage: null,
       isNew: age !== null && age < NEW_STREAM_DAYS, growth: valueGrowth(v),
@@ -536,7 +562,7 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
   const useLine = (l: IsUseLine | IsHolderLine | IsCostLine): IsUseLineOut => {
     const v = useValue(l);
     return {
-      id: l.id, label: l.label ?? null, of: l.of ?? null, share: l.share ?? 1, method: useMethod(l), sourceTypes: useTypes(l),
+      id: l.id, label: l.label ?? null, of: l.of ?? null, share: l.share ?? 1, method: useMethod(l), sourceTypes: useTypes(l), priceBasis: basisOf(v),
       annualized: valueAnnual(v), growth: valueGrowth(v), ...(l.note ? { note: l.note } : {}), ...(l.not_measured !== undefined ? { notMeasured: l.not_measured } : {}),
       ...(l.apportion !== undefined ? { apportion: mixOf(l.apportion) } : {}),
     };
@@ -568,10 +594,11 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
   const section = (a: Agg, lines: IsUseLineOut[], isRemainder: boolean, other: Agg): UseSectionOut<IsUseLineOut> => {
     if (!isRemainder) return { annualized: sectionAnnual(a), growth: sectionGrowth(a, 'a disclosed level: no daily series'), remainder: false, notMeasured: a.nm, lines };
     const r = remainderOf(other);
+    const priceBasis = basisOf({ kind: 'terms', terms: [...revAgg.terms, ...costAgg.terms, ...holdersAgg.terms, ...other.terms] });
     const note = costAgg.nm.length > 0 ? 'revenue less holders and the other uses, before the costs not measured' : 'revenue less the rest';
     return {
       annualized: r.annualized, growth: r.growth, remainder: true, notMeasured: [...holdersAgg.nm, ...other.nm],
-      lines: [{ id: 'remainder', label: null, of: null, share: 1, method: 'derived', sourceTypes: [], annualized: r.annualized, growth: r.growth, note }],
+      lines: [{ id: 'remainder', label: null, of: null, share: 1, method: 'derived', sourceTypes: [], priceBasis, annualized: r.annualized, growth: r.growth, note }],
     };
   };
   const protocol = section(protocolAgg, (is.protocol ?? []).map(useLine), is.remainder === 'protocol', opexAgg);
@@ -637,7 +664,7 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     const net = gross === null ? null : gross * (1 - s.haircut);
     const terms = v.kind === 'terms' ? v.terms : [];
     return {
-      id: s.id, section: s.section, fromBelowLine: s.section === 'below_line', bucket: s.bucket, method: s.method, sourceTypes: s.sourceTypes,
+      id: s.id, section: s.section, fromBelowLine: s.section === 'below_line', bucket: s.bucket, method: s.method, sourceTypes: s.sourceTypes, priceBasis: basisOf(v),
       metric: terms.length === 1 ? terms[0].metric : null, haircut: s.haircut, recipientBase: s.base,
       gross, net, yield: yieldOf(net, s.base),
       growth: v.kind === 'terms' ? growthOf(daily, terms.map((t) => t.metric), day, W, terms.map((t) => t.gw)) : v.kind === 'level' ? noSeries('a run-rate level: no daily series') : noSeries('not measured'),
@@ -654,7 +681,7 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     const f = flowLine({ id: l.id, section: 'holders', v, bucket: l.bucket, haircut: l.haircut, base: l.recipient_base, method: useMethod(l), sourceTypes, set: setOf(l.metric, l.apportion) });
     holderFlowLines.push(f);
     return {
-      ...useLine(l), sourceTypes,
+      ...useLine(l), sourceTypes, priceBasis: basisOf(useValue(l), v),
       bucket: l.bucket, haircut: l.haircut, recipientBase: l.recipient_base, valuedPer: l.valued_per ?? null, captureRule: l.capture_rule,
       paidMetric: l.paid_metric ?? null, gross: f.gross, net: f.net, yield: f.yield,
     };
@@ -675,7 +702,7 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
       holderFlowLines.push(flowLine({ id: b.id, section: 'below_line', v, bucket: b.bucket ?? null, haircut: b.haircut ?? 0, base: b.recipient_base ?? 'all', method, sourceTypes, set: setOf(b.metric, b.apportion) }));
     }
     return {
-      id: b.id, label: b.label ?? null, to: b.to, method, sourceTypes,
+      id: b.id, label: b.label ?? null, to: b.to, method, sourceTypes, priceBasis: basisOf(v),
       annualized: valueAnnual(v), growth: valueGrowth(v), bucket: b.bucket ?? null, haircut: b.haircut ?? null, recipientBase: b.recipient_base ?? null,
       captureRule: b.capture_rule ?? null, ...(b.note ? { note: b.note } : {}), ...(b.not_measured !== undefined ? { notMeasured: b.not_measured } : {}),
       ...(b.apportion !== undefined ? { apportion: mixOf(b.apportion) } : {}),
@@ -940,7 +967,9 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     perToken: { ...per(circ), circulatingSupply: circ, totalSupply: total, supplyAsOf: lv.asOf ?? null, perTokenFdv: per(total) },
     priceBasis: {
       price, metric: STD_METRICS.price, sourceType: priceDef ? sourceTypeOf(priceDef, asset.metrics) : null, source: priceDef ? sourceLabelOf(priceDef) : null,
-      day, asOf: lv.asOf ?? null, flows: "each flow day's USD at that day's price (the stored value)",
+      day, asOf: lv.asOf ?? null, flows: dayBasis === undefined
+        ? "each flow day's USD at that day's price (the stored value)"
+        : "each flow day's USD from its tokens x hourly prices where every hour is priced, else the stored value (per line: priceBasis)",
     },
     checks: (input.checks ?? []).map((c) => ({
       id: c.checkId, type: c.type, status: c.status, lhs: c.lhs, rhs: c.rhs, gapPct: c.gapPct,

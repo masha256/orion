@@ -284,6 +284,12 @@ Built: migration 0005 (expand-only): `tokens` (`token_ref` PK, symbol, `decimals
 the newest `prices` row at or before the hour, coingecko first, at most 6 hours old; `hours_priced`, `hours_needed`,
 `legacy_usd` = `value`, and `usd` / `usd_basis` = hourly | usd_native | legacy_unpriced | legacy_no_hourly |
 legacy_no_tokens). No report code reads the view; the report still reads `value` (Task 8 switches it after G2).
+**Task 8 (after G2, built):** income statement v2 reads the view (`src/report/load.ts` `statementSeries`): per day row
+`dailyOf` selects, the view's `usd` where `usd_basis` is hourly or usd_native, else `value`; each statement line carries
+`priceBasis` (`hourly` | `usd_native` | `legacy` | `mixed` over its window days, null without a daily USD series), and
+`incomeStatement.priceBasis.flows` says so. The legacy v1 keys (`--legacy`, the tick's v1 fields) keep reading `value`,
+byte for byte; the default report day is still chosen from `value` rows. Periodic streams (HYPE reserve yield) stay on
+`value`, labelled legacy. Snapshot `schema` stays 1.
 
 Dual write (values unchanged, plan correction 2):
 - Transfer scans (`src/ingest/flow.ts`): the per-day count moved into `openDayScanner`, shared with the backfill, so both

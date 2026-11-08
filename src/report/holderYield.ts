@@ -1,5 +1,6 @@
 import type { AssetConfig, FlowKind, RecipientBase } from '../config/schema.js';
 import type { CheckResult } from '../db/checkResults.js';
+import type { PriceBasis } from '../db/prices.js';
 import { addDays } from '../ingest/time.js';
 import { DAYS_PER_YEAR } from '../types.js';
 import type { IsV2 } from './incomeStatement.js';
@@ -58,6 +59,14 @@ export interface ReportInput {
    * never reads it). Absent: the statement's provenance falls back to the config (`basis: 'config'`).
    */
   provenance?: Map<string, Map<string, DayProvenance>>;
+  /**
+   * Task 8 (after G2), income statement v2 only: its daily series, priced from the stored tokens x hourly prices where a
+   * row's hourly coverage is full (flow_usd_v), else the stored USD. Absent: v2 reads `daily`. v1 always reads `daily`
+   * (the stored `value`), so the legacy keys never move.
+   */
+  statementDaily?: Map<string, Map<string, number>>;
+  /** Per USD flow metric and UTC day, the basis of `statementDaily`'s value (v2 only). Absent: every day is `legacy`. */
+  priceBasis?: Map<string, Map<string, PriceBasis>>;
 }
 
 /** The method and `<rung>:<what>` label of the row a day's value came from; method null on unmapped history. */
