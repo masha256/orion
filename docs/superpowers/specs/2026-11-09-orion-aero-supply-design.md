@@ -26,7 +26,7 @@ All of these come from the pre-merger contracts or the old CoinGecko id.
 - **Revenue:** $83.6M/yr from DefiLlama `aerodrome` `dailyHoldersRevenue`. Since 10-22 the series silently returns the
   all-chain Aero parent (`parent#aero-protocol`).
 
-## 2. Measured on chain, 2026-11-09 (Base block 55,335,954, 19:32Z; read-only)
+## 2. Measured on chain, 2026-11-09 (Base block 55,335,954, 20:52Z; read-only)
 
 Contracts come from app.aero.xyz/docs/security. Source is `dromos-labs/metadex-public` (V3/src).
 

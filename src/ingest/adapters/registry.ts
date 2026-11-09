@@ -1,8 +1,8 @@
 import { OrionError } from '../../types.js';
 import type { SourceContext, SourceValue } from '../types.js';
-import { aeroAdapters } from './aero.js';
 import { cakeAdapters } from './cake.js';
 import { crvAdapters } from './crv.js';
+import { evmAdapters } from './evm.js';
 import { hypeAdapters } from './hype.js';
 import { litAdapters } from './lit.js';
 import { solanaAdapters } from './solana.js';
@@ -53,4 +53,4 @@ export function adapterNames(): string[] {
 }
 
 // Asset-specific adapters register here.
-for (const adapter of [...vvvAdapters, ...aeroAdapters, ...hypeAdapters, ...crvAdapters, ...cakeAdapters, ...litAdapters, ...solanaAdapters]) registerAdapter(adapter);
+for (const adapter of [...vvvAdapters, ...hypeAdapters, ...crvAdapters, ...cakeAdapters, ...litAdapters, ...solanaAdapters, ...evmAdapters]) registerAdapter(adapter);

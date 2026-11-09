@@ -9,6 +9,8 @@ export interface FakeRpcOptions {
   timestampOf?: (n: bigint) => number;
   /** Contract call results by callKey(). An Error makes that one call fail. */
   calls?: Record<string, bigint | Error>;
+  /** Per-block overrides of `calls` (archive reads at an earlier block): keys found here win over `calls`. */
+  callsAt?: (blockNumber: bigint) => Record<string, bigint | Error> | undefined;
   logs?: Omit<TransferLog, 'timestamp'>[];
   /** Exposed as the transport's maxLogRange; the fake refuses wider queries. Default 2000 (Base), left unexposed. */
   maxLogRange?: bigint;
@@ -58,10 +60,12 @@ export function fakeRpc(o: FakeRpcOptions): FakeRpc {
       stats.getBlock++;
       return block(n);
     },
-    async multicall(calls: ContractCall[], _blockNumber: bigint): Promise<CallResult[]> {
+    async multicall(calls: ContractCall[], blockNumber: bigint): Promise<CallResult[]> {
       stats.multicall++;
+      const at = o.callsAt?.(blockNumber);
       return calls.map((c) => {
-        const hit = o.calls?.[callKey(c.address, c.functionName, c.args) + (c.pick !== undefined ? `[${c.pick}]` : '')];
+        const key = callKey(c.address, c.functionName, c.args) + (c.pick !== undefined ? `[${c.pick}]` : '');
+        const hit = at?.[key] ?? o.calls?.[key];
         if (hit === undefined) return { ok: false, error: `no fake result for ${callKey(c.address, c.functionName, c.args)}` };
         return hit instanceof Error ? { ok: false, error: hit.message } : { ok: true, value: hit };
       });

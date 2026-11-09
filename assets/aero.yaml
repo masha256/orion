@@ -1,51 +1,71 @@
 id: aero
 symbol: AERO
-name: Aerodrome Finance
+name: Aero
 chain: base
 
-# Read live on 2026-09-23 (block 51,704,207); see docs/superpowers/specs/2026-09-23-orion-aero-onboarding-design.md section 2.
+# Aero (Aerodrome + Velodrome, launched 2026-10-22 00:00Z). Contracts from app.aero.xyz/docs/security, read live on
+# 2026-11-09 (Base block 55,335,954); see docs/superpowers/specs/2026-11-09-orion-aero-supply-design.md section 2.
+# No CoinGecko or DefiLlama read in this file except the revenue series (Mike, 2026-11-09: licensing; Phase 3 replaces it).
 contracts:
-  token: "0x940181a94a35a4569e4529a3cdfb74e38fd98631"
-  ve: "0xebf418fe2512e7e6bd9b87a8f0f294acdc67e6b4" # VotingEscrow: veAERO locks; supply() is the AERO locked
-  minter: "0xeB018363F0a9Af8f91F06FEe6613a751b2A33FE5" # from AERO.minter(); in its tail regime since weekly() reached TAIL_START
-  team: "0xBDE0c70BdC242577c52dFAD53389F82fd149EA5a"
+  token: "0x3f5bF3EdAc59d650D8fDf9657a71F2f904A3a4Ee" # new AERO; pre-minted the two upgrade allocations at launch
+  ve: "0xBF7977E1521e9a3032bf7243Ee4712f311f13915" # VotingEscrow: sAERO; supply() is the AERO staked
+  minter: "0x59268A34ba897e82368feE39839FFC661D4f9C97" # mints on redeem; baseRate AERO/s, teamRate pips on top
+  aero_migration: "0x22a2F7340a3fB4C7C389D91eE954766B12476721" # AerodromeMigration: the unclaimed Aerodrome upgrade reserve
+  velo_migration: "0x6daE95FE833f190640dB1176F8C8a2e50C6a66c0" # VelodromeMigrationEntrypoint: the unclaimed Velodrome upgrade reserve
+  price_pool: "0xf634058dc94e6bf8e828e27621320c423bc8b18e" # Aero volatile AERO/USDC basic pool (27.2M AERO, 15.6M USDC on 11-09)
+  price_check_pool: "0xd0acf293547457fb4fe9ee32ca93e89497626816" # Aero Slipstream AERO/USDC, tick spacing 200: the independent check
+  usdc_usd_feed: "0x7e860098F58bBFC8648a4311b374B1D669a2bc6B" # Chainlink USDC / USD on Base, 8 decimals
+  # Pre-merger Aerodrome, read by nothing since 2026-11-09: they explain the history before that day.
+  legacy_token: "0x940181a94a35a4569e4529a3cdfb74e38fd98631"
+  legacy_ve: "0xebf418fe2512e7e6bd9b87a8f0f294acdc67e6b4"
+  legacy_minter: "0xeB018363F0a9Af8f91F06FEe6613a751b2A33FE5"
 
 ingest: { chain_id: 8453, rpc_url_env: ORION_BASE_RPC_URL, backfill_days: 100 }
 
+# Identifiers only (no source reads them): CoinGecko's id for the new token, DefiLlama's slug the revenue series uses.
 external_ids:
-  coingecko: aerodrome-finance
+  coingecko: aero
   defillama: aerodrome
 
-# Every metric is fetched: AERO has no manual metric, so a bootstrap run finds nothing to research and writes only its journal.
+# Every metric is fetched: AERO has no manual metric.
 metrics:
+  # On chain: the deepest AERO/USDC pool's one-hour time-weighted price, in USD through Chainlink's USDC feed. The check is
+  # an independent Slipstream pool's spot price (0.3 percent apart on 2026-11-09).
   price_usd:
     type: level
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: aerodrome-finance, field: price }
+    source: { type: adapter, name: chain.v2_pool_twap_price, params: { pool: price_pool, token: token, quote_decimals: 6, seconds: 3600, usd_feed: usdc_usd_feed } }
     cross_checks:
-      - { tolerance_pct: 2, source: { type: http_json, url: "https://coins.llama.fi/prices/current/base:0x940181a94a35a4569e4529a3cdfb74e38fd98631", path: "coins.base:0x940181a94a35a4569e4529a3cdfb74e38fd98631.price" } }
+      - { tolerance_pct: 2, source: { type: adapter, name: chain.cl_pool_spot_price, params: { pool: price_check_pool, token: token, quote_decimals: 6, usd_feed: usdc_usd_feed } } }
 
-  # No burn sink: the ERC-20 total is the total supply. Locked AERO stays inside it.
+  # The ERC-20 total, the FDV basis. No burn sink (burns go through burn() and lower totalSupply). It includes the upgrade
+  # reserve, which the report counts as dilution (reporting.dilution) as it moves to holders. No cross-check: the parts
+  # below are computed from it, so any on-chain check would be circular.
   total_supply:
     type: level
     unit: tokens
     staleness_days: 7
     critical: true
     source: { type: erc20_supply, token: token }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: coingecko, id: aerodrome-finance, field: total_supply } }
 
-  # CoinGecko's own definition (about 0.99B against 0.93B unlocked on chain); display only, the report's market cap
-  # basis (FDV uses total_supply).
+  # Liquid AERO: total less sAERO less the two unclaimed upgrade reserves. Display only, the market cap basis.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: aerodrome-finance, field: circulating_supply }
+    source:
+      type: adapter
+      name: chain.view_sum
+      params:
+        terms:
+          - { contract: token, function: totalSupply }
+          - { contract: ve, function: supply, sign: -1 }
+          - { contract: token, function: balanceOf, args: [ aero_migration ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ velo_migration ], sign: -1 }
 
-  # Staking is locking for AERO: both metrics read the escrow's supply(), the AERO held in veAERO locks.
+  # Staking is sAERO: both metrics read the escrow's supply(), the AERO staked.
   staked_supply:
     type: level
     unit: tokens
@@ -58,24 +78,64 @@ metrics:
     staleness_days: 7
     source: { type: contract_read, contract: ve, function: supply, decimals: 18 }
 
-  # The rebase's share of the gross weekly mint (about 0.10): what reaches lockers of every token emitted.
+  # sAERO earns exchange revenue, not emissions: the Minter mints only to redeeming LPs and the team Splitter.
   staker_emission_share:
     type: level
     unit: ratio
     staleness_days: 30
-    source: { type: adapter, name: aero.staker_emission_share }
+    source: { type: constant, value: 0, note: "sAERO earns exchange revenue, not emissions: no rebase on Aero" }
 
-  # Gross emissions in the tail regime: base to the gauges plus the rebase plus the team share, at this week's tail rate,
-  # which governance can move one basis point per epoch. The adapter refuses if the Minter leaves the tail regime.
+  # Realised emissions (spec D4, Mike 2026-11-09): the Minter's emissionsMinted() over 91 days, clamped to the launch, plus
+  # the team share (teamRate pips of 1e6, minted on top of each mint). 214.0M a year on 2026-11-09. The ceiling is below.
   emission_rate_annual:
     type: schedule
     unit: tokens_per_year
     staleness_days: 45
     critical: true
-    source: { type: adapter, name: aero.emission_rate_annual }
+    source:
+      type: adapter
+      name: chain.counter_rate
+      params: { contract: minter, function: emissionsMinted, direction: rise, days: 91, not_before: "2026-10-22T00:00:00Z", plus_share: { contract: minter, function: teamRate, denominator: 1000000 } }
 
-  # 100 percent of pool fees from gauge-staked liquidity go to veAERO lockers (DefiLlama's holders revenue for the
-  # aerodrome parent: V1, Slipstream, Aero Lite). Incentives (bribes) to lockers have no usable series and are left out.
+  # Report-only: the Minter's ceiling, baseRate (AERO a second) x a year x (1 + team): 446.7M on 2026-11-09. The operator may
+  # move baseRate 1.2 percent per 47 hours; a move shows here first.
+  emission_ceiling_annual:
+    type: level
+    unit: tokens_per_year
+    staleness_days: 7
+    monitor_only: true
+    source: { type: adapter, name: chain.view_sum, params: { terms: [ { contract: minter, function: baseRate } ], scale: 31536000, plus_share: { contract: minter, function: teamRate, denominator: 1000000 } } }
+
+  # Report-only dilution (spec D3, Mike 2026-11-09): the upgrade reserves still unclaimed (the caps) and their trailing
+  # 30-day release a year (the rates). A burn of a reserve (burnRemaining) lowers totalSupply and is refused, not counted.
+  upgrade_reserve_aero:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    monitor_only: true
+    source: { type: contract_read, contract: token, function: balanceOf, args: [ aero_migration ], decimals: 18 }
+  upgrade_reserve_velo:
+    type: level
+    unit: tokens
+    staleness_days: 7
+    monitor_only: true
+    source: { type: contract_read, contract: token, function: balanceOf, args: [ velo_migration ], decimals: 18 }
+  upgrade_release_aero:
+    type: level
+    unit: tokens_per_year
+    staleness_days: 7
+    monitor_only: true
+    source: { type: adapter, name: chain.counter_rate, params: { contract: token, function: balanceOf, args: [ aero_migration ], direction: fall, days: 30, not_before: "2026-10-22T00:00:00Z", refuse_if_supply_falls: token } }
+  upgrade_release_velo:
+    type: level
+    unit: tokens_per_year
+    staleness_days: 7
+    monitor_only: true
+    source: { type: adapter, name: chain.counter_rate, params: { contract: token, function: balanceOf, args: [ velo_migration ], direction: fall, days: 30, not_before: "2026-10-22T00:00:00Z", refuse_if_supply_falls: token } }
+
+  # DefiLlama's `aerodrome` holders revenue: Base-only Aerodrome gauged-pool fees before 2026-10-22, the all-chain Aero
+  # parent (parent#aero-protocol) since, so the 91-day window spans the change. Kept until Phase 3 reads exchange revenue on
+  # chain. Never re-backfill it: the 2026-09-09 manual correction row stays.
   flow_usd.fees:
     type: flow
     unit: usd
@@ -88,14 +148,17 @@ holder_flows:
   - { id: fees, kind: fee_share, capture_rule: contractual, recipient_base: locked, metric: flow_usd.fees, window_days: 91 }
 
 # Report-only holder yield and growth (orion report yield). AERO's fees arrive as the pools' own tokens, many long-tail:
-# 2 percent. Protocol revenue waits for the post-migration rebuild (reminder 2026-11-05).
+# 2 percent. Protocol revenue waits for the Phase 3 pilot.
 reporting:
   window_days: 91
   haircuts: { fees: 0.02 }
-  # Income statement (Mike, 2026-10-11): all fees go to veAERO voters; the protocol keeps none (revisit at the rebuild).
+  # Income statement (Mike, 2026-10-11): all fees go to the stakers; the protocol keeps none (revisit in Phase 3).
   income:
     lines:
-      - { id: voter_fees, to: holders, metric: flow_usd.fees }
+      - { id: voter_fees, to: holders, metric: flow_usd.fees, note: "all-chain Aero since 2026-10-22 (DefiLlama parent#aero-protocol); Base-only Aerodrome before" }
+  dilution:
+    - { id: aero_upgrade, metric: upgrade_release_aero, cap_metric: upgrade_reserve_aero, note: "unclaimed Aerodrome upgrade reserve moving to holders (trailing 30 days, capped at what is left)" }
+    - { id: velo_upgrade, metric: upgrade_release_velo, cap_metric: upgrade_reserve_velo, note: "unclaimed Velodrome upgrade reserve moving to holders (trailing 30 days, capped at what is left)" }
 
 # Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
 # reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
@@ -104,10 +167,13 @@ income_statement:
   scope: protocol_share_only
   window_days: 91
   revenue:
-    - { id: fees, label: "gauged-pool fees to voters (DefiLlama dailyHoldersRevenue)", metric: flow_usd.fees }
+    - { id: fees, label: "pool fees to stakers (DefiLlama dailyHoldersRevenue): all-chain Aero since 2026-10-22, Base-only Aerodrome before", metric: flow_usd.fees }
   cost_of_revenue:
     - { id: lp_fees, to: lps, not_measured: "swap fees to LPs and ungauged pools: pools not scanned yet (Phase 3)" }
   holders:
-    - { id: voter_fees, of: fees, bucket: cash, haircut: 0.02, recipient_base: locked, capture_rule: contractual }
+    - { id: voter_fees, of: fees, bucket: cash, haircut: 0.02, recipient_base: locked, capture_rule: contractual, note: "all-chain Aero since 2026-10-22 (DefiLlama parent#aero-protocol); Base-only Aerodrome before" }
   below_line:
-    - { id: bribes, to: holders, not_measured: "voter bribes (BribeVotingReward): gauges not scanned yet (Phase 3)" }
+    - { id: bribes, to: holders, not_measured: "incentives to sAERO allocators (Predictive Allocation): not read yet (Phase 3; Foundation migration incentives to be held apart)" }
+  dilution:
+    - { id: aero_upgrade, metric: upgrade_release_aero, cap_metric: upgrade_reserve_aero, note: "unclaimed Aerodrome upgrade reserve moving to holders (trailing 30 days, capped at what is left)" }
+    - { id: velo_upgrade, metric: upgrade_release_velo, cap_metric: upgrade_reserve_velo, note: "unclaimed Velodrome upgrade reserve moving to holders (trailing 30 days, capped at what is left)" }

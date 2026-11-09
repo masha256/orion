@@ -26,9 +26,11 @@ export const LISTING_RUNGS: ReadonlySet<SourceType> = new Set(['contract_state',
  * although the other `lit.*` adapters read Lighter. An adapter missing here has no rung (null) until it is added.
  */
 export const ADAPTER_SOURCE_TYPES: Readonly<Record<string, SourceType>> = {
-  'aero.emission_rate_annual': 'contract_state',
-  'aero.staker_emission_share': 'contract_state',
   'cake.emission_rate_annual': 'contract_state',
+  'chain.counter_rate': 'contract_state',
+  'chain.view_sum': 'contract_state',
+  'chain.v2_pool_twap_price': 'contract_state',
+  'chain.cl_pool_spot_price': 'contract_state',
   'crv.emission_rate_annual': 'contract_state',
   'hype.total_supply': 'first_party_api',
   'hype.staked_supply': 'first_party_api',

@@ -67,8 +67,10 @@ const solRpc = (params: AdapterParams): Endpoint => ({ kind: 'solana_rpc', env: 
  * pins that this covers every adapter in src/ingest/adapters/registry.ts, so a new adapter needs a line here.
  */
 export const ADAPTER_ENDPOINTS: Record<string, (params: AdapterParams, asset: AssetConfig) => Endpoint[]> = {
-  'aero.emission_rate_annual': (_p, a) => chainRpc(a, 'aero.emission_rate_annual'),
-  'aero.staker_emission_share': (_p, a) => chainRpc(a, 'aero.staker_emission_share'),
+  'chain.counter_rate': (_p, a) => chainRpc(a, 'chain.counter_rate'),
+  'chain.view_sum': (_p, a) => chainRpc(a, 'chain.view_sum'),
+  'chain.v2_pool_twap_price': (_p, a) => chainRpc(a, 'chain.v2_pool_twap_price'),
+  'chain.cl_pool_spot_price': (_p, a) => chainRpc(a, 'chain.cl_pool_spot_price'),
   'cake.emission_rate_annual': (_p, a) => chainRpc(a, 'cake.emission_rate_annual'),
   'crv.emission_rate_annual': (_p, a) => chainRpc(a, 'crv.emission_rate_annual'),
   'vvv.staker_emission_share': (_p, a) => chainRpc(a, 'vvv.staker_emission_share'),

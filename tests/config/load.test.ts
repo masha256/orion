@@ -204,8 +204,9 @@ describe('metric watch', () => {
     // Re-pinned 2026-10-26: window 90 -> 91 days on every asset (Mike); no watch/share key involved.
     // Re-pinned 2026-11-01: the valuation keys and valuation-only metrics left (Phase 1); no watch/share key involved.
     // Re-pinned 2026-11-04: income_statement v2 block added (Phase 2 Task 2); no watch/share key involved.
+    // Re-pinned 2026-11-09 (aero only): the Aero contracts (spec 2026-11-09-orion-aero-supply-design.md); no watch/share key involved.
     expect(asset('vvv')).toBe('433d0306b2cad2849a717180e24568d5c0bf3ed3c62455c2208b470c9ed3f4f5');
     expect(asset('hype')).toBe('7a52e7974c9c90234ac9ac27d6d0495291b047aa04d566e02e89c1801c284296');
-    expect(asset('aero')).toBe('c1065fd5aad2898493b9c35f74349d10b549426dc8f17610ae7fa1e12436ca8b');
+    expect(asset('aero')).toBe('e9e96f3c78e997fdc260433fe6bb1aa4e3958b959d0c3679ff9219a9aaaa9779');
   });
 });
