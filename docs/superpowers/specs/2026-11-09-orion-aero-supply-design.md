@@ -217,13 +217,13 @@ Every adapter is generic, configured by contract names from `contracts`, and tes
 
 **D3. Upgrade-reserve dilution rate** (cap = remaining reserve, 385.09M in both live options).
 - **A:** trailing **30-day** release, annualized and capped. Today it is capped at 385.1M/yr, which adds **+18.0 pts**
-  and puts total dilution at **29.8%**. It stays at the cap until conversions run below ~1.05M a day for 30 days (11-09
+  and puts total dilution at **28.0%** (corrected 2026-11-09: 29.8% was an addition error, 11.8% + 18.0%; the proof reads 28.0%). It stays at the cap until conversions run below ~1.05M a day for 30 days (11-09
   ran at 3.2M).
 - **B:** trailing 365 days, as for LINK. It is also capped today, and it stays at the cap far longer.
 - **C:** a rate of 0, with the cap shown. Dilution stays at the emissions-only 10.0-11.8%.
 - **Recommendation: A**, as you directed: the reserve is dilution, measured and capped, and it decays on its own.
 - **Caveat:** an upgrade dilutes no one. Old AERO already trades 1:1, so the +18 pts is a circulating-base effect rather
-  than new supply. If the 29.8% headline reads wrong to you, C is the honest alternative (the reserve still shows as two
+  than new supply. If the 28.0% headline reads wrong to you, C is the honest alternative (the reserve still shows as two
   lines).
 
 **D4. Emission rate.**
@@ -254,9 +254,9 @@ Every adapter is generic, configured by contract names from `contracts`, and tes
 | fdv | $1,162M | $1,219M |
 | staked / locked | 1,706.4M | 1,061.4M |
 | emissions | 202.2M/yr | 214.0M/yr |
-| dilution | 10.1% | 10.0% emissions + 18.0% reserve = 29.8% (D3C: 10.0%) |
+| dilution | 10.1% | 10.0% emissions + 18.0% reserve = 28.0% (proof: 28.02%) (D3C: 10.0%) |
 | cash yield (fees on staked) | 8.3% | ~13.5% |
-| net shareholder | −1.8% | ~−16.3% (D3C: ~+3.5%) |
+| net shareholder | −1.8% | −14.5% (proof; D3C: ~+3.5%) |
 | revenue | $83.6M | $83.6M (unchanged; relabelled all-chain since 10-22) |
 
 The proof table in step 4 replaces these estimates with the real `report yield` output from the prod copy.
@@ -268,3 +268,27 @@ The proof table in step 4 replaces these estimates with the real `report yield` 
 - DefiLlama removal: Phase 3 pilot, scoping in `workspace/orion/aero-scoping/`, built after the Foundation subsidy ends.
 - Task 10 (G3).
 - Any AERO DefiLlama re-backfill.
+
+## 6. Proof (2026-11-09, read-only prod copy p2proof_20261109t213402z, report day 2026-11-08)
+
+- Before = prod's own `report yield aero --day 2026-11-08` (orion-2026.11.08.1). After = the branch dist on the prod copy
+  after `data fetch aero` of every metric except `flow_usd.fees` (Base block at 21:44:29Z; no anomalies, all sources ok,
+  price check 0.571025 vs 0.569726 = 0.23%).
+
+| Field | Before | After |
+| --- | --- | --- |
+| price | $0.578905 (CoinGecko) | $0.571025 (pool TWAP x Chainlink) |
+| circulating | 305.32M | 691.24M |
+| marketCap | $176.75M | $394.71M |
+| total | 2,007.63M | 2,137.68M |
+| fdv | $1,162.2M | $1,220.7M |
+| staked | 1,706.4M | 1,061.4M |
+| emissions | 202.20M/yr | 213.98M/yr |
+| dilution | 10.07% | 28.02% (emissions 10.01% + Aerodrome reserve 16.71% + Velodrome reserve 1.30%) |
+| cash yield (fees on staked) | 8.30% | 13.53% |
+| net shareholder | -1.77% | -14.50% |
+| multiple | 12.05x | 7.39x |
+| revenue | unchanged | unchanged (label and notes only) |
+
+- The other 12 assets: `report yield` v2 and `--legacy`, release dist vs branch dist on the same copy, byte-identical
+  (24/24), at day 2026-11-09 before the AERO fetch and at day 2026-11-08 after it.
