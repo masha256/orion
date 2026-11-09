@@ -260,6 +260,37 @@ class HomesTest(unittest.TestCase):
             self.assertIn("not inside $TMPDIR", r.stderr)
 
 
+class FkOrderTest(unittest.TestCase):
+    def test_parents_come_before_children_and_ties_keep_their_order(self):
+        tables = ["anomalies", "observations", "prices", "tokens"]
+        edges = [("observations", "tokens"), ("observations", "observations"), ("prices", "tokens")]
+        self.assertEqual(prod_copy.fk_order(tables, edges), ["anomalies", "tokens", "observations", "prices"])
+
+    def test_a_cycle_is_refused(self):
+        with self.assertRaises(prod_copy.CopyError):
+            prod_copy.fk_order(["a", "b"], [("a", "b"), ("b", "a")])
+
+
+class KeyPageTest(unittest.TestCase):
+    def test_pages_by_primary_key_and_halves_on_truncation(self):
+        rows = [{"token_ref": "a", "ts": str(i)} for i in range(5)]
+        seen = []
+
+        def sql_ro(q):
+            seen.append(q)
+            if "limit 4" in q:
+                raise prod_copy.Truncated("cut")
+            start = 0
+            if "where" in q:
+                start = int(q.split("> ('a', '")[1].split("'")[0]) + 1
+            lim = int(q.rsplit("limit ", 1)[1].split(")")[0])
+            return [{"j": json.dumps(rows[start:start + lim])}]
+
+        got = prod_copy.fetch_by_key(sql_ro, "prices", ["token_ref", "ts"], page=4)
+        self.assertEqual(got, rows)
+        self.assertIn('order by "token_ref", "ts"', seen[1])
+
+
 class CopyTableTest(unittest.TestCase):
     """copy_table end to end with fakes: prod count vs local count, one insert per table."""
 

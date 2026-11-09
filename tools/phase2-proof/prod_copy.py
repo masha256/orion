@@ -50,6 +50,26 @@ class CopyError(Exception):
     pass
 
 
+# Foreign keys between the schema's tables (child -> parent); a self-reference is left to the deferred insert.
+FK_SQL = ("select c.relname as child, p.relname as parent from pg_constraint k join pg_class c on c.oid = k.conrelid "
+          "join pg_class p on p.oid = k.confrelid join pg_namespace n on n.oid = c.relnamespace "
+          "where k.contype = 'f' and n.nspname = current_schema() order by 1, 2")
+
+
+def fk_order(tables, edges):
+    """`tables` with every table after the tables it references (a non-deferrable FK, e.g. observations.token_ref ->
+    tokens, refuses a child row whose parent is not copied yet). Stable: ties keep the input order. A cycle refuses."""
+    deps = {t: {p for c, p in edges if c == t and p != t and p in tables} for t in tables}
+    out, done = [], set()
+    while len(out) < len(tables):
+        ready = [t for t in tables if t not in done and deps[t] <= done]
+        if not ready:
+            raise CopyError(f"foreign-key cycle among {sorted(set(tables) - done)}")
+        out.append(ready[0])
+        done.add(ready[0])
+    return out
+
+
 def columns_sql(table):
     return ("select column_name as c from information_schema.columns where table_schema = current_schema() "
             f"and table_name = {quote_literal(table)} order by ordinal_position")
@@ -84,6 +104,36 @@ def fetch_all(sql_ro, table):
     return unwrap_rows(sql_ro(f"select coalesce(json_agg(x), '[]'::json) as j from {quote_ident(table)} x")[0]["j"])
 
 
+def pk_sql(table):
+    return ("select a.attname as c from pg_index i join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey) "
+            f"where i.indrelid = {quote_literal(table)}::regclass and i.indisprimary order by array_position(i.indkey, a.attnum)")
+
+
+def key_page_sql(table, keys, last, limit):
+    cols = ", ".join(quote_ident(k) for k in keys)
+    where = "" if last is None else f"where ({cols}) > ({', '.join(quote_literal(str(v)) for v in last)}) "
+    return (f"select coalesce(json_agg(x order by {', '.join('x.' + quote_ident(k) for k in keys)}), '[]'::json) as j from "
+            f"(select * from {quote_ident(table)} {where}order by {cols} limit {int(limit)}) x")
+
+
+def fetch_by_key(sql_ro, table, keys, page=FIRST_PAGE):
+    """Every prod row of a table without an id (prices: over the 1 MB cap in one reply), paged by its primary key, with
+    the same halving on a truncated reply as fetch_by_id. The caller's count check catches a row written meanwhile."""
+    rows, last = [], None
+    while True:
+        try:
+            got = unwrap_rows(sql_ro(key_page_sql(table, keys, last, page))[0]["j"])
+        except Truncated:
+            if page == 1:
+                raise
+            page = max(1, page // 2)
+            continue
+        if not got:
+            return rows
+        rows.extend(got)
+        last = [got[-1][k] for k in keys]
+
+
 def insert_sql(schema, table, rows):
     """One transaction inserting every row (constraints deferred: a self-referencing FK sees the whole table)."""
     payload = json.dumps(rows)
@@ -96,12 +146,15 @@ def insert_sql(schema, table, rows):
             f"json_populate_recordset(null::{quote_ident(table)}, {tag}{payload}{tag}); commit;")
 
 
-def copy_table(sql_ro, psql, schema, table, cols, page=FIRST_PAGE):
+def copy_table(sql_ro, psql, schema, table, cols, page=FIRST_PAGE, keys=None):
     """Copy one table; {prod, copied, local}; CopyError when the local count is not prod's."""
     if "id" in cols:
         top = int(sql_ro(f"select coalesce(max(id), 0)::bigint as m from {quote_ident(table)}")[0]["m"])
         n = int(sql_ro(f"select count(*)::int as n from {quote_ident(table)} where id <= {top}")[0]["n"])
         rows = fetch_by_id(sql_ro, table, top, page)
+    elif keys:
+        n = int(sql_ro(f"select count(*)::int as n from {quote_ident(table)}")[0]["n"])
+        rows = fetch_by_key(sql_ro, table, keys, page)
     else:
         rows = fetch_all(sql_ro, table)
         n = len(rows)
@@ -200,7 +253,8 @@ def copy_prod(P, release, worktree, sql_ro, psql, run=subprocess.run):
     local_tables = [x["t"] for x in local_json(psql, schema, TABLES_SQL.replace("current_schema()", quote_literal(schema)))]
     if sorted(tables) != sorted(local_tables):
         raise CopyError(f"table sets differ: prod only {sorted(set(tables) - set(local_tables))}, local only {sorted(set(local_tables) - set(tables))}")
-    copy = [t for t in tables if t not in SKIP_TABLES]
+    edges = [(x["child"], x["parent"]) for x in local_json(psql, schema, FK_SQL.replace("current_schema()", quote_literal(schema)))]
+    copy = fk_order([t for t in tables if t not in SKIP_TABLES], edges)
     cols = {}
     for t in copy:
         cols[t] = [x["c"] for x in sql_ro(columns_sql(t))]
@@ -213,7 +267,8 @@ def copy_prod(P, release, worktree, sql_ro, psql, run=subprocess.run):
         psql(f"set search_path to {quote_ident(schema)}; truncate {', '.join(quote_ident(t) for t in copy)} cascade;")
     counts = {}
     for t in copy:
-        counts[t] = copy_table(sql_ro, psql, schema, t, cols[t])
+        keys = None if "id" in cols[t] else [x["c"] for x in local_json(psql, schema, pk_sql(f"{quote_ident(schema)}.{quote_ident(t)}"))]
+        counts[t] = copy_table(sql_ro, psql, schema, t, cols[t], keys=keys)
     seqs = set_sequences(psql, schema)
 
     # 4. Observations, per asset: count, sum(value), max(id), up to the top the copy read.
