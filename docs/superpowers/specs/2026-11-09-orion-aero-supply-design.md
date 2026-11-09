@@ -1,7 +1,14 @@
 # AERO supply, emissions and price after the Aero merger: design
 
-**Status:** draft for Mike's review, 2026-11-09. Branch `feat/aero-supply` from main b354680 (release orion-2026.11.08.1).
-Decisions D1-D6 open (section 4). Nothing is built until they are approved.
+**Status:** APPROVED by Mike 2026-11-09. Branch `feat/aero-supply` from main b354680 (release orion-2026.11.08.1).
+- D1 A, D3 A, D4 A, D6 A as recommended.
+- **Change (Mike): no live Orion code may use CoinGecko or DefiLlama data** (licensing). They may be used during
+  development as cross-checks, outside the code. So D2 becomes B (circulating on chain), D5 becomes on-chain (price from
+  an Aero pool TWAP x the Chainlink USDC/USD feed, cross-checked against a second, independent Aero pool), and every
+  CoinGecko and DefiLlama cross-check on AERO's touched metrics is dropped. See section 3.4 for the amended design.
+- Scope note: AERO revenue (`flow_usd.fees`, DefiLlama) stays as it is in this branch, because no on-chain source exists
+  yet. It is the Phase 3 pilot (scoping in `workspace/orion/aero-scoping/`), so this branch adds no new CoinGecko or
+  DefiLlama use and removes AERO's price and supply reads from them.
 
 **Scope:** step 1 of the AERO rebuild. Supply, emissions, staked base and price move to the new Aero contracts. Revenue
 keeps its DefiLlama series with no value change, but is labelled as the all-chain Aero series since 2026-10-22. Revenue,
@@ -161,6 +168,39 @@ This is a contract-state read, top of the method ladder. It needs archive `eth_c
    AERO, then verify. Prod follows after another go.
 3. **Soak.** The `orion-stage-soak` stage-vs-prod parity will diverge on AERO (price-independent fields such as total,
    staked and emissions) until prod gets the tag. This divergence is expected and should be noted in the soak thread.
+
+### 3.4 Amended design: no CoinGecko or DefiLlama in live code (Mike, 2026-11-09)
+
+This section replaces any CoinGecko or DefiLlama source named in 3.1. Measured at Base block ~55.34M, 2026-11-09:
+
+- **`price_usd`** uses the new generic adapter **`chain.v2_pool_twap_price`**.
+  - It reads `currentCumulativePrices()` on an Aero basic (v2) pool at the run block and at the first block on or after
+    `now − seconds`. The window is 3,600 s. From the two reads it takes the time-weighted reserves, so the price is
+    `reserve_quote / reserve_token`, adjusted for decimals, then multiplied by a Chainlink feed (`latestAnswer`,
+    8 decimals).
+  - Pool: volatile AERO/USDC `0xf634058dc94e6bf8e828e27621320c423bc8b18e` (27.2M AERO and $15.6M USDC, the deepest
+    pool found). Feed: Chainlink USDC/USD on Base, `0x7e860098F58bBFC8648a4311b374B1D669a2bc6B` (0.99976).
+  - It refuses a pool that does not hold the token, a window with no elapsed time, and an answer that is not positive.
+  - Reading at 11-09: 1h TWAP $0.57183 x 0.99976 = **$0.5717**. Spot is $0.57177.
+- **The price cross-check** uses the new generic adapter **`chain.cl_pool_spot_price`**. It reads `slot0().sqrtPriceX96`
+  on an independent Slipstream pool, CL200 AERO/USDC `0xd0acf293547457fb4fe9ee32ca93e89497626816` (5.9M AERO,
+  $1.0M USDC), multiplied by the same feed. Reading: **$0.5699**, 0.3% from the primary. Tolerance 2%.
+  - Dev-only reference, not in code: CoinGecko `aero` $0.5703 and DefiLlama coins $0.5703.
+- **`circulating_supply`** uses the new generic adapter **`chain.view_sum`**: a signed sum of `uint256` views in one
+  multicall at the run block. Here it is new `totalSupply()` − `ve.supply()` − `balanceOf(aero_migration)` −
+  `balanceOf(velo_migration)` = **691.15M**. It refuses a negative result.
+  - Dev-only reference: CoinGecko `aero` 689.13M (0.29%). On chain, the market cap is **$395M**.
+- **`total_supply`** is `erc20_supply`, with no cross-check. CoinGecko is gone, and an on-chain check against the parts
+  would be circular, because circulating is computed from total.
+  - Dev-only reference: CoinGecko total 2,135.58M (0.10%).
+- **Old cross-checks deleted:** DefiLlama coins on price, and CoinGecko on total.
+- **Kept:** `external_ids.coingecko`. It is an identifier, not a data read, so dropping it buys nothing; the sources no
+  longer use it. If any code path still reads CoinGecko from it (e.g. the hourly `levels.ts` reads,
+  `price_coingecko_id`), that use goes for AERO.
+- **`flow_usd.fees` (DefiLlama) stays in this branch.** See the Status scope note. Its label says it is the all-chain
+  series. Phase 3 replaces it.
+
+Every adapter is generic, configured by contract names from `contracts`, and tested against a mock RPC first.
 
 ## 4. Decisions Mike owes (priced at 2026-11-09, price $0.5703, revenue $83.6M unchanged)
 
