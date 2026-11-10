@@ -4,18 +4,18 @@ import type { PriceBasis } from '../db/prices.js';
 import { addDays } from '../ingest/time.js';
 import { chainOfSource, locatorOfSource, provenanceLabel, scrubLocator } from '../provenance/locator.js';
 import { DAYS_PER_YEAR, STD_METRICS } from '../types.js';
-import { disclosedGrowthOf, growthOf, NEW_STREAM_DAYS, recipients, windowSum, type Bucket, type Growth, type HolderYieldReport, type ReportInput, type RevenueReport } from './holderYield.js';
+import { disclosedGrowthOf, growthOf, NEW_STREAM_DAYS, recipients, windowSum, type Bucket, type DisclosedGrowth, type Growth, type ReportInput, type SupplyFlow, type Yields } from './holderYield.js';
 import { crossCheckTypesOf, LISTING_RUNGS, sourceLabelOf, sourceTypeOf, type SourceType } from './sourceTypes.js';
 
 /**
- * Income statement v2 (spec 2026-10-28 §6-7, plan corrections 6, 7, 13, 14): a pure function of the same report input as
- * v1, beside it for one release. Annualizing, window sums and growth reuse `windowSum`/`growthOf` and v1's term
- * arithmetic (Σ window sum × weight, then × 365 / window), summed in YAML line order, so every figure the two statements
- * share is equal by construction (the parity map, PARITY below). `yields`, `dilution` and the supply line are copied
- * from the v1 report (spec §7 "as today").
- * Task 8 (after G2): the loader gives v2 its own daily series (`ReportInput.statementDaily`: tokens x hourly prices where a
- * row's hourly coverage is full and its stored USD was hourly-priced at ingest, else the stored USD) and the v1 report it copies from is computed over those same series;
- * the legacy v1 object keeps the stored `value`. So v2 and v1 then agree to the G2 deltas (float noise), not bit for bit.
+ * Income statement v2 (spec 2026-10-28 §6-7, plan corrections 6, 7, 13, 14): a pure function of the report input, the
+ * only report since Task 11 (G4) retired v1 and its config keys. Annualizing, window sums and growth use
+ * `windowSum`/`growthOf` (Σ window sum × weight, then × 365 / window), summed in YAML line order. The yields, the
+ * dilution and the supply line keep v1's arithmetic (spec §7 "as today"), now over the statement's holder-flow lines:
+ * the same series, in the same order, as the retired holder_flows, revenue streams and extra_cash, so every figure is
+ * unchanged to the bit (tests/report/v2Golden.test.ts).
+ * Task 8 (after G2): the loader gives the statement its own daily series (`ReportInput.statementDaily`: tokens x hourly
+ * prices where a row's hourly coverage is full and its stored USD was hourly-priced at ingest, else the stored USD).
  * Each line's `priceBasis` labels the days it reads (the window and growth's prior window).
  *
  *   revenue        = Σ revenue lines
@@ -97,7 +97,7 @@ export interface IsRevenueLineOut {
   /** A disclosed line: growth between the two latest disclosures (v1's disclosed growth, the same computation). */
   growth: Growth;
   /** A disclosed line only: the gap between the two latest disclosures, the latest's age and their flags (v1's). */
-  disclosedGrowth?: NonNullable<RevenueReport['disclosedGrowth']>;
+  disclosedGrowth?: DisclosedGrowth;
   /** A disclosed line's cross-check series, annualized over the window, and its rung (VVV: DefiLlama, third_party). */
   crossCheck?: { metric: string; annualized: number | null; sourceType: SourceType | null };
   notMeasured?: string;
@@ -256,7 +256,7 @@ export interface IsV2 {
     tokensPerYear: number | null;
     emissionsPerYear: number | null;
     releases: { id: string; tokensPerYear: number | null; yield: number | null }[];
-    supply: HolderYieldReport['supply'];
+    supply: SupplyFlow;
   };
   ratios: {
     takeRate: number | null;
@@ -269,7 +269,7 @@ export interface IsV2 {
     mcapToGrossProfit: number | null;
     mcapToHolderFlow: Record<Bucket | 'total', number | null>;
   };
-  yields: HolderYieldReport['yields'];
+  yields: Yields;
   /** USD a year per token (circulating supply), for the site's live-price layer (spec §7 amendment 2026-10-28). */
   perToken: PerToken & {
     circulatingSupply: number | null;
@@ -334,7 +334,7 @@ const neg = (t: Term[]): Term[] => t.map((x) => ({ metric: x.metric, w: -x.w, gw
 const scale = (t: Term[], k: number): Term[] => t.map((x) => ({ metric: x.metric, w: x.w * k, gw: x.gw * k }));
 const uniq = <T>(xs: T[]): T[] => [...new Set(xs)];
 
-export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport): IsV2 {
+export function incomeStatementV2(input: ReportInput): IsV2 {
   const { asset, day, levels: lv } = input;
   const is = asset.income_statement;
   if (!is) throw new Error(`assets/${asset.id}.yaml has no income_statement block`);
@@ -345,10 +345,10 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
   /** The rungs of the cross_checks on the metrics a line reads. */
   const crossTypesOf = (metrics: (string | undefined)[]): SourceType[] =>
     uniq(metrics.filter((m): m is string => m !== undefined).flatMap((m) => (metricDef(m) ? crossCheckTypesOf(metricDef(m)!, asset.metrics) : [])));
-  // The disclosed line's levels: its own metric's (the loader reads it apart when v1 discloses another one).
-  const disclosedSeries = lv.statementDisclosed ?? lv.disclosed;
+  // The disclosed line's levels (the loader reads the metric its `disclosed` key names).
+  const disclosedSeries = lv.disclosed;
 
-  // A line is zero before it began: days before `started` are filled with 0 (as v1 does for reporting.revenue streams).
+  // A line is zero before it began: days before `started` are filled with 0 (as v1 did for its revenue streams).
   const daily = new Map(input.daily);
   for (const r of is.revenue) {
     const m = r.metric ?? r.derived?.from;
@@ -778,8 +778,44 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
       ? noSeries(`not measured: ${holdersNm.map((f) => f.id).join(', ')}`)
       : growthOf(daily, series.flatMap((f) => f.terms.map((t) => t.metric)), day, W, series.flatMap((f) => f.terms.map((t) => (1 - f.haircut) * t.gw)));
   const hfNet = holdersNm.length > 0 ? null : sumOrNull(units.map((f) => f.net));
+
+  // Yields, dilution and the supply line (spec §7 "as today"): v1's arithmetic, term for term, on the units above (each
+  // the series a retired holder flow, revenue stream or extra_cash line read, in that order), so the figures are v1's
+  // to the bit. A bucket with no line is 0 in the yields; a missing value anywhere makes the sum null.
+  const eff = lv.totalSupply;
+  const fdv = finite(price) && finite(eff) ? price * eff : null;
+  const strictSum = (xs: (number | null)[]): number | null => (xs.length === 0 || xs.some((x) => x === null) ? null : xs.reduce<number>((s, x) => s + x!, 0));
+  const cashYield = byBucket.cash ? byBucket.cash.yield : 0;
+  const bb = [byBucket.burn, byBucket.hold].filter((x): x is BucketFlow => x !== null);
+  const buybackYield = bb.length === 0 ? 0 : strictSum(bb.map((x) => x.yield));
+  const shareholder = cashYield === null || buybackYield === null ? null : cashYield + buybackYield;
+  // Emissions plus any release outside the schedule (income_statement.dilution), each capped by what is approved.
+  const releaseRates = (is.dilution ?? []).map((d) => {
+    const x = lv.dilution?.[d.id];
+    if (!x || !finite(x.rate)) return null;
+    return d.cap_metric === undefined ? x.rate : finite(x.cap) ? Math.min(x.rate, x.cap) : null;
+  });
+  const released = strictSum(releaseRates);
+  const dilutionPct =
+    finite(lv.emissionRateAnnual) && finite(eff) && eff > 0 && (is.dilution === undefined || released !== null) ? (lv.emissionRateAnnual + (released ?? 0)) / eff : null;
+  const releases = (is.dilution ?? []).map((d, i) => ({ id: d.id, tokensPerYear: releaseRates[i]!, yield: finite(releaseRates[i]!) && finite(eff) && eff > 0 ? releaseRates[i]! / eff : null }));
+  const netShareholder = shareholder === null || dilutionPct === null ? null : shareholder - dilutionPct;
+  const multiple = shareholder !== null && shareholder > 0 ? 1 / shareholder : null;
+  const hfg = holderFlowGrowth.annualized;
+  const yields: Yields = {
+    cash: cashYield, buyback: buybackYield, shareholder, dilution: dilutionPct, netShareholder, multiple,
+    pegTrailing: multiple !== null && hfg !== null && hfg > 0 ? multiple / (hfg * 100) : null, ...(is.dilution ? { dilutionLines: releases } : {}),
+  };
+  let supply: SupplyFlow = null;
+  if (is.burned_tokens) {
+    const b = windowSum(daily, is.burned_tokens, day, W);
+    const burnedPerYear = b === null ? null : (b * DAYS_PER_YEAR) / W;
+    const addedPerYear = finite(lv.emissionRateAnnual) && (is.dilution === undefined || released !== null) ? lv.emissionRateAnnual + (released ?? 0) : null;
+    const netPerYear = finite(burnedPerYear) && finite(addedPerYear) ? addedPerYear - burnedPerYear : null;
+    supply = { burnedPerYear, addedPerYear, netPerYear, netPct: finite(netPerYear) && finite(eff) && eff > 0 ? netPerYear / eff : null };
+  }
   // Dilution in USD a year: annual supply growth x FDV = (emissions + releases) x price.
-  const dilutionUsd = finite(legacy.yields.dilution) && finite(legacy.fdv) ? legacy.yields.dilution * legacy.fdv : null;
+  const dilutionUsd = finite(dilutionPct) && finite(fdv) ? dilutionPct * fdv : null;
   const holderFlow: IsV2['holderFlow'] = {
     gross: holdersNm.length > 0 ? null : sumOrNull(units.map((f) => f.gross)),
     net: hfNet,
@@ -803,7 +839,7 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
   const gpMeasured = grossProfit !== null;
   const payoutRatio = gpMeasured ? div(holdersAnnual, grossProfit) : div(holdersAnnual, revenueAnnual);
 
-  const mcap = legacy.marketCap;
+  const mcap = finite(price) && finite(lv.circulatingSupply) ? price * lv.circulatingSupply : null;
   const bucketNet = (bk: Bucket) => byBucket[bk]?.net ?? null;
   const multiples: IsV2['multiples'] = {
     mcapToRevenue: div(mcap, revenueAnnual),
@@ -833,10 +869,10 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
       })()
     : null;
 
-  // Tokens a year added (v1's dilution numerator): emissions plus the reporting.dilution releases (null when one is unread).
-  const releases = legacy.yields.dilutionLines ?? [];
+  // Tokens a year added (v1's dilution numerator): emissions plus the income_statement.dilution releases (null when one
+  // is unread).
   const tokensPerYear =
-    legacy.yields.dilution === null || !finite(lv.emissionRateAnnual) || releases.some((r) => !finite(r.tokensPerYear))
+    dilutionPct === null || !finite(lv.emissionRateAnnual) || releases.some((r) => !finite(r.tokensPerYear))
       ? null
       : releases.reduce((s, r) => s + r.tokensPerYear!, lv.emissionRateAnnual);
 
@@ -962,10 +998,10 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     belowLine: { toHolders: measuredBelow('holders'), toProtocol: measuredBelow('protocol'), notMeasured: belowNm, lines: belowLines },
     holderFlow,
     volume,
-    dilution: { pct: legacy.yields.dilution, tokensPerYear, emissionsPerYear: lv.emissionRateAnnual, releases, supply: legacy.supply },
+    dilution: { pct: dilutionPct, tokensPerYear, emissionsPerYear: lv.emissionRateAnnual, releases, supply },
     ratios: { takeRate: div(grossProfit, revenueAnnual), payoutRatio, payoutRatioBasis: gpMeasured ? 'grossProfit' : 'revenue' },
     multiples,
-    yields: legacy.yields,
+    yields,
     perToken: { ...per(circ), circulatingSupply: circ, totalSupply: total, supplyAsOf: lv.asOf ?? null, perTokenFdv: per(total) },
     priceBasis: {
       price, metric: STD_METRICS.price, sourceType: priceDef ? sourceTypeOf(priceDef, asset.metrics) : null, source: priceDef ? sourceLabelOf(priceDef) : null,

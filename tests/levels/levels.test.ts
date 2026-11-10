@@ -8,7 +8,7 @@ import type { FetchDeps } from '../../src/ingest/run.js';
 import type { RpcTransport } from '../../src/ingest/transport/rpc.js';
 import { CG_MARKETS, harness, NOW } from '../helpers/fetchHarness.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
-import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
+import { INGEST_ASSET_YAML, METRICS_END } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
 import { watchAsset } from '../helpers/watchAsset.js';
 import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
@@ -21,7 +21,7 @@ function variant(id: string, cg: string, extra = '', rpcEnv = 'TEST_RPC_URL'): L
     INGEST_ASSET_YAML.replace('id: mini\n', `id: ${id}\n`)
       .replaceAll('mini-token', cg)
       .replace('rpc_url_env: TEST_RPC_URL', `rpc_url_env: ${rpcEnv}`)
-      .replace('holder_flows:', `${extra}holder_flows:`),
+      .replace(METRICS_END, `${extra}${METRICS_END}`),
   );
 }
 
@@ -59,7 +59,7 @@ describe('levelMetricKeys', () => {
     expect(levelMetricKeys(variant('d', 'mini-token', DISPLAY).config)).not.toContain('display_price');
     expect(levelMetricKeys(watchAsset().config)).toEqual(['circulating_supply', 'emission_rate_annual', 'price_usd', 'staked_supply', 'stats_apr', 'stats_price', 'total_supply']);
     const constant = parseAssetYaml(
-      INGEST_ASSET_YAML.replace('holder_flows:', '  fixed_supply:\n    type: level\n    unit: tokens\n    staleness_days: 7\n    source: { type: constant, value: 5, note: fixed }\nholder_flows:'),
+      INGEST_ASSET_YAML.replace(METRICS_END, '  fixed_supply:\n    type: level\n    unit: tokens\n    staleness_days: 7\n    source: { type: constant, value: 5, note: fixed }\n' + METRICS_END),
     ).config;
     expect(levelMetricKeys(constant)).not.toContain('fixed_supply');
   });

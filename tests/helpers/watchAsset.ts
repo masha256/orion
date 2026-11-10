@@ -10,9 +10,8 @@ export const TREASURY = '0x5555555555555555555555555555555555555555';
  */
 export function watchAssetYaml(opts: { above?: number; changePct?: number; outside?: [number, number]; levels?: boolean } = {}): string {
   const levels = opts.levels ?? true;
-  return INGEST_ASSET_YAML.replace(`  safe: "${SAFE}"\n`, `  safe: "${SAFE}"\n  treasury: "${TREASURY}"\n`).replace(
-    'holder_flows:',
-    `  flow_usd.revenue:
+  // The metrics block is the YAML's last: the watched metrics are appended to it.
+  return `${INGEST_ASSET_YAML.replace(`  safe: "${SAFE}"\n`, `  safe: "${SAFE}"\n  treasury: "${TREASURY}"\n`)}  flow_usd.revenue:
     type: flow
     unit: usd
     staleness_days: 10
@@ -37,8 +36,7 @@ ${
     source: { type: http_json, url: "https://api.example.test/stats", path: apr }
 `
     : ''
-}holder_flows:`,
-  );
+}`;
 }
 
 export const watchAsset = (opts: Parameters<typeof watchAssetYaml>[0] = {}): LoadedAsset => parseAssetYaml(watchAssetYaml(opts));

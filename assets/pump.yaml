@@ -63,7 +63,7 @@ metrics:
     source: { type: constant, value: 0, note: "no emissions" }
 
   # No minting can happen: the mint authority is null. The unlocks are tokens already in total supply, so they are
-  # reported as dilution (reporting.dilution), never counted as an emission.
+  # reported as dilution (income_statement.dilution), never counted as an emission.
   emission_rate_annual:
     type: schedule
     unit: tokens_per_year
@@ -109,27 +109,15 @@ metrics:
     monitor_only: true
     source: { type: defillama, slug: pump, data_type: dailyRevenue, backfill_days: 370 }
 
+# Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
+# the holders and below_line lines):
 # discretionary (Mike, 2026-10-16): the company sets the share (100 percent of its fee slice from 2025-07-14, cut to 50
 # percent on 2026-04-28) and runs the wallets; no contract binds it.
-holder_flows:
-  - { id: buyback, kind: burn, capture_rule: discretionary, recipient_base: all, metric: flow_usd.buyback, window_days: 91 }
-
 # Report-only holder yield and growth. A burn: no haircut. Revenue = DefiLlama's revenue (the company's take); paid to
 # holders = the burns. The unlocks are the dilution, the burns in PUMP the tokens removed.
-reporting:
-  window_days: 91
-  haircuts: { buyback: 0 }
-  revenue:
-    - { id: protocol, label: "pump.fun revenue (DefiLlama dailyRevenue)", metric: flow_usd.llama_revenue, settlement: daily }
-  income:
-    lines:
-      - { id: buyback, to: holders, metric: flow_usd.buyback, note: "company wallets buy PUMP daily and burn it (supply drop)" }
-  burned_tokens: [ flow_tokens.buyback ]
-  dilution:
-    - { id: unlocks, metric: unlocks_next_year, note: "team and existing-investor vesting to mid-2029 (DefiLlama emissions)" }
-
-# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
-# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+#
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2): the report's only block since Task 11 retired
+# holder_flows and reporting. Revenue = what users pay; each section says where it goes.
 income_statement:
   category: launchpad
   scope: protocol_share_only

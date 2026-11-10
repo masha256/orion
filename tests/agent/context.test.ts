@@ -153,7 +153,7 @@ describe('context', () => {
       expect('share' in p.revenue_streams[0]).toBe(false);
     });
 
-    it('an asset without reporting.revenue has no revenue_streams key', async () => {
+    it('an asset without metric revenue lines has no revenue_streams key', async () => {
       expect(await pack()).not.toHaveProperty('revenue_streams');
     });
   });

@@ -7,7 +7,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { loadAsset, parseAssetObject, parseAssetYaml } from '../../src/config/load.js';
 import { registerAdapter } from '../../src/ingest/adapters/registry.js';
 import { canonicalJson } from '../../src/util/canonical.js';
-import { MINI_ASSET_YAML } from '../helpers/assets.js';
+import { MINI_ASSET_YAML, MINI_HOLDER_YAML } from '../helpers/assets.js';
 
 describe('canonicalJson', () => {
   it('sorts object keys recursively and keeps array order', () => {
@@ -19,13 +19,14 @@ describe('parseAssetYaml', () => {
   it('parses a valid asset and applies defaults', () => {
     const { config, hash } = parseAssetYaml(MINI_ASSET_YAML);
     expect(config.contracts).toEqual({});
-    expect(config.holder_flows[0].window_days).toBe(90);
+    expect(config.external_ids).toEqual({});
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('pins the mini fixture\'s parsed-config hash, so no schema default is added silently', () => {
     // A new default changes every parsed config, and so every asset's config hash. Moving this pin must be on purpose.
-    expect(parseAssetYaml(MINI_ASSET_YAML).hash).toBe('c8cc46425acb05d4fd7e211aa648d8c284b29d3ccd9dfdfde6d5cdad4030f830');
+    // Re-pinned (Task 11, G4): MINI lost its holder_flows block (retired).
+    expect(parseAssetYaml(MINI_ASSET_YAML).hash).toBe('5b2f690b96353007bc31b9d29996ed078d92a0404e64f7d05e36ff2b81ae8021');
   });
 
   it('gives the same hash regardless of YAML key order', () => {
@@ -33,13 +34,27 @@ describe('parseAssetYaml', () => {
     expect(parseAssetYaml(reordered).hash).toBe(parseAssetYaml(MINI_ASSET_YAML).hash);
   });
 
-  it('rejects a holder flow whose metric is not a flow metric', () => {
-    const bad = MINI_ASSET_YAML.replace('metric: flow_usd.fees }', 'metric: price_usd }');
-    expect(() => parseAssetYaml(bad)).toThrow(/flow/);
+  it('rejects a holder-flow line whose metric is not a flow metric', () => {
+    const bad = MINI_HOLDER_YAML.replace('metric: flow_usd.fees, bucket', 'metric: price_usd, bucket');
+    expect(bad).not.toBe(MINI_HOLDER_YAML);
+    expect(() => parseAssetYaml(bad)).toThrow(/holders\.fees metric "price_usd" is not a flow metric/);
   });
 
   it('rejects unknown top-level keys', () => {
     expect(() => parseAssetYaml(MINI_ASSET_YAML + '\nsurprise: true\n')).toThrow();
+  });
+
+  // Task 11 (G4, ruling R11.1): the retired keys are gone from the schema, so the strict root refuses them by name.
+  it.each([
+    ['holder_flows', 'holder_flows:\n  - { id: fees, kind: fee_share, capture_rule: contractual, recipient_base: all, metric: flow_usd.fees }\n'],
+    ['reporting', 'reporting:\n  window_days: 90\n  haircuts: { fees: 0 }\n'],
+  ])('refuses the retired %s key by name at load', (key, block) => {
+    expect(() => parseAssetYaml(`${MINI_HOLDER_YAML}${block}`)).toThrow(new RegExp(`\\(root\\): Unrecognized key: "${key}"`));
+  });
+
+  it('loads an asset that pays its holders nothing (no holder flow at all: the Lido case, template T10)', () => {
+    const { config } = parseAssetYaml(MINI_ASSET_YAML);
+    expect(config.income_statement).toBeUndefined();
   });
 });
 
@@ -116,7 +131,9 @@ describe('the valuation config keys are gone', () => {
   });
 
   it('schema: a standard or holder-flow metric cannot be monitor_only', () => {
-    expect(messageOf(MINI_ASSET_YAML.replace('flow_usd.fees: { type: flow, unit: usd, staleness_days: 45, critical: true }', 'flow_usd.fees: { type: flow, unit: usd, staleness_days: 45, monitor_only: true }')))
+    // flow_usd.fees is a holder flow through MINI_HOLDER_YAML's holders line (Task 11: income_statement, not
+    // holder_flows).
+    expect(messageOf(MINI_HOLDER_YAML.replace('flow_usd.fees: { type: flow, unit: usd, staleness_days: 45, critical: true }', 'flow_usd.fees: { type: flow, unit: usd, staleness_days: 45, monitor_only: true }')))
       .toContain('"flow_usd.fees" is a standard or holder-flow metric and cannot be monitor_only');
     expect(messageOf(MINI_ASSET_YAML.replace('staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }', 'staker_emission_share: { type: level, unit: ratio, staleness_days: 30, monitor_only: true }')))
       .toContain('"staker_emission_share" is a standard or holder-flow metric and cannot be monitor_only');
@@ -136,12 +153,13 @@ describe('adapter params validation', () => {
 
   it('parseAssetObject surfaces the refusal with the metric path; assets/lit.yaml still loads and keeps its hash', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(litYaml).hash).toBe('a3685331c2301c67faaf931814655cde3cf416a307fe26638b98f578f0dcce4a');
-    expect(parseAssetObject(parseYaml(litYaml)).hash).toBe('a3685331c2301c67faaf931814655cde3cf416a307fe26638b98f578f0dcce4a');
+    // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
+    expect(parseAssetYaml(litYaml).hash).toBe('a3e049f1d277b4d5ba23af6995fbf4527776ce8c5493433d4c671faf83ce1004');
+    expect(parseAssetObject(parseYaml(litYaml)).hash).toBe('a3e049f1d277b4d5ba23af6995fbf4527776ce8c5493433d4c671faf83ce1004');
     // Another valid schedule loads (and is a different config from the file's 36 monthly tranches).
     const good = parseAssetObject(withTranches({ first: '2027-01-29', every_months: 3, count: 12 }));
     expect(good.config.metrics.unlocks_next_year.source).toMatchObject({ params: { tranches: { first: '2027-01-29', every_months: 3, count: 12 } } });
-    expect(good.hash).not.toBe('a3685331c2301c67faaf931814655cde3cf416a307fe26638b98f578f0dcce4a');
+    expect(good.hash).not.toBe('a3e049f1d277b4d5ba23af6995fbf4527776ce8c5493433d4c671faf83ce1004');
     // A malformed one is refused with the metric path, through the object path (filing) and the YAML path (approve).
     const bad = withTranches({ first: '2027-01-29', every_months: 13, count: 36 });
     expect(() => parseAssetObject(bad)).toThrow(expect.objectContaining({ code: 'invalid_asset_config', message: expect.stringContaining('metrics.unlocks_next_year.source.params: tranches.every_months') }));
@@ -205,8 +223,9 @@ describe('metric watch', () => {
     // Re-pinned 2026-11-01: the valuation keys and valuation-only metrics left (Phase 1); no watch/share key involved.
     // Re-pinned 2026-11-04: income_statement v2 block added (Phase 2 Task 2); no watch/share key involved.
     // Re-pinned 2026-11-09 (aero only): the Aero contracts (spec 2026-11-09-orion-aero-supply-design.md); no watch/share key involved.
-    expect(asset('vvv')).toBe('433d0306b2cad2849a717180e24568d5c0bf3ed3c62455c2208b470c9ed3f4f5');
-    expect(asset('hype')).toBe('7a52e7974c9c90234ac9ac27d6d0495291b047aa04d566e02e89c1801c284296');
-    expect(asset('aero')).toBe('e9e96f3c78e997fdc260433fe6bb1aa4e3958b959d0c3679ff9219a9aaaa9779');
+    // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
+    expect(asset('vvv')).toBe('fa05d39217ee2160f6e746350494a818b51c316368e6d3b364dc1c105b328838');
+    expect(asset('hype')).toBe('f7dcfeecf846ff6161e18797728bc37ae2d30d52157446bd92e21b1b8b245b3f');
+    expect(asset('aero')).toBe('3c413feb4fbdba98b9ab17c4802ea46cc4306e9e700fb8d1384fa984dde4d19b');
   });
 });

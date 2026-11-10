@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
@@ -83,7 +84,8 @@ function world() {
 describe('assets/crv.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'crv', symbol: 'CRV', chain: 'ethereum', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
-    expect(config.holder_flows).toEqual([{ id: 'fees', kind: 'fee_share', capture_rule: 'programmatic', recipient_base: 'locked', metric: 'flow_usd.fees', window_days: 91 }]);
+    expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.fees']);
+    expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     // Every metric has a source, and none is manual: a bootstrap run has nothing to research and the grade can be A.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
@@ -91,7 +93,8 @@ describe('assets/crv.yaml', () => {
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('dd2331c3efbb106f780d720f0e18a067658af84e35ef9023057b32d4a71cf70a');
+    // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('02417b36678c4d60d189ee7a86b748a5fed020c66528bcb19d199d83dbd0a80b');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

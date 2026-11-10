@@ -1,7 +1,7 @@
 import { appendFileSync } from 'node:fs';
 import { z } from 'zod';
 import { CHECK_TYPES } from '../checks/schema.js';
-import type { HolderYieldReport } from '../report/holderYield.js';
+import type { HolderYieldReport } from '../report/legacy.js';
 import type { IsV2 } from '../report/incomeStatement.js';
 import { WATCH_RULES } from '../types.js';
 import { InboxSchema } from './inbox.js';
@@ -115,8 +115,9 @@ export const TickReportSchema = z.strictObject({
     .nullable(),
   /**
    * The asset's `report yield` summary for its latest complete day, field for field and unrounded. Null when the report
-   * could not be built (`report_unavailable`), when the tick never reached it, or when the asset has no `reporting` block.
-   * Kept, with `report_error` `report_stale`, when the report's day is more than REPORT_STALE_DAYS behind the tick.
+   * could not be built (`report_unavailable`), when the tick never reached it, or when the asset has no
+   * `income_statement` block. Kept, with `report_error` `report_stale`, when the report's day is more than
+   * REPORT_STALE_DAYS behind the tick.
    */
   holder_yield: TickHolderYieldSchema.nullable(),
   /**

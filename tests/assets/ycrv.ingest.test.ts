@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
@@ -76,9 +77,8 @@ function world(extraLogs: { iso: string; from: string; tokens: bigint }[] = []) 
 describe('assets/ycrv.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'ycrv', symbol: 'yCRV', chain: 'ethereum', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
-    expect(config.holder_flows).toEqual([
-      { id: 'fees', kind: 'fee_share', capture_rule: 'programmatic', recipient_base: 'staked', valued_per: 'recipients', metric: 'flow_usd.fees', window_days: 91 },
-    ]);
+    expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.fees']);
+    expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     expect(config.metrics.revenue_run_rate_usd).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/ycrv.yaml moves it; update the pin on purpose.
@@ -86,7 +86,8 @@ describe('assets/ycrv.yaml', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned 2026-11-05: the splitter's gross by sender (yearn_gross_fees, yearn_gross_incentives) and the vote
     // incentives below the line by apportion (Phase 2 Task 7b, Mike G1).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('65cbdcb0ec4a593b9430d0e1e871cfebef2e3d44628b3ebb7662400ae8178b3c');
+    // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('d594acfc729f0b3b8c4022ec44ecd0f11133e5df07582049a6c09685d4e87f37');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

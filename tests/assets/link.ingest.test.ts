@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
@@ -98,19 +99,21 @@ function world() {
 describe('assets/link.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'link', symbol: 'LINK', chain: 'ethereum', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
-    expect(config.holder_flows).toEqual([{ id: 'reserve', kind: 'buy_and_hold', capture_rule: 'discretionary', recipient_base: 'all', metric: 'flow_usd.reserve', window_days: 91 }]);
+    expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.reserve']);
+    expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     // Every metric has a source (the one manual metric, the category share, left with the valuation layer).
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // No DefiLlama at all (Mike, 2026-10-11): the Reserve flow and the releases are read on chain.
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama' || d.cross_checks?.some((c) => c.source.type === 'defillama')).map(([k]) => k)).toEqual([]);
     // The hold bucket's overhang haircut (Mike, 2026-10-16: 5 percent).
-    expect(config.reporting!.haircuts).toEqual({ reserve: 0.05 });
+    expect(config.income_statement!.holders!.map((h) => [h.id, h.bucket, h.haircut, h.capture_rule])).toEqual([['reserve', 'hold', 0.05, 'discretionary']]);
     for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // A deliberate edit of assets/link.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/link.yaml`, 'utf8')).hash).toBe('036be4e28d3fa0bcb08af0f0338e1b37c9130a8e551b4cdd39bd12217aa8b6e4');
+    // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/link.yaml`, 'utf8')).hash).toBe('6bc2033876e803860ab6aa949e6ab20a1db8f24d695e12a454ec7f7a77d0f8b1');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

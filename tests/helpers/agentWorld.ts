@@ -10,7 +10,7 @@ import { assignPersona } from '../../src/db/coverage.js';
 import type { Db } from '../../src/db/connection.js';
 import { insertDocument, type StoredDocument } from '../../src/db/documents.js';
 import { insertObservation } from '../../src/db/observations.js';
-import { MINI_ASSET_YAML } from './assets.js';
+import { MINI_HOLDER_YAML } from './assets.js';
 import { AS_OF, miniObservations } from './obs.js';
 import { TEST_PROVENANCE, testProvenance } from './provenance.js';
 
@@ -18,7 +18,7 @@ import { TEST_PROVENANCE, testProvenance } from './provenance.js';
  * The mini asset as an agent sees it: revenue is critical, manual, and allows provisional data (like VVV's); the price is
  * fetched; staked supply is manual and does not allow provisional data.
  */
-export const AGENT_ASSET_YAML = MINI_ASSET_YAML
+export const AGENT_ASSET_YAML = MINI_HOLDER_YAML
   .replace(
     'price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }',
     'price_usd: { type: level, unit: usd, staleness_days: 3, critical: true, source: { type: coingecko, id: mini, field: price } }',

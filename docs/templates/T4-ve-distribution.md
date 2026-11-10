@@ -131,9 +131,6 @@ metrics:
     source: { type: transfer_flow, token: fee_token, to: fee_allocator, from_allowlist: [ fee_source ], unit: usd, price_coingecko_id: {{fee_token_coingecko_id}} }
   # needs pool_scan (Phase 3): flow_usd.vote_incentives, voter payouts over a curated list of incentive markets, with coverage
 
-holder_flows:
-  - { id: fees, kind: fee_share, capture_rule: programmatic, recipient_base: locked, metric: flow_usd.fees, window_days: 91 }
-
 income_statement:
   category: dex
   scope: protocol_share_only

@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { holderYieldReport, type HolderYieldReport } from '../../src/report/holderYield.js';
 import { incomeStatementV2, type IsV2 } from '../../src/report/incomeStatement.js';
 import { getPath, PARITY, PARITY_PATHS } from '../../src/report/parity.js';
 import { ALL_ASSETS, repoAsset, syntheticInput } from '../helpers/syntheticReport.js';
@@ -10,12 +9,19 @@ const PARITY_ASSETS = ['aero', 'cake', 'crv', 'cvxcrv', 'hype', 'link', 'pump', 
 const REL = 1e-12;
 const rel = (a: number | null, b: number | null) => (a === null && b === null ? 0 : a === null || b === null ? Infinity : a === b ? 0 : Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b)));
 
-/** Both statements for a repo asset on synthetic series, as the report JSON carries them (a JSON round trip). */
-function reports(id: string): { v1: HolderYieldReport; v2: IsV2 } {
+/**
+ * The v1 report of each repo asset on the synthetic series, as cc59fa7 computed it (before Task 11 retired v1 and its
+ * config): the old side of the cross-release proof, which reads it from an old release's JSON the same way.
+ */
+const V1_GOLDEN = JSON.parse(readFileSync(fileURLToPath(new URL('./golden/v1-report-13.json', import.meta.url)), 'utf8')) as Record<string, V1>;
+type V1 = any;
+
+/**
+ * Both statements for a repo asset on synthetic series, as the report JSON carries them: v1 frozen, v2 computed now.
+ */
+function reports(id: string): { v1: V1; v2: IsV2 } {
   const input = syntheticInput(repoAsset(id));
-  const v1 = holderYieldReport(input);
-  const v2 = incomeStatementV2(input, v1);
-  return { v1: JSON.parse(JSON.stringify(v1)), v2: JSON.parse(JSON.stringify(v2)) };
+  return { v1: structuredClone(V1_GOLDEN[id]), v2: JSON.parse(JSON.stringify(incomeStatementV2(input))) };
 }
 
 const num = (obj: unknown, path: string): number => {
@@ -76,10 +82,11 @@ describe('parity map (ruling R7)', () => {
       for (const h of asset.income_statement!.holders ?? []) {
         for (const k of ['net', 'yield', 'growth.annualized']) expect(v2Paths, `${id} ${h.id} ${k}`).toContain(`incomeStatement.holderFlow.lines[id=${h.id}].${k}`);
       }
-      if (asset.reporting!.revenue) {
+      const v1 = V1_GOLDEN[id];
+      if (v1.revenue?.basis === 'streams' || v1.revenue?.basis === 'disclosed') {
         for (const r of asset.income_statement!.revenue) expect(v2Paths, `${id} ${r.id} growth`).toContain(`incomeStatement.revenue.lines[id=${r.id}].growth.annualized`);
       }
-      if (asset.reporting!.volume) {
+      if (v1.volume) {
         expect(v1Of.get('incomeStatement.volume.annualized'), id).toBe('volume.annualized');
         expect(v1Of.get('incomeStatement.volume.growth.annualized'), id).toBe('volume.growth.annualized');
       }
@@ -117,7 +124,7 @@ describe('parity map (ruling R7)', () => {
 /** The Reclassification Table (plan Global Constraints), from the v1 report, keyed by expected.py's paths. */
 const YCRV_MIX_PATH = 'incomeStatement.holders.lines[id=ybs_payout].apportion.mix';
 
-function reclassExpected(id: string, v1: HolderYieldReport, v2: IsV2): Record<string, number> {
+function reclassExpected(id: string, v1: V1, v2: IsV2): Record<string, number> {
   const line = (l: string) => num(v1, `income.lines[id=${l}].annualized`);
   if (id === 'sdcrv') {
     const revenue = num(v1, 'income.revenue.annualized') - line('vote_incentives');

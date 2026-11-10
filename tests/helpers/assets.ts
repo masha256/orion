@@ -17,8 +17,21 @@ metrics:
   staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }
   emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400 }
   flow_usd.fees: { type: flow, unit: usd, staleness_days: 45, critical: true }
-holder_flows:
-  - { id: fees, kind: fee_share, capture_rule: contractual, recipient_base: all, metric: flow_usd.fees }
+`;
+
+/**
+ * MINI with an income statement whose one holders line pays the fees (Task 11: what makes `flow_usd.fees` a holder
+ * flow, so eligibility keeps its window and the agent's pack shows it); revenue not measured, so no revenue line reads
+ * a series.
+ */
+export const MINI_HOLDER_YAML = `${MINI_ASSET_YAML}income_statement:
+  category: dex
+  scope: complete
+  window_days: 90
+  revenue:
+    - { id: revenue, not_measured: "mini test asset" }
+  holders:
+    - { id: fees, metric: flow_usd.fees, bucket: cash, haircut: 0, recipient_base: all, capture_rule: contractual }
 `;
 
 export function miniAsset(): AssetConfig {
@@ -51,17 +64,10 @@ export function statementShape(is: IncomeStatementDef | undefined) {
 }
 
 /**
- * MINI with a 10-day `reporting` block and an `income_statement` (Task 4 report tests): revenue is the fees, all paid to
- * holders as cash, the LP cost of revenue not measured (so the statement carries flags). `seedMiniReport` stores the
- * rows it reads.
+ * MINI with a 10-day `income_statement` (Task 4 report tests): revenue is the fees, all paid to holders as cash, the LP
+ * cost of revenue not measured (so the statement carries flags). `seedMiniReport` stores the rows it reads.
  */
-export const MINI_REPORT_YAML = `${MINI_ASSET_YAML}reporting:
-  window_days: 10
-  haircuts: { fees: 0 }
-  income:
-    lines:
-      - { id: fees, to: holders, metric: flow_usd.fees }
-income_statement:
+export const MINI_REPORT_YAML = `${MINI_ASSET_YAML}income_statement:
   category: dex
   scope: complete
   window_days: 10

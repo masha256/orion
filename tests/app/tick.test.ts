@@ -9,12 +9,12 @@ import { addDays } from '../../src/ingest/time.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import { testDatabaseConfig, testDbPair, useTestDb } from '../helpers/db.js';
 import { GENESIS_TS, harness, NOW, type Harness } from '../helpers/fetchHarness.js';
-import { INGEST_ASSET_YAML, POOL } from '../helpers/ingestAsset.js';
+import { INGEST_ASSET_YAML, METRICS_END, POOL } from '../helpers/ingestAsset.js';
 import { watchAssetYaml } from '../helpers/watchAsset.js';
 import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
-/** The mini asset's one holder flow, reported over a week. */
-const REPORTING = 'reporting:\n  window_days: 7\n  haircuts: { fees: 0 }\n';
+/** The mini asset's fees as revenue, all paid to holders (cash), reported over a week (Task 11: income_statement). */
+const REPORTING = 'income_statement:\n  category: dex\n  scope: complete\n  window_days: 7\n  revenue:\n    - { id: fees_rev, metric: flow_usd.fees }\n  holders:\n    - { id: fees, of: fees_rev, bucket: cash, haircut: 0, recipient_base: all, capture_rule: contractual }\n';
 const reportAsset = (yaml = INGEST_ASSET_YAML, extra = ''): LoadedAsset => parseAssetYaml(`${yaml}${REPORTING}${extra}`);
 
 const testDb = useTestDb();
@@ -67,9 +67,6 @@ describe('tickAsset', () => {
   it('tick report lists checks; no agent run is started', async () => {
     // The mini asset with a statement and two checks: a two_path the fetch's own rows satisfy, a parameter that breaches.
     const statement = [
-      'income_statement:', '  category: dex', '  scope: complete', '  window_days: 7',
-      '  revenue:', '    - { id: fees_rev, metric: flow_usd.fees }',
-      '  holders:', '    - { id: fees, of: fees_rev, bucket: cash, haircut: 0, recipient_base: all, capture_rule: contractual }',
       '  checks:',
       '    - { id: two_ways, type: two_path, a: flow_usd.fees, b: flow_usd.fees_programmatic, tolerance_pct: 1 }',
       '    - { id: staker_share, type: parameter, metric: staker_emission_share, expected: 0.5, tolerance_pct: 0 }',
@@ -119,8 +116,8 @@ describe('tickAsset', () => {
 
   it('tick: report unavailable -> exit 2, report still emitted', async () => {
     // A report flow with no stored day (a new asset): the fetch works, the report cannot be built.
-    const volume = '  flow_usd.volume: { type: flow, unit: usd, staleness_days: 45, monitor_only: true }\nholder_flows:';
-    const yaml = watchAssetYaml({ above: 20, levels: false }).replace('holder_flows:', volume);
+    const volume = '  flow_usd.volume: { type: flow, unit: usd, staleness_days: 45, monitor_only: true }\n' + METRICS_END;
+    const yaml = watchAssetYaml({ above: 20, levels: false }).replace(METRICS_END, volume);
     const logs = [{ blockNumber: BigInt(Math.ceil((Date.parse('2026-09-17T12:00:00Z') / 1000 - GENESIS_TS) / 2)), logIndex: 0, txHash: '0xa', from: POOL, value: 3n * 10n ** 18n }];
     world({ loaded: reportAsset(yaml, '  volume: [flow_usd.volume]\n'), logs });
     const a = await raiseAnomaly(h.db, { assetId: 'mini', kind: 'cross_check_mismatch', metricKey: 'price_usd', dedupeKey: 'x', severity: 'advisory', detail: { check: 1 }, seenAt: NOW.toISOString() });
@@ -135,8 +132,8 @@ describe('tickAsset', () => {
 
   /** The mini asset plus a monitor-only report flow (volume) the fetch never writes: the flow that can stop. */
   function volumeWorld() {
-    const volume = '  flow_usd.volume: { type: flow, unit: usd, staleness_days: 45, monitor_only: true }\nholder_flows:';
-    world({ loaded: reportAsset(watchAssetYaml({ above: 1000, levels: false }).replace('holder_flows:', volume), '  volume: [flow_usd.volume]\n') });
+    const volume = '  flow_usd.volume: { type: flow, unit: usd, staleness_days: 45, monitor_only: true }\n' + METRICS_END;
+    world({ loaded: reportAsset(watchAssetYaml({ above: 1000, levels: false }).replace(METRICS_END, volume), '  volume: [flow_usd.volume]\n') });
   }
 
   it('tick: a report flow that stopped -> exit 2, report_stale, holder_yield still filled', async () => {
@@ -214,7 +211,7 @@ describe('tickAsset', () => {
     expect(TickReportSchema.parse(report)).toEqual(report);
   });
 
-  it('gives an asset without a reporting block holder_yield null, report_error null, and exit 0', async () => {
+  it('gives an asset without an income_statement block holder_yield null, report_error null, and exit 0', async () => {
     world({ loaded: parseAssetYaml(INGEST_ASSET_YAML) });
     const { report, exitCode } = await tick();
     expect(exitCode).toBe(0);

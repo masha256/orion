@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
@@ -107,7 +108,8 @@ function world() {
 describe('assets/cake.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'cake', symbol: 'CAKE', chain: 'bnb', ingest: { chain_id: 56, rpc_url_env: 'ORION_BNB_RPC_URL', backfill_days: 100 } });
-    expect(config.holder_flows).toEqual([{ id: 'burn', kind: 'burn', capture_rule: 'programmatic', recipient_base: 'all', metric: 'flow_usd.burn', window_days: 91 }]);
+    expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.burn']);
+    expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // DefiLlama only for the display series with no on-chain source (fees paid in thousands of pool tokens).
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.fees', 'flow_usd.llama_revenue']);
@@ -116,7 +118,9 @@ describe('assets/cake.yaml', () => {
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/cake.yaml`, 'utf8')).hash).toBe('2d05a80bdff0c499065879b3f361d45fc35f6cc81efc0f0fe9cb1a09091dbb02');
+    // Re-pinned 2026-11-10 (fix/cake-pending-burn 0ecc69e): total_supply nets the burner and MasterChef v2; CoinGecko total cross-check dropped.
+    // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/cake.yaml`, 'utf8')).hash).toBe('2f7d698f7f077e3769758dde049776f921dfd6381519892240fca3af98dd7a99');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

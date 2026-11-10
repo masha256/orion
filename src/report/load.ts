@@ -7,38 +7,19 @@ import { provenanceLabel } from '../provenance/locator.js';
 import { latestLevel } from '../observations/select.js';
 import { addDays, utcDay } from '../ingest/time.js';
 import { MS_PER_DAY, STD_METRICS } from '../types.js';
-import { holderYieldReport, type DayProvenance, type HolderYieldReport, type ReportInput, type ReportLevels } from './holderYield.js';
+import { reportHeader, type DayProvenance, type ReportInput, type ReportLevels } from './holderYield.js';
 import { incomeStatementV2, type IsV2 } from './incomeStatement.js';
+import { legacyView, type HolderYieldReport } from './legacy.js';
 
 /**
- * Every flow metric the report reads: the holder flows, plus revenue and volume, then the income statement v2's (the
- * same series for 12 assets; yCRV adds its two by-sender flows). The default report day reads only v1's
- * (`defaultDayFlowMetrics`), so v2-only series never move it.
+ * Every flow metric the report reads: income_statement's revenue, uses, paid_metric, below-line flows, apportion by and
+ * total, sum check totals, volume and burned_tokens (Task 11: the only block since holder_flows and reporting retired).
  */
 export function reportFlowMetrics(asset: AssetConfig): string[] {
-  const r = asset.reporting;
-  const inc = r?.income;
-  const income = inc
-    ? [
-        ...inc.lines.map((l) => l.metric ?? l.estimate!.of),
-        ...(inc.remainder_of ?? []),
-        ...(inc.checks ?? []).flatMap((c) => c.total),
-        ...(inc.outside_revenue ?? []).map((o) => o.metric),
-      ]
-    : [];
-  const streams = (r?.revenue ?? []).flatMap((s) => [s.metric, s.cross_check].filter((m): m is string => m !== undefined));
-  return [...new Set([...asset.holder_flows.map((f) => f.metric), ...income, ...streams, ...(r?.volume ?? []), ...(r?.burned_tokens ?? []), ...statementFlowMetrics(asset)])];
-}
-
-/**
- * The flow metrics `income_statement` reads (revenue, uses, paid_metric, below-line flows, apportion by/total, check
- * totals, volume, burned_tokens).
- */
-function statementFlowMetrics(asset: AssetConfig): string[] {
   const is = asset.income_statement;
   if (!is) return [];
   const uses = [...(is.cost_of_revenue ?? []), ...(is.holders ?? []), ...(is.protocol ?? []), ...(is.operating_costs ?? [])];
-  return [
+  return [...new Set([
     ...is.revenue.flatMap((l) => [l.metric, l.derived?.from, l.cross_check]),
     ...uses.flatMap((l) => [l.metric, 'paid_metric' in l ? l.paid_metric : undefined, l.apportion?.by, l.apportion?.total]),
     ...(is.below_line ?? []).flatMap((b) => [b.metric, b.apportion?.by, b.apportion?.total]),
@@ -46,15 +27,12 @@ function statementFlowMetrics(asset: AssetConfig): string[] {
     ...(is.checks ?? []).flatMap((c) => (c.type === 'sum' ? c.total : [])),
     ...(is.volume ?? []),
     ...(is.burned_tokens ?? []),
-  ].filter((m): m is string => m !== undefined);
+  ].filter((m): m is string => m !== undefined))];
 }
 
 /** The metrics of periodic revenue streams: paid weeks after the days they cover, so they never hold back the report day. */
 function periodicMetrics(asset: AssetConfig): Set<string> {
-  return new Set([
-    ...(asset.reporting?.revenue ?? []).filter((s) => s.settlement === 'periodic').map((s) => s.metric!),
-    ...(asset.income_statement?.revenue ?? []).filter((l) => l.settlement === 'periodic').map((l) => (l.metric ?? l.derived?.from)!),
-  ]);
+  return new Set((asset.income_statement?.revenue ?? []).filter((l) => l.settlement === 'periodic').map((l) => (l.metric ?? l.derived?.from)!));
 }
 
 /**
@@ -94,7 +72,7 @@ async function dayRows(db: Db, assetId: string, metricKey: string): Promise<Map<
   return days;
 }
 
-/** A flow metric's stored daily rows (confirmed, active), keyed by the UTC day each covers: the stored `value` (v1). */
+/** A flow metric's stored daily rows (confirmed, active), keyed by the UTC day each covers: the stored `value`. */
 async function dailyOf(db: Db, assetId: string, metricKey: string): Promise<Map<string, number>> {
   return new Map([...(await dayRows(db, assetId, metricKey))].map(([d, r]) => [d, r.value]));
 }
@@ -105,7 +83,7 @@ async function dailyOf(db: Db, assetId: string, metricKey: string): Promise<Map<
  * hourly-priced at ingest (`pricedHourlyAtIngest`: the G2-signed days), a first-party API's dollars where the row is
  * usd-native, else the stored `value`; `basis` says which per day. A metric that is not a USD flow (tokens, a
  * level) is not in the view: its days keep `value` and get no basis. Periodic streams are left to `periodicDaily`
- * (stored value, basis legacy). The legacy (v1) report never calls this.
+ * (stored value, basis legacy).
  */
 async function statementSeries(
   db: Db, assetId: string, metrics: string[], periodic: Set<string>, legacyDaily: Map<string, Map<string, number>>,
@@ -139,13 +117,12 @@ async function statementSeries(
 }
 
 /**
- * The flows that set the default report day: the v1 report's (holder flows, income lines, revenue streams, volume,
- * burned tokens), never a metric only `income_statement` reads (final review M4: yCRV's by-sender flows). So during the
- * legacy release the default day is v1's exactly, and a v2-only series with no row for that day shows as the
- * statement's own missing-day flag rather than holding the whole report back.
+ * The flows that set the default report day: every flow the report reads (Task 11, ruling R11.1). For 12 assets this is
+ * the v1 set exactly; yCRV's differs (the v1-only st-yCRV fee leaves it, the two by-sender flows of yearn_gross's own
+ * scan join it), pinned in tests/report/load.test.ts.
  */
 export function defaultDayFlowMetrics(asset: AssetConfig): string[] {
-  return reportFlowMetrics({ ...asset, income_statement: undefined });
+  return reportFlowMetrics(asset);
 }
 
 /**
@@ -154,8 +131,8 @@ export function defaultDayFlowMetrics(asset: AssetConfig): string[] {
  */
 export async function lastCompleteReportDay(db: Db, asset: AssetConfig): Promise<string | null> {
   let last: string | null = null;
-  // v1's periodic streams (M4: a statement-only periodic setting must not change which v1 flows gate the day).
-  const periodic = periodicMetrics({ ...asset, income_statement: undefined });
+  // Periodic streams are paid weeks after the days they cover: they never hold back the day.
+  const periodic = periodicMetrics(asset);
   for (const metric of defaultDayFlowMetrics(asset)) {
     if (periodic.has(metric)) continue;
     const days = [...(await dailyOf(db, asset.id, metric)).keys()].sort();
@@ -167,9 +144,9 @@ export async function lastCompleteReportDay(db: Db, asset: AssetConfig): Promise
 }
 
 /**
- * `report yield --json` (D9): the income statement v2 with the figures it shares with the header. The v1 keys (`flows`,
- * `buckets`, `yields`, `holderFlowGrowth`, `supply`, `income`, `revenue`, `volume`, `revenueDisclosed`) stay one release
- * behind `--legacy`. `incomeStatement` is absent for an asset with no `income_statement` block.
+ * `report yield --json` (D9): the income statement v2 with the figures it shares with the header. Absent for an asset
+ * with no `income_statement` block (it has no report). Task 11a: the v1 keys behind `--legacy` are rebuilt from the
+ * statement (src/report/legacy.ts) until Task 11b removes them.
  */
 export interface YieldReport {
   asset: string;
@@ -178,63 +155,61 @@ export interface YieldReport {
   price: number | null;
   marketCap: number | null;
   fdv: number | null;
-  /** Null when computing it threw (`incomeStatementError` says why); absent without an income_statement block. */
-  incomeStatement?: IsV2 | null;
+  /** Null when computing it threw (`incomeStatementError` says why). */
+  incomeStatement: IsV2 | null;
   incomeStatementError?: string;
   notes: string[];
 }
 
 export interface ReportOptions {
-  /** The v1 object in v1 key order, `incomeStatement` appended last (deleting it gives v1 byte for byte). */
+  /** The v1-shaped keys (src/report/legacy.ts) in v1 key order, `incomeStatement` appended last. */
   legacy?: boolean;
 }
 
 /**
- * Ruling C4: income statement v2 is new code beside the legacy report for one release, so an exception inside it never
- * fails the legacy report, the tick or the snapshot: the report carries `incomeStatement: null` and the error's message
- * (`incomeStatementError`), the tick `holder_yield.statement_error`, and the nightly block an ALERT line, so a broken
- * statement is never silent.
+ * Ruling C4: an exception inside the statement never fails the report, the tick or the snapshot: the report carries
+ * `incomeStatement: null` and the error's message (`incomeStatementError`), the tick `holder_yield.statement_error`,
+ * and the nightly block an ALERT line, so a broken statement is never silent. Task 8: on its own daily series when the
+ * loader gives them (`statementDaily`).
  */
-function statementOf(input: ReportInput, v1: HolderYieldReport): { incomeStatement: IsV2 } | { incomeStatement: null; incomeStatementError: string } {
+function statementOf(input: ReportInput): { incomeStatement: IsV2 } | { incomeStatement: null; incomeStatementError: string } {
   try {
-    // Task 8: with its own daily series, v2 also takes the figures it copies from v1 (yields, dilution, supply) from a v1
-    // computation over those series, so the statement is on one basis; the legacy object keeps `daily` (`v1` here).
-    if (input.statementDaily === undefined) return { incomeStatement: incomeStatementV2(input, v1) };
-    const v2Input: ReportInput = { ...input, daily: input.statementDaily };
-    return { incomeStatement: incomeStatementV2(v2Input, holderYieldReport(v2Input)) };
+    return { incomeStatement: incomeStatementV2(input.statementDaily === undefined ? input : { ...input, daily: input.statementDaily }) };
   } catch (err) {
     return { incomeStatement: null, incomeStatementError: (err instanceof Error ? err.message : String(err)).slice(0, 300) };
   }
 }
 
-/** The report object for one input: v1 then v2, from the same input (pure). */
+/** The report object for one input (pure). */
 export function yieldReport(input: ReportInput, opts: { legacy: true }): HolderYieldReport;
 export function yieldReport(input: ReportInput, opts?: ReportOptions): YieldReport | HolderYieldReport;
 export function yieldReport(input: ReportInput, opts: ReportOptions = {}): YieldReport | HolderYieldReport {
   return assembleReport(input, opts);
 }
 
-/** `yieldReport`, or with `v2ReadError` (a v2-only DB read threw, M3): the statement is not computed and carries that error. */
+/**
+ * `yieldReport`, or with `v2ReadError` (a statement-only DB read threw, M3): the statement is not computed and carries
+ * that error.
+ */
 function assembleReport(input: ReportInput, opts: ReportOptions, v2ReadError?: string): YieldReport | HolderYieldReport {
-  const v1 = holderYieldReport(input);
-  const withIs = !input.asset.income_statement
-    ? {}
-    : v2ReadError !== undefined
-      ? { incomeStatement: null, incomeStatementError: v2ReadError.slice(0, 300) }
-      : statementOf(input, v1);
-  if (opts.legacy) return { ...v1, ...withIs };
-  return { asset: v1.asset, day: v1.day, windowDays: v1.windowDays, price: v1.price, marketCap: v1.marketCap, fdv: v1.fdv, ...withIs, notes: v1.notes };
+  // The header's figures and notes, on the series the statement reads (Task 8: the same basis as its yields).
+  const head = reportHeader(input.statementDaily === undefined ? input : { ...input, daily: input.statementDaily });
+  const withIs = v2ReadError !== undefined ? { incomeStatement: null, incomeStatementError: v2ReadError.slice(0, 300) } : statementOf(input);
+  const base = { asset: input.asset.id, day: input.day, windowDays: head.windowDays, price: head.price, marketCap: head.marketCap, fdv: head.fdv };
+  if (opts.legacy) return { ...legacyView({ ...base, notes: head.notes }, withIs.incomeStatement), ...withIs };
+  return { ...base, ...withIs, notes: head.notes };
 }
 
 /**
- * The asset's report for `day` (default: its last complete report day). Without `legacy`, the D9 shape; with it, the v1
- * object plus `incomeStatement` (the tick's summary and the snapshot body read the v1 keys).
+ * The asset's report for `day` (default: its last complete report day): the D9 shape; with `legacy`, the v1-shaped keys
+ * plus `incomeStatement` (Task 11a: the tick's summary and the snapshot body still read them). Throws for an asset with
+ * no income_statement block.
  */
 export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day: string | undefined, opts: { legacy: true }): Promise<HolderYieldReport>;
 export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: string, opts?: ReportOptions): Promise<YieldReport | HolderYieldReport>;
 export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: string, opts: ReportOptions = {}): Promise<YieldReport | HolderYieldReport> {
-  const r = asset.reporting;
-  if (!r) throw new Error(`assets/${asset.id}.yaml has no reporting block`);
+  const is = asset.income_statement;
+  if (!is) throw new Error(`assets/${asset.id}.yaml has no income_statement block`);
   const target = day ?? (await lastCompleteReportDay(db, asset));
   if (target === null) throw new Error(`${asset.id}: no stored day for every report flow yet`);
   const asOf = new Date(Date.parse(`${addDays(target, 1)}T00:00:00.000Z`) + MS_PER_DAY - 1).toISOString(); // to the end of the next day: the levels read with that day's run
@@ -242,26 +217,21 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
     const rows = (await listActiveObservations(db, asset.id, key)).filter((o) => o.status === 'confirmed');
     return latestLevel(rows, asOf)?.value ?? null;
   };
+  // The run-rate lines below the line (CRV's vote incentives).
   const extra: Record<string, number | null> = {};
-  for (const x of r.extra_cash ?? []) extra[x.metric] = await level(x.metric);
-  // Income statement v2's run-rate lines (CRV's vote incentives: the same level extra_cash reads).
-  for (const b of asset.income_statement?.below_line ?? []) if (b.run_rate !== undefined && !(b.run_rate in extra)) extra[b.run_rate] = await level(b.run_rate);
-  const disclosuresOf = async (metric: string) =>
-    (await listActiveObservations(db, asset.id, metric))
-      .filter((o) => o.status === 'confirmed' && o.observedAt <= asOf)
-      .sort((a, b) => (a.observedAt < b.observedAt ? -1 : 1))
-      .map((o) => ({ observedAt: o.observedAt, value: o.value }));
-  // v1 reads `revenue_disclosed` (output unchanged). The v2 disclosed line reads the metric its own `disclosed` key names:
-  // the same rows when the two keys agree (VVV), its own rows when they differ, so a mismatch can never borrow v1's.
-  const v1Discloses = r.revenue_disclosed !== undefined || (r.revenue ?? []).some((s) => s.disclosed !== undefined);
-  const v1Metric = v1Discloses ? r.revenue_disclosed : undefined;
-  const disclosed = v1Metric ? await disclosuresOf(v1Metric) : [];
-  const statementMetric = asset.income_statement?.revenue.find((l) => l.disclosed !== undefined)?.disclosed;
-  const statementDisclosed = statementMetric === undefined ? undefined : statementMetric === v1Metric ? disclosed : await disclosuresOf(statementMetric);
+  for (const b of is.below_line ?? []) if (b.run_rate !== undefined && !(b.run_rate in extra)) extra[b.run_rate] = await level(b.run_rate);
+  // The disclosed revenue line reads the metric its `disclosed` key names (VVV's run rate).
+  const disclosedMetric = is.revenue.find((l) => l.disclosed !== undefined)?.disclosed;
+  const disclosed = disclosedMetric === undefined
+    ? []
+    : (await listActiveObservations(db, asset.id, disclosedMetric))
+        .filter((o) => o.status === 'confirmed' && o.observedAt <= asOf)
+        .sort((a, b) => (a.observedAt < b.observedAt ? -1 : 1))
+        .map((o) => ({ observedAt: o.observedAt, value: o.value }));
   let dilution: ReportLevels['dilution'];
-  if (r.dilution) {
+  if (is.dilution) {
     dilution = {};
-    for (const d of r.dilution) dilution[d.id] = { rate: await level(d.metric), cap: d.cap_metric ? await level(d.cap_metric) : null };
+    for (const d of is.dilution) dilution[d.id] = { rate: await level(d.metric), cap: d.cap_metric ? await level(d.cap_metric) : null };
   }
   const levels: ReportLevels = {
     price: await level(STD_METRICS.price),
@@ -273,7 +243,6 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
     extra,
     ...(dilution ? { dilution } : {}),
     disclosed,
-    ...(statementDisclosed ? { statementDisclosed } : {}),
     asOf,
   };
   const periodic = periodicMetrics(asset);
@@ -291,23 +260,21 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
     provisional.set(m, p.provisional);
     daily.set(m, p.days);
   }
-  // The v2-only reads, inside C4's isolation (M3): a throw here gives `incomeStatement: null` and its message, and never
-  // fails the legacy report, the tick's holder_yield or the snapshot.
+  // The statement-only reads, inside C4's isolation (M3): a throw here gives `incomeStatement: null` and its message,
+  // and never fails the report's header, the tick's holder_yield or the snapshot.
   let checks: Awaited<ReturnType<typeof listCheckResults>> = [];
   let provenance: Map<string, Map<string, DayProvenance>> | undefined;
   let statement: Awaited<ReturnType<typeof statementSeries>> | undefined;
   let v2ReadError: string | undefined;
-  if (asset.income_statement) {
-    try {
-      // The checks the tick stored for this day (v2 only: the legacy object never carries them).
-      checks = await listCheckResults(db, asset.id, target);
-      // The provenance of every day the daily series hold (v2 only), for the statement's provenance from observations.
-      provenance = await provenanceByDay(db, asset.id, [...daily.keys()], periodic);
-      // Task 8 (after G2): the statement's series on the tokens x prices basis where hourly coverage is full.
-      statement = await statementSeries(db, asset.id, [...daily.keys()], periodic, daily, rowsOf);
-    } catch (err) {
-      v2ReadError = `income statement inputs unavailable: ${err instanceof Error ? err.message : String(err)}`;
-    }
+  try {
+    // The checks the tick stored for this day.
+    checks = await listCheckResults(db, asset.id, target);
+    // The provenance of every day the daily series hold, for the statement's provenance from observations.
+    provenance = await provenanceByDay(db, asset.id, [...daily.keys()], periodic);
+    // Task 8 (after G2): the statement's series on the tokens x prices basis where hourly coverage is full.
+    statement = await statementSeries(db, asset.id, [...daily.keys()], periodic, daily, rowsOf);
+  } catch (err) {
+    v2ReadError = `income statement inputs unavailable: ${err instanceof Error ? err.message : String(err)}`;
   }
   return assembleReport(
     {

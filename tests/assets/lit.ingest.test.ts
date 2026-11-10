@@ -1,4 +1,5 @@
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +12,7 @@ import { buildPlan } from '../../src/ingest/plan.js';
 import { addDays } from '../../src/ingest/time.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.js';
-import { loadHolderYieldReport } from '../../src/report/load.js';
+import { loadHolderYieldReport, type YieldReport } from '../../src/report/load.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { testCliContext, useTestDb } from '../helpers/db.js';
@@ -155,17 +156,20 @@ describe('assets/lit.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'lit', symbol: 'LIT', chain: 'ethereum', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
     // Mike, 2026-10-16: discretionary.
-    expect(config.holder_flows).toEqual([{ id: 'buyback', kind: 'burn', capture_rule: 'discretionary', recipient_base: 'all', metric: 'flow_usd.buyback', window_days: 91 }]);
+    expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.buyback']);
+    expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // Lighter's own data for the holder flow (Mike, 2026-10-16); DefiLlama only for display series and the unlock schedule.
     expect(config.metrics['flow_usd.buyback'].source).toMatchObject({ type: 'adapter', name: 'lit.treasury_buys_daily' });
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.fees', 'flow_usd.llama_revenue']);
-    // Revenue from Lighter's API (Mike, 2026-10-23): Core in full, the Robinhood instance at Lighter's 50 percent.
-    expect(config.reporting!.revenue).toEqual([
+    // Revenue from Lighter's API (Mike, 2026-10-23): Core in full, the Robinhood instance gross with Robinhood's 50
+    // percent a cost of revenue (v2: gross user-paid fees).
+    expect(config.income_statement!.revenue).toEqual([
       { id: 'core', label: 'Lighter Core fees (Lighter API)', metric: 'flow_usd.fees_core', settlement: 'daily' },
-      { id: 'robinhood', label: "Lighter's 50% of Robinhood-instance fees (Lighter API)", metric: 'flow_usd.fees_rh', settlement: 'daily', share: 0.5, started: '2026-06-26' },
+      { id: 'robinhood', label: 'Robinhood-instance fees (Lighter API)', metric: 'flow_usd.fees_rh', settlement: 'daily', started: '2026-06-26' },
     ]);
-    expect(config.reporting!.volume).toEqual(['flow_usd.fees_core', 'flow_usd.fees_rh']);
+    expect(config.income_statement!.cost_of_revenue).toEqual([expect.objectContaining({ id: 'robinhood_partner', of: 'robinhood', share: 0.5 })]);
+    expect(config.income_statement!.volume).toEqual(['flow_usd.fees_core', 'flow_usd.fees_rh']);
     // Every new series is monitor-only (the valuation is unchanged), the four watches as approved.
     const added = ['flow_usd.fees_core', 'flow_usd.fees_rh', 'flow_usd.rh_buyback', 'rh_fee_account_usd', 'rh_revenue_share_app', 'staked_tokens_reported', 'staking_apr'];
     for (const key of added) expect(config.metrics[key], key).toMatchObject({ monitor_only: true, staleness_days: config.metrics[key].type === 'flow' ? 5 : 3 });
@@ -191,7 +195,8 @@ describe('assets/lit.yaml', () => {
     // Re-pinned 2026-10-23: revenue and volume from Lighter's API, the Robinhood watch, staked LIT (all monitor-only).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('a3685331c2301c67faaf931814655cde3cf416a307fe26638b98f578f0dcce4a');
+    // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('a3e049f1d277b4d5ba23af6995fbf4527776ce8c5493433d4c671faf83ce1004');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -266,7 +271,7 @@ describe('assets/lit.yaml', () => {
     // the APR is inside its band. None is an anomaly (asserted empty above).
     expect(r.watch).toEqual([{ metric: 'flow_usd.rh_buyback', rule: 'above', value: 2_500, previous: null, day: RH_BUY_DAY }]);
     // The holder flow is still the measured Core buys.
-    expect(config.holder_flows.map((h) => h.metric)).toEqual(['flow_usd.buyback']);
+    expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.buyback']);
     expect(config.metrics['flow_usd.buyback'].source).toEqual({ type: 'adapter', name: 'lit.treasury_buys_daily', params: { account: 0, market: 2049, unit: 'usd', days: 7 } });
 
     // The next routine fetch has a cursor, so it reads only the adapter's own 7-day window: one page (84 trades), not the 12 of the first.
@@ -283,30 +288,29 @@ describe('assets/lit.yaml', () => {
   it('reports the buys as the payout, the unlocks as dilution, and the market cap on circulating supply', async () => {
     const w = world();
     await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
-    const rep = await loadHolderYieldReport(w.db, config, undefined, { legacy: true });
+    const rep = (await loadHolderYieldReport(w.db, config)) as YieldReport;
     expect(rep.day).toBe('2026-10-15');
     expect(rep.marketCap).toBeCloseTo(PRICE * 250_000_000, 0);
     expect(rep.fdv).toBeCloseTo(PRICE * 981_909_280, 0);
-    expect(rep.yields.buyback).toBeCloseTo((25_000 * PRICE * 365) / (981_909_280 * PRICE), 3);
-    // Revenue = Core $100k + 0.5 x RH $40k a day; volume = both gross ($140k a day).
-    expect(rep.revenue!.basis).toBe('streams');
-    expect(rep.revenue!.streams.map((s) => [s.id, s.share, s.annualized])).toEqual([
-      ['core', undefined, expect.closeTo(100_000 * 365, -2)],
-      ['robinhood', 0.5, expect.closeTo(20_000 * 365, -2)],
+    const is = rep.incomeStatement!;
+    expect(is.yields.buyback).toBeCloseTo((25_000 * PRICE * 365) / (981_909_280 * PRICE), 3);
+    // Revenue = Core $100k + RH $40k a day, gross; Robinhood's half ($20k) is a cost of revenue, so gross profit is
+    // $120k.
+    expect(is.revenue.lines.map((l) => [l.id, l.annualized])).toEqual([
+      ['core', expect.closeTo(100_000 * 365, -2)],
+      ['robinhood', expect.closeTo(40_000 * 365, -2)],
     ]);
-    // Core carries no share key at all (toEqual reads an absent key and an undefined one alike).
-    expect('share' in rep.revenue!.streams[0]).toBe(false);
-    expect(rep.revenue!.streams[1].grossAnnualized).toBeCloseTo(40_000 * 365, -2);
-    expect('grossAnnualized' in rep.revenue!.streams[0]).toBe(false);
-    expect(rep.revenue!.annualized).toBeCloseTo(120_000 * 365, -2);
-    expect(rep.volume).toMatchObject({ metrics: ['flow_usd.fees_core', 'flow_usd.fees_rh'], annualized: expect.closeTo(140_000 * 365, -2) });
-    expect(rep.income!.payoutRatio).toBeCloseTo((25_000 * PRICE) / 120_000, 2);
-    expect(rep.supply).toMatchObject({ burnedPerYear: expect.closeTo(25_000 * 365, -3) });
+    expect(is.costOfRevenue.lines.map((l) => [l.id, l.share, l.annualized])).toEqual([['robinhood_partner', 0.5, expect.closeTo(20_000 * 365, -2)]]);
+    expect(is.grossProfit.annualized).toBeCloseTo(120_000 * 365, -2);
+    expect(is.volume).toMatchObject({ metrics: ['flow_usd.fees_core', 'flow_usd.fees_rh'], annualized: expect.closeTo(140_000 * 365, -2) });
+    expect(is.ratios.payoutRatioBasis).toBe('grossProfit');
+    expect(is.ratios.payoutRatio).toBeCloseTo((25_000 * PRICE) / 120_000, 2);
+    expect(is.dilution.supply).toMatchObject({ burnedPerYear: expect.closeTo(25_000 * 365, -3) });
     // Unlocks (about 133M a year) swamp the burn (9.1M) in tokens.
-    expect(rep.supply!.netPerYear).toBeGreaterThan(0);
+    expect(is.dilution.supply!.netPerYear).toBeGreaterThan(0);
   });
 
-  it('orion report yield lit --json --legacy carries the same streams, shares and totals (what the coinrevs feed reads)', async () => {
+  it('orion report yield lit --json carries the same lines, shares and totals (what the coinrevs feed reads)', async () => {
     const home = mkdtempSync(join(tmpdir(), 'orion-lit-report-'));
     const lines: string[] = [];
     const ctx = testCliContext(home, { stdout: (l) => lines.push(l), now: () => NOW, stderr: () => undefined });
@@ -317,23 +321,15 @@ describe('assets/lit.yaml', () => {
     await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     lines.length = 0;
     await orion('report', 'yield', 'lit', '--json');
-    // D9: the default object is the v2 statement; the v1 keys the coinrevs feed reads are behind --legacy for one release.
-    const slim = JSON.parse(lines.join('\n'));
-    expect(slim).not.toHaveProperty('revenue');
-    expect(slim.incomeStatement.revenue.lines.map((l: { id: string }) => l.id)).toEqual(['core', 'robinhood']);
-    lines.length = 0;
-    await orion('report', 'yield', 'lit', '--json', '--legacy');
+    // D9: the object is the v2 statement; the v1 keys are gone (Task 11).
     const out = JSON.parse(lines.join('\n'));
-    expect(out.incomeStatement).toEqual(slim.incomeStatement);
+    expect(out).not.toHaveProperty('revenue');
     expect(out.day).toBe('2026-10-15');
-    expect(out.revenue.basis).toBe('streams');
-    expect(out.revenue.streams.map((s: Record<string, unknown>) => [s.id, s.share ?? null, 'share' in s])).toEqual([['core', null, false], ['robinhood', 0.5, true]]);
-    expect(out.revenue.streams[0].annualized).toBeCloseTo(100_000 * 365, -2);
-    expect(out.revenue.streams[1].annualized).toBeCloseTo(20_000 * 365, -2);
-    expect(out.revenue.streams[1].grossAnnualized).toBeCloseTo(40_000 * 365, -2);
-    expect('grossAnnualized' in out.revenue.streams[0]).toBe(false);
-    expect(out.revenue.annualized).toBeCloseTo(120_000 * 365, -2);
-    expect(out.volume.annualized).toBeCloseTo(140_000 * 365, -2);
+    expect(out.incomeStatement.revenue.lines.map((l: { id: string }) => l.id)).toEqual(['core', 'robinhood']);
+    expect(out.incomeStatement.revenue.annualized).toBeCloseTo(140_000 * 365, -2);
+    expect(out.incomeStatement.costOfRevenue.lines[0]).toMatchObject({ id: 'robinhood_partner', of: 'robinhood', share: 0.5 });
+    expect(out.incomeStatement.grossProfit.annualized).toBeCloseTo(120_000 * 365, -2);
+    expect(out.incomeStatement.volume.annualized).toBeCloseTo(140_000 * 365, -2);
     expect(out.marketCap).toBeCloseTo(PRICE * 250_000_000, 0);
     expect(out.fdv).toBeCloseTo(PRICE * 981_909_280, 0);
   });

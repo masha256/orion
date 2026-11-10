@@ -151,9 +151,6 @@ metrics:
     source: { type: transfer_flow, token: fee_token, to: splitter, from_allowlist: [ voter, incentive_seller ], count_from: [ incentive_seller ], unit: usd, price_coingecko_id: {{fee_token_coingecko_id}} }
   # needs balance_delta (Phase 3): distributor_balance_change, for a balance check on the distributor
 
-holder_flows:
-  - { id: payout, kind: fee_share, capture_rule: programmatic, recipient_base: staked, valued_per: recipients, metric: flow_usd.payout, window_days: 91 }
-
 income_statement:
   category: liquid_locker
   scope: complete

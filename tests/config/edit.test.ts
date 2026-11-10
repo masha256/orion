@@ -172,7 +172,7 @@ describe('the real VVV config', () => {
 
   it('takes a holder flow change and a new metric setting as two changed lines', () => {
     const out = applyEditsToYaml(text, [
-      { path: ['holder_flows', 'burn', 'window_days'], value: 182 },
+      { path: ['income_statement', 'window_days'], value: 182 },
       { path: ['metrics', 'revenue_run_rate_usd', 'staleness_days'], value: 120 },
     ]);
     const changed = changedLines(text, out);

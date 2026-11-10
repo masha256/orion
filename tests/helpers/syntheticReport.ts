@@ -9,6 +9,27 @@ import { reportFlowMetrics } from '../../src/report/load.js';
 export const ALL_ASSETS = ['aero', 'cake', 'crv', 'cvxcrv', 'hype', 'link', 'lit', 'pump', 'sdcrv', 'sky', 'uni', 'vvv', 'ycrv'] as const;
 export const SYNTHETIC_DAY = '2026-11-02';
 
+/**
+ * The flows each repo asset's synthetic input carries, in the order the report read them at cc59fa7 (before Task 11): a
+ * series' scale depends on its place, so this frozen list keeps every synthetic input, and the golden reports built on
+ * them (tests/report/v2Golden.test.ts), unchanged. yCRV keeps its st-yCRV fee, which no line reads since Task 11.
+ */
+const SYNTHETIC_FLOWS: Record<string, string[]> = {
+  aero: ['flow_usd.fees'],
+  cake: ['flow_usd.burn', 'flow_usd.treasury', 'flow_usd.fees', 'flow_tokens.burn'],
+  crv: ['flow_usd.fees', 'flow_usd.curve_treasury', 'flow_usd.protocol_revenue'],
+  cvxcrv: ['flow_usd.fees', 'flow_usd.crv', 'flow_usd.cvx', 'flow_usd.convex_rev_cvxcrv', 'flow_usd.convex_rev_cvx', 'flow_usd.convex_rev_treasury', 'flow_usd.convex_gross_crv'],
+  hype: ['flow_usd.af_buyback', 'flow_usd.revenue_proxy', 'flow_usd.reserve_yield'],
+  link: ['flow_usd.reserve'],
+  lit: ['flow_usd.buyback', 'flow_usd.fees_core', 'flow_usd.fees_rh', 'flow_tokens.buyback'],
+  pump: ['flow_usd.buyback', 'flow_usd.llama_revenue', 'flow_tokens.buyback'],
+  sdcrv: ['flow_usd.fees', 'flow_usd.crv', 'flow_usd.bribes', 'flow_usd.sd_rev_crv_vesdt', 'flow_usd.sd_rev_crv_treasury', 'flow_usd.sd_rev_fees_liquidity', 'flow_usd.sd_rev_fees_treasury', 'flow_usd.sd_boost_delegation', 'flow_usd.sd_rev_crv', 'flow_usd.sd_gross_crv'],
+  sky: ['flow_usd.stakers', 'flow_usd.buyback'],
+  uni: ['flow_usd.burn', 'flow_usd.swap_fees', 'flow_tokens.burn'],
+  vvv: ['flow_usd.burn', 'flow_usd.revenue_proxy'],
+  ycrv: ['flow_usd.fees', 'flow_usd.yearn_revenue', 'flow_usd.yearn_styc_fee', 'flow_usd.yearn_gross', 'flow_usd.yearn_gross_fees', 'flow_usd.yearn_gross_incentives'],
+};
+
 export function repoAsset(id: string): AssetConfig {
   return parseAssetYaml(readFileSync(fileURLToPath(new URL(`../../assets/${id}.yaml`, import.meta.url)), 'utf8')).config;
 }
@@ -27,15 +48,11 @@ function wiggle(metric: string, i: number): number {
  */
 export function syntheticInput(asset: AssetConfig, day = SYNTHETIC_DAY): ReportInput {
   const started = new Map<string, string>();
-  for (const s of asset.reporting?.revenue ?? []) if (s.metric && s.started) started.set(s.metric, s.started);
   for (const l of asset.income_statement?.revenue ?? []) if (l.metric && l.started) started.set(l.metric, l.started);
-  const periodic = new Set([
-    ...(asset.reporting?.revenue ?? []).filter((s) => s.settlement === 'periodic').map((s) => s.metric!),
-    ...(asset.income_statement?.revenue ?? []).filter((l) => l.settlement === 'periodic').map((l) => l.metric!),
-  ]);
+  const periodic = new Set((asset.income_statement?.revenue ?? []).filter((l) => l.settlement === 'periodic').map((l) => l.metric!));
   const daily = new Map<string, Map<string, number>>();
   const provisional = new Map<string, Set<string>>();
-  reportFlowMetrics(asset).forEach((m, k) => {
+  (SYNTHETIC_FLOWS[asset.id] ?? reportFlowMetrics(asset)).forEach((m, k) => {
     const series = new Map<string, number>();
     const scale = 1000 * (k + 1) * (m.startsWith('flow_tokens.') ? 3 : 1);
     for (let i = 0; i < 200; i++) {
@@ -56,10 +73,9 @@ export function syntheticInput(asset: AssetConfig, day = SYNTHETIC_DAY): ReportI
     daily.set(c.total[0]!, sum);
   }
   const extra: Record<string, number | null> = {};
-  for (const x of asset.reporting?.extra_cash ?? []) extra[x.metric] = 4_321_000;
   for (const b of asset.income_statement?.below_line ?? []) if (b.run_rate) extra[b.run_rate] = 4_321_000;
-  const dilution: ReportLevels['dilution'] = asset.reporting?.dilution
-    ? Object.fromEntries(asset.reporting.dilution.map((d) => [d.id, { rate: 2_000_000, cap: d.cap_metric ? 1_500_000 : null }]))
+  const dilution: ReportLevels['dilution'] = asset.income_statement?.dilution
+    ? Object.fromEntries(asset.income_statement.dilution.map((d) => [d.id, { rate: 2_000_000, cap: d.cap_metric ? 1_500_000 : null }]))
     : undefined;
   const levels: ReportLevels = {
     price: 1.7,
@@ -70,7 +86,7 @@ export function syntheticInput(asset: AssetConfig, day = SYNTHETIC_DAY): ReportI
     emissionRateAnnual: 10_000_000,
     extra,
     ...(dilution ? { dilution } : {}),
-    disclosed: asset.reporting?.revenue_disclosed
+    disclosed: asset.income_statement?.revenue.some((l) => l.disclosed !== undefined)
       ? [{ observedAt: '2026-06-01T00:00:00.000Z', value: 90_000_000 }, { observedAt: '2026-10-01T00:00:00.000Z', value: 100_000_000 }]
       : [],
     asOf: `${addDays(day, 1)}T23:59:59.999Z`,

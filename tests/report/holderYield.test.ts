@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseAssetYaml } from '../../src/config/load.js';
 import { addDays } from '../../src/ingest/time.js';
-import { growthOf, holderYieldReport, type ReportLevels } from '../../src/report/holderYield.js';
+import { growthOf, reportHeader, type ReportLevels } from '../../src/report/holderYield.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -38,175 +38,70 @@ describe('growthOf', () => {
   });
 });
 
-/** The HYPE fixture with a reporting block: one burn-tagged flow plus a revenue proxy. */
+/** The HYPE fixture (one buy-and-hold flow) with an income statement: `holders` and `below` are its sections' YAML. */
 const hypeYaml = readFileSync(fileURLToPath(new URL('../fixtures/hype.yaml', import.meta.url)), 'utf8');
+const withStatement = (holders: string, below = '', revenue = '    - { id: trading, not_measured: "fixture" }\n') => `${hypeYaml.replace('metrics:\n', 'metrics:\n  run_rate_usd: { type: level, unit: usd, staleness_days: 30 }\n  flow_usd.other: { type: flow, unit: usd, staleness_days: 7 }\n')}income_statement:
+  category: perp_dex
+  scope: complete
+  window_days: 10
+  revenue:
+${revenue}  holders:
+${holders}${below ? `  below_line:\n${below}` : ''}`;
+const BUYBACK = '    - { id: buyback, metric: flow_usd.buyback, bucket: hold, haircut: 0.05, recipient_base: all, capture_rule: programmatic }\n';
 
-describe('holderYieldReport', () => {
-  const levels: ReportLevels = {
-    price: 2, totalSupply: 1000, stakedSupply: 400, lockedSupply: null, emissionRateAnnual: 50, extra: {}, disclosed: [],
-  };
+describe('reportHeader (Task 11: the notes v1 printed, read from income_statement)', () => {
+  const levels: ReportLevels = { price: 2, totalSupply: 1000, circulatingSupply: 600, stakedSupply: 400, lockedSupply: null, emissionRateAnnual: 50, extra: {}, disclosed: [] };
+  const head = (yaml: string, over: Partial<ReportLevels> = {}, provisional?: Map<string, Set<string>>) =>
+    reportHeader({ asset: parseAssetYaml(yaml).config, day: '2026-01-20', daily: new Map(), levels: { ...levels, ...over }, ...(provisional ? { provisional } : {}) });
 
-  it('reports market cap on circulating supply and FDV on total supply; the yields stay on total supply', () => {
-    const asset = parseAssetYaml(`${hypeYaml}\nreporting: { window_days: 10, haircuts: { buyback: 0 } }\n`).config;
-    const daily = new Map([[asset.holder_flows[0].metric, flat('2026-01-01', 20, 1)]]);
-    const withCirc = holderYieldReport({ asset, day: '2026-01-20', daily, levels: { ...levels, circulatingSupply: 250 } });
-    const without = holderYieldReport({ asset, day: '2026-01-20', daily, levels });
-    expect([withCirc.marketCap, withCirc.fdv]).toEqual([500, 2000]);
-    expect(withCirc.yields).toEqual(without.yields);
-    expect(withCirc.supply).toEqual(without.supply);
+  it('market cap on circulating supply, FDV on total supply, the statement\'s window', () => {
+    expect(head(withStatement(BUYBACK))).toEqual({ windowDays: 10, price: 2, marketCap: 1200, fdv: 2000, notes: [] });
+    expect(head(withStatement(BUYBACK), { circulatingSupply: null, price: null })).toMatchObject({ marketCap: null, fdv: null });
   });
 
-  it('puts each holder flow in the bucket its kind names, and derives the yields from them', () => {
-    const asset = parseAssetYaml(`${hypeYaml}\nreporting: { window_days: 10, haircuts: { buyback: 0 } }\n`).config;
-    const day = '2026-01-20';
-    const flowMetric = asset.holder_flows[0].metric;
-    const daily = new Map([[flowMetric, flat('2026-01-01', 20, 1)]]);
-    const r = holderYieldReport({ asset, day, daily, levels });
-    expect(r.flows[0].bucket).toBe(asset.holder_flows[0].kind === 'burn' ? 'burn' : asset.holder_flows[0].kind === 'buy_and_hold' ? 'hold' : 'cash');
-    // 10 per window of 10 days: 365 a year, on an FDV of 2000 (price 2 x total supply 1000). No circulating supply: no market cap.
-    expect(r.flows[0].gross).toBeCloseTo(365);
-    expect(r.fdv).toBe(2000);
-    expect(r.marketCap).toBeNull();
-    const y = r.yields;
-    expect(y.shareholder).toBeCloseTo(365 / 2000);
-    expect(y.dilution).toBeCloseTo(0.05);
-    expect(y.netShareholder).toBeCloseTo(365 / 2000 - 0.05);
-    expect(y.multiple).toBeCloseTo(2000 / 365);
-    // Flat flow: growth 0, so the trailing PEG is not meaningful.
-    expect(r.holderFlowGrowth.annualized).toBeCloseTo(0);
-    expect(y.pegTrailing).toBeNull();
-    expect(y.dilutionLines).toBeUndefined();
+  it('notes a run-rate line to holders, and yields per token of a base other than all', () => {
+    const below = '    - { id: bribes, to: holders, run_rate: run_rate_usd, bucket: cash, haircut: 0, recipient_base: staked, capture_rule: programmatic }\n';
+    expect(head(withStatement(BUYBACK, below)).notes).toEqual([
+      'holder-flow growth excludes bribes (a run rate with no daily series)',
+      "yields are per token of each flow's recipients (staked or locked supply), i.e. to a holder in every flow's base",
+    ]);
+    expect(head(withStatement(BUYBACK.replace('recipient_base: all', 'recipient_base: staked'))).notes).toEqual([
+      "yields are per token of each flow's recipients (staked or locked supply), i.e. to a holder in every flow's base",
+    ]);
   });
 
-  it('adds reporting.dilution releases to the dilution, each capped by what is approved', () => {
-    const yaml = hypeYaml.replace('metrics:\n', 'metrics:\n  vest_rate: { type: level, unit: tokens_per_year, staleness_days: 7, monitor_only: true }\n  vest_cap: { type: level, unit: tokens, staleness_days: 7, monitor_only: true }\n');
-    const asset = parseAssetYaml(`${yaml}\nreporting: { window_days: 10, haircuts: { buyback: 0 }, dilution: [ { id: vest, metric: vest_rate, cap_metric: vest_cap } ] }\n`).config;
-    const daily = new Map([[asset.holder_flows[0].metric, flat('2026-01-01', 20, 1)]]);
-    const at = (rate: number | null, cap: number | null) => holderYieldReport({ asset, day: '2026-01-20', daily, levels: { ...levels, dilution: { vest: { rate, cap } } } }).yields;
-    // emission 50 + vest 100 (cap 300) on 1000 effective: 15 percent.
-    expect(at(100, 300).dilution).toBeCloseTo(0.15);
-    expect(at(100, 300).dilutionLines).toEqual([{ id: 'vest', tokensPerYear: 100, yield: 0.1 }]);
-    // Only 40 approved: the cap binds.
-    expect(at(100, 40).dilution).toBeCloseTo(0.09);
-    expect(at(100, 40).netShareholder).toBeCloseTo(365 / 2000 - 0.09);
-    // Without burned_tokens there is no token supply line.
-    expect(holderYieldReport({ asset, day: '2026-01-20', daily, levels: { ...levels, dilution: { vest: { rate: 100, cap: 300 } } } }).supply).toBeNull();
-    // An unread line leaves the dilution unknown rather than understated.
-    expect(at(null, 40).dilution).toBeNull();
-    expect(() => parseAssetYaml(`${hypeYaml}\nreporting: { window_days: 10, haircuts: { buyback: 0 }, dilution: [ { id: vest, metric: nope } ] }\n`)).toThrow(/dilution "vest" metric "nope" is not a level metric/);
+  it('notes a periodic line\'s unpaid days in the window, and a single disclosure', () => {
+    const periodic = '    - { id: reserve, metric: flow_usd.other, settlement: periodic, started: "2026-01-01" }\n';
+    const provisional = new Map([['flow_usd.other', new Set(['2026-01-19', '2026-01-20', '2025-12-01'])]]);
+    expect(head(withStatement(BUYBACK, '', periodic), {}, provisional).notes).toEqual(["revenue: reserve has 2 unpaid day(s) at the last period's daily rate (provisional)"]);
+    const disclosed = '    - { id: business, disclosed: run_rate_usd }\n';
+    expect(head(withStatement(BUYBACK, '', disclosed), { disclosed: [{ observedAt: '2026-01-01T00:00:00.000Z', value: 9 }] }).notes).toEqual([
+      'disclosed revenue: one disclosure so far; growth starts at the next one',
+    ]);
+    expect(head(withStatement(BUYBACK, '', disclosed), { disclosed: [{ observedAt: '2025-10-01T00:00:00.000Z', value: 8 }, { observedAt: '2026-01-01T00:00:00.000Z', value: 9 }] }).notes).toEqual([]);
   });
 
-  it('sets the tokens burned against the tokens added in one unit (reporting.burned_tokens)', () => {
-    const yaml = hypeYaml.replace('metrics:\n', 'metrics:\n  flow_tokens.b: { type: flow, unit: tokens, staleness_days: 4, monitor_only: true }\n  vest_rate: { type: level, unit: tokens_per_year, staleness_days: 7, monitor_only: true }\n');
-    const asset = parseAssetYaml(`${yaml}\nreporting: { window_days: 10, haircuts: { buyback: 0 }, burned_tokens: [ flow_tokens.b ], dilution: [ { id: vest, metric: vest_rate } ] }\n`).config;
-    // 0.2 tokens a day burned = 73 a year; added: emission 50 + vest 10 = 60. Net -13 on 1000: supply shrinks 1.3 percent.
-    const daily = new Map([[asset.holder_flows[0].metric, flat('2026-01-01', 20, 1)], ['flow_tokens.b', flat('2026-01-01', 20, 0.2)]]);
-    const s = holderYieldReport({ asset, day: '2026-01-20', daily, levels: { ...levels, dilution: { vest: { rate: 10, cap: null } } } }).supply!;
-    expect(s.burnedPerYear).toBeCloseTo(73);
-    expect(s.addedPerYear).toBeCloseTo(60);
-    expect(s.netPerYear).toBeCloseTo(-13);
-    expect(s.netPct).toBeCloseTo(-0.013);
-    expect(() => parseAssetYaml(`${hypeYaml}\nreporting: { window_days: 10, haircuts: { buyback: 0 }, burned_tokens: [ ${asset.holder_flows[0].metric} ] }\n`)).toThrow(/is not a flow metric in tokens/);
+  it('throws for an asset without an income statement (it has no report)', () => {
+    expect(() => reportHeader({ asset: parseAssetYaml(hypeYaml).config, day: '2026-01-20', daily: new Map(), levels })).toThrow(/has no income_statement block/);
   });
+});
 
-  it('nets a haircut out of the yield and the growth, and reports the PEG when growth is positive', () => {
-    const base = parseAssetYaml(hypeYaml).config;
-    const id = base.holder_flows[0].id;
-    const yaml = hypeYaml.replace('kind: buy_and_hold', 'kind: fee_share');
-    const asset = parseAssetYaml(`${yaml}\nreporting: { window_days: 10, haircuts: { ${id}: 0.1 } }\n`).config;
-    const flowMetric = asset.holder_flows[0].metric;
-    const daily = new Map([[flowMetric, series('2026-01-01', [...Array(10).fill(1), ...Array(10).fill(1.1)])]]);
-    const r = holderYieldReport({ asset, day: '2026-01-20', daily, levels });
-    expect(r.flows[0].bucket).toBe('cash');
-    expect(r.flows[0].net).toBeCloseTo(r.flows[0].gross! * 0.9);
-    expect(r.yields.buyback).toBe(0);
-    expect(r.yields.cash).toBeCloseTo(r.flows[0].net! / (recipientsOf(asset.holder_flows[0].recipient_base) * 2));
-    expect(r.holderFlowGrowth.change).toBeCloseTo(0.1);
-    expect(r.yields.pegTrailing).toBeCloseTo(r.yields.multiple! / (r.holderFlowGrowth.annualized! * 100));
-  });
-
-  describe('income statement', () => {
-    const withMetrics = hypeYaml.replace(
-      'metrics:\n',
-      'metrics:\n' +
-        ['rev', 'kept', 'kept2', 'cost', 'total', 'reserve'].map((m) => `  flow_usd.${m}: { type: flow, unit: usd, staleness_days: 4, monitor_only: true }\n`).join(''),
-    );
-    const make = (income: string) => parseAssetYaml(`${withMetrics}\nreporting: { window_days: 10, haircuts: { buyback: 0 }, income: ${income} }\n`).config;
-    const day = '2026-01-20';
-    const d = (v: number) => flat('2026-01-01', 20, v);
-
-    it('sums its lines into revenue, paid to holders, costs and protocol income, with ratios of revenue', () => {
-      const asset = make(`{ lines: [
-        { id: h, to: holders, metric: flow_usd.buyback },
-        { id: k, to: protocol, metric: flow_usd.kept },
-        { id: c, to: cost, estimate: { of: flow_usd.buyback, ratio: 0.05 } } ],
-        checks: [ { total: [ flow_usd.total ], parts: [ h, k ] } ],
-        outside_revenue: [ { id: r, metric: flow_usd.reserve } ] }`);
-      const daily = new Map([['flow_usd.buyback', d(8)], ['flow_usd.kept', d(2)], ['flow_usd.total', d(10.5)], ['flow_usd.reserve', d(1)]]);
-      const i = holderYieldReport({ asset, day, daily, levels }).income!;
-      const yr = (x: number) => (x * 10 * 365) / 10;
-      expect(i.holders.annualized).toBeCloseTo(yr(8));
-      expect(i.protocol.annualized).toBeCloseTo(yr(2));
-      expect(i.costs.annualized).toBeCloseTo(yr(0.4));
-      expect(i.revenue.annualized).toBeCloseTo(yr(10.4));
-      expect(i.payoutRatio).toBeCloseTo(8 / 10.4);
-      expect(i.protocolMargin).toBeCloseTo(2 / 10.4);
-      expect(i.lines.find((l) => l.id === 'c')!.basis).toBe('estimate');
-      // The check reports the gap, never books it: parts 10 against a measured 10.5.
-      expect(i.checks[0].gapPct).toBeCloseTo((10 / 10.5 - 1) * 100);
-      // A reserve payout is listed apart and stays out of the payout ratio.
-      expect(i.outsideRevenue[0].annualized).toBeCloseTo(yr(1));
-    });
-
-    it('takes protocol income as the remainder of a measured total (a revenue proxy)', () => {
-      const asset = make(`{ lines: [ { id: h, to: holders, metric: flow_usd.buyback }, { id: c, to: cost, metric: flow_usd.cost } ], remainder_of: [ flow_usd.rev ] }`);
-      const daily = new Map([['flow_usd.buyback', d(7)], ['flow_usd.cost', d(1)], ['flow_usd.rev', d(10)]]);
-      const i = holderYieldReport({ asset, day, daily, levels }).income!;
-      expect(i.revenue.annualized).toBeCloseTo(365 * 10);
-      expect(i.protocol.annualized).toBeCloseTo(365 * 2);
-      const rem = i.lines.find((l) => l.basis === 'remainder')!;
-      expect(rem.to).toBe('protocol');
-      expect(rem.annualized).toBeCloseTo(365 * 2);
-      expect(i.protocolMargin).toBeCloseTo(0.2);
-    });
-
-    it('grows each part on its own series', () => {
-      const asset = make(`{ lines: [ { id: h, to: holders, metric: flow_usd.buyback }, { id: k, to: protocol, metric: flow_usd.kept } ] }`);
-      const daily = new Map([['flow_usd.buyback', d(1)], ['flow_usd.kept', series('2026-01-01', [...Array(10).fill(1), ...Array(10).fill(2)])]]);
-      const i = holderYieldReport({ asset, day, daily, levels }).income!;
-      expect(i.holders.growth.change).toBeCloseTo(0);
-      expect(i.protocol.growth.change).toBeCloseTo(1);
-      expect(i.revenue.growth.change).toBeCloseTo(0.5);
-    });
-
-    it('refuses a line with both or neither of metric and estimate, a protocol line beside remainder_of, and unknown names', () => {
-      expect(() => make(`{ lines: [ { id: h, to: holders } ] }`)).toThrow(/metric or an estimate/);
-      expect(() => make(`{ lines: [ { id: h, to: holders, metric: flow_usd.buyback, estimate: { of: flow_usd.kept, ratio: 1 } } ] }`)).toThrow(/metric or an estimate/);
-      expect(() => make(`{ lines: [ { id: k, to: protocol, metric: flow_usd.kept } ], remainder_of: [ flow_usd.rev ] }`)).toThrow(/list no protocol line/);
-      expect(() => make(`{ lines: [ { id: h, to: holders, metric: flow_usd.nope } ] }`)).toThrow(/not a flow metric/);
-      expect(() => make(`{ lines: [ { id: h, to: holders, metric: flow_usd.buyback } ], checks: [ { total: [ flow_usd.total ], parts: [ x ] } ] }`)).toThrow(/not a line id/);
-      expect(() => make(`{ lines: [ { id: h, to: holders, metric: flow_usd.buyback }, { id: h, to: protocol, metric: flow_usd.kept } ] }`)).toThrow(/used twice/);
-    });
-  });
-
-  it('refuses a reporting block that misses a holder flow, names a stranger, or haircuts a burn', () => {
-    const id = parseAssetYaml(hypeYaml).config.holder_flows[0].id;
-    expect(() => parseAssetYaml(`${hypeYaml}\nreporting: { window_days: 10, haircuts: {} }\n`)).toThrow(/haircuts has no entry/);
-    expect(() => parseAssetYaml(`${hypeYaml}\nreporting: { window_days: 10, haircuts: { ${id}: 0, nope: 0 } }\n`)).toThrow(/not a holder flow/);
-    const burn = hypeYaml.replace('kind: buy_and_hold', 'kind: burn');
-    expect(() => parseAssetYaml(`${burn}\nreporting: { window_days: 10, haircuts: { ${id}: 0.1 } }\n`)).toThrow(/is a burn, whose haircut is 0/);
-  });
-
+describe('holder-flow metrics and monitor_only (Task 11)', () => {
   it('accepts a monitor-only flow metric, and still refuses monitor_only on a holder-flow metric', () => {
-    const extra = hypeYaml.replace('metrics:\n', 'metrics:\n  flow_usd.revenue_proxy: { type: flow, unit: usd, staleness_days: 4, monitor_only: true }\n');
+    const extra = withStatement(BUYBACK).replace('metrics:\n', 'metrics:\n  flow_usd.revenue_proxy: { type: flow, unit: usd, staleness_days: 4, monitor_only: true }\n');
     expect(() => parseAssetYaml(extra)).not.toThrow();
-    const flowMetric = parseAssetYaml(hypeYaml).config.holder_flows[0].metric;
-    const bad = hypeYaml.replace(new RegExp(`(  ${flowMetric.replace('.', '\\.')}: \\{)`), '$1 monitor_only: true,');
-    expect(bad).not.toBe(hypeYaml);
-    expect(() => parseAssetYaml(bad)).toThrow(/is a standard or holder-flow metric and cannot be monitor_only/);
+    const bad = withStatement(BUYBACK).replace('flow_usd.buyback: {', 'flow_usd.buyback: { monitor_only: true,').replace(', critical: true, source', ', source');
+    expect(bad).not.toBe(withStatement(BUYBACK));
+    expect(() => parseAssetYaml(bad)).toThrow(/"flow_usd\.buyback" is a standard or holder-flow metric and cannot be monitor_only/);
+    // A below-line line to holders reads a holder flow too; one to the protocol does not.
+    const below = (to: string) => withStatement(BUYBACK, `    - { id: x, to: ${to}, metric: flow_usd.other${to === 'holders' ? ', bucket: cash, haircut: 0, recipient_base: all, capture_rule: programmatic' : ''} }\n`)
+      .replace('flow_usd.other: { type: flow, unit: usd, staleness_days: 7 }', 'flow_usd.other: { type: flow, unit: usd, staleness_days: 7, monitor_only: true }');
+    expect(() => parseAssetYaml(below('holders'))).toThrow(/"flow_usd\.other" is a standard or holder-flow metric/);
+    expect(() => parseAssetYaml(below('protocol'))).not.toThrow();
   });
 
-  function recipientsOf(base: string): number {
-    return base === 'all' ? levels.totalSupply! : levels.stakedSupply!;
-  }
+  it('a protocol that pays its holders nothing loads (no holders line; Lido, template T10)', () => {
+    const none = withStatement('').replace('  holders:\n', '  remainder: protocol\n');
+    expect(parseAssetYaml(none).config.income_statement!.holders).toBeUndefined();
+  });
 });

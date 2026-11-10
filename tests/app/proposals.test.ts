@@ -221,7 +221,7 @@ describe('approving a config proposal', () => {
   it('refuses an edit that would break the config, and leaves the file untouched', async () => {
     // The real loader is the check: the asset must still parse after the edit.
     const before = readFileSync(yamlPath, 'utf8');
-    const weights = await file({ kind: 'config', edits: [{ path: ['holder_flows', 'fees', 'metric'], value: 'price_usd' }] }, ['flow_usd.fees']);
+    const weights = await file({ kind: 'config', edits: [{ path: ['metrics', 'flow_usd.fees', 'type'], value: 'level' }] }, ['flow']);
     expect(await codeOf(() => approve(weights.id))).toBe('invalid_asset_config');
     const inverted = await file({ kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'staleness_days'], value: -1 }] }, [7]);
     expect(await codeOf(() => approve(inverted.id))).toBe('invalid_asset_config');
@@ -241,6 +241,9 @@ describe('approving a config proposal', () => {
       ['peer_set', []],
       ['total_return_variants', []],
       ['supply_basis', 'effective_total'],
+      // Task 11 (G4, ruling R11.1): v1's report config, retired the same way.
+      ['holder_flows', [{ id: 'fees', kind: 'fee_share', capture_rule: 'contractual', recipient_base: 'all', metric: 'flow_usd.fees' }]],
+      ['reporting', { window_days: 90, haircuts: { fees: 0 } }],
     ];
     for (const [key, value] of removed) {
       const p = await file({ kind: 'config', edits: [{ path: [key], value }] }, [null]);

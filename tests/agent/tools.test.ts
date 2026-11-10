@@ -305,7 +305,7 @@ describe('propose_change', () => {
   it('validates a config proposal as a whole config, and refuses one that changes nothing or points nowhere', async () => {
     expect((await propose({ kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'tolerance_pct'], value: -1 }] })).result.refused).toBe('invalid_asset_config');
     expect((await propose({ kind: 'config', edits: [{ path: ['symbol'], value: 'MINI' }] })).result.refused).toBe('no_change');
-    expect((await propose({ kind: 'config', edits: [{ path: ['holder_flows', 'nope', 'window_days'], value: 1 }] })).result.refused).toBe('invalid_path');
+    expect((await propose({ kind: 'config', edits: [{ path: ['metrics', 'nope', 'staleness_days'], value: 1 }] })).result.refused).toBe('invalid_path');
     expect((await propose({ kind: 'config' })).result.refused).toBe('invalid_input');
     expect(w.ledger.proposals()).toEqual([]);
   });
@@ -320,6 +320,9 @@ describe('propose_change', () => {
       ['peer_set', []],
       ['total_return_variants', []],
       ['supply_basis', 'effective_total'],
+      // Task 11 (G4, ruling R11.1): v1's report config, retired the same way.
+      ['holder_flows', [{ id: 'fees', kind: 'fee_share', capture_rule: 'contractual', recipient_base: 'all', metric: 'flow_usd.fees' }]],
+      ['reporting', { window_days: 90, haircuts: { fees: 0 } }],
     ];
     for (const [key, value] of removed) {
       const r = await propose({ kind: 'config', edits: [{ path: [key], value }] });

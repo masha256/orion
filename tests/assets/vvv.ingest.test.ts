@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { budgetsFor } from '../../src/config/agentPolicy.js';
@@ -77,13 +78,16 @@ function world() {
 describe('assets/vvv.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     // VVV keeps its own revenue_run_rate_usd (Venice's disclosures, the disclosed revenue stream) and its four DIEM levels (D2(a)).
-    expect(config.reporting!.revenue_disclosed).toBe('revenue_run_rate_usd');
+    expect(config.income_statement!.revenue).toEqual([expect.objectContaining({ disclosed: 'revenue_run_rate_usd' })]);
+    expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.burn']);
+    expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     for (const key of ['diem_supply', 'diem_target_supply', 'diem_price_usd', 'diem_locked_yield_share']) expect(config.metrics[key], key).toBeDefined();
     // Re-pinned 2026-11-01 (first pin here; it was in tests/assets/vvv.golden.test.ts, deleted with the valuation layer): the
     // valuation keys (supply_basis, modules, scenario_probabilities, total_return_variants, assumptions, agent budgets,
     // review_triggers, peer_set) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/vvv.yaml`, 'utf8')).hash).toBe('433d0306b2cad2849a717180e24568d5c0bf3ed3c62455c2208b470c9ed3f4f5');
+    // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/vvv.yaml`, 'utf8')).hash).toBe('fa05d39217ee2160f6e746350494a818b51c316368e6d3b364dc1c105b328838');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

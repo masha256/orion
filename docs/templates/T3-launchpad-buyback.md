@@ -119,9 +119,6 @@ metrics:
   # needs balance_delta (Phase 3): flow_usd.platform_fees, the fee-recipient accounts' daily inflows (Solana)
   # needs balance_delta (Phase 3): flow_usd.creator_fees and flow_usd.lp_fees, the creator-vault and AMM LP fee accounts
 
-holder_flows:
-  - { id: buyback, kind: burn, capture_rule: {{capture_rule}}, recipient_base: all, metric: flow_usd.buyback, window_days: 91 }
-
 income_statement:
   category: launchpad
   scope: complete

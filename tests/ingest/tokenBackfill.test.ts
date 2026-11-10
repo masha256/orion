@@ -11,7 +11,7 @@ import { backfillTokens } from '../../src/ingest/tokenBackfill.js';
 import type { TransferLog } from '../../src/ingest/transport/rpc.js';
 import { CG_CHART, harness, hourlyPrices, type Harness } from '../helpers/fetchHarness.js';
 import { callKey } from '../helpers/fakeRpc.js';
-import { INGEST_ASSET_YAML, POOL, SAFE, TOKEN } from '../helpers/ingestAsset.js';
+import { INGEST_ASSET_YAML, METRICS_END, POOL, SAFE, TOKEN } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
 import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
@@ -130,13 +130,13 @@ describe('backfillTokens', () => {
   it('fetches one market_chart range per CoinGecko id, stores it under every token ref sharing the id, and never re-fetches stored hours', async () => {
     // A second scanned token priced at the same CoinGecko id (two refs, one id).
     const withB = INGEST_ASSET_YAML.replace(`  safe: "${SAFE}"\n`, `  safe: "${SAFE}"\n  token_b: "${TOKEN_B}"\n`).replace(
-      'holder_flows:',
+      METRICS_END,
       `  flow_usd.fees_b:
     type: flow
     unit: usd
     staleness_days: 45
     source: { type: transfer_flow, token: token_b, to: burn_sink, from_allowlist: [pool], unit: usd, price_coingecko_id: mini-token }
-holder_flows:`,
+${METRICS_END}`,
     );
     const h = harness(testDb(), {
       loaded: parseAssetYaml(withB), routes: { [CG_CHART]: hourlyPrices('2026-09-10T00:00:00Z', '2026-09-19T12:00:00Z', () => 10) },

@@ -9,7 +9,7 @@ import { getRegistryRow, setRegistryState } from '../../src/db/registry.js';
 import { listWatchStates, putWatchStates } from '../../src/db/watchState.js';
 import { harness, NOW } from '../helpers/fetchHarness.js';
 import { useTestDb } from '../helpers/db.js';
-import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
+import { INGEST_ASSET_YAML, METRICS_END } from '../helpers/ingestAsset.js';
 import { activate, cleanupAfterAll, levelsContext, levelsWorld } from '../helpers/levelsWorld.js';
 
 const testDb = useTestDb();
@@ -118,8 +118,8 @@ describe('refresh job', () => {
 
   it('refresh: level rows written by the nightly refresh land in latest_levels too', async () => {
     const yaml = INGEST_ASSET_YAML.replace(
-      'holder_flows:',
-      '  stats_price:\n    type: level\n    unit: usd\n    staleness_days: 3\n    monitor_only: true\n    watch: { outside: [1, 2] }\n    source: { type: http_json, url: "https://api.example.test/stats", path: price }\nholder_flows:',
+      METRICS_END,
+      '  stats_price:\n    type: level\n    unit: usd\n    staleness_days: 3\n    monitor_only: true\n    watch: { outside: [1, 2] }\n    source: { type: http_json, url: "https://api.example.test/stats", path: price }\n' + METRICS_END,
     );
     const w = levelsWorld({ mini: yaml });
     worlds.push(w);
@@ -145,8 +145,8 @@ describe('refresh job', () => {
   it('refresh: a nightly that clears a firing level watch posts the cleared line', async () => {
     // stats_price reads 10.1; the watch range [1, 20] holds it, so a watch the hourly job left firing clears.
     const yaml = INGEST_ASSET_YAML.replace(
-      'holder_flows:',
-      '  stats_price:\n    type: level\n    unit: usd\n    staleness_days: 3\n    monitor_only: true\n    watch: { outside: [1, 20] }\n    source: { type: http_json, url: "https://api.example.test/stats", path: price }\nholder_flows:',
+      METRICS_END,
+      '  stats_price:\n    type: level\n    unit: usd\n    staleness_days: 3\n    monitor_only: true\n    watch: { outside: [1, 20] }\n    source: { type: http_json, url: "https://api.example.test/stats", path: price }\n' + METRICS_END,
     );
     const w = levelsWorld({ mini: yaml });
     worlds.push(w);

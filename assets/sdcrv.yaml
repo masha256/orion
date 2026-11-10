@@ -175,37 +175,19 @@ metrics:
     monitor_only: true
     source: { type: transfer_flow, token: crvusd, to: sd_treasury, from_allowlist: [ accumulator ], unit: usd, price_coingecko_id: crvusd }
 
-holder_flows:
-  - { id: fees, kind: fee_share, capture_rule: programmatic, recipient_base: staked, valued_per: recipients, metric: flow_usd.fees, window_days: 91 }
-  - { id: crv, kind: fee_share, capture_rule: programmatic, recipient_base: staked, valued_per: recipients, metric: flow_usd.crv, window_days: 91 }
-  - { id: bribes, kind: fee_share, capture_rule: programmatic, recipient_base: staked, valued_per: recipients, metric: flow_usd.bribes, window_days: 91 }
-
+# Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
+# the holders and below_line lines):
 # Report-only holder yield and growth (orion report yield). Haircuts from pool depth (2026-10-10): crvUSD none; CRV 0.5
 # percent (about $600 a day); the vote incentives are paid in sdCRV itself, whose one real pool (sdCRV/CRV, $1.5M) loses
 # 1.3 percent on a day's payout and 9 on a week's, plus 0.5 more selling the CRV: 5 percent.
-reporting:
-  window_days: 91
-  haircuts: { fees: 0, crv: 0.005, bribes: 0.05 }
-  volume: [ flow_usd.sd_gross_crv ]
-  # Income statement (Mike, 2026-10-11). Revenue = what StakeDAO takes in on its veCRV: the veCRV crvUSD fees, its CRV fee
-  # (16.5 percent of strategy CRV), and the vote incentives (sold into sdCRV). Paid to sdCRV stakers: 85 percent of the
-  # crvUSD, the accumulator's part of the CRV fee, the incentives. Kept: veSDT and treasury parts of the CRV fee, 15 percent
-  # of the crvUSD (the 10 percent liquidity part funds sdCRV pool incentives at StakeDAO's direction). Cost: boost delegators.
-  income:
-    lines:
-      - { id: vecrv_fees, to: holders, metric: flow_usd.fees }
-      - { id: crv_fee_share, to: holders, metric: flow_usd.crv }
-      - { id: vote_incentives, to: holders, metric: flow_usd.bribes }
-      - { id: vesdt, to: protocol, metric: flow_usd.sd_rev_crv_vesdt }
-      - { id: treasury_crv, to: protocol, metric: flow_usd.sd_rev_crv_treasury }
-      - { id: liquidity_fee, to: protocol, metric: flow_usd.sd_rev_fees_liquidity }
-      - { id: treasury_fees, to: protocol, metric: flow_usd.sd_rev_fees_treasury }
-      - { id: boost_delegators, to: cost, metric: flow_usd.sd_boost_delegation }
-    checks:
-      - { total: [ flow_usd.sd_rev_crv ], parts: [ vesdt, treasury_crv, crv_fee_share, boost_delegators ] }
-
-# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
-# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+# Income statement (Mike, 2026-10-11). Revenue = what StakeDAO takes in on its veCRV: the veCRV crvUSD fees, its CRV fee
+# (16.5 percent of strategy CRV), and the vote incentives (sold into sdCRV). Paid to sdCRV stakers: 85 percent of the
+# crvUSD, the accumulator's part of the CRV fee, the incentives. Kept: veSDT and treasury parts of the CRV fee, 15
+# percent of the crvUSD (the 10 percent liquidity part funds sdCRV pool incentives at StakeDAO's direction). Cost: boost
+# delegators.
+#
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2): the report's only block since Task 11 retired
+# holder_flows and reporting. Revenue = what users pay; each section says where it goes.
 income_statement:
   category: liquid_locker
   scope: complete

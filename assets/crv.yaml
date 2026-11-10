@@ -94,8 +94,9 @@ metrics:
 
   # The revenue-funded flow to lockers, read on chain: crvUSD into the FeeDistributor from the FeeAllocator, weekly on
   # Wednesdays (six of seven days are zero). DefiLlama's holders revenue adds third-party bribes and runs about 3x this,
-  # so it is not a cross-check; bribes are reported separately (vote_incentive_run_rate_usd, reporting.extra_cash).
-  # Staleness 10 allows one missed Wednesday (staleness_days is unread since Phase 1; Phase 2 decides its future).
+  # so it is not a cross-check; bribes are reported separately (vote_incentive_run_rate_usd, income_statement.below_line
+  # run_rate). Staleness 10 allows one missed Wednesday (staleness_days is unread since Phase 1; Phase 2 decides its
+  # future).
   flow_usd.fees:
     type: flow
     unit: usd
@@ -134,28 +135,17 @@ metrics:
     monitor_only: true
     source: { type: transfer_flow, token: crvusd, to: fee_allocator, from_allowlist: [ hooker ], unit: usd, price_coingecko_id: crvusd }
 
-holder_flows:
-  - { id: fees, kind: fee_share, capture_rule: programmatic, recipient_base: locked, metric: flow_usd.fees, window_days: 91 }
-
+# Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
+# the holders and below_line lines):
 # Report-only holder yield and growth (orion report yield): no driver, no grade, no signal. Haircuts are the fraction a
 # holder loses turning a payout into cash, sized from pool depth (2026-10-10): crvUSD fees none; vote incentives 3
 # percent (a basket of mostly long-tail tokens, sold by the claimer).
-reporting:
-  window_days: 91
-  haircuts: { fees: 0 }
-  extra_cash:
-    - { id: vote_incentives, metric: vote_incentive_run_rate_usd, haircut: 0.03, recipient_base: locked }
-  # Income statement (Mike, 2026-10-11): revenue = every protocol fee (Hooker -> FeeAllocator); 90 percent paid to veCRV,
-  # 10 percent kept. Vote incentives are third parties paying veCRV voters, not Curve's revenue (they stay in extra_cash).
-  income:
-    lines:
-      - { id: vecrv_fees, to: holders, metric: flow_usd.fees }
-      - { id: treasury, to: protocol, metric: flow_usd.curve_treasury }
-    checks:
-      - { total: [ flow_usd.protocol_revenue ], parts: [ vecrv_fees, treasury ] }
-
-# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
-# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+# Income statement (Mike, 2026-10-11): revenue = every protocol fee (Hooker -> FeeAllocator); 90 percent paid to veCRV,
+# 10 percent kept. Vote incentives are third parties paying veCRV voters, not Curve's revenue (v1 kept them in
+# extra_cash; v2 has them below the line).
+#
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2): the report's only block since Task 11 retired
+# holder_flows and reporting. Revenue = what users pay; each section says where it goes.
 income_statement:
   category: dex
   scope: protocol_share_only

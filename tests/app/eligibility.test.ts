@@ -3,7 +3,7 @@ import { eligibleObservations, narrowToUsable } from '../../src/app/eligibility.
 import { parseAssetYaml } from '../../src/config/load.js';
 import type { Db } from '../../src/db/connection.js';
 import { insertObservation } from '../../src/db/observations.js';
-import { MINI_ASSET_YAML, miniAsset } from '../helpers/assets.js';
+import { MINI_HOLDER_YAML } from '../helpers/assets.js';
 import { AS_OF, miniObservations, obs } from '../helpers/obs.js';
 import { useTestDb } from '../helpers/db.js';
 import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
@@ -24,8 +24,13 @@ function dailyHistory() {
   return list;
 }
 
+/**
+ * MINI whose income statement pays `flow_usd.fees` to holders (Task 11: the flow windows come from income_statement).
+ */
+const miniHolder = () => parseAssetYaml(MINI_HOLDER_YAML).config;
+
 describe('narrowToUsable', () => {
-  const asset = miniAsset();
+  const asset = miniHolder();
 
   it('keeps the newest level, the flow window plus a day, the schedule in force and later, and future events', () => {
     const list = [
@@ -35,7 +40,7 @@ describe('narrowToUsable', () => {
       obs('scheduled_unlock_tokens', 7, '2026-05-01'),
       obs('scheduled_unlock_tokens', 9, '2026-12-01'),
     ];
-    const withEvents = parseAssetYaml(MINI_ASSET_YAML.replace('holder_flows:', '  scheduled_unlock_tokens: { type: event, unit: tokens, staleness_days: 400 }\nholder_flows:')).config;
+    const withEvents = parseAssetYaml(MINI_HOLDER_YAML.replace('income_statement:', '  scheduled_unlock_tokens: { type: event, unit: tokens, staleness_days: 400 }\nincome_statement:')).config;
     const kept = narrowToUsable(withEvents, list, AS_OF);
     const of = (key: string) => kept.filter((o) => o.metricKey === key);
     expect(of('price_usd')).toHaveLength(1);
@@ -48,12 +53,19 @@ describe('narrowToUsable', () => {
   });
 
   it('drops flow metrics that no holder flow uses, and metrics the asset does not define', () => {
-    const withInfo = parseAssetYaml(MINI_ASSET_YAML.replace('holder_flows:', '  flow_tokens.fees: { type: flow, unit: tokens, staleness_days: 45 }\nholder_flows:')).config;
+    const withInfo = parseAssetYaml(MINI_HOLDER_YAML.replace('income_statement:', '  flow_tokens.fees: { type: flow, unit: tokens, staleness_days: 45 }\nincome_statement:')).config;
     const list = [...miniObservations(), obs('flow_tokens.fees', 5, AS_OF, { periodDays: 1 }), obs('not_defined', 1, AS_OF)];
     const keys = new Set(narrowToUsable(withInfo, list, AS_OF).map((o) => o.metricKey));
     expect(keys.has('flow_tokens.fees')).toBe(false);
     expect(keys.has('not_defined')).toBe(false);
     expect(keys.has('flow_usd.fees')).toBe(true);
+  });
+
+  it('keeps no flow window for an asset without an income statement (no holder flow)', () => {
+    const list = [...dailyHistory()];
+    const fees = (yaml: string) => narrowToUsable(parseAssetYaml(yaml).config, list, AS_OF).filter((o) => o.metricKey === 'flow_usd.fees');
+    expect(fees(MINI_HOLDER_YAML)).toHaveLength(91);
+    expect(fees(MINI_HOLDER_YAML.slice(0, MINI_HOLDER_YAML.indexOf('income_statement:')))).toEqual([]);
   });
 
   it('ignores observations after as_of, except schedule steps and events', () => {
@@ -72,7 +84,7 @@ describe('eligibleObservations', () => {
 
   it('reads the stored rows narrowed to what is usable at as_of', async () => {
     for (const o of dailyHistory()) await insertObservation(db, { provenance: testProvenance(o.source), assetId: o.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, fetchedAt: o.fetchedAt });
-    const asset = miniAsset();
+    const asset = miniHolder();
     const eligible = await eligibleObservations(db, asset, AS_OF);
     expect(eligible.length).toBeLessThan(110);
     expect(eligible.filter((o) => o.metricKey === 'flow_usd.fees')).toHaveLength(91);

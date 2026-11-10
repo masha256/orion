@@ -88,11 +88,18 @@ export async function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledg
 }
 
 /**
- * The asset's metric revenue streams, when it lists reporting.revenue: a stream with a `share` counts only that share of
- * its series as revenue, which a flow total of the series does not apply. Absent for an asset without metric streams.
+ * The asset's metric revenue lines (income_statement): each with the share of its series the protocol keeps after the
+ * cost of revenue lines that pass part of it on (`of` with a `share`), when that is below 1 (LIT's Robinhood fees:
+ * 0.5), because a flow total of the series does not apply it. Absent for an asset without metric revenue lines.
  */
 function revenueStreams(asset: LoadedAsset['config']): { revenue_streams?: { id: string; metric: string; share?: number }[] } {
-  const streams = (asset.reporting?.revenue ?? []).flatMap((s) => (s.metric === undefined ? [] : [{ id: s.id, metric: s.metric, ...(s.share !== undefined ? { share: s.share } : {}) }]));
+  const is = asset.income_statement;
+  const streams = (is?.revenue ?? []).flatMap((r) => {
+    if (r.metric === undefined) return [];
+    const passedOn = (is?.cost_of_revenue ?? []).filter((c) => c.of === r.id).reduce((s, c) => s + (c.share ?? 1), 0);
+    const share = 1 - passedOn;
+    return [{ id: r.id, metric: r.metric, ...(share < 1 ? { share } : {}) }];
+  });
   return streams.length > 0 ? { revenue_streams: streams } : {};
 }
 

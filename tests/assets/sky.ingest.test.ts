@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
@@ -106,20 +107,20 @@ describe('assets/sky.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'sky', symbol: 'SKY', chain: 'ethereum', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
     // Both halves of the surplus reach staked SKY, as cash (Mike, 2026-10-16).
-    expect(config.holder_flows).toEqual([
-      { id: 'stakers', kind: 'fee_share', capture_rule: 'programmatic', recipient_base: 'staked', metric: 'flow_usd.stakers', window_days: 91 },
-      { id: 'buyback', kind: 'fee_share', capture_rule: 'programmatic', recipient_base: 'staked', metric: 'flow_usd.buyback', window_days: 91 },
-    ]);
+    expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.stakers', 'flow_usd.buyback']);
+    expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
+    expect(config.income_statement!.holders!.map((h) => [h.id, h.bucket, h.capture_rule, h.recipient_base])).toEqual([['stakers', 'cash', 'programmatic', 'staked'], ['buyback', 'cash', 'programmatic', 'staked']]);
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // No DefiLlama (Mike, 2026-10-11): every flow is read on chain.
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama' || d.cross_checks?.some((c) => c.source.type === 'defillama')).map(([k]) => k)).toEqual([]);
-    expect(config.reporting!.dilution).toEqual([expect.objectContaining({ id: 'treasury_net', metric: 'treasury_net_payout' })]);
+    expect(config.income_statement!.dilution).toEqual([expect.objectContaining({ id: 'treasury_net', metric: 'treasury_net_payout' })]);
     for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // A deliberate edit of assets/sky.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/sky.yaml`, 'utf8')).hash).toBe('4438a38748f72d5b9cd9227dffa3ad04ea67467d3ee3452d21fb81bc3b159620');
+    // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/sky.yaml`, 'utf8')).hash).toBe('cef8a54bcbc5186f9a742ec6b8a99be2f19308f51f01630bdf33647df7b9cd74');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

@@ -127,28 +127,18 @@ metrics:
       name: hype.reserve_yield_payments
       params: { interest: system_interest, fund: assistance_fund, treasury: [ aqa_treasury ], token: USDC, started: "2026-08-26", interval_days: 30, lag_days: 8 }
 
-holder_flows:
-  - { id: af_buyback, kind: burn, capture_rule: programmatic, recipient_base: all, metric: flow_usd.af_buyback, window_days: 91 }
-
+# Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
+# the holders and below_line lines):
 # Report-only holder yield and growth (orion report yield). The fund buys and holds, but stays a burn here as in the
 # valuation (Mike, 2026-10-10: keep the two layers in sync), so no haircut.
-reporting:
-  window_days: 91
-  haircuts: { af_buyback: 0, reserve_yield: 0 }
-  # Revenue (Mike, 2026-10-12) = trading fees (DefiLlama dailyRevenue, a labelled proxy) + the USDC reserve yield (paid
-  # every 30 days). The reserve yield is new (2026-08-26): growth is shown with and without it. It funds the Fund's
-  # buybacks, so the report also counts it as holder flow (burn bucket); the valuation keeps af_buyback only.
-  revenue:
-    - { id: trading, label: "trading fees (DefiLlama dailyRevenue)", metric: flow_usd.revenue_proxy, settlement: daily }
-    - { id: reserve_yield, label: "USDC reserve yield (AQAv2)", metric: flow_usd.reserve_yield, settlement: periodic, started: "2026-08-26", holder_flow: burn }
-  # Income statement (Mike, 2026-10-11): paid to holders = the Assistance Fund's buybacks (and the reserve yield, which
-  # funds them); protocol income = revenue less both.
-  income:
-    lines:
-      - { id: af_buyback, to: holders, metric: flow_usd.af_buyback }
-
-# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
-# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+# Revenue (Mike, 2026-10-12) = trading fees (DefiLlama dailyRevenue, a labelled proxy) + the USDC reserve yield (paid
+# every 30 days). The reserve yield is new (2026-08-26): growth is shown with and without it. It funds the Fund's
+# buybacks, so the report also counts it as holder flow (burn bucket); the valuation keeps af_buyback only.
+# Income statement (Mike, 2026-10-11): paid to holders = the Assistance Fund's buybacks (and the reserve yield, which
+# funds them); protocol income = revenue less both.
+#
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2): the report's only block since Task 11 retired
+# holder_flows and reporting. Revenue = what users pay; each section says where it goes.
 income_statement:
   category: perp_dex
   scope: protocol_share_only

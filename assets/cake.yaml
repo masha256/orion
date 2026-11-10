@@ -133,23 +133,13 @@ metrics:
     monitor_only: true
     source: { type: defillama, slug: pancakeswap, data_type: dailyRevenue, backfill_days: 100 }
 
-holder_flows:
-  - { id: burn, kind: burn, capture_rule: programmatic, recipient_base: all, metric: flow_usd.burn, window_days: 91 }
-
+# Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
+# the holders and below_line lines):
 # Report-only holder yield and growth. A burn: no haircut. Revenue = the burn plus the treasury share (the converters'
 # whole output); DefiLlama's revenue is the cross-check.
-reporting:
-  window_days: 91
-  haircuts: { burn: 0 }
-  income:
-    lines:
-      - { id: burn, to: holders, metric: flow_usd.burn, note: "fee-funded CAKE burned (weekly)" }
-      - { id: treasury, to: protocol, metric: flow_usd.treasury, note: "the converters' treasury share" }
-  volume: [ flow_usd.fees ]
-  burned_tokens: [ flow_tokens.burn ]
-
-# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
-# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+#
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2): the report's only block since Task 11 retired
+# holder_flows and reporting. Revenue = what users pay; each section says where it goes.
 income_statement:
   category: dex
   scope: protocol_share_only

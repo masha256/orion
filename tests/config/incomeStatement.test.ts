@@ -411,7 +411,8 @@ describe('income_statement schema', () => {
   });
 
   it('an asset without income_statement keeps its hash', () => {
-    expect(parseAssetYaml(MINI_ASSET_YAML).hash).toBe('c8cc46425acb05d4fd7e211aa648d8c284b29d3ccd9dfdfde6d5cdad4030f830');
+    // Re-pinned (Task 11, G4): MINI lost its holder_flows block (retired).
+    expect(parseAssetYaml(MINI_ASSET_YAML).hash).toBe('5b2f690b96353007bc31b9d29996ed078d92a0404e64f7d05e36ff2b81ae8021');
     expect('income_statement' in parseAssetYaml(MINI_ASSET_YAML).config).toBe(false);
   });
 });

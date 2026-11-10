@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { parseAssetYaml } from '../../src/config/load.js';
 import { addDays } from '../../src/ingest/time.js';
-import { holderYieldReport, type ReportInput } from '../../src/report/holderYield.js';
+import { growthOf, type ReportInput } from '../../src/report/holderYield.js';
 import { incomeStatementV2 } from '../../src/report/incomeStatement.js';
 import { LOCKER_W as W, LOCKER_YAML } from '../helpers/apportionAsset.js';
 
 /**
  * Task 7b: apportion-by-mix lines. A paid flow is split between "from revenue" and "below the line" by the window's
- * sender mix (window sum of `by` / window sum of `total`), method derived; holder flow, yields and buckets stay v1's.
+ * sender mix (window sum of `by` / window sum of `total`), method derived; holder flow, yields and buckets stay those
+ * of the whole flow (v1's figures, computed here from the series).
  */
 const DAY = '2026-01-20';
 const asset = parseAssetYaml(LOCKER_YAML).config;
@@ -35,9 +36,22 @@ function input(over: Partial<Record<string, Map<string, number>>> = {}): ReportI
 const windowSum = (m: Map<string, number>) => Array.from({ length: W }, (_, i) => m.get(addDays(DAY, -i))!).reduce((s, x) => s + x, 0);
 const annual = (sum: number) => (sum * 365) / W;
 
+/** What the retired v1 report computed for the whole flow (one cash flow to stakers, haircut 0), from the series. */
+function wholeFlow(inp: ReportInput) {
+  const d = inp.daily;
+  const gross = annual(windowSum(d.get('flow_usd.payout')!));
+  const cash = gross / (800 * 0.2);
+  const growth = growthOf(d, ['flow_usd.payout'], DAY, W, [1]);
+  const multiple = 1 / (cash + 0);
+  return {
+    gross, net: gross * (1 - 0), cash, growth,
+    yields: { cash, buyback: 0, shareholder: cash + 0, dilution: 0 / 1000, netShareholder: cash + 0 - 0, multiple, pegTrailing: growth.annualized !== null && growth.annualized > 0 ? multiple / (growth.annualized * 100) : null },
+    volume: annual(windowSum(d.get('flow_usd.gross')!)), payout: gross, treasury: annual(windowSum(d.get('flow_usd.treasury')!)),
+  };
+}
+
 function run(inp = input()) {
-  const v1 = holderYieldReport(inp);
-  return { inp, v1, v2: incomeStatementV2(inp, v1) };
+  return { inp, v1: wholeFlow(inp), v2: incomeStatementV2(inp) };
 }
 
 describe('apportion by mix (Task 7b)', () => {
@@ -74,18 +88,18 @@ describe('apportion by mix (Task 7b)', () => {
 
   it('complementary lines sum to the whole flow; holder flow, its net, bucket, yield and growth are v1 exactly', () => {
     const { v1, v2 } = run();
-    const whole = v1.buckets.cash!.gross!;
+    const whole = v1.gross;
     const [a, b] = v2.holderFlow.lines.map((l) => l.gross!);
     expect(Math.abs(a! + b! - whole) / whole).toBeLessThan(1e-15);
     const tWhole = annual(windowSum(input().daily.get('flow_usd.treasury')!));
     expect(Math.abs(v2.protocol.annualized! + v2.belowLine.toProtocol! - tWhole) / tWhole).toBeLessThan(1e-15);
     // the totals read the whole flow once: exactly v1's figures
     expect(v2.holderFlow.gross).toBe(whole);
-    expect(v2.holderFlow.net).toBe(v1.buckets.cash!.net);
+    expect(v2.holderFlow.net).toBe(v1.net);
     expect(v2.holderFlow.byBucket.cash!.gross).toBe(whole);
-    expect(v2.holderFlow.byBucket.cash!.net).toBe(v1.buckets.cash!.net);
-    expect(v2.holderFlow.byBucket.cash!.yield).toBe(v1.buckets.cash!.yield);
-    expect(v2.holderFlow.growth.annualized).toBe(v1.holderFlowGrowth.annualized);
+    expect(v2.holderFlow.byBucket.cash!.net).toBe(v1.net);
+    expect(v2.holderFlow.byBucket.cash!.yield).toBe(v1.cash);
+    expect(v2.holderFlow.growth).toEqual(v1.growth);
     expect(v2.yields).toEqual(v1.yields);
     // only the split between from revenue and below the line is new
     expect(v2.holderFlow.fromRevenue).toBe(a);
@@ -98,11 +112,10 @@ describe('apportion by mix (Task 7b)', () => {
     const { v1, v2 } = run();
     const mix = v2.holders.lines[0]!.apportion!.mix!;
     const rel = (x: number, y: number) => Math.abs(x - y) / Math.max(Math.abs(x), Math.abs(y));
-    expect(rel(v2.revenue.annualized!, v1.volume!.annualized! * mix)).toBeLessThan(1e-12);
-    const payout = v1.income!.lines.find((l) => l.id === 'ybs_payout')!.annualized!;
-    const treasury = v1.income!.lines.find((l) => l.id === 'treasury')!.annualized!;
+    expect(rel(v2.revenue.annualized!, v1.volume * mix)).toBeLessThan(1e-12);
+    const { payout, treasury } = v1;
     expect(rel(v2.belowLine.toHolders!, payout * (1 - mix))).toBeLessThan(1e-12);
-    expect(rel(v2.unreconciled.annualized!, v1.volume!.annualized! * mix - payout * mix - treasury * mix)).toBeLessThan(1e-12);
+    expect(rel(v2.unreconciled.annualized!, v1.volume * mix - payout * mix - treasury * mix)).toBeLessThan(1e-12);
     expect(v2.flags.filter((f) => f.startsWith('apportion'))).toEqual([]);
   });
 
@@ -120,7 +133,7 @@ describe('apportion by mix (Task 7b)', () => {
     expect(v2.flags).toContain('apportion mix n/a: ybs_payout, treasury, incentives_to_holders, incentives_to_protocol (the window sum of flow_usd.gross is 0)');
     expect(v2.holderFlow.fromRevenue).toBeNull();
     expect(v2.holderFlow.fromBelowLine).toBeNull();
-    expect(v2.holderFlow.gross).toBe(v1.buckets.cash!.gross);
+    expect(v2.holderFlow.gross).toBe(v1.gross);
     expect(JSON.stringify(v2)).not.toMatch(/NaN|Infinity/);
   });
 
@@ -140,7 +153,7 @@ describe('apportion by mix (Task 7b)', () => {
       .replace(/  below_line:\n(.*\n){2}/, '')
       .replace(/    - \{ id: splitter.*\n/, '    - { id: splitter, type: sum, total: [ flow_usd.gross ], parts: [ ybs_payout, treasury ], tolerance_pct: 2 }\n')).config;
     const inp = { ...input(), asset: plain };
-    const v2 = incomeStatementV2(inp, holderYieldReport(inp));
+    const v2 = incomeStatementV2(inp);
     expect(JSON.stringify(v2)).not.toContain('apportion');
   });
 });

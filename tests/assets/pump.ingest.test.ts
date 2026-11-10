@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
@@ -72,18 +73,20 @@ describe('assets/pump.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'pump', symbol: 'PUMP', chain: 'solana' });
     expect(config.ingest).toBeUndefined(); // no EVM RPC: Solana is read by the solana.* adapters
-    expect(config.holder_flows).toEqual([{ id: 'buyback', kind: 'burn', capture_rule: 'discretionary', recipient_base: 'all', metric: 'flow_usd.buyback', window_days: 91 }]);
+    expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.buyback']);
+    expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // DefiLlama only for the pre-reading history, the unlocks and the revenue display line (Mike, 2026-10-16).
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.llama_revenue']);
     expect(config.metrics['flow_usd.llama_revenue'].monitor_only).toBe(true);
-    expect(config.reporting!.dilution).toEqual([expect.objectContaining({ id: 'unlocks', metric: 'unlocks_next_year' })]);
+    expect(config.income_statement!.dilution).toEqual([expect.objectContaining({ id: 'unlocks', metric: 'unlocks_next_year' })]);
     for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // A deliberate edit of assets/pump.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/pump.yaml`, 'utf8')).hash).toBe('981a2959037c7a13cc62bb880481cf124cdf12afec1237ff7f83744bd328a072');
+    // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/pump.yaml`, 'utf8')).hash).toBe('3a2f142bfc7a25afd959263a479a22b8f188d8827a47ce52dd8ed2a3bd98bd06');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

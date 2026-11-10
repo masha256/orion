@@ -3,7 +3,7 @@ import { defaultHandlers } from '../../src/daemon/daemon.js';
 import { levelsHandler } from '../../src/daemon/jobs/levels.js';
 import { listLatestLevels } from '../../src/db/latestLevels.js';
 import { setRegistryState } from '../../src/db/registry.js';
-import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
+import { INGEST_ASSET_YAML, METRICS_END } from '../helpers/ingestAsset.js';
 import { harness } from '../helpers/fetchHarness.js';
 import { useTestDb } from '../helpers/db.js';
 import { activate, cleanupAfterAll, handlerFor, levelsContext, levelsJob, levelsWorld } from '../helpers/levelsWorld.js';
@@ -72,8 +72,8 @@ describe('levels job', () => {
 
   it('levelsJob: an undelivered watch post is kept and the dead-man is withheld', async () => {
     const yaml = INGEST_ASSET_YAML.replace(
-      'holder_flows:',
-      '  stats_price:\n    type: level\n    unit: usd\n    staleness_days: 3\n    monitor_only: true\n    watch: { outside: [1, 2] }\n    source: { type: http_json, url: "https://api.example.test/stats", path: price }\nholder_flows:',
+      METRICS_END,
+      '  stats_price:\n    type: level\n    unit: usd\n    staleness_days: 3\n    monitor_only: true\n    watch: { outside: [1, 2] }\n    source: { type: http_json, url: "https://api.example.test/stats", path: price }\n' + METRICS_END,
     );
     const w = await world({ mini: yaml }, ['mini']);
     const h = harness(testDb());

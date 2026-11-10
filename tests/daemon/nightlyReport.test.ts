@@ -15,7 +15,7 @@ import { putWatchStates } from '../../src/db/watchState.js';
 import { slackNotifier } from '../../src/notify/slack.js';
 import { useTestDb } from '../helpers/db.js';
 import { FakeClock } from '../helpers/clock.js';
-import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
+import { INGEST_ASSET_YAML, METRICS_END } from '../helpers/ingestAsset.js';
 import { cleanupAfterAll, levelsContext, levelsWorld } from '../helpers/levelsWorld.js';
 import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
@@ -218,7 +218,7 @@ describe('nightly_report job', () => {
 
   it('nightly_report: CONFIG CHANGED since the last delivered nightly, RESUMED short of the API refill, WATCH FIRING lines', async () => {
     // other's fee series is an API series that refills only 30 days back.
-    const api = asId('other').replace('holder_flows:', '  flow_usd.api: { type: flow, unit: usd, staleness_days: 45, source: { type: defillama, slug: x, data_type: dailyFees, backfill_days: 30 } }\nholder_flows:');
+    const api = asId('other').replace(METRICS_END, '  flow_usd.api: { type: flow, unit: usd, staleness_days: 45, source: { type: defillama, slug: x, data_type: dailyFees, backfill_days: 30 } }\n' + METRICS_END);
     const w = await world(['mini', 'other'], ['mini', 'other'], { other: api });
     // Yesterday's delivered report saw other at hash-old.
     const prevSlot = new Date(SLOT_MS - 86_400_000).toISOString();
@@ -327,12 +327,14 @@ describe('nightly_report job', () => {
 
   it('nightly_report: an asset whose flows lag the report day is published at its last complete day, with LAG in Slack (I-7)', async () => {
     const hype = `${readFileSync(fileURLToPath(new URL('../fixtures/hype.yaml', import.meta.url)), 'utf8')}
-reporting:
+income_statement:
+  category: perp_dex
+  scope: complete
   window_days: 10
-  haircuts: { buyback: 0 }
-  income:
-    lines:
-      - { id: buyback, to: holders, metric: flow_usd.buyback }
+  revenue:
+    - { id: trading, not_measured: "fixture" }
+  holders:
+    - { id: buyback, metric: flow_usd.buyback, bucket: hold, haircut: 0, recipient_base: all, capture_rule: programmatic }
 `;
     const w = await world(['mini', 'hype'], ['mini', 'hype'], { hype });
     for (let i = 0; i < 20; i++) {

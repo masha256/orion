@@ -4,7 +4,7 @@ import { summarizeHolderYield, type TickHolderYield, type TickReport } from '../
 import {
   fmtNum, fmtPct, formatAssetBlock, formatNightly, formatWatchCleared, formatWatchPost, slackClean, splitForSlack, SLACK_MAX_CHARS, type AssetRunResult,
 } from '../../src/notify/format.js';
-import { holderYieldReport } from '../../src/report/holderYield.js';
+import { yieldReport } from '../../src/report/load.js';
 import { incomeStatementV2 } from '../../src/report/incomeStatement.js';
 import { ALL_ASSETS, repoAsset, syntheticInput } from '../helpers/syntheticReport.js';
 import { slackEscape } from '../../src/notify/slack.js';
@@ -243,8 +243,7 @@ describe('holder-yield block v2 (spec 7, Task 4)', () => {
     // Every repo asset's real-shaped block (its own config's flags, scope and buckets; synthetic series), symbol CVXCRV.
     const blocks = ALL_ASSETS.map((id) => {
       const input = syntheticInput(repoAsset(id));
-      const v1 = holderYieldReport(input);
-      const holder_yield = summarizeHolderYield({ ...v1, incomeStatement: incomeStatementV2(input, v1) });
+      const holder_yield = summarizeHolderYield(yieldReport(input, { legacy: true }));
       return { id, holder_yield, lines: formatAssetBlock(run({ symbol: 'CVXCRV' }, { ...cleanReport(), holder_yield })).lines };
     });
     const longest = blocks.reduce((a, b) => (b.lines.join('\n').length > a.lines.join('\n').length ? b : a));

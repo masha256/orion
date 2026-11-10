@@ -5,26 +5,27 @@ import { parseAssetYaml } from '../../src/config/load.js';
 import type { Db } from '../../src/db/connection.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { addDays } from '../../src/ingest/time.js';
-import { holderYieldReport } from '../../src/report/holderYield.js';
-import { defaultDayFlowMetrics, lastCompleteReportDay, loadHolderYieldReport, reportFlowMetrics, yieldReport } from '../../src/report/load.js';
+import { lastCompleteReportDay, loadHolderYieldReport, type YieldReport } from '../../src/report/load.js';
 import { MINI_ASSET_YAML, MINI_REPORT_YAML, seedMiniReport } from '../helpers/assets.js';
 import { useTestDb } from '../helpers/db.js';
-import { ALL_ASSETS, repoAsset, syntheticInput } from '../helpers/syntheticReport.js';
+import { repoAsset } from '../helpers/syntheticReport.js';
 import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
-/** The HYPE fixture (one holder flow, flow_usd.buyback) plus a revenue proxy that the income statement totals. */
+/** The HYPE fixture plus a revenue proxy: revenue is the proxy, the buys are paid to holders, protocol the rest. */
 const hypeYaml = readFileSync(fileURLToPath(new URL('../fixtures/hype.yaml', import.meta.url)), 'utf8');
-const yaml = `${hypeYaml.replace('metrics:\n', 'metrics:\n  flow_usd.revenue_proxy: { type: flow, unit: usd, staleness_days: 4, monitor_only: true }\n')}
-reporting:
+const yaml = `${hypeYaml.replace('metrics:\n', 'metrics:\n  flow_usd.revenue_proxy: { type: flow, unit: usd, staleness_days: 4, monitor_only: true }\n')}income_statement:
+  category: perp_dex
+  scope: complete
   window_days: 10
-  haircuts: { buyback: 0 }
-  income:
-    lines:
-      - { id: buyback, to: holders, metric: flow_usd.buyback }
-    remainder_of: [ flow_usd.revenue_proxy ]
+  revenue:
+    - { id: trading, metric: flow_usd.revenue_proxy }
+  holders:
+    - { id: buyback, metric: flow_usd.buyback, bucket: hold, haircut: 0, recipient_base: all, capture_rule: programmatic }
+  remainder: protocol
 `;
+const statementOf = (r: unknown) => (r as YieldReport).incomeStatement!;
 
 /** Daily rows for `days` days ending on `lastDay` (a day's row is stamped at the end of the day). */
 async function seed(db: Db, metricKey: string, lastDay: string, days: number, value: number) {
@@ -44,43 +45,31 @@ describe('lastCompleteReportDay', () => {
     await seed(db, 'flow_usd.buyback', '2026-10-10', 25, 2); // a day ahead
     await seed(db, 'flow_usd.revenue_proxy', '2026-10-09', 25, 2);
     expect(await lastCompleteReportDay(db, asset)).toBe('2026-10-09');
-    const r = await loadHolderYieldReport(db, asset, undefined, { legacy: true });
+    const r = statementOf(await loadHolderYieldReport(db, asset));
     expect(r.day).toBe('2026-10-09');
-    expect(r.income!.revenue.annualized).toBeCloseTo(2 * 365);
-    expect(r.income!.payoutRatio).toBeCloseTo(1);
+    expect(r.revenue.annualized).toBeCloseTo(2 * 365);
+    expect(r.ratios.payoutRatio).toBeCloseTo(1);
   });
 
-  // Final review M4: the default day is v1's exactly. Metrics only income_statement reads (yCRV's by-sender flows) never
-  // gate it; the v2 statement flags their missing days instead.
-  it('reads the v1 report flows only, for all 13 assets', () => {
-    for (const id of ALL_ASSETS) {
-      const asset = repoAsset(id);
-      expect(defaultDayFlowMetrics(asset), id).toEqual(reportFlowMetrics({ ...asset, income_statement: undefined }));
-    }
-  });
-
-  it('yCRV before its by-sender flows exist: the default day is v1\'s, and v2 flags the missing days', async () => {
+  // Task 11 (ruling R11.1 B): the day gates on every flow the statement reads. yCRV's by-sender flows now gate it (they
+  // come from flow_usd.yearn_gross's own scan); v1's st-yCRV fee, which no line reads, no longer does.
+  it("yCRV: the by-sender flows gate the day; the st-yCRV fee does not", async () => {
     const asset = repoAsset('ycrv');
-    const v1Metrics = reportFlowMetrics({ ...asset, income_statement: undefined });
-    const v2Only = reportFlowMetrics(asset).filter((m) => !v1Metrics.includes(m));
-    expect(v2Only).toEqual(['flow_usd.yearn_gross_fees', 'flow_usd.yearn_gross_incentives']);
     const db = testDb();
-    for (const m of v1Metrics) {
+    const rows = async (m: string, last: string) => {
       for (let i = 0; i < 200; i++) {
-        const day = addDays('2026-10-10', -i);
+        const day = addDays(last, -i);
         await insertObservation(db, { provenance: testProvenance('onchain'), assetId: 'ycrv', metricKey: m, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value: 10, fetchedAt: '2026-10-11T00:00:00.000Z' });
       }
-    }
-    expect(await lastCompleteReportDay(db, asset)).toBe('2026-10-10');
-    const r = await loadHolderYieldReport(db, asset, undefined, { legacy: true });
-    expect(r.day).toBe('2026-10-10');
-    // The legacy object is v1's for that day (the input v1 reads is the same with or without the v2-only series).
-    const { incomeStatement, ...legacy } = r as typeof r & { incomeStatement?: unknown };
-    const v1 = await loadHolderYieldReport(db, { ...asset, income_statement: undefined }, undefined, { legacy: true });
-    expect(JSON.stringify(legacy)).toBe(JSON.stringify(v1));
-    const is = incomeStatement as { revenue: { annualized: number | null }; flags: string[] };
-    expect(is.revenue.annualized).toBeNull(); // fees_rev reads flow_usd.yearn_gross_fees: no day yet
-    expect(is.flags).toEqual(expect.arrayContaining([expect.stringMatching(/apportion mix n\/a: ybs_payout, treasury \(a day of flow_usd\.yearn_gross_fees or flow_usd\.yearn_gross is missing\)/)]));
+    };
+    for (const m of ['flow_usd.fees', 'flow_usd.yearn_revenue', 'flow_usd.yearn_gross']) await rows(m, '2026-10-10');
+    expect(await lastCompleteReportDay(db, asset)).toBeNull();
+    await rows('flow_usd.yearn_gross_fees', '2026-10-10');
+    await rows('flow_usd.yearn_gross_incentives', '2026-10-09');
+    expect(await lastCompleteReportDay(db, asset)).toBe('2026-10-09');
+    const r = statementOf(await loadHolderYieldReport(db, asset));
+    expect(r.day).toBe('2026-10-09');
+    expect(r.flags.filter((f) => f.startsWith('apportion'))).toEqual([]);
   });
 
   it('is null while any report flow has no row', async () => {
@@ -91,106 +80,45 @@ describe('lastCompleteReportDay', () => {
   });
 });
 
-describe('loadHolderYieldReport: v2 and --legacy (D9, Task 4)', () => {
-  const V1_KEYS = ['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'flows', 'buckets', 'yields', 'holderFlowGrowth', 'supply', 'income', 'revenue', 'volume', 'revenueDisclosed', 'notes'];
-
-  it('report yield --json omits legacy keys; --legacy keeps them in v1 order', async () => {
+describe('loadHolderYieldReport (D9; v1 retired, Task 11)', () => {
+  it('report yield --json: the header, the statement, the notes; no v1 key', async () => {
     const asset = parseAssetYaml(MINI_REPORT_YAML).config;
     const db = testDb();
     await seedMiniReport(db, '2026-10-10');
-    const slim = await loadHolderYieldReport(db, asset, '2026-10-10');
-    expect(Object.keys(slim)).toEqual(['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'incomeStatement', 'notes']);
-    expect(slim.incomeStatement).toMatchObject({ schema: 2, day: '2026-10-10', scope: 'complete', grossProfit: { annualized: null } });
-    const legacy = await loadHolderYieldReport(db, asset, '2026-10-10', { legacy: true });
-    expect(Object.keys(legacy)).toEqual([...V1_KEYS, 'incomeStatement']);
-    expect(legacy.incomeStatement).toEqual(slim.incomeStatement);
-    for (const k of ['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'notes'] as const) expect(slim[k]).toEqual(legacy[k]);
+    const r = await loadHolderYieldReport(db, asset, '2026-10-10');
+    expect(Object.keys(r)).toEqual(['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'incomeStatement', 'notes']);
+    expect(statementOf(r)).toMatchObject({ schema: 2, day: '2026-10-10', scope: 'complete', grossProfit: { annualized: null } });
   });
 
-  it('--legacy JSON minus incomeStatement equals the v1 object', async () => {
-    const asset = parseAssetYaml(MINI_REPORT_YAML).config;
-    const db = testDb();
-    await seedMiniReport(db, '2026-10-10');
-    const legacy = JSON.parse(JSON.stringify(await loadHolderYieldReport(db, asset, '2026-10-10', { legacy: true }))) as Record<string, unknown>;
-    expect(legacy.incomeStatement).toBeDefined();
-    delete legacy.incomeStatement;
-    // v1 = the same asset without the income_statement block (the previous release's report reads nothing else).
-    const { income_statement: _drop, ...v1Asset } = asset;
-    const v1 = await loadHolderYieldReport(db, v1Asset, '2026-10-10', { legacy: true });
-    expect('incomeStatement' in v1).toBe(false);
-    expect(JSON.stringify(legacy)).toBe(JSON.stringify(v1));
-    expect((v1 as { income: { revenue: { annualized: number } } }).income.revenue.annualized).toBeGreaterThan(0);
-  });
-
-  it('an asset without income_statement: no incomeStatement key either way', async () => {
-    const asset = parseAssetYaml(yaml).config;
-    const db = testDb();
-    await seed(db, 'flow_usd.buyback', '2026-10-09', 25, 2);
-    await seed(db, 'flow_usd.revenue_proxy', '2026-10-09', 25, 2);
-    expect(Object.keys(await loadHolderYieldReport(db, asset))).toEqual(['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'notes']);
-    expect(Object.keys(await loadHolderYieldReport(db, asset, undefined, { legacy: true }))).toEqual(V1_KEYS);
-  });
-});
-
-describe('legacyReport on the 13 repo assets (synthetic series)', () => {
-  it.each(ALL_ASSETS)('%s: the --legacy object minus incomeStatement is the v1 object byte for byte, incomeStatement last', (id) => {
-    const input = syntheticInput(repoAsset(id));
-    const v1 = JSON.stringify(holderYieldReport(input));
-    const legacy = JSON.parse(JSON.stringify(yieldReport(input, { legacy: true }))) as Record<string, unknown>;
-    expect(Object.keys(legacy).at(-1)).toBe('incomeStatement');
-    delete legacy.incomeStatement;
-    expect(JSON.stringify(legacy)).toBe(v1);
-    expect(Object.keys(yieldReport(input))).toEqual(['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'incomeStatement', 'notes']);
+  it('an asset without income_statement has no report', async () => {
+    const asset = parseAssetYaml(MINI_ASSET_YAML).config;
+    await expect(loadHolderYieldReport(testDb(), asset, '2026-10-10')).rejects.toThrow(/has no income_statement block/);
   });
 });
 
 describe('the statement reads its own disclosed metric (fix round 1, M8)', () => {
-  /** MINI disclosing revenue through `revenue_run_rate_usd` (v1) while its income statement names `disclosed_b`. */
-  const yamlOf = (statementMetric: string) => `${MINI_ASSET_YAML.replace('metrics:\n', 'metrics:\n  disclosed_b: { type: level, unit: usd, staleness_days: 60 }\n')}reporting:
-  window_days: 10
-  haircuts: { fees: 0 }
-  revenue_disclosed: revenue_run_rate_usd
-  revenue:
-    - { id: business, disclosed: revenue_run_rate_usd }
-  income:
-    lines:
-      - { id: fees, to: holders, metric: flow_usd.fees }
-income_statement:
+  /** MINI disclosing its revenue through `disclosed_b` (another level, revenue_run_rate_usd, also has rows). */
+  const disclosedYaml = `${MINI_ASSET_YAML.replace('metrics:\n', 'metrics:\n  disclosed_b: { type: level, unit: usd, staleness_days: 60 }\n')}income_statement:
   category: ai_platform
   scope: complete
   window_days: 10
   revenue:
-    - { id: business, disclosed: ${statementMetric} }
+    - { id: business, disclosed: disclosed_b }
   holders:
     - { id: fees_paid, metric: flow_usd.fees, bucket: cash, haircut: 0, recipient_base: all, capture_rule: contractual }
   remainder: protocol
 `;
 
-  async function seedDisclosures(db: Db) {
+  it('the disclosed line reads the metric its disclosed key names, up to the report as-of', async () => {
+    const asset = parseAssetYaml(disclosedYaml).config;
+    const db = testDb();
     await seedMiniReport(db, '2026-10-10');
     const at = (d: string) => `${d}T00:00:00.000Z`;
-    for (const [key, value, day] of [['revenue_run_rate_usd', 1000, '2026-06-01'], ['revenue_run_rate_usd', 2000, '2026-10-01'], ['disclosed_b', 50_000, '2026-05-01'], ['disclosed_b', 60_000, '2026-09-01']] as const) {
+    for (const [key, value, day] of [['revenue_run_rate_usd', 1000, '2026-06-01'], ['disclosed_b', 50_000, '2026-05-01'], ['disclosed_b', 60_000, '2026-09-01'], ['disclosed_b', 70_000, '2026-10-20']] as const) {
       await insertObservation(db, { provenance: testProvenance('manual'), assetId: 'mini', metricKey: key, observedAt: at(day), value, fetchedAt: at(day) });
     }
-  }
-
-  it('an income statement disclosed key that differs from v1 revenue_disclosed is read on its own (v1 unchanged)', async () => {
-    const asset = parseAssetYaml(yamlOf('disclosed_b')).config;
-    const db = testDb();
-    await seedDisclosures(db);
-    const r = await loadHolderYieldReport(db, asset, '2026-10-10', { legacy: true });
-    expect(r.revenue!.annualized).toBe(2000);
-    expect(r.revenueDisclosed!.latest).toBe(2000);
-    expect(r.incomeStatement!.revenue.annualized).toBe(60_000);
-    expect(r.incomeStatement!.revenue.lines[0].growth.prior).toBe(50_000);
-  });
-
-  it('the same key: the statement reads the v1 disclosures', async () => {
-    const asset = parseAssetYaml(yamlOf('revenue_run_rate_usd')).config;
-    const db = testDb();
-    await seedDisclosures(db);
-    const r = await loadHolderYieldReport(db, asset, '2026-10-10', { legacy: true });
-    expect(r.incomeStatement!.revenue.annualized).toBe(2000);
-    expect(r.incomeStatement!.revenue.growth).toEqual(r.revenue!.growth);
+    const r = statementOf(await loadHolderYieldReport(db, asset, '2026-10-10'));
+    expect(r.revenue.annualized).toBe(60_000);
+    expect(r.revenue.lines[0].growth.prior).toBe(50_000);
   });
 });

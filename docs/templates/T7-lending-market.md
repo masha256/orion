@@ -132,9 +132,6 @@ metrics:
   # needs state_delta (Phase 3): flow_usd.accrued_to_treasury, accruedToTreasury x the liquidity index, per day per market
   # needs state_delta (Phase 3): flow_usd.borrow_interest, Σ debt x Δ borrow index per day (a measured gross)
 
-holder_flows:
-  - { id: buyback, kind: buy_and_hold, capture_rule: {{capture_rule}}, recipient_base: all, metric: flow_usd.buyback, window_days: 91 }
-
 income_statement:
   category: lending
   scope: complete

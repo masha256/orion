@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
@@ -75,7 +76,7 @@ const sd = loadAsset(ROOT, 'sdcrv').config.contracts;
 const CASES: Case[] = [
   {
     id: 'cvxcrv',
-    hash: 'e426e489d3d3b552f908bc92e4d5279b8643476c1f4f18ecf427cf368ed14b0f',
+    hash: 'e9ecdb0d739a2be07973e015419c328ee67d6325a597e33e71a65ea411ded7a8',
     coingecko: 'convex-crv',
     price: 0.1392,
     llamaPrice: 0.1391,
@@ -91,7 +92,7 @@ const CASES: Case[] = [
   },
   {
     id: 'sdcrv',
-    hash: 'ab2018a4ae3205e2dc37bbe812e2b61e3a3a45dc6bfc7bb6962042a5f4174758',
+    hash: '0583401d6b4d5a409522a3c29958b3b7bf4baf99a22b72fe57255697c0199b32',
     coingecko: 'stake-dao-crv',
     price: 0.1884,
     llamaPrice: 0.1832,
@@ -164,11 +165,16 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
 
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: c.id, chain: 'ethereum', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
-    expect(config.holder_flows.map((f) => [f.id, f.kind, f.recipient_base, f.valued_per, f.window_days])).toEqual(flowIds.map((id) => [id, 'fee_share', 'staked', 'recipients', 91]));
+    expect(holderFlowMetrics(config.income_statement)).toEqual(flowIds.map((id) => `flow_usd.${id}`));
+    // Every holder-flow line: cash, to stakers, valued per staked token.
+    const lines = [...(config.income_statement!.holders ?? []), ...(config.income_statement!.below_line ?? []).filter((b) => b.to === 'holders')];
+    expect(lines.map((l) => [l.bucket, l.recipient_base, l.valued_per])).toEqual(flowIds.map(() => ['cash', 'staked', 'recipients']));
+    expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     expect(config.metrics.revenue_run_rate_usd).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
+    // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     expect(parseAssetYaml(readFileSync(`${ROOT}/assets/${c.id}.yaml`, 'utf8')).hash).toBe(c.hash);
     // Supply definitions (Mike, 2026-10-12): CoinGecko has no circulating supply for the wrappers, so it is the on-chain total;
     // CoinGecko's total_supply checks cvxCRV only (sdCRV's figure there is a stale 2022 snapshot).
@@ -188,11 +194,11 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     const plan = buildPlan(config);
     // One scan per holder-flow stream, then the report-only revenue and gross scans (never a holder flow).
     const reportFlows = Object.entries(config.metrics).filter(([, d]) => d.type === 'flow' && d.monitor_only === true).map(([k]) => k);
-    const r = config.reporting!;
+    const is = config.income_statement!;
     // Every revenue and volume line is a report-only flow; a report-only flow may also be a record only (e.g. the whole
     // fee, of which only the protocol's part is revenue).
-    const incomeMetrics = (r.income?.lines ?? []).flatMap((l) => (l.metric ? [l.metric] : []));
-    expect(reportFlows).toEqual(expect.arrayContaining([...incomeMetrics.filter((m) => config.metrics[m]?.monitor_only), ...(r.volume ?? [])]));
+    const incomeMetrics = [...is.revenue, ...(is.cost_of_revenue ?? []), ...(is.protocol ?? []), ...(is.operating_costs ?? [])].flatMap((l) => (l.metric ? [l.metric] : []));
+    expect(reportFlows).toEqual(expect.arrayContaining([...incomeMetrics.filter((m) => config.metrics[m]?.monitor_only), ...(is.volume ?? [])]));
     expect(plan.flowGroups.map((g) => g.members.map((m) => m.metricKey))).toEqual([...flowIds.map((id) => [`flow_usd.${id}`]), ...reportFlows.map((m) => [m])]);
     expect(plan.derived).toEqual([]);
   });

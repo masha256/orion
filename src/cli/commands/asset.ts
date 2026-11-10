@@ -21,6 +21,20 @@ export function byOf(by: string | undefined): string {
   return who;
 }
 
+/**
+ * `asset show`'s holder flows: income_statement's holders lines and its below_line lines to holders, each with its
+ * bucket, capture rule and recipient base (a not-measured below-line line has none: `not measured`). `none` without
+ * any.
+ */
+function holderFlowText(c: AssetConfig): string {
+  const is = c.income_statement;
+  const lines = [
+    ...(is?.holders ?? []).map((h) => `${h.id} [${h.bucket}, ${h.capture_rule}, ${h.recipient_base}]`),
+    ...(is?.below_line ?? []).filter((b) => b.to === 'holders').map((b) => (b.bucket === undefined ? `${b.id} [not measured]` : `${b.id} [${b.bucket}, ${b.capture_rule}, ${b.recipient_base}]`)),
+  ];
+  return lines.length > 0 ? lines.join('; ') : 'none';
+}
+
 function registryLine(r: RegistryRow): string {
   const why = r.stateReason ? `: ${r.stateReason}` : '';
   const last = r.lastRunAt ? `${r.lastRunAt}${r.lastOutcome ? ` ${r.lastOutcome}` : ''} (job ${r.lastJobId ?? '?'})` : 'never';
@@ -65,7 +79,7 @@ export function registerAsset(program: Command, ctx: CliContext): void {
         `${c.symbol}  ${c.name}  (${c.id})`,
         `config hash ${loaded.hash}`,
         `metrics: ${Object.keys(c.metrics).join(', ')}`,
-        `holder flows: ${c.holder_flows.map((f) => `${f.id} [${f.kind}, ${f.capture_rule}, ${f.recipient_base}]`).join('; ')}`,
+        `holder flows: ${holderFlowText(c)}`,
       ]);
     });
 

@@ -51,7 +51,7 @@
         },
         {
          "path": [
-          "reporting",
+          "income_statement",
           "dilution",
           "unlocks",
           "note"
@@ -236,7 +236,7 @@
       },
       {
        "path": [
-        "reporting",
+        "income_statement",
         "dilution",
         "unlocks",
         "note"

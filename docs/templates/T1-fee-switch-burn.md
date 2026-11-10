@@ -132,9 +132,6 @@ metrics:
   # needs event_sum (Phase 3): flow_usd.swap_fees from a singleton's Swap.fee per day (v4 PoolManager), a measured gross
   # needs pool_scan (Phase 3): flow_usd.listed_protocol_fees over a versioned pool list, for the coverage check
 
-holder_flows:
-  - { id: burn, kind: burn, capture_rule: {{capture_rule}}, recipient_base: all, metric: flow_usd.burn, window_days: 91 }
-
 income_statement:
   category: dex
   scope: complete

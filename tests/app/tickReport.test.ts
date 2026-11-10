@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
 import { emitTickReport, summarizeHolderYield, tickId, TickReportSchema, type TickReport } from '../../src/app/tickReport.js';
-import type { Growth, HolderYieldReport, IncomeStatement, RevenueReport } from '../../src/report/holderYield.js';
-import { holderYieldReport as computeReport } from '../../src/report/holderYield.js';
+import type { Growth } from '../../src/report/holderYield.js';
+import type { HolderYieldReport, IncomeStatement, RevenueReport } from '../../src/report/legacy.js';
+import { yieldReport } from '../../src/report/load.js';
 import { incomeStatementV2, type IsV2 } from '../../src/report/incomeStatement.js';
 import { repoAsset, syntheticInput } from '../helpers/syntheticReport.js';
 
@@ -116,8 +117,8 @@ describe('summarizeHolderYield: income statement v2 (Task 4)', () => {
 
   it('adds the v2 fields after the v1 ones, copied from incomeStatement; the v1 fields do not move', () => {
     const input = syntheticInput(repoAsset('lit'));
-    const v1 = computeReport(input);
-    const is: IsV2 = incomeStatementV2(input, v1);
+    const { incomeStatement: _is, ...v1 } = yieldReport(input, { legacy: true });
+    const is: IsV2 = incomeStatementV2(input);
     const before = summarizeHolderYield(v1);
     const after = summarizeHolderYield({ ...v1, incomeStatement: is });
     expect(Object.keys(before)).toEqual(V1_FIELDS);

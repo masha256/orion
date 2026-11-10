@@ -387,6 +387,33 @@ export function incomeStatementIssues(asset: CheckAsset): string[] {
   return out;
 }
 
+/**
+ * The flow metrics holder flow reads at the holders (Task 11, ruling R11.1; the retired `holder_flows` metrics for all
+ * 13 assets): each measured holders line's `paid_metric`, else its own `metric`, else the flow of the revenue line it
+ * passes on (`of`, or an `estimate` of one), and each measured below_line line to holders with a `metric`. Never an
+ * apportion's by or total series, a run-rate level or a not_measured line. A line passing on a periodic revenue line is
+ * left out: its lump payments are reported, never a holder flow the agent's pack or the monitor-only rule counted
+ * (HYPE's reserve yield, a report-only stream in v1). The agent pack's flow rows (eligibility) and the monitor-only
+ * rule read this. Never throws on a block validation refuses (a dangling `of` is skipped).
+ */
+export function holderFlowMetrics(is: IncomeStatementDef | undefined): string[] {
+  if (!is) return [];
+  const byId = new Map(is.revenue.map((r) => [r.id, r] as const));
+  const passedOn = (id: string): string | undefined => {
+    const r = byId.get(id);
+    if (r === undefined || r.settlement === 'periodic' || r.not_measured !== undefined) return undefined;
+    return r.metric ?? r.derived?.from ?? (r.estimate !== undefined && r.estimate.of !== id ? passedOn(r.estimate.of) : undefined);
+  };
+  const out: string[] = [];
+  for (const h of is.holders ?? []) {
+    if (h.not_measured !== undefined) continue;
+    const m = h.paid_metric ?? h.metric ?? (h.of !== undefined ? passedOn(h.of) : h.estimate !== undefined ? passedOn(h.estimate.of) : undefined);
+    if (m !== undefined) out.push(m);
+  }
+  for (const b of is.below_line ?? []) if (b.to === 'holders' && b.not_measured === undefined && b.metric !== undefined) out.push(b.metric);
+  return [...new Set(out)];
+}
+
 /** A use line with its `of` resolved: what the report reads for it. */
 export interface ResolvedUse {
   id: string;

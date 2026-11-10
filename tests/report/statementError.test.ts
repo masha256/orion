@@ -11,7 +11,6 @@ import { insertObservation } from '../../src/db/observations.js';
 import { addDays } from '../../src/ingest/time.js';
 import { formatAssetBlock, formatNightly, type AssetRunResult } from '../../src/notify/format.js';
 import { fullBody } from '../../src/push/body.js';
-import { holderYieldReport } from '../../src/report/holderYield.js';
 import { loadHolderYieldReport, yieldReport } from '../../src/report/load.js';
 import { MINI_REPORT_YAML, seedMiniReport } from '../helpers/assets.js';
 import { useTestDb } from '../helpers/db.js';
@@ -21,8 +20,9 @@ import { repoAsset, syntheticInput } from '../helpers/syntheticReport.js';
 import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 /**
- * Task 4 ruling C4: an exception inside incomeStatementV2 never fails the legacy report, the tick or the snapshot. The
- * seam: incomeStatementV2 throws while `boom.on` is set (the real function otherwise).
+ * Task 4 ruling C4: an exception inside incomeStatementV2 never fails the report, the tick or the snapshot. The seam:
+ * incomeStatementV2 throws while `boom.on` is set (the real function otherwise). Task 11a: the v1-shaped keys are the
+ * statement's (src/report/legacy.ts), so with it they are empty (no flows, null yields), not v1's own figures.
  */
 const MESSAGE = 'income statement v2: holders.x reads no series';
 const boom = vi.hoisted(() => ({ on: false }));
@@ -49,16 +49,15 @@ beforeEach(() => {
 const V1_KEYS = ['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'flows', 'buckets', 'yields', 'holderFlowGrowth', 'supply', 'income', 'revenue', 'volume', 'revenueDisclosed', 'notes'];
 
 describe('a throwing income statement v2 (C4)', () => {
-  it('the report: incomeStatement null and incomeStatementError, the v1 keys unchanged (legacy and default)', () => {
+  it('the report: incomeStatement null and incomeStatementError; the header stands (legacy and default)', () => {
     const input = syntheticInput(repoAsset('lit'));
-    const v1 = holderYieldReport(input);
+    boom.on = false;
+    const ok = yieldReport(input);
+    boom.on = true;
     const legacy = JSON.parse(JSON.stringify(yieldReport(input, { legacy: true }))) as Record<string, unknown>;
     expect(Object.keys(legacy)).toEqual([...V1_KEYS, 'incomeStatement', 'incomeStatementError']);
-    expect(legacy.incomeStatement).toBeNull();
-    expect(legacy.incomeStatementError).toBe(MESSAGE);
-    delete legacy.incomeStatement;
-    delete legacy.incomeStatementError;
-    expect(JSON.stringify(legacy)).toBe(JSON.stringify(v1));
+    expect(legacy).toMatchObject({ incomeStatement: null, incomeStatementError: MESSAGE, flows: [], income: null, yields: { cash: null, multiple: null } });
+    for (const k of ['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'notes'] as const) expect(legacy[k]).toEqual(ok[k]);
     const slim = yieldReport(input);
     expect(Object.keys(slim)).toEqual(['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'incomeStatement', 'incomeStatementError', 'notes']);
     expect(slim).toMatchObject({ incomeStatement: null, incomeStatementError: MESSAGE });
@@ -77,16 +76,15 @@ describe('a throwing income statement v2 (C4)', () => {
     const db = testDb();
     await seedMiniReport(db, '2026-10-10');
     const r = await loadHolderYieldReport(db, asset, '2026-10-10', { legacy: true });
-    expect(r.income!.revenue.annualized).toBeGreaterThan(0);
-    expect(r).toMatchObject({ incomeStatement: null, incomeStatementError: MESSAGE });
+    expect(r).toMatchObject({ incomeStatement: null, incomeStatementError: MESSAGE, day: '2026-10-10' });
     expect(reportLines(r)).toContain(`  income statement unavailable: ${MESSAGE}`);
   });
 
-  it('the tick holder_yield: v1 fields as without v2, statement_error set, schema valid', () => {
+  it('the tick holder_yield: the header fields, empty flows and null yields, statement_error set, schema valid', () => {
     const input = syntheticInput(repoAsset('lit'));
     const h = summarizeHolderYield(yieldReport(input, { legacy: true }));
-    const v1Only = summarizeHolderYield(holderYieldReport(input));
-    expect(h).toEqual({ ...v1Only, statement_error: MESSAGE });
+    expect(h).toMatchObject({ day: input.day, flows: [], revenue_annualized: null, multiple: null, statement_error: MESSAGE });
+    expect(h.statement_revenue).toBeUndefined();
     expect(TickHolderYieldSchema.parse(h)).toEqual(h);
   });
 
@@ -102,9 +100,9 @@ describe('a throwing income statement v2 (C4)', () => {
     expect(block.alert).toBe(true);
     const alerts = block.lines.filter((l) => l.startsWith('ALERT'));
     expect(alerts).toEqual([`ALERT LIT income statement unavailable: ${MESSAGE}`]);
-    // Right after the block's first line; the v1 block is still printed.
+    // Right after the block's first line; the price line is still printed.
     expect(block.lines[block.lines.indexOf('nothing to decide') + 2]).toBe(alerts[0]);
-    expect(block.lines.some((l) => l.startsWith('yields: cash'))).toBe(true);
+    expect(block.lines.some((l) => l.startsWith('price '))).toBe(true);
     const posts = formatNightly({
       env: 'stage', day: '2026-11-02', releaseTag: null, results: [{ ...run, assetId: 'lit' }], notRun: [], symbols: { lit: 'LIT' }, configChanged: [],
       resumedShort: [], firingWatches: [], refreshesMissing: [], slot: '01:00',
@@ -124,7 +122,7 @@ describe('a throwing income statement v2 (C4)', () => {
     const mini = body.assets.mini!;
     expect(mini.report_error).toBeNull();
     expect(Object.keys(mini.report)).toEqual([...V1_KEYS, 'incomeStatement', 'incomeStatementError']);
-    expect(mini.report).toMatchObject({ incomeStatement: null, incomeStatementError: MESSAGE, income: { revenue: { annualized: expect.any(Number) } } });
+    expect(mini.report).toMatchObject({ incomeStatement: null, incomeStatementError: MESSAGE, day: '2026-11-02' });
   });
 });
 
@@ -142,7 +140,7 @@ describe('a throwing income statement v2 in a tick (C4)', () => {
 
   it('the tick completes with exit 0, no report_error, and holder_yield.statement_error', async () => {
     const db = testDb();
-    h = harness(db, { loaded: parseAssetYaml(`${INGEST_ASSET_YAML}reporting:\n  window_days: 7\n  haircuts: { fees: 0 }\n${IS_BLOCK}`) });
+    h = harness(db, { loaded: parseAssetYaml(`${INGEST_ASSET_YAML}${IS_BLOCK}`) });
     for (let i = 0; i < 12; i++) {
       const day = addDays('2026-09-15', -i);
       await insertObservation(h.db, { provenance: testProvenance('onchain'), assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value: 2, fetchedAt: NOW.toISOString() });
@@ -152,7 +150,7 @@ describe('a throwing income statement v2 in a tick (C4)', () => {
     expect(exitCode).toBe(0);
     expect(report).toMatchObject({ outcome: 'completed', report_error: null, error: null });
     expect(report.holder_yield).toMatchObject({ day: '2026-09-18', statement_error: MESSAGE });
-    expect(report.holder_yield!.flows).toEqual([{ id: 'fees', bucket: 'cash', net: expect.any(Number), yield: expect.any(Number) }]);
+    expect(report.holder_yield!.flows).toEqual([]);
     expect(report.holder_yield!.statement_revenue).toBeUndefined();
     expect(TickReportSchema.parse(report)).toEqual(report);
   });

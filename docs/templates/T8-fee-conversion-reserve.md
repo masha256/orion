@@ -118,9 +118,6 @@ metrics:
     source: { type: transfer_flow, token: token, to: release_wallet, from_any: true, ignore_below_tokens: 1000, unit: tokens }
   released_rate: { type: level, unit: tokens_per_year, staleness_days: 120, monitor_only: true, source: { type: derived, name: flow_annualized, params: { metric: flow_tokens.released, days: 365 } } }
 
-holder_flows:
-  - { id: reserve, kind: buy_and_hold, capture_rule: {{capture_rule}}, recipient_base: all, metric: flow_usd.reserve, window_days: 91 }
-
 income_statement:
   category: oracle
   scope: protocol_share_only

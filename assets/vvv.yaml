@@ -181,26 +181,16 @@ metrics:
     monitor_only: true
     source: { type: defillama, slug: venice, data_type: dailyRevenue, backfill_days: 365 }
 
-holder_flows:
-  - { id: burn, kind: burn, capture_rule: discretionary, recipient_base: all, metric: flow_usd.burn, window_days: 91 }
-
+# Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
+# the holders and below_line lines):
 # Report-only holder yield and growth (orion report yield). Burns: no haircut.
-reporting:
-  window_days: 91
-  haircuts: { burn: 0 }
-  revenue_disclosed: revenue_run_rate_usd
-  # Revenue (Mike, 2026-10-12) = Venice's disclosed business revenue (the latest annual run rate). DefiLlama's dailyRevenue
-  # (the on-chain burns, about 10x smaller) is a cross-check only. Growth is between the two latest disclosures, flagged
-  # when they are < 90 days apart or the latest is > 90 days old. Holder flow stays = the burns.
-  revenue:
-    - { id: business, label: "disclosed business revenue (annual run rate)", disclosed: revenue_run_rate_usd, cross_check: flow_usd.revenue_proxy }
-  # Income statement (Mike, 2026-10-11): paid to holders = the burns; protocol income = revenue less the burns.
-  income:
-    lines:
-      - { id: burn, to: holders, metric: flow_usd.burn }
-
-# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
-# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+# Revenue (Mike, 2026-10-12) = Venice's disclosed business revenue (the latest annual run rate). DefiLlama's
+# dailyRevenue (the on-chain burns, about 10x smaller) is a cross-check only. Growth is between the two latest
+# disclosures, flagged when they are < 90 days apart or the latest is > 90 days old. Holder flow stays = the burns.
+# Income statement (Mike, 2026-10-11): paid to holders = the burns; protocol income = revenue less the burns.
+#
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2): the report's only block since Task 11 retired
+# holder_flows and reporting. Revenue = what users pay; each section says where it goes.
 income_statement:
   category: ai_platform
   scope: complete

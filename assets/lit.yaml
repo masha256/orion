@@ -70,7 +70,7 @@ metrics:
     source: { type: constant, value: 0, note: "no emissions" }
 
   # No minting: all 1B were minted at launch. The unlocks are tokens already in total supply, so they are reported as
-  # dilution (reporting.dilution), never counted as an emission.
+  # dilution (income_statement.dilution), never counted as an emission.
   emission_rate_annual:
     type: schedule
     unit: tokens_per_year
@@ -130,9 +130,10 @@ metrics:
   unlocks_next_year: { type: level, unit: tokens_per_year, staleness_days: 14, monitor_only: true, source: { type: adapter, name: lit.unlocks_next_year, params: { allocations: [ Team, Investors ], tranches: { first: 2027-01-29, every_months: 1, count: 36 } } } }
   reserve_lit: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: token, function: balanceOf, args: [ ecosystem_reserve ], decimals: 18 } }
 
-  # Revenue from Lighter's own exchangeMetrics (Mike, 2026-10-23, pick 2a): the four revenue kinds per completed UTC day,
-  # gross. Liquidation fees go to the LLP and are not revenue. Core: from 2025-01-17. The Robinhood instance (RH) is a
-  # separate exchange with its own API, from 2026-06-26; reporting.revenue keeps Lighter's half of it.
+  # Revenue from Lighter's own exchangeMetrics (Mike, 2026-10-23, pick 2a): the four revenue kinds per completed UTC
+  # day, gross. Liquidation fees go to the LLP and are not revenue. Core: from 2025-01-17. The Robinhood instance (RH)
+  # is a separate exchange with its own API, from 2026-06-26; the cost of revenue line robinhood_partner passes on the
+  # other half.
   flow_usd.fees_core:
     type: flow
     unit: usd
@@ -149,7 +150,7 @@ metrics:
     source: { type: adapter, name: lit.exchange_fees_daily, params: { api: "https://api.rh.lighter.xyz/api/v1", kinds: [ maker_fee, taker_fee, transfer_fee, withdraw_fee ] } }
 
   # The Robinhood split as Lighter's own app applies it: the constant in the stats page's exchange-stats chunk (0.5 on
-  # 2026-10-23). Display and watch only: reporting.revenue's share is config, and a reading off 0.5 is reported, never
+  # 2026-10-23). Display and watch only: the cost line's share is config, and a reading off 0.5 is reported, never
   # applied (Mike decides whether the share changes).
   rh_revenue_share_app:
     type: level
@@ -215,33 +216,19 @@ metrics:
     monitor_only: true
     source: { type: defillama, slug: lighter, data_type: dailyRevenue, backfill_days: 150 }
 
-# discretionary (Mike, 2026-10-16): the burn policy dates from June 2026, the team executes each burn, and the burned LIT
-# is drawn from the reserve rather than being the bought LIT.
-holder_flows:
-  - { id: buyback, kind: burn, capture_rule: discretionary, recipient_base: all, metric: flow_usd.buyback, window_days: 91 }
-
-# Report-only holder yield and growth. A burn: no haircut. Revenue = Lighter Core fees + Lighter's 50 percent of the
-# Robinhood instance's fees, both from Lighter's API (Mike, 2026-10-23, pick 2a); paid to holders = the buys. Volume =
-# the gross fees of both. The unlocks are the dilution, the buys in LIT the tokens removed.
-# The 0.5: the Q3 2026 call (05:20, "a 50-50 ref share"), and Lighter's app constant (exchange-stats chunk:
-# `return <set of maker_fee, taker_fee, transfer_fee, withdraw_fee>.has(kind)?.5:1`), watched by rh_revenue_share_app.
-# The Robinhood stream is dated from its first day so it stays out of the ex-new-streams growth until it has 180 days.
-reporting:
-  window_days: 91
-  haircuts: { buyback: 0 }
-  revenue:
-    - { id: core, label: "Lighter Core fees (Lighter API)", metric: flow_usd.fees_core, settlement: daily }
-    - { id: robinhood, label: "Lighter's 50% of Robinhood-instance fees (Lighter API)", metric: flow_usd.fees_rh, settlement: daily, share: 0.5, started: "2026-06-26" }
-  income:
-    lines:
-      - { id: buyback, to: holders, metric: flow_usd.buyback, note: "treasury buys LIT daily; an equal count is burned quarterly" }
-  volume: [ flow_usd.fees_core, flow_usd.fees_rh ]
-  burned_tokens: [ flow_tokens.buyback ]
-  dilution:
-    - { id: unlocks, metric: unlocks_next_year, note: "team and investor vesting, 36 monthly tranches from 2027-01-29 (Lighter terms; sizes from DefiLlama emissions)" }
-
-# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
-# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+# Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
+# the holders and below_line lines):
+# discretionary (Mike, 2026-10-16): the burn policy dates from June 2026, the team executes each burn, and the burned
+# LIT is drawn from the reserve rather than being the bought LIT. Report-only holder yield and growth. A burn: no
+# haircut. Revenue = Lighter Core fees + Lighter's 50 percent of the Robinhood instance's fees, both from Lighter's API
+# (Mike, 2026-10-23, pick 2a); paid to holders = the buys. Volume = the gross fees of both. The unlocks are the
+# dilution, the buys in LIT the tokens removed. The 0.5: the Q3 2026 call (05:20, "a 50-50 ref share"), and Lighter's
+# app constant (exchange-stats chunk: `return <set of maker_fee, taker_fee, transfer_fee,
+# withdraw_fee>.has(kind)?.5:1`), watched by rh_revenue_share_app. The Robinhood stream is dated from its first day so
+# it stays out of the ex-new-streams growth until it has 180 days.
+#
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2): the report's only block since Task 11 retired
+# holder_flows and reporting. Revenue = what users pay; each section says where it goes.
 income_statement:
   category: perp_dex
   scope: complete

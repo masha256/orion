@@ -25,16 +25,6 @@ metrics:
   flow_usd.gross_incentives: { type: flow, unit: usd, staleness_days: 45 }
   flow_usd.payout: { type: flow, unit: usd, staleness_days: 45 }
   flow_usd.treasury: { type: flow, unit: usd, staleness_days: 45 }
-holder_flows:
-  - { id: fees, kind: fee_share, capture_rule: programmatic, recipient_base: staked, valued_per: recipients, metric: flow_usd.payout, window_days: ${LOCKER_W} }
-reporting:
-  window_days: ${LOCKER_W}
-  haircuts: { fees: 0 }
-  volume: [ flow_usd.gross ]
-  income:
-    lines:
-      - { id: ybs_payout, to: holders, metric: flow_usd.payout }
-      - { id: treasury, to: protocol, metric: flow_usd.treasury }
 income_statement:
   category: liquid_locker
   scope: complete

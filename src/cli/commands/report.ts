@@ -1,7 +1,8 @@
 import type { Command } from 'commander';
 import { listAssetIds, loadAsset } from '../../config/load.js';
 import { loadHolderYieldReport, type YieldReport } from '../../report/load.js';
-import type { Growth, HolderYieldReport } from '../../report/holderYield.js';
+import type { Growth } from '../../report/holderYield.js';
+import type { HolderYieldReport } from '../../report/legacy.js';
 import type { IsV2 } from '../../report/incomeStatement.js';
 import { OrionError } from '../../types.js';
 import { output, withDb, type CliContext } from '../util.js';
@@ -117,18 +118,18 @@ export function registerReport(program: Command, ctx: CliContext): void {
   const report = program.command('report').description('report-only series: holder yield, growth, protocol revenue');
   report
     .command('yield [asset]')
-    .description('holder yield by bucket (burn, hold, cash), yields on price, 90d-over-90d growth, protocol revenue; every asset with a reporting block when no asset is given')
-    .option('--day <yyyy-mm-dd>', 'the last day the report covers (default: the newest day every holder flow has)')
+    .description('holder yield by bucket (burn, hold, cash), yields on price, 90d-over-90d growth, protocol revenue; every asset with an income_statement block when no asset is given')
+    .option('--day <yyyy-mm-dd>', 'the last day the report covers (default: the newest day every report flow has)')
     .option('--json', 'JSON output')
     .option('--legacy', 'also the v1 keys (flows, buckets, yields, holderFlowGrowth, supply, income, revenue, volume, revenueDisclosed), in v1 order with incomeStatement last; kept one release (D9)')
     .action(async (assetId: string | undefined, opts: { day?: string; json?: boolean; legacy?: boolean }) => {
       if (opts.day !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(opts.day)) throw new OrionError('invalid_day', '--day must be YYYY-MM-DD');
-      const ids = assetId ? [assetId] : listAssetIds(ctx.configRoot).filter((id) => loadAsset(ctx.configRoot, id).config.reporting !== undefined);
+      const ids = assetId ? [assetId] : listAssetIds(ctx.configRoot).filter((id) => loadAsset(ctx.configRoot, id).config.income_statement !== undefined);
       const reports = await withDb(ctx, async (db) => {
         const out: (YieldReport | HolderYieldReport)[] = [];
         for (const id of ids) {
           const asset = loadAsset(ctx.configRoot, id).config;
-          if (!asset.reporting) throw new OrionError('no_reporting', `assets/${id}.yaml has no reporting block`);
+          if (!asset.income_statement) throw new OrionError('no_income_statement', `assets/${id}.yaml has no income_statement block`);
           out.push(await loadHolderYieldReport(db, asset, opts.day, { legacy: opts.legacy === true }));
         }
         return out;

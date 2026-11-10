@@ -67,7 +67,7 @@ metrics:
     source: { type: constant, value: 0, note: "no emissions" }
 
   # No minting: all 1B were minted at launch. The quarterly releases move tokens already in total supply, so they are
-  # reported as dilution (reporting.dilution), never counted as an emission.
+  # reported as dilution (income_statement.dilution), never counted as an emission.
   emission_rate_annual:
     type: schedule
     unit: tokens_per_year
@@ -118,27 +118,16 @@ metrics:
     source: { type: transfer_flow, token: token, to: release_rewards, from_any: true, ignore_below_tokens: 1000, unit: tokens }
   released_rate: { type: level, unit: tokens_per_year, staleness_days: 120, monitor_only: true, source: { type: derived, name: flow_annualized, params: { metrics: [ flow_tokens.released_hub, flow_tokens.released_rewards ], days: 365 } } }
 
+# Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
+# the holders and below_line lines):
 # buy_and_hold, discretionary (Mike, 2026-10-16): Chainlink chooses which revenue is routed on chain and controls the
 # Reserve's timelock. Held, not burned: on total supply the flow does not shrink the supply path.
-holder_flows:
-  - { id: reserve, kind: buy_and_hold, capture_rule: discretionary, recipient_base: all, metric: flow_usd.reserve, window_days: 91 }
-
 # Report-only holder yield and growth. A hold: 5 percent overhang haircut (Mike, 2026-10-16: Chainlink controls the
-# timelock and can release the Reserve). Revenue = the fees Chainlink routes on chain (the Reserve's buys); its enterprise
-# revenue is private. The releases are the dilution.
-reporting:
-  window_days: 91
-  haircuts: { reserve: 0.05 }
-  revenue:
-    - { id: onchain_fees, label: "on-chain service fees converted to LINK (Payment Abstraction)", metric: flow_usd.reserve, settlement: daily }
-  income:
-    lines:
-      - { id: reserve, to: holders, metric: flow_usd.reserve, note: "fees converted to LINK and held in the Chainlink Reserve" }
-  dilution:
-    - { id: releases, metric: released_rate, note: "quarterly releases from Chainlink's non-circulating Safes (trailing 365 days)" }
-
-# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
-# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+# timelock and can release the Reserve). Revenue = the fees Chainlink routes on chain (the Reserve's buys); its
+# enterprise revenue is private. The releases are the dilution.
+#
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2): the report's only block since Task 11 retired
+# holder_flows and reporting. Revenue = what users pay; each section says where it goes.
 income_statement:
   category: oracle
   scope: protocol_share_only

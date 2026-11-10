@@ -61,7 +61,7 @@ metrics:
     source: { type: constant, value: 0, note: "no staking, no staking rewards" }
 
   # The minter (up to 2 percent a year by governance) has never been used. The Labs vest is not an emission here: the
-  # Timelock's UNI is already in total supply, so it is reported as dilution instead (reporting.dilution).
+  # Timelock's UNI is already in total supply, so it is reported as dilution instead (income_statement.dilution).
   emission_rate_annual:
     type: schedule
     unit: tokens_per_year
@@ -96,7 +96,8 @@ metrics:
   labs_vest_approved: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: token, function: allowance, args: [ timelock, vesting ], decimals: 18 } }
   treasury_uni: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: token, function: balanceOf, args: [ timelock ], decimals: 18 } }
 
-  # Gross swap fees, LPs and protocol, every Uniswap version and chain: display only, the protocol's gross (reporting volume).
+  # Gross swap fees, LPs and protocol, every Uniswap version and chain: display only, the protocol's gross
+  # (income_statement volume).
   flow_usd.swap_fees:
     type: flow
     unit: usd
@@ -105,30 +106,17 @@ metrics:
     monitor_only: true
     source: { type: defillama, slug: uniswap, data_type: dailyFees, backfill_days: 100 }
 
-holder_flows:
-  - { id: burn, kind: burn, capture_rule: programmatic, recipient_base: all, metric: flow_usd.burn, window_days: 91 }
-
+# Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
+# the holders and below_line lines):
 # Report-only holder yield and growth (orion report yield). A burn: no haircut. The Labs vest is the report's dilution
 # (Mike, 2026-10-11), capped by what governance has approved, so the net shareholder yield shows the burn against it.
-reporting:
-  window_days: 91
-  haircuts: { burn: 0 }
-  income:
-    lines:
-      - { id: burn, to: holders, metric: flow_usd.burn, note: "every protocol fee burns UNI" }
-  # Revenue (Mike, 2026-10-12): the burns are the protocol fees switched on, v2 plus selected v3 pools (and a small
-  # Unichain sequencer share); v4 and the other v3 pools are upside, not revenue.
-  revenue:
-    - { id: protocol_fees, label: "protocol fees (v2 + selected v3)", metric: flow_usd.burn, settlement: daily }
-  volume: [ flow_usd.swap_fees ]
-  # The burn in UNI against the vest in UNI (Mike, 2026-10-11): the USD net shareholder yield values the burn at each day's
-  # price and the vest at spot, so a rally alone can turn it negative; the token line cannot.
-  burned_tokens: [ flow_tokens.burn ]
-  dilution:
-    - { id: labs_vest, metric: labs_vest_rate, cap_metric: labs_vest_approved, note: "Timelock to Uniswap Labs via UNIVesting" }
-
-# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
-# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+# Revenue (Mike, 2026-10-12): the burns are the protocol fees switched on, v2 plus selected v3 pools (and a small
+# Unichain sequencer share); v4 and the other v3 pools are upside, not revenue.
+# The burn in UNI against the vest in UNI (Mike, 2026-10-11): the USD net shareholder yield values the burn at each
+# day's price and the vest at spot, so a rally alone can turn it negative; the token line cannot.
+#
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2): the report's only block since Task 11 retired
+# holder_flows and reporting. Revenue = what users pay; each section says where it goes.
 income_statement:
   category: dex
   scope: protocol_share_only

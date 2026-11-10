@@ -7,7 +7,7 @@ import { buildProgram } from '../../src/cli/program.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
 import { testCliContext, useTestDb } from '../helpers/db.js';
 import { harness, NOW } from '../helpers/fetchHarness.js';
-import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
+import { INGEST_ASSET_YAML, METRICS_END } from '../helpers/ingestAsset.js';
 
 const testDb = useTestDb();
 
@@ -29,7 +29,8 @@ async function orion(...args: string[]): Promise<string> {
   return lines.join('\n');
 }
 
-const REPORTING = 'reporting:\n  window_days: 7\n  haircuts: { fees: 0 }\n';
+/** The mini asset's fees as revenue, all paid to holders (cash), reported over a week (Task 11: income_statement). */
+const REPORTING = 'income_statement:\n  category: dex\n  scope: complete\n  window_days: 7\n  revenue:\n    - { id: fees_rev, metric: flow_usd.fees }\n  holders:\n    - { id: fees, of: fees_rev, bucket: cash, haircut: 0, recipient_base: all, capture_rule: contractual }\n';
 const lines = (file: string): unknown[] => (existsSync(join(home, file)) ? readFileSync(join(home, file), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as unknown) : []);
 
 beforeEach(async () => {
@@ -61,8 +62,8 @@ describe('orion tick', () => {
   });
 
   it('exits 2 when the report cannot be built, still printing it, and 1 with an error report when the ingest cannot run', async () => {
-    const volume = '  flow_usd.volume: { type: flow, unit: usd, staleness_days: 45, monitor_only: true }\nholder_flows:';
-    writeFileSync(join(home, 'assets', 'mini.yaml'), `${INGEST_ASSET_YAML.replace('holder_flows:', volume)}${REPORTING}  volume: [flow_usd.volume]\n`);
+    const volume = '  flow_usd.volume: { type: flow, unit: usd, staleness_days: 45, monitor_only: true }\n' + METRICS_END;
+    writeFileSync(join(home, 'assets', 'mini.yaml'), `${INGEST_ASSET_YAML.replace(METRICS_END, volume)}${REPORTING}  volume: [flow_usd.volume]\n`);
     const unavailable = JSON.parse(await orion('tick', 'mini')) as TickReport;
     expect(unavailable).toMatchObject({ outcome: 'completed', holder_yield: null, report_error: { code: 'report_unavailable' }, ingest: { outcome: 'ok' } });
     expect(exitCodes).toEqual([2]);

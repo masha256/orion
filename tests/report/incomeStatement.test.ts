@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { parseAssetYaml } from '../../src/config/load.js';
 import type { MetricDef } from '../../src/config/schema.js';
 import { addDays } from '../../src/ingest/time.js';
-import { holderYieldReport, type ReportInput, type ReportLevels } from '../../src/report/holderYield.js';
+import { disclosedGrowthOf, growthOf, windowSum, type ReportInput, type ReportLevels } from '../../src/report/holderYield.js';
 import { incomeStatementV2, listingBar, type IsV2 } from '../../src/report/incomeStatement.js';
-import { reportFlowMetrics } from '../../src/report/load.js';
+import { defaultDayFlowMetrics, reportFlowMetrics } from '../../src/report/load.js';
 import { sourceTypeOf } from '../../src/report/sourceTypes.js';
 import { ALL_ASSETS, repoAsset, syntheticInput } from '../helpers/syntheticReport.js';
 
@@ -37,12 +37,6 @@ metrics:
   flow_usd.keepers: { type: flow, unit: usd, staleness_days: 45 }
   flow_usd.bribes: { type: flow, unit: usd, staleness_days: 45 }
   flow_usd.yield: { type: flow, unit: usd, staleness_days: 45 }
-holder_flows:
-  - { id: burn, kind: burn, capture_rule: programmatic, recipient_base: all, metric: flow_usd.burn }
-reporting:
-  window_days: ${W}
-  haircuts: { burn: 0 }
-  income: { lines: [ { id: burn, to: holders, metric: flow_usd.burn } ] }
 income_statement:
   category: dex
   scope: complete
@@ -69,8 +63,7 @@ function run(isBlock: string, over: Partial<ReportInput> = {}) {
     ['flow_usd.keepers', flat(20, 0.5)], ['flow_usd.bribes', flat(20, 1)],
   ]);
   const input: ReportInput = { asset, day: DAY, daily, levels: levels(), ...over };
-  const v1 = holderYieldReport(input);
-  return { v1, v2: incomeStatementV2(input, v1) };
+  return { v2: incomeStatementV2(input) };
 }
 
 const year = (perDay: number) => (perDay * W * 365) / W;
@@ -151,7 +144,7 @@ ${BURN}  operating_costs: [ { id: keepers, metric: flow_usd.keepers } ]
     const daily = new Map([['flow_usd.fees', flat(20, 10)], ['flow_usd.burn', flat(20, 5)], ['flow_usd.yield', flat(5, 3)]]);
     const provisional = new Map([['flow_usd.yield', new Set([DAY, addDays(DAY, -1)])]]);
     const input: ReportInput = { asset, day: DAY, daily, provisional, levels: levels() };
-    const v2 = incomeStatementV2(input, holderYieldReport(input));
+    const v2 = incomeStatementV2(input);
     const y = v2.revenue.lines.find((l) => l.id === 'yield')!;
     expect(y).toMatchObject({ settlement: 'periodic', started, daysMeasured: 5, provisionalDays: 2, isNew: true });
     expect(y.annualized).toBeCloseTo(((3 * 5 * 365) / W) * (W / 5));
@@ -191,7 +184,7 @@ ${BURN}  operating_costs: [ { id: keepers, metric: flow_usd.keepers } ]
   });
 
   it('perToken = annualized / circulatingSupply; perTokenFdv / totalSupply', () => {
-    const { v2, v1 } = run(BASE, { levels: levels({ asOf: '2026-01-21T23:59:59.999Z' }) });
+    const { v2 } = run(BASE, { levels: levels({ asOf: '2026-01-21T23:59:59.999Z' }) });
     expect(v2.perToken.circulatingSupply).toBe(500);
     expect(v2.perToken.totalSupply).toBe(1000);
     expect(v2.perToken.supplyAsOf).toBe('2026-01-21T23:59:59.999Z');
@@ -199,7 +192,8 @@ ${BURN}  operating_costs: [ { id: keepers, metric: flow_usd.keepers } ]
     expect(v2.perToken.grossProfit).toBeCloseTo(year(8) / 500);
     expect(v2.perToken.holderFlow.total).toBeCloseTo(year(5) / 500);
     expect(v2.perToken.holderFlow.byBucket).toEqual({ burn: expect.closeTo(year(5) / 500), hold: null, cash: null });
-    expect(v2.perToken.dilution).toBeCloseTo((v1.yields.dilution! * v1.fdv!) / 500);
+    // Dilution: 50 tokens a year on 1000 (5 percent) x FDV 2000 = $100 a year.
+    expect(v2.perToken.dilution).toBeCloseTo((0.05 * 2000) / 500);
     expect(v2.perToken.perTokenFdv.revenue).toBeCloseTo(year(10) / 1000);
     expect(v2.perToken.perTokenFdv.holderFlow.total).toBeCloseTo(year(5) / 1000);
     // The multiples at Orion's day-end price: market cap 1000 (2 x 500).
@@ -210,17 +204,22 @@ ${BURN}  operating_costs: [ { id: keepers, metric: flow_usd.keepers } ]
   it('priceBasis names the day-end price, its source and day', () => {
     const asset = repoAsset('crv');
     const input = syntheticInput(asset);
-    const v2 = incomeStatementV2(input, holderYieldReport(input));
+    const v2 = incomeStatementV2(input);
     expect(v2.priceBasis).toEqual({
       price: 1.7, metric: 'price_usd', sourceType: 'market_data', source: 'market_data:coingecko', day: '2026-11-02', asOf: '2026-11-03T23:59:59.999Z',
       flows: "each flow day's USD at that day's price (the stored value)",
     });
   });
 
-  it('dilution and yields are v1\'s; checks are empty and provenance.basis is config', () => {
-    const { v1, v2 } = run(BASE);
-    expect(v2.yields).toEqual(v1.yields);
-    expect(v2.dilution).toMatchObject({ pct: v1.yields.dilution, emissionsPerYear: 50, supply: v1.supply });
+  it("dilution and yields keep v1's arithmetic; checks are empty and provenance.basis is config", () => {
+    const { v2 } = run(BASE);
+    // The burn (5/day, haircut 0) on FDV 2000: buyback yield = 5 x 365 / 2000; dilution 50 / 1000; no cash bucket (0).
+    const buyback = year(5) / (1000 * 2);
+    expect(v2.yields).toEqual({
+      cash: 0, buyback: expect.closeTo(buyback, 12), shareholder: expect.closeTo(buyback, 12), dilution: 0.05,
+      netShareholder: expect.closeTo(buyback - 0.05, 12), multiple: expect.closeTo(1 / buyback, 9), pegTrailing: null,
+    });
+    expect(v2.dilution).toMatchObject({ pct: 0.05, emissionsPerYear: 50, supply: null });
     expect(v2.checks).toEqual([]);
     expect(v2.provenance.basis).toBe('config');
     expect(v2.provenance.methods).toEqual({ measured: 1, derived: 0, disclosed: 0 });
@@ -270,7 +269,7 @@ describe('source types and provenance', () => {
   it('thirdParty lists every line whose metric sourceTypeOf is third_party', () => {
     const tp = (id: string) => {
       const input = syntheticInput(repoAsset(id));
-      return incomeStatementV2(input, holderYieldReport(input)).provenance.thirdParty;
+      return incomeStatementV2(input).provenance.thirdParty;
     };
     expect(tp('hype')).toEqual(['revenue.trading', 'holders.af_buyback']);
     expect(tp('pump')).toEqual(['revenue.protocol']);
@@ -283,7 +282,7 @@ describe('source types and provenance', () => {
 
   it('provenance.sources names each statement series by rung, never a full URL', () => {
     const input = syntheticInput(repoAsset('lit'));
-    const v2 = incomeStatementV2(input, holderYieldReport(input));
+    const v2 = incomeStatementV2(input);
     expect(v2.provenance.sources).toEqual(['first_party_api:lit.app_fee_share', 'first_party_api:lit.exchange_fees_daily', 'first_party_api:lit.treasury_buys_daily']);
   });
 });
@@ -315,20 +314,39 @@ describe('listingBar (spec §2 deferral, D6)', () => {
   });
 });
 
-describe('reportFlowMetrics with income_statement', () => {
-  it('adds no series for 12 of the 13 assets (the default report day does not move), in v1 order', () => {
-    for (const id of ALL_ASSETS) {
-      const asset = repoAsset(id);
-      const v1 = reportFlowMetrics({ ...asset, income_statement: undefined });
-      // Task 7b: yCRV's statement reads the splitter's gross by sender (revenue = the fees; the apportion mix). Both come
-      // from flow_usd.yearn_gross's own scan, so once backfilled they end on its day.
-      expect(reportFlowMetrics(asset), id).toEqual(id === 'ycrv' ? [...v1, 'flow_usd.yearn_gross_fees', 'flow_usd.yearn_gross_incentives'] : v1);
-    }
+describe('the default report day (Task 11, ruling R11.1 B)', () => {
+  /** At cc59fa7 (before Task 11): the flows `lastCompleteReportDay` gated on (v1's set, periodic streams left out). */
+  const V1_DAY_FLOWS: Record<string, string[]> = {
+    aero: ['flow_usd.fees'],
+    cake: ['flow_tokens.burn', 'flow_usd.burn', 'flow_usd.fees', 'flow_usd.treasury'],
+    crv: ['flow_usd.curve_treasury', 'flow_usd.fees', 'flow_usd.protocol_revenue'],
+    cvxcrv: ['flow_usd.convex_gross_crv', 'flow_usd.convex_rev_cvx', 'flow_usd.convex_rev_cvxcrv', 'flow_usd.convex_rev_treasury', 'flow_usd.crv', 'flow_usd.cvx', 'flow_usd.fees'],
+    hype: ['flow_usd.af_buyback', 'flow_usd.revenue_proxy'],
+    link: ['flow_usd.reserve'],
+    lit: ['flow_tokens.buyback', 'flow_usd.buyback', 'flow_usd.fees_core', 'flow_usd.fees_rh'],
+    pump: ['flow_tokens.buyback', 'flow_usd.buyback', 'flow_usd.llama_revenue'],
+    sdcrv: ['flow_usd.bribes', 'flow_usd.crv', 'flow_usd.fees', 'flow_usd.sd_boost_delegation', 'flow_usd.sd_gross_crv', 'flow_usd.sd_rev_crv', 'flow_usd.sd_rev_crv_treasury', 'flow_usd.sd_rev_crv_vesdt', 'flow_usd.sd_rev_fees_liquidity', 'flow_usd.sd_rev_fees_treasury'],
+    sky: ['flow_usd.buyback', 'flow_usd.stakers'],
+    uni: ['flow_tokens.burn', 'flow_usd.burn', 'flow_usd.swap_fees'],
+    vvv: ['flow_usd.burn', 'flow_usd.revenue_proxy'],
+    ycrv: ['flow_usd.fees', 'flow_usd.yearn_gross', 'flow_usd.yearn_revenue', 'flow_usd.yearn_styc_fee'],
+  };
+  const periodic = (id: string) => new Set(repoAsset(id).income_statement!.revenue.filter((l) => l.settlement === 'periodic').map((l) => l.metric!));
+  const dayFlows = (id: string) => [...new Set(defaultDayFlowMetrics(repoAsset(id)))].filter((m) => !periodic(id).has(m)).sort();
+
+  it.each(ALL_ASSETS.filter((id) => id !== 'ycrv'))('%s: gates on exactly the flows it gated on before (the day cannot move)', (id) => {
+    expect(dayFlows(id)).toEqual(V1_DAY_FLOWS[id]);
+  });
+
+  it("ycrv: v1's st-yCRV fee leaves (no line reads it), the two by-sender flows of yearn_gross's own scan join", () => {
+    // The two join from the one scan that writes flow_usd.yearn_gross (same token, sink, allowlist and cursor), so they
+    // end on its day; the fee is a scan of its own that no statement line reads.
+    expect(dayFlows('ycrv')).toEqual([...V1_DAY_FLOWS.ycrv.filter((m) => m !== 'flow_usd.yearn_styc_fee'), 'flow_usd.yearn_gross_fees', 'flow_usd.yearn_gross_incentives'].sort());
   });
 
   it('reads a series only the income statement names', () => {
     const asset = toy(`${BASE}  below_line: [ { id: bribes, metric: flow_usd.bribes, to: holders, bucket: cash, haircut: 0.05, recipient_base: staked, capture_rule: programmatic } ]\n`);
-    expect(reportFlowMetrics(asset)).toEqual(['flow_usd.burn', 'flow_usd.fees', 'flow_usd.lp', 'flow_usd.treasury', 'flow_usd.keepers', 'flow_usd.bribes']);
+    expect(reportFlowMetrics(asset)).toEqual(['flow_usd.fees', 'flow_usd.lp', 'flow_usd.burn', 'flow_usd.treasury', 'flow_usd.keepers', 'flow_usd.bribes']);
   });
 });
 
@@ -340,14 +358,15 @@ ${BURN}  remainder: protocol
 
   it("VVV: the disclosed line carries v1's disclosed growth, flags and cross-check; revenue.growth is it", () => {
     const input = syntheticInput(repoAsset('vvv'));
-    const v1 = holderYieldReport(input);
-    const v2 = incomeStatementV2(input, v1);
-    expect(v1.revenue!.growth.annualized).toEqual(expect.any(Number));
-    expect(v2.revenue.growth).toEqual(v1.revenue!.growth);
+    const v2 = incomeStatementV2(input);
+    const g = disclosedGrowthOf(input.levels.disclosed, input.day);
+    expect(g.growth.annualized).toEqual(expect.any(Number));
+    expect(v2.revenue.growth).toEqual(g.growth);
     const line = v2.revenue.lines.find((l) => l.id === 'business')!;
-    expect(line.growth).toEqual(v1.revenue!.streams[0].growth);
-    expect(line.disclosedGrowth).toEqual(v1.revenue!.disclosedGrowth);
-    expect(line.crossCheck).toEqual({ metric: 'flow_usd.revenue_proxy', annualized: v1.revenue!.crossCheck!.annualized, sourceType: 'third_party' });
+    expect(line.growth).toEqual(g.growth);
+    expect(line.disclosedGrowth).toEqual(g.disclosedGrowth);
+    const proxy = windowSum(input.daily, ['flow_usd.revenue_proxy'], input.day, 91)!;
+    expect(line.crossCheck).toEqual({ metric: 'flow_usd.revenue_proxy', annualized: (proxy * 365) / 91, sourceType: 'third_party' });
   });
 
   it('one disclosure: growth null with the v1 flag, also in the statement flags', () => {
@@ -367,19 +386,12 @@ ${BURN}  remainder: protocol
     expect(v2.flags).toContain('disclosed revenue: the two latest disclosures are 30 days apart (< 90): a noisy rate');
     expect(v2.revenue.lines[0].crossCheck).toEqual({ metric: 'flow_usd.fees', annualized: expect.closeTo(year(10)), sourceType: 'disclosure' });
   });
-
-  it('the statement reads its own disclosed metric (statementDisclosed) when the loader gives it', () => {
-    const { v2 } = run(DISCLOSED, {
-      levels: levels({ disclosed: [{ observedAt: '2026-01-01T00:00:00.000Z', value: 1 }], statementDisclosed: [{ observedAt: '2026-01-01T00:00:00.000Z', value: 7000 }] }),
-    });
-    expect(v2.revenue.annualized).toBe(7000);
-  });
 });
 
 describe('fix round 1: net of dilution (I2)', () => {
   it('holderFlow.netOfDilution = net - dilution in USD (emissions + releases at price), per token too', () => {
-    const { v1, v2 } = run(BASE);
-    const dilutionUsd = v1.yields.dilution! * v1.fdv!;
+    const { v2 } = run(BASE);
+    const dilutionUsd = v2.dilution.pct! * 2 * 1000; // supply growth x FDV
     expect(dilutionUsd).toBeCloseTo(50 * 2); // 50 tokens a year at price 2
     expect(v2.holderFlow.net).toBeCloseTo(year(5));
     expect(v2.holderFlow.netOfDilution).toBeCloseTo(year(5) - dilutionUsd);
@@ -411,7 +423,7 @@ describe('fix round 1: below-line not measured is never 0 (I3)', () => {
 
   it('AERO (repo) on synthetic series: below line null, not 0', () => {
     const input = syntheticInput(repoAsset('aero'));
-    const v2 = incomeStatementV2(input, holderYieldReport(input));
+    const v2 = incomeStatementV2(input);
     expect(v2.belowLine.toHolders).toBeNull();
     expect(v2.holderFlow.fromBelowLine).toBeNull();
     expect(v2.holderFlow.byBucket.cash!.fromBelowLine).toBeNull();
@@ -501,13 +513,13 @@ ${BURN}  protocol: [ { id: treasury, metric: flow_usd.treasury }, { id: grants, 
 describe('fix round 1: unreconciled is exactly 0 where the series coincide (M2)', () => {
   it.each(['aero', 'cake', 'crv', 'cvxcrv', 'link', 'sdcrv', 'sky', 'uni'])('%s: unreconciled === 0 on synthetic series', (id) => {
     const input = syntheticInput(repoAsset(id));
-    const v2 = incomeStatementV2(input, holderYieldReport(input));
+    const v2 = incomeStatementV2(input);
     expect(v2.unreconciled.annualized).toBe(0);
   });
 
   it('a real gap still shows (yCRV: revenue less YBS payouts and treasury; the toy: 0.5/day)', () => {
     const input = syntheticInput(repoAsset('ycrv'));
-    const v2 = incomeStatementV2(input, holderYieldReport(input));
+    const v2 = incomeStatementV2(input);
     expect(v2.unreconciled.annualized).not.toBe(0);
     expect(v2.unreconciled.annualized).toBeCloseTo(v2.revenue.annualized! - v2.holders.annualized! - v2.protocol.annualized!, 6);
     expect(run(BASE).v2.unreconciled.annualized).toBeCloseTo(year(0.5));
@@ -530,7 +542,7 @@ describe('fix round 1: a data gap is flagged apart from not_measured (M3)', () =
       ['flow_usd.fees', flat(20, 10)], ['flow_usd.lp', lp], ['flow_usd.burn', flat(20, 5)], ['flow_usd.treasury', flat(20, 2)], ['flow_usd.keepers', flat(20, 0.5)],
     ]);
     const input: ReportInput = { asset, day: DAY, daily, levels: levels() };
-    const v2 = incomeStatementV2(input, holderYieldReport(input));
+    const v2 = incomeStatementV2(input);
     expect(v2.grossProfit.annualized).toBeNull();
     expect(v2.ratios.payoutRatioBasis).toBe('revenue');
     expect(v2.flags).toContain('payout ratio on revenue: cost of revenue has a missing day');
@@ -560,7 +572,7 @@ describe('fix round 1: provenance blind spots (M4)', () => {
   it('metric-level third-party cross_checks of statement lines are listed (section.id.cross_checks)', () => {
     const tp = (id: string) => {
       const input = syntheticInput(repoAsset(id));
-      return incomeStatementV2(input, holderYieldReport(input)).provenance.thirdParty;
+      return incomeStatementV2(input).provenance.thirdParty;
     };
     expect(tp('lit')).toEqual(['holders.buyback.cross_checks']);
     expect(tp('vvv')).toEqual(['revenue.business.cross_check', 'holders.burn.cross_checks']);
@@ -571,10 +583,10 @@ describe('fix round 1: provenance blind spots (M4)', () => {
 describe('fix round 1: shape (M1 volume, M6)', () => {
   it.each(['cake', 'cvxcrv', 'uni'])('%s: volume is v1 volume (annualized, growth, metrics)', (id) => {
     const input = syntheticInput(repoAsset(id));
-    const v1 = holderYieldReport(input);
-    const v2 = incomeStatementV2(input, v1);
-    expect(v1.volume).not.toBeNull();
-    expect(v2.volume).toEqual(v1.volume);
+    const v2 = incomeStatementV2(input);
+    const metrics = input.asset.income_statement!.volume!;
+    const sum = windowSum(input.daily, metrics, input.day, 91)!;
+    expect(v2.volume).toEqual({ metrics, annualized: (sum * 365) / 91, growth: growthOf(input.daily, metrics, input.day, 91) });
   });
 
   it('volume is null without a volume list', () => {
@@ -584,12 +596,12 @@ describe('fix round 1: shape (M1 volume, M6)', () => {
   it('dilution.tokensPerYear = emissions + releases (tokens a year)', () => {
     expect(run(BASE).v2.dilution.tokensPerYear).toBe(50);
     const input = syntheticInput(repoAsset('uni'));
-    const v1 = holderYieldReport(input);
-    const v2 = incomeStatementV2(input, v1);
-    const releases = (v1.yields.dilutionLines ?? []).reduce((s, l) => s + l.tokensPerYear!, 0);
-    expect(v1.yields.dilutionLines!.length).toBeGreaterThan(0);
-    expect(v2.dilution.tokensPerYear).toBeCloseTo(10_000_000 + releases);
-    expect(v2.dilution.tokensPerYear! / 1_000_000_000).toBeCloseTo(v1.yields.dilution!);
+    const v2 = incomeStatementV2(input);
+    // UNI's Labs vest: rate 2M a year capped at what is approved (1.5M).
+    expect(v2.dilution.releases).toEqual([{ id: 'labs_vest', tokensPerYear: 1_500_000, yield: 1_500_000 / 1_000_000_000 }]);
+    expect(v2.yields.dilutionLines).toEqual(v2.dilution.releases);
+    expect(v2.dilution.tokensPerYear).toBeCloseTo(10_000_000 + 1_500_000);
+    expect(v2.dilution.tokensPerYear! / 1_000_000_000).toBeCloseTo(v2.yields.dilution!);
     expect(run(BASE, { levels: levels({ emissionRateAnnual: null }) }).v2.dilution.tokensPerYear).toBeNull();
   });
 
@@ -605,7 +617,7 @@ describe('fix round 1: shape (M1 volume, M6)', () => {
     expect(line('other_bribes')).toMatchObject({ method: 'not_measured', sourceTypes: [] });
     const hype = (() => {
       const input = syntheticInput(repoAsset('hype'));
-      return incomeStatementV2(input, holderYieldReport(input));
+      return incomeStatementV2(input);
     })();
     expect(hype.holderFlow.lines.find((l) => l.id === 'af_buyback')).toMatchObject({ method: 'measured', sourceTypes: ['third_party'] });
     expect(hype.holderFlow.lines.find((l) => l.id === 'reserve_yield_paid')).toMatchObject({ method: 'measured', sourceTypes: ['first_party_api'] });

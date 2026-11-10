@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { STD_METRICS, WATCH_RULES } from '../types.js';
-import { IncomeStatementBaseSchema, incomeStatementIssues } from './incomeStatement.js';
+import { holderFlowMetrics, IncomeStatementBaseSchema, incomeStatementIssues } from './incomeStatement.js';
 import { CrossCheckSchema, IngestSchema, SourceSchema, sourceIssues } from './sources.js';
 
 const MetricDefSchema = z.strictObject({
@@ -54,123 +54,15 @@ const DilutionSchema = z
  */
 const BurnedTokensSchema = z.array(z.string()).min(1);
 
-/** The keys `reporting` and `income_statement` share, with one shape and one set of checks. */
-const sharedReportingShape = {
+/**
+ * Income statement v2 (src/config/incomeStatement.ts): the report's only block since Task 11 retired `holder_flows` and
+ * `reporting` (spec D9). Optional, no default (hashes): an asset without it has no report.
+ */
+const IncomeStatementSchema = IncomeStatementBaseSchema.extend({
   window_days: WindowDaysSchema,
   volume: VolumeSchema.optional(),
   dilution: DilutionSchema.optional(),
   burned_tokens: BurnedTokensSchema.optional(),
-};
-
-/** Income statement v2 (src/config/incomeStatement.ts), beside `reporting` for one release. Optional, no default (hashes). */
-const IncomeStatementSchema = IncomeStatementBaseSchema.extend(sharedReportingShape);
-
-/**
- * Report-only holder-yield and growth series (no driver, no grade, no signal): the holder flows in three buckets with a
- * haircut each, yields on price, period-over-period growth, and the protocol's own revenue. Optional with no default,
- * so an asset without it keeps its config hash.
- */
-const ReportingSchema = z.strictObject({
-  ...sharedReportingShape,
-  /**
-   * Per holder flow id: the fraction lost turning the flow into a holder's cash. A cash payout's slippage, sized from
-   * pool depth; a buy-and-hold's overhang. A burn has none (0).
-   */
-  haircuts: z.record(z.string(), z.number().min(0).max(0.5)),
-  /**
-   * The income statement (Mike, 2026-10-11): revenue is everything the protocol takes in from the market; each line says
-   * where its part goes: to holders (payout), kept by the protocol (protocol income), or a cost (keepers, third parties).
-   */
-  income: z
-    .strictObject({
-      lines: z
-        .array(
-          z
-            .strictObject({
-              id: z.string().regex(/^[a-z0-9_]+$/),
-              to: z.enum(['holders', 'protocol', 'cost']),
-              /** A measured daily flow metric... */
-              metric: z.string().optional(),
-              /** ...or a fixed contractual ratio of another line's metric (Convex's 0.5 percent caller fee is 5 percent of the 10). */
-              estimate: z.strictObject({ of: z.string(), ratio: z.number().positive().max(10) }).optional(),
-              note: z.string().optional(),
-            })
-            .refine((l) => (l.metric === undefined) !== (l.estimate === undefined), { message: 'an income line has a metric or an estimate, not both' }),
-        )
-        .min(1),
-      /**
-       * Revenue measured as a total (VVV and HYPE: DefiLlama's dailyRevenue proxy): protocol income is the total less the
-       * holder and cost lines, and no protocol line may be listed.
-       */
-      remainder_of: z.array(z.string()).min(1).optional(),
-      /** Reconciliations: a measured total that the listed lines should add up to (the gap is reported, never booked). */
-      checks: z.array(z.strictObject({ total: z.array(z.string()).min(1), parts: z.array(z.string()).min(1) })).optional(),
-      /** Holder payouts not funded from revenue (a treasury reserve, e.g. cvxCRV's CVX): shown apart from the payout ratio. */
-      outside_revenue: z.array(z.strictObject({ id: z.string().regex(/^[a-z0-9_]+$/), metric: z.string(), note: z.string().optional() })).optional(),
-    })
-    .optional(),
-  /** A level metric entered from disclosures (VVV's revenue run rate): its growth between disclosures. */
-  revenue_disclosed: z.string().optional(),
-  /**
-   * Revenue as a list of streams (Mike, 2026-10-12): revenue = the sum of the streams, and a new revenue type is config
-   * only. Without the list, revenue is the income statement's total as before (the sum of its lines, or remainder_of).
-   * Each stream has one source:
-   * - `metric` (a flow) with `settlement`: `daily`, a daily series; or `periodic`, lump payments stored one row per
-   *   coverage period, spread evenly over the days covered. The unpaid days since the last covered period run at that
-   *   period's daily rate, provisional, and are replaced when the payment lands.
-   * - `disclosed` (a level, the asset's revenue_disclosed): the company's own figure. When an asset has disclosures, they
-   *   are its revenue, and `cross_check` names the daily series kept beside them (VVV: DefiLlama's dailyRevenue).
-   * `started` dates a stream; one younger than the two growth windows is left out of the second revenue growth figure.
-   * `holder_flow` also counts the stream in the report's holder flow, in that bucket (never in the valuation).
-   */
-  revenue: z
-    .array(
-      z
-        .strictObject({
-          id: z.string().regex(/^[a-z0-9_]+$/),
-          label: z.string().optional(),
-          metric: z.string().optional(),
-          settlement: z.enum(['daily', 'periodic']).optional(),
-          disclosed: z.string().optional(),
-          cross_check: z.string().optional(),
-          started: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-          holder_flow: z.enum(['burn', 'hold', 'cash']).optional(),
-          /** The fraction of a metric stream the protocol keeps (0 < share <= 1); absent, the stream counts in full. */
-          share: z.number().positive().max(1).optional(),
-        })
-        .refine((s) => (s.metric === undefined) !== (s.disclosed === undefined), { message: 'a revenue stream has a metric or a disclosed level, not both' }),
-    )
-    .min(1)
-    .optional(),
-  /**
-   * Cash to holders that the valuation keeps outside holder_flows (CRV's vote incentives, a component): an annual run-rate
-   * level metric, its haircut, and whose tokens receive it.
-   */
-  extra_cash: z
-    .array(
-      z.strictObject({
-        id: z.string().regex(/^[a-z0-9_]+$/),
-        metric: z.string(),
-        haircut: z.number().min(0).max(0.5),
-        recipient_base: z.enum(['all', 'staked', 'locked']),
-      }),
-    )
-    .optional(),
-});
-
-const HolderFlowSchema = z.strictObject({
-  id: z.string().regex(/^[a-z0-9_]+$/),
-  kind: z.enum(['burn', 'buy_and_hold', 'fee_share']),
-  capture_rule: z.enum(['contractual', 'programmatic', 'discretionary']),
-  recipient_base: z.enum(['all', 'staked', 'locked']),
-  metric: z.string(),
-  window_days: z.number().positive().default(90),
-  /**
-   * `recipients`: value the flow per token of its recipients (staked supply now) instead of per token of supply. For a
-   * flow paid only to stakers whose unstaked share goes elsewhere (yCRV: to Yearn's treasury), so the cash per staked
-   * token is the claim a holder who stakes buys. Optional with no default, so existing config hashes do not move.
-   */
-  valued_per: z.enum(['supply', 'recipients']).optional(),
 });
 
 const BudgetOverrideSchema = z.strictObject({
@@ -197,9 +89,7 @@ export const AssetConfigSchema = z
     external_ids: z.record(z.string(), z.string()).default({}),
     ingest: IngestSchema.optional(),
     metrics: z.record(z.string(), MetricDefSchema),
-    holder_flows: z.array(HolderFlowSchema).min(1),
     agent: AgentConfigSchema.optional(),
-    reporting: ReportingSchema.optional(),
     income_statement: IncomeStatementSchema.optional(),
   })
   .superRefine((a, ctx) => {
@@ -217,9 +107,9 @@ export const AssetConfigSchema = z
       if (a.metrics[key] && a.metrics[key].type !== type) issue(`metrics: "${key}" must have type ${type}`);
     }
     // A monitor-only metric is display data, exempt from anomalies and the failure streak, so no standard metric and no
-    // holder flow's metric may be one.
+    // holder flow's metric (income_statement's holder-flow lines) may be one.
     const standardKeys = new Set<string>(Object.values(STD_METRICS));
-    const holderFlowMetrics = new Set<string>(a.holder_flows.map((f) => f.metric));
+    const holderFlows = new Set<string>(holderFlowMetrics(a.income_statement));
     for (const [key, def] of Object.entries(a.metrics)) {
       if (def.watch !== undefined) {
         const w = def.watch;
@@ -234,93 +124,7 @@ export const AssetConfigSchema = z
       if (def.monitor_only !== true) continue;
       if (def.type !== 'level' && def.type !== 'flow') issue(`metrics: "${key}" is monitor_only, which is for level and flow metrics`);
       if (def.critical) issue(`metrics: "${key}" is monitor_only and cannot be critical`);
-      if (standardKeys.has(key) || holderFlowMetrics.has(key)) issue(`metrics: "${key}" is a standard or holder-flow metric and cannot be monitor_only`);
-    }
-
-    const flowIds = new Set<string>();
-    for (const f of a.holder_flows) {
-      if (flowIds.has(f.id)) issue(`holder_flows: duplicate id "${f.id}"`);
-      flowIds.add(f.id);
-      if (a.metrics[f.metric]?.type !== 'flow') issue(`holder_flows: "${f.id}" must reference a metric of type flow`);
-      if (f.valued_per === 'recipients' && f.recipient_base !== 'staked') {
-        issue(`holder_flows: "${f.id}" can be valued per recipients only with recipient_base staked`);
-      }
-    }
-
-    if (a.reporting) {
-      const r = a.reporting;
-      for (const f of a.holder_flows) if (r.haircuts[f.id] === undefined) issue(`reporting: haircuts has no entry for holder flow "${f.id}"`);
-      const reportFlows = (r.revenue ?? []).filter((s) => s.holder_flow !== undefined);
-      for (const id of Object.keys(r.haircuts)) {
-        const f = a.holder_flows.find((x) => x.id === id);
-        const s = reportFlows.find((x) => x.id === id);
-        if (!f && !s) issue(`reporting: haircuts names "${id}", which is not a holder flow`);
-        else if ((f?.kind ?? s?.holder_flow) === 'burn' && r.haircuts[id] !== 0) issue(`reporting: "${id}" is a burn, whose haircut is 0`);
-      }
-      const inc = r.income;
-      if (inc) {
-        const ids = new Set<string>();
-        const flow = (m: string, where: string) => {
-          if (a.metrics[m]?.type !== 'flow') issue(`reporting.income: ${where} "${m}" is not a flow metric`);
-        };
-        for (const l of inc.lines) {
-          if (ids.has(l.id)) issue(`reporting.income: line id "${l.id}" is used twice`);
-          ids.add(l.id);
-          if (l.metric) flow(l.metric, `line ${l.id}`);
-          if (l.estimate) flow(l.estimate.of, `line ${l.id} estimate`);
-        }
-        if (inc.remainder_of) {
-          for (const m of inc.remainder_of) flow(m, 'remainder_of');
-          if (inc.lines.some((l) => l.to === 'protocol')) issue('reporting.income: with remainder_of, protocol income is the remainder; list no protocol line');
-        }
-        for (const c of inc.checks ?? []) {
-          for (const m of c.total) flow(m, 'check total');
-          for (const p of c.parts) if (!ids.has(p)) issue(`reporting.income: check part "${p}" is not a line id`);
-        }
-        for (const o of inc.outside_revenue ?? []) flow(o.metric, `outside_revenue ${o.id}`);
-      }
-      for (const message of sharedReportingIssues(a.metrics, r, 'reporting')) issue(message);
-      for (const x of r.extra_cash ?? []) {
-        if (a.metrics[x.metric]?.type !== 'level') issue(`reporting: extra_cash "${x.id}" must reference a level metric`);
-        if (a.holder_flows.some((f) => f.id === x.id)) issue(`reporting: extra_cash id "${x.id}" is also a holder flow id`);
-      }
-      if (r.revenue_disclosed !== undefined && a.metrics[r.revenue_disclosed]?.type !== 'level') {
-        issue(`reporting: revenue_disclosed "${r.revenue_disclosed}" is not a level metric`);
-      }
-      if (r.revenue) {
-        const ids = new Set<string>();
-        for (const s of r.revenue) {
-          if (ids.has(s.id)) issue(`reporting.revenue: stream id "${s.id}" is used twice`);
-          ids.add(s.id);
-          if (s.metric !== undefined && a.metrics[s.metric]?.type !== 'flow') issue(`reporting.revenue: stream "${s.id}" metric "${s.metric}" is not a flow metric`);
-          if (s.disclosed !== undefined) {
-            if (s.disclosed !== r.revenue_disclosed) issue(`reporting.revenue: stream "${s.id}" disclosed "${s.disclosed}" must be the asset's revenue_disclosed`);
-            if (s.settlement !== undefined || s.holder_flow !== undefined) issue(`reporting.revenue: disclosed stream "${s.id}" takes no settlement or holder_flow`);
-            if (s.share !== undefined) issue(`reporting.revenue: disclosed stream "${s.id}" takes no share`);
-          }
-          // A share keeps part of a gross series; a holder flow or an income line on the same series would stay gross.
-          if (s.share !== undefined && s.holder_flow !== undefined) issue(`reporting.revenue: stream "${s.id}" takes no share with a holder_flow`);
-          if (s.share !== undefined && s.metric !== undefined && (r.income?.lines ?? []).some((l) => l.metric === s.metric)) {
-            issue(`reporting.revenue: stream "${s.id}" takes no share: its metric "${s.metric}" is also an income line's metric`);
-          }
-          if (s.cross_check !== undefined) {
-            if (s.disclosed === undefined) issue(`reporting.revenue: only a disclosed stream takes a cross_check ("${s.id}")`);
-            if (a.metrics[s.cross_check]?.type !== 'flow') issue(`reporting.revenue: stream "${s.id}" cross_check "${s.cross_check}" is not a flow metric`);
-          }
-          if (s.holder_flow !== undefined && (a.holder_flows.some((f) => f.id === s.id) || (r.extra_cash ?? []).some((x) => x.id === s.id))) {
-            issue(`reporting.revenue: stream id "${s.id}" is also a holder flow id`);
-          }
-          if (s.settlement === 'periodic' && s.started === undefined) issue(`reporting.revenue: periodic stream "${s.id}" needs started (its first covered day)`);
-        }
-        if (r.revenue.filter((s) => s.disclosed !== undefined).length > 1) issue('reporting.revenue: at most one disclosed stream');
-        if (r.revenue.some((s) => s.disclosed !== undefined) && r.revenue.length > 1) issue('reporting.revenue: a disclosed stream is the whole revenue; list no other stream');
-        if (r.income?.remainder_of) issue('reporting: with revenue streams, protocol income is revenue less holders and costs; drop income.remainder_of');
-        if (r.income?.lines.some((l) => l.to === 'protocol')) issue('reporting.income: with revenue streams, protocol income is the remainder; list no protocol line');
-      }
-      // Mike, 2026-10-12: an asset that discloses its revenue reports that as revenue, not a third-party proxy.
-      if (r.revenue_disclosed !== undefined && !(r.revenue ?? []).some((s) => s.disclosed === r.revenue_disclosed)) {
-        issue(`reporting: revenue_disclosed "${r.revenue_disclosed}" is the asset's revenue: list it as a disclosed revenue stream`);
-      }
+      if (standardKeys.has(key) || holderFlows.has(key)) issue(`metrics: "${key}" is a standard or holder-flow metric and cannot be monitor_only`);
     }
 
     if (a.income_statement) {
@@ -331,7 +135,7 @@ export const AssetConfigSchema = z
     for (const message of sourceIssues(a, required)) issue(message);
   });
 
-/** The checks on the keys `reporting` and `income_statement` share (volume, burned_tokens, dilution), prefixed by block. */
+/** The checks on income_statement's volume, burned_tokens and dilution, prefixed by block. */
 function sharedReportingIssues(
   metrics: Record<string, { type: string; unit: string }>,
   block: { volume?: string[]; burned_tokens?: string[]; dilution?: { id: string; metric: string; cap_metric?: string }[] },
@@ -354,13 +158,10 @@ function sharedReportingIssues(
 
 export type AssetConfig = z.infer<typeof AssetConfigSchema>;
 export type MetricDef = AssetConfig['metrics'][string];
-export type ReportingDef = NonNullable<AssetConfig['reporting']>;
 export type IncomeStatementDef = NonNullable<AssetConfig['income_statement']>;
 export type {
   CostTo, IsBelowLine, IsBucket, IsCategory, IsCheck, IsCostLine, IsHolderLine, IsRevenueLine, IsUseLine,
 } from './incomeStatement.js';
-export type HolderFlowDef = AssetConfig['holder_flows'][number];
-export type FlowKind = HolderFlowDef['kind'];
-export type CaptureRule = HolderFlowDef['capture_rule'];
-export type RecipientBase = HolderFlowDef['recipient_base'];
+export type RecipientBase = NonNullable<IncomeStatementDef['holders']>[number]['recipient_base'];
+export type CaptureRule = NonNullable<IncomeStatementDef['holders']>[number]['capture_rule'];
 

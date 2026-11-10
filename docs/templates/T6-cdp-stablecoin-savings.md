@@ -122,10 +122,6 @@ metrics:
   # needs state_delta (Phase 3): flow_usd.stability_fees, Σ ilk Art × Δrate per day from the Vat (incl. allocator ilks)
   # needs state_delta (Phase 3): flow_usd.savings_rate, savings-vault chi growth × supply per day
 
-holder_flows:
-  - { id: stakers, kind: fee_share, capture_rule: programmatic, recipient_base: staked, metric: flow_usd.stakers, window_days: 91 }
-  - { id: buyback, kind: fee_share, capture_rule: programmatic, recipient_base: staked, metric: flow_usd.buyback, window_days: 91 }
-
 income_statement:
   category: cdp_stablecoin
   scope: protocol_share_only

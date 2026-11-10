@@ -6,7 +6,13 @@ export const SINK = '0x0000000000000000000000000000000000000000';
 export const POOL = '0x3333333333333333333333333333333333333333';
 export const SAFE = '0x4444444444444444444444444444444444444444';
 
-/** The mini asset with every declarative source type wired up. */
+/**
+ * The last line of INGEST_ASSET_YAML's metrics block (a YAML comment): tests insert a metric with
+ * `.replace(METRICS_END, `${metric}${METRICS_END}`)`, as they did before `holder_flows:` (the block after it) retired.
+ */
+export const METRICS_END = '  # end of metrics';
+
+/** The mini asset with every declarative source type wired up (no income statement: it reports nothing). */
 export const INGEST_ASSET_YAML = `
 id: mini
 symbol: MINI
@@ -71,8 +77,7 @@ metrics:
     unit: usd
     staleness_days: 45
     source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], count_from: [pool], unit: usd, price_coingecko_id: mini-token }
-holder_flows:
-  - { id: fees, kind: fee_share, capture_rule: contractual, recipient_base: all, metric: flow_usd.fees }
+${METRICS_END}
 `;
 
 export function ingestAsset(): LoadedAsset {

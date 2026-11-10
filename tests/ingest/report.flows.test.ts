@@ -4,7 +4,7 @@ import { listActiveObservations } from '../../src/db/observations.js';
 import { fetchAsset, type FetchResult } from '../../src/ingest/run.js';
 import type { TransferLog } from '../../src/ingest/transport/rpc.js';
 import { GENESIS_TS, harness, NOW } from '../helpers/fetchHarness.js';
-import { INGEST_ASSET_YAML, POOL, SAFE } from '../helpers/ingestAsset.js';
+import { INGEST_ASSET_YAML, METRICS_END, POOL, SAFE } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
 
 const testDb = useTestDb();
@@ -19,14 +19,14 @@ const yaml = INGEST_ASSET_YAML.replace(
   `  safe: "${SAFE}"\n`,
   `  safe: "${SAFE}"\n  treasury: "${TREASURY}"\n`,
 ).replace(
-  'holder_flows:',
+  METRICS_END,
   `  flow_usd.revenue:
     type: flow
     unit: usd
     staleness_days: 10
     monitor_only: true
     source: { type: transfer_flow, token: token, to: treasury, from_allowlist: [pool], unit: usd, price_coingecko_id: mini-token }
-holder_flows:`,
+${METRICS_END}`,
 );
 const loaded = () => parseAssetYaml(yaml);
 const source = (r: FetchResult, id: string) => r.sources.find((s) => s.sourceId === id);

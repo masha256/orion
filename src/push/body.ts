@@ -19,7 +19,7 @@ const message = (err: unknown): string => (err instanceof Error ? err.message : 
 /**
  * The day an active asset's report covers (I-7): `day`, or its last complete report day when its flows lag behind
  * (LIT by design; an EVM chain whose finalized block is still before 00:00Z), never a day with a missing flow.
- * Null when it has no reporting block, no YAML, or no complete day yet.
+ * Null when it has no income_statement block, no YAML, or no complete day yet.
  */
 export async function assetReportDay(db: Db, configRoot: string, assetId: string, day: string): Promise<{ day: string; lagDays: number } | null> {
   let asset;
@@ -28,7 +28,7 @@ export async function assetReportDay(db: Db, configRoot: string, assetId: string
   } catch {
     return null;
   }
-  if (!asset.reporting) return null;
+  if (!asset.income_statement) return null;
   const last = await lastCompleteReportDay(db, asset);
   const used = last !== null && last < day ? last : day;
   return { day: used, lagDays: Math.round((Date.parse(`${day}T00:00:00Z`) - Date.parse(`${used}T00:00:00Z`)) / MS_PER_DAY) };
@@ -49,7 +49,7 @@ export async function reportLags(db: Db, configRoot: string, registry: RegistryR
  * `{ day, assets: { [id]: { state, state_since, state_reason, report_day, lag_days, report, report_error } } }`. An
  * active asset's report covers `day`, or its last complete day when its flows lag (`report_day`, `lag_days` days
  * behind); a paused asset's covers the newest day it has data for (its last report; `lag_days` null). An asset with no
- * report (no reporting block, a YAML that does not load, not enough data) has `report: null` and the reason.
+ * report (no income_statement block, a YAML that does not load, not enough data) has `report: null` and the reason.
  */
 export async function fullBody(db: Db, configRoot: string, registry: RegistryRow[], day: string): Promise<unknown> {
   const assets: Record<string, unknown> = {};
@@ -60,8 +60,8 @@ export async function fullBody(db: Db, configRoot: string, registry: RegistryRow
     let lagDays: number | null = null;
     try {
       const asset = loadAsset(configRoot, r.assetId).config;
-      if (!asset.reporting) {
-        reportError = 'no reporting block';
+      if (!asset.income_statement) {
+        reportError = 'no income_statement block';
       } else {
         const used = r.state === 'active' ? await assetReportDay(db, configRoot, r.assetId, day) : null;
         if (used) {

@@ -131,9 +131,6 @@ metrics:
     source: { type: derived, name: burn_momentum, params: { metric: flow_usd.burn_programmatic, days: 30 } }
     watch: { change_pct: {{usage_watch_pct}} }
 
-holder_flows:
-  - { id: burn, kind: burn, capture_rule: {{capture_rule}}, recipient_base: all, metric: flow_usd.burn, window_days: 91 }
-
 income_statement:
   category: {{category}}
   scope: complete

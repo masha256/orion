@@ -48,4 +48,27 @@ describe('fetchAsset: the origin guard', () => {
     expect(s.error).toMatch(/total_supply: origin_mismatch: the reading is onchain but its provenance \(measured, first_party_api\) reads back as api/);
     expect(await listActiveObservations(h.db, 'hype', 'total_supply')).toEqual([]);
   });
+
+  // Task 11 (ruling R11.3, the Task 10 re-review): the schedule-steps path has the same guard (src/ingest/run.ts).
+  it('refuses schedule steps stamped onchain on a first_party_api rung (origin_mismatch), and writes no step', async () => {
+    const yaml = FIXTURE.replace(
+      '  emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400 }',
+      '  emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400, source: { type: adapter, name: hype.total_supply, params: {} } }',
+    );
+    expect(yaml).not.toBe(FIXTURE);
+    registerAdapter({
+      ...original,
+      run: async (ctx) => ({
+        kind: 'schedule_steps', source: 'onchain', detail: 'test',
+        steps: [{ observedAt: ctx.nowIso, value: 0 }, { observedAt: '2027-01-01T00:00:00.000Z', value: 5 }],
+      }),
+    });
+    const h = harness(testDb(), { loaded: parseAssetYaml(yaml), routes: { [LLAMA_HYPE]: { totalDataChart: [] } } });
+    const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps, { metrics: ['emission_rate_annual'] });
+    expect(r.written).toEqual([]);
+    const s = r.sources.find((x) => x.sourceId.includes('hype.total_supply'))!;
+    expect(s.status).toBe('failed');
+    expect(s.error).toMatch(/emission_rate_annual: origin_mismatch: the reading is onchain but its provenance \(measured, first_party_api\) reads back as api/);
+    expect(await listActiveObservations(h.db, 'hype', 'emission_rate_annual')).toEqual([]);
+  });
 });

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
@@ -77,7 +78,8 @@ function world() {
 describe('assets/aero.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'aero', symbol: 'AERO', name: 'Aero' });
-    expect(config.holder_flows).toEqual([{ id: 'fees', kind: 'fee_share', capture_rule: 'contractual', recipient_base: 'locked', metric: 'flow_usd.fees', window_days: 91 }]);
+    expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.fees']);
+    expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     // Every metric has a source.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
@@ -91,7 +93,8 @@ describe('assets/aero.yaml', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned 2026-11-09: the Aero contracts (spec 2026-11-09-orion-aero-supply-design.md): on-chain price, circulating,
     // realised emissions, the upgrade reserves as dilution, no CoinGecko/DefiLlama outside revenue, revenue relabelled.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/aero.yaml`, 'utf8')).hash).toBe('e9e96f3c78e997fdc260433fe6bb1aa4e3958b959d0c3679ff9219a9aaaa9779');
+    // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/aero.yaml`, 'utf8')).hash).toBe('3c413feb4fbdba98b9ab17c4802ea46cc4306e9e700fb8d1384fa984dde4d19b');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

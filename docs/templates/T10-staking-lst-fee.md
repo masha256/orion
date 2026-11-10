@@ -14,8 +14,8 @@ users' deposits earn; stakers' share and node operators are the cost of revenue.
 | revenue | `staking_rewards` | `derived` from the treasury's fee mints ÷ the treasury's fee share, `share_metric` read daily | a measured total from oracle reports needs `state_delta` (Phase 3) |
 | cost_of_revenue | `stakers` | `of: staking_rewards`, share = 1 − total fee | |
 | cost_of_revenue | `node_operators` | `log_scan`: fee mints to the node-operator module | |
-| holders | `buyback` | `log_scan` of a buyback route, if any | see the holder-flow trap |
-| protocol | remainder | `remainder: protocol` | the treasury's fee less the buyback |
+| holders | none | no `holders` section | Lido's token receives nothing: see the holder-flow trap |
+| protocol | remainder | `remainder: protocol` | the treasury's fee |
 
 ## Addresses and endpoints to find
 
@@ -23,7 +23,8 @@ users' deposits earn; stakers' share and node operators are the cost of revenue.
   are minted from.
 - The fee read (total fee, treasury share, operator share), as fractions.
 - The oracle that reports rewards (for the Phase 3 `state_delta`).
-- The protocol token and any buyback route. CoinGecko ids (protocol token, the LST or the base asset).
+- The protocol token and any buyback route (a `holders` line if one exists). CoinGecko ids (protocol token, the LST
+  or the base asset).
 
 ## Checks
 
@@ -35,9 +36,9 @@ users' deposits earn; stakers' share and node operators are the cost of revenue.
 
 - MEV and priority fees: some protocols report them apart from consensus rewards; check what the fee applies to.
 - A rebasing LST's balances grow without transfers: never use a `balance` check on a holder of it.
-- **The protocol token may receive nothing** (Lido today). The schema still requires one `holder_flows` entry, so such
-  a protocol cannot be onboarded until that requirement is lifted with the move to `income_statement` (raise it before
-  scoping one).
+- **The protocol token may receive nothing** (Lido today). Since Task 11 retired `holder_flows` an asset needs no holder
+  flow: leave out the `holders` section and the yields read zero. Add a `holders` line (a `log_scan` of the route) only
+  for a protocol whose token is bought back or paid.
 - Fee mints happen once per oracle report (daily on Lido): a missed report shows as a zero day, not a cut fee.
 
 ## Skeleton
@@ -55,8 +56,6 @@ contracts:
   treasury: "{{treasury_address}}"
   node_operators: "{{node_operators_address}}"       # the node-operator module that receives its fee shares
   fee_config: "{{fee_config_address}}"               # states the fee split
-  buyback_source: "{{buyback_source_address}}"
-  buyback_sink: "{{buyback_sink_address}}"
 
 ingest: { chain_id: {{chain_id}}, rpc_url_env: {{rpc_url_env}}, backfill_days: 100 }
 
@@ -119,18 +118,7 @@ metrics:
   treasury_fee_share: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: fee_config, function: {{treasury_fee_function}}, decimals: {{fee_decimals}} } }
   node_operator_fee_share: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: fee_config, function: {{operator_fee_function}}, decimals: {{fee_decimals}} } }
 
-  flow_usd.buyback:
-    type: flow
-    unit: usd
-    cadence: daily
-    staleness_days: 30
-    critical: true
-    source: { type: transfer_flow, token: token, to: buyback_sink, from_allowlist: [ buyback_source ], unit: usd, price_coingecko_id: {{coingecko_id}} }
-
   # needs state_delta (Phase 3): flow_usd.reported_rewards, the oracle-reported rewards (pooled-asset delta) per day
-
-holder_flows:
-  - { id: buyback, kind: buy_and_hold, capture_rule: {{capture_rule}}, recipient_base: all, metric: flow_usd.buyback, window_days: 91 }
 
 income_statement:
   category: lst
@@ -141,8 +129,6 @@ income_statement:
   cost_of_revenue:
     - { id: stakers, to: other, label: "stakers' share of rewards", of: staking_rewards, share: {{stakers_share}} }
     - { id: node_operators, to: node_operators, metric: flow_usd.node_operator_fee }
-  holders:
-    - { id: buyback, metric: flow_usd.buyback, bucket: hold, haircut: {{hold_haircut}}, recipient_base: all, capture_rule: {{capture_rule}} }
   remainder: protocol
   checks:
     - { id: node_operator_share, type: parameter, metric: node_operator_fee_share, expected: {{node_operator_fee_share}}, tolerance_pct: 0 }
@@ -164,8 +150,6 @@ lst_address: "0x0000000000000000000000000000000000000a02"
 treasury_address: "0x0000000000000000000000000000000000000a03"
 node_operators_address: "0x0000000000000000000000000000000000000a04"
 fee_config_address: "0x0000000000000000000000000000000000000a05"
-buyback_source_address: "0x0000000000000000000000000000000000000a06"
-buyback_sink_address: "0x0000000000000000000000000000000000000a07"
 chain_id: 1
 rpc_url_env: ORION_ETH_RPC_URL
 coingecko_id: dummy-staking-token
@@ -178,8 +162,6 @@ fee_decimals: 4
 treasury_fee_share: 0.05
 stakers_share: 0.9
 node_operator_fee_share: 0.05
-hold_haircut: 0.05
-capture_rule: discretionary
 ```
 
 ## Scoping checklist

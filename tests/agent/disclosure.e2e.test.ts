@@ -33,7 +33,7 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = '2026-10-23T12:00:00.000Z';
 const TRANSCRIPT = join(ROOT, 'tests/fixtures/disclosure/lit-q3-2026-call-transcript.txt');
 const RUN_FIXTURE = join(ROOT, 'tests/fixtures/disclosure/lit-q3-run.json');
-const LIT_HASH = 'a3685331c2301c67faaf931814655cde3cf416a307fe26638b98f578f0dcce4a';
+const LIT_HASH = 'a3e049f1d277b4d5ba23af6995fbf4527776ce8c5493433d4c671faf83ce1004';
 const SOURCE_URL = 'https://x.com/Lighter_xyz/status/2113065839352336774';
 
 // Q3 2026 as the live DB has it (spec section 2): the treasury's buys and DefiLlama's revenue, summed over 92 days.
@@ -141,7 +141,7 @@ function script(docId: number): (Step | ((r: ModelRequest) => Step))[] {
         rationale: 'The call says team and investor tokens unlock in 36 monthly tranches from 2027-01-29, not linearly from 2026-12-29 as DefiLlama has it.',
         edits: [
           { path: ['metrics', 'unlocks_next_year', 'source', 'params', 'tranches'], value: TRANCHES },
-          { path: ['reporting', 'dilution', 'unlocks', 'note'], value: DILUTION_NOTE },
+          { path: ['income_statement', 'dilution', 'unlocks', 'note'], value: DILUTION_NOTE },
         ],
         citations: cite(docId, Q.firstTranche, Q.thirtySix),
       }));
@@ -274,7 +274,7 @@ describe('disclosure dry run on the Q3 2026 Lighter call (scripted model)', () =
       kind: 'config',
       edits: [
         { path: ['metrics', 'unlocks_next_year', 'source', 'params', 'tranches'], value: TRANCHES },
-        { path: ['reporting', 'dilution', 'unlocks', 'note'], value: DILUTION_NOTE },
+        { path: ['income_statement', 'dilution', 'unlocks', 'note'], value: DILUTION_NOTE },
       ],
     });
     // No proposal carries a target effect any more: the valuation that computed one is gone.
@@ -363,7 +363,7 @@ describe('approving the config proposal on a copy of assets/lit.yaml', () => {
     const { config } = loadAsset(h2, 'lit');
     const source = config.metrics.unlocks_next_year!.source as { type: string; name: string; params: Record<string, unknown> };
     expect(source).toEqual({ type: 'adapter', name: 'lit.unlocks_next_year', params: { allocations: ['Team', 'Investors'], tranches: TRANCHES } });
-    expect(config.reporting!.dilution).toEqual([{ id: 'unlocks', metric: 'unlocks_next_year', note: DILUTION_NOTE }]);
+    expect(config.income_statement!.dilution).toEqual([{ id: 'unlocks', metric: 'unlocks_next_year', note: DILUTION_NOTE }]);
 
     // Task 8's canned DefiLlama curve (tests/ingest/adapters.lit.test.ts): linear weekly from 2026-12-29 over three years to
     // 300M (Team) and 198M (Investors). Nothing is out at the schedule start, so 9 of 36 tranches fall in the next year.

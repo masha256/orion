@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
@@ -82,7 +83,8 @@ describe('assets/hype.yaml', () => {
     expect(config).toMatchObject({ id: 'hype', symbol: 'HYPE' });
     expect(config.chain).toBeUndefined();
     expect(config.ingest).toBeUndefined();
-    expect(config.holder_flows).toEqual([{ id: 'af_buyback', kind: 'burn', capture_rule: 'programmatic', recipient_base: 'all', metric: 'flow_usd.af_buyback', window_days: 91 }]);
+    expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.af_buyback']);
+    expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     // One manual metric: the staker share, 1.0 by construction, which the bootstrap researches and the user confirms.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual(['staker_emission_share']);
     for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
@@ -91,7 +93,8 @@ describe('assets/hype.yaml', () => {
     // Re-pinned 2026-10-26: window 90 -> 91 days on every asset (Mike).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('7a52e7974c9c90234ac9ac27d6d0495291b047aa04d566e02e89c1801c284296');
+    // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('f7dcfeecf846ff6161e18797728bc37ae2d30d52157446bd92e21b1b8b245b3f');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

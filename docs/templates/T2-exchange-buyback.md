@@ -150,9 +150,6 @@ metrics:
     source: { type: transfer_flow, token: token, to: dead, from_allowlist: [ burn_sender ], unit: tokens }
   # needs balance_delta (Phase 3): treasury_token_balance_change, the treasury's token balance change on the exchange per day
 
-holder_flows:
-  - { id: buyback, kind: burn, capture_rule: {{capture_rule}}, recipient_base: all, metric: flow_usd.buyback, window_days: 91 }
-
 income_statement:
   category: perp_dex
   scope: complete

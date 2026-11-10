@@ -168,27 +168,16 @@ metrics:
     monitor_only: true
     source: { type: transfer_flow, token: crvusd, to: splitter, from_allowlist: [ voter, fee_burner ], count_from: [ fee_burner ], unit: usd, price_coingecko_id: crvusd }
 
-holder_flows:
-  # Paid only to staked yCRV (the unstaked share goes to Yearn's treasury), so valued per staked token.
-  - { id: fees, kind: fee_share, capture_rule: programmatic, recipient_base: staked, valued_per: recipients, metric: flow_usd.fees, window_days: 91 }
-
+# Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
+# the holders and below_line lines):
+# Paid only to staked yCRV (the unstaked share goes to Yearn's treasury), so valued per staked token.
 # Report-only holder yield and growth (orion report yield). Paid in crvUSD vault shares, redeemable 1:1: no haircut.
-reporting:
-  window_days: 91
-  haircuts: { fees: 0 }
-  volume: [ flow_usd.yearn_gross ]
-  # Income statement (Mike, 2026-10-11). Revenue = crvUSD into the splitter (veCRV fees and auctioned vote incentives) plus the
-  # st-yCRV performance fee. Paid to YBS stakers via the Receiver; Yearn keeps the splitter's 20, the Receiver's 10, and the fee.
-  income:
-    lines:
-      - { id: ybs_payout, to: holders, metric: flow_usd.fees }
-      - { id: treasury, to: protocol, metric: flow_usd.yearn_revenue }
-      - { id: styc_fee, to: protocol, metric: flow_usd.yearn_styc_fee }
-    checks:
-      - { total: [ flow_usd.yearn_gross ], parts: [ ybs_payout, treasury ] }
-
-# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
-# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+# Income statement (Mike, 2026-10-11). Revenue = crvUSD into the splitter (veCRV fees and auctioned vote incentives)
+# plus the st-yCRV performance fee. Paid to YBS stakers via the Receiver; Yearn keeps the splitter's 20, the Receiver's
+# 10, and the fee.
+#
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2): the report's only block since Task 11 retired
+# holder_flows and reporting. Revenue = what users pay; each section says where it goes.
 # Task 7b (Mike G1): revenue is the veCRV fees only; the auctioned vote incentives are below the line (spec rule 3, as
 # sdCRV's bribes). The splitter pays both on as one stream, so the measured YBS payouts and treasury take are each split
 # by the window's sender mix (apportion, ruling R14): fees / gross from revenue, incentives / gross below the line. The

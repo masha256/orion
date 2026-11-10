@@ -1,0 +1,96 @@
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+import { buildContextPack } from '../../src/agent/context.js';
+import { Ledger } from '../../src/agent/ledger.js';
+import { DEFAULT_BUDGETS } from '../../src/config/agentPolicy.js';
+import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
+import { loadAsset } from '../../src/config/load.js';
+import { insertObservation } from '../../src/db/observations.js';
+import { addDays } from '../../src/ingest/time.js';
+import { useTestDb } from '../helpers/db.js';
+import { testProvenance } from '../helpers/provenance.js';
+import { ALL_ASSETS } from '../helpers/syntheticReport.js';
+
+/**
+ * Task 11 (G4): the analyst's context pack for each repo asset, on seeded rows (100 daily rows of every flow metric,
+ * one row of every level), against the packs written at cc59fa7, before `holder_flows`/`reporting` were retired. The
+ * flow rows in force must be exactly those (eligibility now reads income_statement's holder-flow lines); LIT's whole
+ * pack is identical. `asset_config_yaml` is left out: it is the YAML text, which lost the retired blocks.
+ * UPDATE_GOLDEN=1 rewrites the file (only ever at the base commit).
+ */
+const GOLDEN = fileURLToPath(new URL('./golden/packs-13.json', import.meta.url));
+const ROOT = fileURLToPath(new URL('../..', import.meta.url));
+const NOW = '2026-11-03T12:00:00.000Z';
+const testDb = useTestDb();
+
+async function packOf(id: string): Promise<Record<string, unknown>> {
+  await testDb.reset();
+  const db = testDb();
+  const loaded = loadAsset(ROOT, id);
+  for (const [key, def] of Object.entries(loaded.config.metrics).sort(([a], [b]) => (a < b ? -1 : 1))) {
+    if (def.type === 'flow') {
+      for (let i = 0; i < 100; i++) {
+        const at = `${addDays('2026-11-03', -i)}T00:00:00.000Z`;
+        await insertObservation(db, { provenance: testProvenance('onchain'), assetId: id, metricKey: key, observedAt: at, periodDays: 1, value: 100 + i, fetchedAt: NOW });
+      }
+    } else if (def.type === 'level' || def.type === 'schedule') {
+      await insertObservation(db, { provenance: testProvenance('api'), assetId: id, metricKey: key, observedAt: '2026-11-02T00:00:00.000Z', value: 7, fetchedAt: NOW });
+    }
+  }
+  const pack = await buildContextPack(db, loaded, new Ledger(id, 'analyst', 'test'), {
+    runType: 'disclosure', budgets: DEFAULT_BUDGETS.disclosure, now: new Date(NOW), trigger: {}, assetYaml: 'yaml',
+  });
+  const { asset_config_yaml: _yaml, ...rest } = JSON.parse(JSON.stringify(pack)) as Record<string, unknown>;
+  return rest;
+}
+
+describe('context packs, golden at cc59fa7 (Task 11)', () => {
+  it('every asset: the same flow rows in force; LIT: the whole pack', { timeout: 120_000 }, async () => {
+    const now: Record<string, Record<string, unknown>> = {};
+    for (const id of ALL_ASSETS) now[id] = await packOf(id);
+    if (process.env.UPDATE_GOLDEN === '1') writeFileSync(GOLDEN, `${JSON.stringify(now, null, 1)}\n`);
+    const golden = JSON.parse(readFileSync(GOLDEN, 'utf8')) as Record<string, Record<string, unknown>>;
+    expect(Object.keys(golden)).toEqual([...ALL_ASSETS]);
+    for (const id of ALL_ASSETS) {
+      expect(now[id]!.observations_in_force, id).toEqual(golden[id]!.observations_in_force);
+      const flows = (now[id]!.observations_in_force as { metric: string }[]).filter((o) => o.metric.startsWith('flow_'));
+      expect(flows.length, id).toBeGreaterThan(0);
+    }
+    expect(now.lit).toEqual(golden.lit);
+  });
+});
+
+/**
+ * Ruling R11.1: the pack's flow set (eligibility's flow windows) is income_statement's holders and
+ * below_line-to-holders
+ * metrics, and must equal the retired `holder_flows` metrics. Hard-coded from cc59fa7's assets/*.yaml (every
+ * `holder_flows` entry had window_days 91, the statement's window).
+ */
+const V1_HOLDER_FLOWS: Record<string, string[]> = {
+    aero: ['flow_usd.fees'],
+    cake: ['flow_usd.burn'],
+    crv: ['flow_usd.fees'],
+    cvxcrv: ['flow_usd.fees', 'flow_usd.crv', 'flow_usd.cvx'],
+    hype: ['flow_usd.af_buyback'],
+    link: ['flow_usd.reserve'],
+    lit: ['flow_usd.buyback'],
+    pump: ['flow_usd.buyback'],
+    sdcrv: ['flow_usd.fees', 'flow_usd.crv', 'flow_usd.bribes'],
+    sky: ['flow_usd.stakers', 'flow_usd.buyback'],
+    uni: ['flow_usd.burn'],
+    vvv: ['flow_usd.burn'],
+    ycrv: ['flow_usd.fees'],
+};
+
+describe('holder-flow metrics = the retired holder_flows (Task 11, R11.1)', () => {
+  it.each(ALL_ASSETS)('%s', (id) => {
+    const is = loadAsset(ROOT, id).config.income_statement;
+    expect(holderFlowMetrics(is)).toEqual(V1_HOLDER_FLOWS[id]);
+    expect(is!.window_days).toBe(91);
+  });
+
+  it('covers the 13 assets', () => {
+    expect(Object.keys(V1_HOLDER_FLOWS).sort()).toEqual([...ALL_ASSETS].sort());
+  });
+});

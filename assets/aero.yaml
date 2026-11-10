@@ -40,9 +40,9 @@ metrics:
     cross_checks:
       - { tolerance_pct: 2, source: { type: adapter, name: chain.cl_pool_spot_price, params: { pool: price_check_pool, token: token, quote_decimals: 6, usd_feed: usdc_usd_feed } } }
 
-  # The ERC-20 total, the FDV basis. No burn sink (burns go through burn() and lower totalSupply). It includes the upgrade
-  # reserve, which the report counts as dilution (reporting.dilution) as it moves to holders. No cross-check: the parts
-  # below are computed from it, so any on-chain check would be circular.
+  # The ERC-20 total, the FDV basis. No burn sink (burns go through burn() and lower totalSupply). It includes the
+  # upgrade reserve, which the report counts as dilution (income_statement.dilution) as it moves to holders. No
+  # cross-check: the parts below are computed from it, so any on-chain check would be circular.
   total_supply:
     type: level
     unit: tokens
@@ -144,24 +144,14 @@ metrics:
     critical: true
     source: { type: defillama, slug: aerodrome, data_type: dailyHoldersRevenue, backfill_days: 100 }
 
-holder_flows:
-  - { id: fees, kind: fee_share, capture_rule: contractual, recipient_base: locked, metric: flow_usd.fees, window_days: 91 }
-
+# Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
+# the holders and below_line lines):
 # Report-only holder yield and growth (orion report yield). AERO's fees arrive as the pools' own tokens, many long-tail:
 # 2 percent. Protocol revenue waits for the Phase 3 pilot.
-reporting:
-  window_days: 91
-  haircuts: { fees: 0.02 }
-  # Income statement (Mike, 2026-10-11): all fees go to the stakers; the protocol keeps none (revisit in Phase 3).
-  income:
-    lines:
-      - { id: voter_fees, to: holders, metric: flow_usd.fees, note: "all-chain Aero since 2026-10-22 (DefiLlama parent#aero-protocol); Base-only Aerodrome before" }
-  dilution:
-    - { id: aero_upgrade, metric: upgrade_release_aero, cap_metric: upgrade_reserve_aero, note: "unclaimed Aerodrome upgrade reserve moving to holders (trailing 30 days, capped at what is left)" }
-    - { id: velo_upgrade, metric: upgrade_release_velo, cap_metric: upgrade_reserve_velo, note: "unclaimed Velodrome upgrade reserve moving to holders (trailing 30 days, capped at what is left)" }
-
-# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2), beside reporting for one release (the report still reads
-# reporting; Task 11 removes it). Revenue = what users pay; each section says where it goes.
+# Income statement (Mike, 2026-10-11): all fees go to the stakers; the protocol keeps none (revisit in Phase 3).
+#
+# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2): the report's only block since Task 11 retired
+# holder_flows and reporting. Revenue = what users pay; each section says where it goes.
 income_statement:
   category: dex
   scope: protocol_share_only
