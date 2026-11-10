@@ -82,6 +82,10 @@ function world() {
       [callKey(C.token, 'totalSupply')]: 5_563_795_275n * E18,
       [callKey(C.token, 'decimals')]: 18n,
       [callKey(C.token, 'balanceOf', [C.dead])]: 5_228_326_976n * E18,
+      // Pending-burn balances, read live on 2026-10-18 (same totalSupply and dead balance as above): MasterChef v2's float
+      // of 347,302 CAKE and the burner's 0.69 CAKE (rounded to 0 here).
+      [callKey(C.token, 'balanceOf', [C.masterchef_v2])]: 347_302n * E18,
+      [callKey(C.token, 'balanceOf', [C.burner])]: 0n,
       [callKey(C.masterchef_v2, 'cakePerBlock', [true])]: 40_000_000n,
       [callKey(C.masterchef_v2, 'cakePerBlock', [false])]: 113_292_343_840_000_000n,
       [callKey(C.chainlink_cake_usd, 'latestAnswer')]: 229_459_054n,
@@ -112,7 +116,7 @@ describe('assets/cake.yaml', () => {
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/cake.yaml`, 'utf8')).hash).toBe('def0ff7a45832e4cb3adaa3972389457b2214810e629545e59b2b30984424d0b');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/cake.yaml`, 'utf8')).hash).toBe('2d05a80bdff0c499065879b3f361d45fc35f6cc81efc0f0fe9cb1a09091dbb02');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -153,9 +157,9 @@ describe('assets/cake.yaml', () => {
     const rows = async (metric: string) => await listActiveObservations(w.db, 'cake', metric);
     const value = async (metric: string) => (await rows(metric)).at(-1)!.value;
     expect(await value('price_usd')).toBe(PRICE);
-    expect(await value('total_supply')).toBe(335_468_299);
+    expect(await value('total_supply')).toBe(335_120_997);
     expect(await value('emission_rate_annual') / 1e6).toBeCloseTo(7.9396, 3);
-    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]);
+    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
 
     // 14 Mondays of 550k CAKE: 13 inside the 91 days to 2026-10-11 (07-13..10-05).
     const burns = (await rows('flow_tokens.burn')).filter((o) => o.value > 0);
@@ -168,7 +172,7 @@ describe('assets/cake.yaml', () => {
     await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     const rep = await loadHolderYieldReport(w.db, config, undefined, { legacy: true });
     expect(rep.day).toBe('2026-10-11');
-    expect(rep.yields.buyback).toBeCloseTo((13 * 550_000 * PRICE * 365) / 91 / (335_468_299 * PRICE), 6);
+    expect(rep.yields.buyback).toBeCloseTo((13 * 550_000 * PRICE * 365) / 91 / (335_120_997 * PRICE), 6);
     expect(rep.supply).toMatchObject({ burnedPerYear: expect.closeTo((13 * 550_000 * 365) / 91, 0) });
     expect(rep.supply!.netPerYear).toBeLessThan(0);
     expect(rep.income!.revenue.annualized).toBeCloseTo((13 * 750_000 * PRICE * 365) / 91, 0);

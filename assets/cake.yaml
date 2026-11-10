@@ -45,16 +45,20 @@ metrics:
     cross_checks:
       - { tolerance_pct: 2, source: { type: contract_read, contract: chainlink_cake_usd, function: latestAnswer, decimals: 8 } }
 
-  # totalSupply() less dead's balance: 335.47M on 2026-10-12. CoinGecko's total (329.54M) also nets 5.93M CAKE that
-  # PancakeSwap counts as burned without sending it to dead (locked in the legacy pools), so the cross-check is 2.5 percent.
+  # totalSupply() less dead's, the burner's and MasterChef v2's balances: 334.57M on 2026-11-10 (dead alone: 394.43M).
+  # MasterChef v1 mints its accrued emission in one harvest (2026-11-09 01:08Z: 43.79M CAKE into v2 via the SyrupBar and
+  # 4.38M to the burner, tx 0xbe5bd6b8...). v2 returns ~99.7 percent of it to the burner, which sends it to dead in the
+  # next weekly burn, so until that burn the minted CAKE sits in v2 or the burner and never circulated. Netting dead only
+  # spiked the total by 8-18 percent for days after every harvest (375.1M 10-12, 363.5M 10-30, 394.4M 11-09); netting
+  # all three gives a smooth series (335.5M 10-06 -> 334.6M 11-10). v2's own float (~0.36M: the 0.28 percent it keeps to
+  # pay farm rewards) is netted too: undistributed rewards, not circulating. No cross-check: CoinGecko is not read by live
+  # code on a metric we touch (Mike, 2026-11-09), and a check computed from these same balances would be circular.
   total_supply:
     type: level
     unit: tokens
     staleness_days: 7
     critical: true
-    source: { type: erc20_supply, token: token, subtract_balances: [ dead ] }
-    cross_checks:
-      - { tolerance_pct: 2.5, source: { type: coingecko, id: pancakeswap-token, field: total_supply } }
+    source: { type: erc20_supply, token: token, subtract_balances: [ dead, burner, masterchef_v2 ] }
 
   # CoinGecko's own definition; display only, the report's market cap basis (FDV uses total_supply).
   circulating_supply:
