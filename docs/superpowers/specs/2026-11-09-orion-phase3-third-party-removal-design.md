@@ -1,8 +1,14 @@
 # Orion Phase 3: remove DefiLlama and CoinGecko from live code
 
-**Status:** DRAFT for Mike's review (2026-11-09, #orion-dev "go on 2"). Branch `feat/phase3-third-party` from main
-0f4b2fe (release orion-2026.11.09.1, AERO post-merger; staged, prod pending its soak). Nothing here is built. The
-decisions Mike owes are in §8. Umbrella: `2026-10-28-orion-coinrevs-core-roadmap.md` (Phase 3; decision 1 history
+**Status:** APPROVED by Mike 2026-11-09 (#orion-dev): "All approved as recommended", D1-D11 as recommended in §8:
+- D1 Phase 3 removes CoinGecko as well as DefiLlama; D2 price method as written; D3 A (183-day hourly history rebuilt
+  from chain, stored flows re-priced); D4 A (circulating on chain, cited exclusions); D5 A (DefiLlama-only gross lines
+  to `not_measured`, on-chain gross series in a later Phase 3b); D6 as written; D7 A (CRV incentive `event_sum` scans
+  in R7); D8 order R0 -> R8 as written; D9 yes; D10 yes; D11 yes (CAKE fix ships alone; Mike: "cake to stage ok").
+- R0 CAKE: tag `orion-2026.11.10.1` = `fix/cake-pending-burn` 0ecc69e on main 0f4b2fe. It is staged after AERO's
+  orion-2026.11.09.1 reaches prod, so AERO's soak gate is not invalidated. Prod needs its own soak and Mike's go.
+Drafted 2026-11-09 (#orion-dev "go on 2"). Branch `feat/phase3-third-party` from main 0f4b2fe (release
+orion-2026.11.09.1, AERO post-merger). Nothing here is built yet; the next step is the plan. Umbrella: `2026-10-28-orion-coinrevs-core-roadmap.md` (Phase 3; decision 1 history
 deletion; decision 4 order: 3 and 5 in parallel). Phase 2 inputs: `2026-10-28-orion-data-strategy-income-v2-design.md`
 §2 (source ladder), §5 (checks), §8 (asset mapping), §12.7 (generic source types), and the followups note's Phase 3
 lists (`docs/superpowers/notes/2026-11-04-orion-phase2-followups.md`).
