@@ -1,6 +1,6 @@
 import { scrubLocator } from '../provenance/scrub.js';
 import { originOfRow } from '../provenance/origin.js';
-import { codeVersion, disclosedProvenance, MAX_TX_REFS, type Json, type Locator, type Provenance, type ProvenanceMethod } from '../provenance/types.js';
+import { codeVersion, MAX_TX_REFS, type Json, type Locator, type Provenance, type ProvenanceMethod } from '../provenance/types.js';
 import type { SourceType } from '../report/sourceTypes.js';
 import { OrionError, type ObservationSource, type ObservationStatus } from '../types.js';
 import type { Db } from './connection.js';
@@ -278,25 +278,24 @@ async function assetOf(db: Db, id: number): Promise<string> {
 
 /**
  * Confirms a provisional row as a new confirmed one. Its provenance is the provisional row's (a citation the analyst or a
- * person entered), marked approved by `by.approvedBy` at `nowIso`. Every row carries one since 0006; `by.configHash` is
- * the fallback the confirm callers still pass (a row with none is built from its citation under it).
+ * person entered), marked approved by `by.approvedBy` at `nowIso`; every row carries one since 0006, so the confirm
+ * needs no asset YAML and keeps the row's own config hash.
  */
-export async function confirmObservation(db: Db, id: number, nowIso: string, by: { approvedBy: string; configHash: string }): Promise<Observation> {
+export async function confirmObservation(db: Db, id: number, nowIso: string, by: { approvedBy: string }): Promise<Observation> {
   const assetId = await assetOf(db, id);
   return db.tx(
     async (t) => {
       const o = await activeProvisional(t, id);
       const [stored] = await getProvenanceByIds(t, [id]);
-      const provenance: Provenance =
-        stored !== undefined
-          ? {
-              method: stored.method, sourceType: stored.sourceType, chain: stored.chain,
-              locator: stored.sourceType === 'disclosure' ? { ...stored.locator, approved_by: by.approvedBy, approved_at: nowIso } : stored.locator,
-              blockFrom: stored.blockFrom, blockTo: stored.blockTo, txCount: stored.txCount, txRefs: stored.txRefs, txDigest: stored.txDigest,
-              responseDigest: stored.responseDigest, inputs: stored.inputs, formula: stored.formula, coverage: stored.coverage,
-              codeVersion: codeVersion(), configHash: stored.configHash,
-            }
-          : disclosedProvenance(by.configHash, { citationUrl: o.citationUrl, approvedBy: by.approvedBy, approvedAt: nowIso });
+      if (stored === undefined) throw new OrionError('observation_not_found', `no observation with id ${id}`);
+      const provenance: Provenance = {
+        method: stored.method, sourceType: stored.sourceType, chain: stored.chain,
+        locator: stored.sourceType === 'disclosure' ? { ...stored.locator, approved_by: by.approvedBy, approved_at: nowIso } : stored.locator,
+        blockFrom: stored.blockFrom, blockTo: stored.blockTo, txCount: stored.txCount, txRefs: stored.txRefs, txDigest: stored.txDigest,
+        responseDigest: stored.responseDigest, inputs: stored.inputs, formula: stored.formula, coverage: stored.coverage,
+        codeVersion: codeVersion(), configHash: stored.configHash,
+      };
+
       return insertObservation(t, {
         assetId: o.assetId,
         metricKey: o.metricKey,

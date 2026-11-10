@@ -489,15 +489,13 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     const sum = windowSum(daily, [m], day, W);
     return { metric: m, annualized: sum === null ? null : (sum * DAYS_PER_YEAR) / W, sourceType: metricDef(m) ? sourceTypeOf(metricDef(m)!, asset.metrics) : null };
   };
-  // Provenance from the stored rows (spec §3, Task 6). Basis `observations` when the loader passed the rows' provenance
-  // and every day a revenue line reads (provisional days aside: they are a run rate, never stored) has a mapped row;
-  // otherwise (history not backfilled yet, a pure input) the config's labels, as before.
+  // Provenance from the stored rows (spec §3, Task 6). Basis `observations` whenever the loader passed the rows'
+  // provenance (since 0006 every stored row has a method, so there is no unbackfilled window to fall back from); `config`
+  // only for a pure input without it (the config's labels).
   const rowProv = input.provenance;
   const windowDaysList = Array.from({ length: W }, (_, i) => addDays(day, -i));
   const termMetrics = (v: Value): string[] => (v.kind === 'terms' ? uniq(v.terms.map((t) => t.metric)) : []);
-  const storedDays = (m: string): string[] => windowDaysList.filter((d) => input.daily.get(m)?.has(d) === true && input.provisional?.get(m)?.has(d) !== true);
-  const basisObservations =
-    rowProv !== undefined && revItems.every((x) => termMetrics(x.v).every((m) => storedDays(m).every((d) => (rowProv.get(m)?.get(d)?.method ?? null) !== null)));
+  const basisObservations = rowProv !== undefined;
   /** Days of the window on which every series the line reads comes from a measured row (basis observations only). */
   const measuredDays = (v: Value): number | null => {
     const ms = termMetrics(v);
@@ -915,7 +913,7 @@ export function incomeStatementV2(input: ReportInput, legacy: HolderYieldReport)
     ? uniq(
         statementMetrics.flatMap((m) => {
           const days = rowProv!.get(m);
-          const inWindow = windowDaysList.flatMap((d) => (days?.get(d)?.label ? [days.get(d)!.label!] : []));
+          const inWindow = windowDaysList.flatMap((d) => (days?.get(d)?.label ? [days.get(d)!.label] : []));
           const own = inWindow.length > 0 ? inWindow : [configLabel(m)];
           return own.filter((s): s is string => s !== null);
         }),

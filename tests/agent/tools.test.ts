@@ -12,7 +12,7 @@ import { AS_OF } from '../helpers/obs.js';
 import { useTestDb } from '../helpers/db.js';
 import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
-const BY = { approvedBy: 'test', configHash: 'test' };
+const BY = { approvedBy: 'test' };
 
 const testDb = useTestDb();
 

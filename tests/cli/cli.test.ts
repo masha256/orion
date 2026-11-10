@@ -172,7 +172,7 @@ describe('orion cli', () => {
     const yaml = join(home, 'assets', 'mini.yaml');
     for (const [what, damage] of [['gone', () => rmSync(yaml)], ['invalid', () => writeFileSync(yaml, 'id: mini\nmetrics: [not, a, map]\n')]] as const) {
       writeFileSync(yaml, MINI_ASSET_YAML);
-      // A provisional row keeps its own config hash (since 0006 every row has provenance: none is built under 'unloaded').
+      // A provisional row keeps its own config hash: the confirm copies the row's provenance and never loads the YAML.
       const p = JSON.parse(await orion('data', 'set', 'mini', 'revenue_run_rate_usd', '1200', '--at', what === 'gone' ? '2026-06-20' : '2026-06-22', '--provisional', '--citation', 'https://example.com/post', '--json'));
       const [{ configHash }] = await getProvenanceByIds(testDb(), [p.id]);
       damage();

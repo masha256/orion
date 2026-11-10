@@ -9,7 +9,7 @@ import { emptySourceOutcome, insertFetchRun, recentSourceStatuses, type FetchOut
 import { insertObservation, listActiveObservations } from '../db/observations.js';
 import { latestLevel } from '../observations/select.js';
 import { fetchedProvenance } from '../provenance/locator.js';
-import { originOf } from '../provenance/origin.js';
+import { INPUT_ORIGIN_KEY, originOf } from '../provenance/origin.js';
 import { responseDigest, type Json, type Provenance } from '../provenance/types.js';
 import type { SourceType } from '../report/sourceTypes.js';
 import { MS_PER_DAY, OrionError, STD_METRICS } from '../types.js';
@@ -154,10 +154,10 @@ function flowMetricsOf(metricKey: string, name: DerivedName, params: Record<stri
 }
 
 /**
- * Since 0006 a row's origin is derived from its provenance (`originOf`), never stored: a reading whose own stamp would
- * read back differently is refused rather than stored under the wrong origin (a code bug: an adapter missing from, or
- * declared wrong in, ADAPTER_ORIGINS; or a derivation over a first-party API series, which the provenance cannot tell
- * apart from one over transfer scans). Null when they agree.
+ * Since 0006 a row's origin is derived from its provenance (`originOf`), never stored: a level or schedule reading whose
+ * own stamp would read back differently is refused rather than stored under the wrong origin (a code bug: an adapter
+ * missing from, or declared wrong in, ADAPTER_ORIGINS). Null when they agree. A derived row carries its inputs' origin
+ * in its locator instead (R10.7), and the series writers' stamp is checked per adapter in tests/provenance/adapterOrigins.test.ts.
  */
 function originMismatch(stamp: 'onchain' | 'api', p: Provenance): string | null {
   const origin = originOf(p);
@@ -519,11 +519,10 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: ${name} cannot sum API-series and on-chain flows`);
     }
     const stamp: 'onchain' | 'api' = apiInputs > 0 ? 'api' : 'onchain';
-    const mismatch = originMismatch(stamp, fetchedProvenance(loaded, r.metricKey, { formula: `${name}@1` }));
-    if (mismatch !== null) {
-      markFailed(outcome, `${r.metricKey}: ${mismatch}`);
-      continue;
-    }
+    // The provenance cannot tell a derivation over an API series from one over transfer scans, so an API-input one says
+    // so in its locator (R10.7: merged into the configured locator, and written only then, so an on-chain derivation's
+    // provenance is unchanged). originOf reads it back as `api`.
+    const withInputOrigin = (p: Provenance): Provenance => (stamp === 'api' ? { ...p, locator: { ...p.locator, [INPUT_ORIGIN_KEY]: 'api' } } : p);
     const dailyOf = async (m: string): Promise<Map<string, number>> => {
       const d = await storedDailyFlow(db, asset.id, m);
       for (const p of scannedDaily.get(m) ?? []) d.set(p.day, p.value);
@@ -553,10 +552,10 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
         : (await insertObservation(db, {
             assetId: asset.id, metricKey: r.metricKey, observedAt, value: point.value,
             sourceDetail: `derived ${name}(${flowMetric}, ${windowDays}d)`, fetchedAt: startedAt,
-            provenance: fetchedProvenance(loaded, r.metricKey, {
+            provenance: withInputOrigin(fetchedProvenance(loaded, r.metricKey, {
               formula: `${name}@1`,
               inputs: [...flowMetrics.map((m) => ({ metric: m, from, to: point.day })), ...minusMetrics.map((m) => ({ metric: m, from, to: point.day, sign: -1 }))],
-            }),
+            })),
           })).id;
       written.push({ metricKey: r.metricKey, value: point.value, observedAt, periodDays: null, source: stamp, observationId });
       if (r.metricKey === STD_METRICS.usageIndex) derivedIndex.push({ observedAt, value: point.value });

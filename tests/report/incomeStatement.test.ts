@@ -225,6 +225,16 @@ ${BURN}  operating_costs: [ { id: keepers, metric: flow_usd.keepers } ]
     expect(v2.provenance.basis).toBe('config');
     expect(v2.provenance.methods).toEqual({ measured: 1, derived: 0, disclosed: 0 });
   });
+
+  it("with the loader's provenance the basis is observations, even on a day it has no row for (Task 10 M-4: no unbackfilled-window fallback)", () => {
+    // Every stored day has a row with a method since 0006; a day the map lacks keeps the line's method and its metric's config label.
+    const days = new Map(Array.from({ length: W }, (_, i) => [addDays(DAY, -i), { method: 'measured' as const, label: 'log_scan:eip155:8453' }]));
+    days.delete(addDays(DAY, -3));
+    const { v2 } = run(BASE, { provenance: new Map([['flow_usd.fees', days]]) });
+    expect(v2.provenance.basis).toBe('observations');
+    expect(v2.provenance.methods).toEqual({ measured: 1, derived: 0, disclosed: 0 });
+    expect(v2.revenue.lines[0]).toMatchObject({ id: 'fees', daysMeasured: W - 1 });
+  });
 });
 
 describe('source types and provenance', () => {

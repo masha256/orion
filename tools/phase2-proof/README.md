@@ -46,7 +46,8 @@ npm run build                                   # the new side: $WT/dist
 P2_PROD_SSH='-i ~/.ssh/<prod key> -o IdentitiesOnly=yes orion-prod@<host>' \
   /usr/bin/python3 tools/phase2-proof/prod_copy.py "$P" "$OLD" "$WT"    # read $P/copy.json; stop on any mismatch
 # Task 10 (0006 drops observations.source): while the copy still has it, every row's derived origin must equal it.
-(cd "$P/new" && ORION_DATABASE_URL=<the copy's url> ORION_DB_SCHEMA="$(cat "$P/schema")" npx tsx "$WT/tools/phase2-proof/origin-check.ts") \
+# tsx from the worktree's own node_modules ($P/new has none, and npx would try the registry): no network needed.
+(cd "$P/new" && ORION_DATABASE_URL=<the copy's url> ORION_DB_SCHEMA="$(cat "$P/schema")" "$WT/node_modules/.bin/tsx" "$WT/tools/phase2-proof/origin-check.ts") \
   >"$P/origin-check.json"                       # exit 0 and equal == rows; else stop: the mismatching shapes are listed
 # The NEW dist's migrations on the copy (an older release opens a newer schema); no other ORION_* in the environment.
 # From 0006 on the new side needs --breaking (it drops observations.source; the copy is scratch).

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { adapterNames } from '../../src/ingest/adapters/registry.js';
 import { ADAPTER_ORIGINS, originOf, type OriginFields } from '../../src/provenance/origin.js';
+import { ADAPTER_SOURCE_TYPES } from '../../src/report/sourceTypes.js';
 import type { ObservationSource } from '../../src/types.js';
 
 /**
@@ -48,6 +49,11 @@ const WRITERS: Shape[] = [
   ['data set / approve / ledger', { method: 'disclosed', sourceType: 'disclosure', locator: { citation_url: 'https://x.test/b', approved_by: 'cli', approved_at: '2026-11-10T00:00:00.000Z' }, formula: null }, 'manual'],
   // A derivation over a DefiLlama flow (run.ts stamps a derivation over a defillama input 'api'; its rung inherits third_party).
   ['derived over defillama', { method: 'derived', sourceType: 'third_party', locator: { metrics: ['flow_usd.fees'], params: {} }, formula: 'flow_annualized@1' }, 'api'],
+  // R10.7: a derivation over a first-party or contract-state adapter's series records input_origin 'api' in its locator.
+  ['derived over an adapter series', { method: 'derived', sourceType: 'derived', locator: { metrics: ['flow_usd.af_buys_direct'], params: { metric: 'flow_usd.af_buys_direct', days: 91 }, input_origin: 'api' }, formula: 'flow_annualized@1' }, 'api'],
+  ['derived over defillama, input_origin written', { method: 'derived', sourceType: 'third_party', locator: { metrics: ['flow_usd.fees'], params: {}, input_origin: 'api' }, formula: 'flow_annualized@1' }, 'api'],
+  // R17's correction stays manual whatever its locator says.
+  ['manual_* with input_origin', { method: 'derived', sourceType: 'derived', locator: { note: 'x', input_origin: 'api' }, formula: 'manual_mean_of_neighbours@1' }, 'manual'],
   // A pool scan (Phase 3) reads logs.
   ['pool_scan', { method: 'measured', sourceType: 'pool_scan', locator: { contracts: ['0xabc'] }, formula: null }, 'onchain'],
   // A defillama_share level, an http_json level on a llama host, the rule-5 backfill shapes (pre-v2).
@@ -69,10 +75,12 @@ describe('originOf', () => {
     expect(originOf(fields)).toBe(stored);
   });
 
-  it('every registered adapter declares the source its readings stamp, and no unknown name is declared', () => {
-    // Retired adapters whose rows prod still holds (aero.* before the generic chain.* adapters) stay declared.
+  it('ADAPTER_ORIGINS declares exactly the contract-state adapters (the only rung originOf reads it for), plus retired ones', () => {
+    // Retired adapters whose rows prod still holds (aero.* before the generic chain.* adapters) stay declared. Whether each
+    // declared value is the one its writer stamps: tests/provenance/adapterOrigins.test.ts.
     const RETIRED = ['aero.emission_rate_annual', 'aero.staker_emission_share'];
-    expect(Object.keys(ADAPTER_ORIGINS).sort()).toEqual([...adapterNames(), ...RETIRED].sort());
+    const contractState = adapterNames().filter((n) => ADAPTER_SOURCE_TYPES[n] === 'contract_state');
+    expect(Object.keys(ADAPTER_ORIGINS).sort()).toEqual([...contractState, ...RETIRED].sort());
   });
 
   it('is total: every (method, source_type) pair gives a source, and an unknown adapter name on a contract read is on chain', () => {

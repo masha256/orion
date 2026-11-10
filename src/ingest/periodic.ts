@@ -5,6 +5,7 @@ import { insertObservation, listActiveObservations } from '../db/observations.js
 import { upsertToken, type TokenInfo } from '../db/prices.js';
 import { seriesTokens } from './apiFlow.js';
 import { fetchedProvenance } from '../provenance/locator.js';
+import { SERIES_ORIGIN } from '../provenance/origin.js';
 import { responseDigest } from '../provenance/types.js';
 import { MS_PER_DAY } from '../types.js';
 import { addDays, dayStartMs, utcDay } from './time.js';
@@ -79,7 +80,7 @@ export async function writePeriodicPayments(args: PeriodicArgs): Promise<Written
             }),
             ...(tokens ? { tokens } : {}),
           })).id;
-      written.push({ metricKey, value: p.value, observedAt, periodDays, source: 'api', observationId });
+      written.push({ metricKey, value: p.value, observedAt, periodDays, source: SERIES_ORIGIN, observationId });
     }
   };
   if (dryRun) await write(db);

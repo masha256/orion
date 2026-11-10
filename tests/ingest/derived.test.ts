@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { parseAssetYaml } from '../../src/config/load.js';
-import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
+import { getProvenanceByIds, insertObservation, listActiveObservations } from '../../src/db/observations.js';
+import { getAdapter, registerAdapter, type AdapterDef } from '../../src/ingest/adapters/registry.js';
 import { checkRevenueStale } from '../../src/ingest/alerts.js';
 import { burnMomentum, DERIVED_NAMES, flowAnnualized } from '../../src/ingest/derived.js';
 import { buildPlan } from '../../src/ingest/plan.js';
@@ -69,6 +70,32 @@ describe('fetchAsset: a revenue run rate derived from an API-series flow', () =>
     expect(r.sources.find((s) => s.sourceId === 'derived:flow_annualized')).toMatchObject({ status: 'ok', metricsWritten: ['revenue_run_rate_usd'] });
     const again = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     expect(again.sources.find((s) => s.sourceId === 'derived:flow_annualized')!.notes).toEqual(['revenue_run_rate_usd: no new day with 3 complete days behind it']);
+  });
+
+  /** The same run rate over a first-party adapter's daily series (Phase 3 R5: HYPE revenue from its own API). */
+  const fundBuys: AdapterDef = getAdapter('hype.fund_buys_daily');
+  afterEach(() => registerAdapter(fundBuys));
+  const overAdapter = yaml.replace(
+    'flow_usd.buyback: { type: flow, unit: usd, staleness_days: 7, critical: true, source: { type: defillama, slug: hyperliquid, data_type: dailyHoldersRevenue } }',
+    'flow_usd.buyback: { type: flow, unit: usd, staleness_days: 7, critical: true, source: { type: adapter, name: hype.fund_buys_daily, params: { pair: "@107", days: 5 } } }',
+  );
+
+  it('over a first-party adapter series: writes the run rate, records input_origin api in its locator, and reads it back as api (R10.7)', async () => {
+    expect(overAdapter).not.toBe(yaml);
+    const points = ['2026-09-14', '2026-09-15', '2026-09-16', '2026-09-17', '2026-09-18'].map((day, i) => ({ day, value: 100 + 10 * i }));
+    registerAdapter({ ...fundBuys, run: async () => ({ kind: 'daily_series', points, detail: 'test fills' }) });
+    const h = harness(testDb(), { loaded: parseAssetYaml(overAdapter) });
+    const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
+    expect(r.sources.find((s) => s.sourceId === 'derived:flow_annualized')).toMatchObject({ status: 'ok', metricsWritten: ['revenue_run_rate_usd'] });
+    const rows = await listActiveObservations(h.db, 'hype', 'revenue_run_rate_usd');
+    expect(rows.map((o) => [o.observedAt.slice(0, 10), o.value, o.source])).toEqual([
+      ['2026-09-17', (330 * 365) / 3, 'api'], ['2026-09-18', (360 * 365) / 3, 'api'], ['2026-09-19', (390 * 365) / 3, 'api'],
+    ]);
+    expect(r.written.filter((w) => w.metricKey === 'revenue_run_rate_usd').map((w) => w.source)).toEqual(['api', 'api', 'api']);
+    const [p] = await getProvenanceByIds(h.db, [rows[0].id]);
+    // Merged into the configured locator: every key it had stays.
+    expect(p).toMatchObject({ method: 'derived', sourceType: 'derived', formula: 'flow_annualized@1' });
+    expect(p.locator).toEqual({ metrics: ['flow_usd.buyback'], params: { metric: 'flow_usd.buyback', days: 3 }, input_origin: 'api' });
   });
 
   it('reads a manual daily row that replaced a fetched day outside the revision window, so the window stays complete and the run rate moves', async () => {
@@ -157,6 +184,9 @@ describe('fetchAsset: derived metrics and the stale-revenue alert', () => {
     ]);
     expect(index[0]).toMatchObject({ source: 'onchain', periodDays: null, sourceDetail: 'derived burn_momentum(flow_usd.fees_programmatic, 3d)' });
     expect(r.sources.find((s) => s.sourceId === 'derived:burn_momentum')).toMatchObject({ status: 'ok', metricsWritten: ['usage_index'] });
+    // Over transfer scans the locator is the configured one, with no input_origin key (R10.7: byte-identical provenance).
+    const [p] = await getProvenanceByIds(h.db, [index[0].id]);
+    expect(p.locator).toEqual({ metrics: ['flow_usd.fees_programmatic'], params: { metric: 'flow_usd.fees_programmatic', days: 3 } });
 
     const again = await fetchAsset(h.db, h.loaded, NOW, h.deps);
     expect(again.written.filter((w) => w.metricKey === 'usage_index')).toEqual([]);

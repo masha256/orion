@@ -111,8 +111,7 @@ describe('approving observation proposals', () => {
   it('confirm_observation works when the asset YAML is gone or invalid: the row keeps its own config hash', async () => {
     for (const [what, damage] of [['gone', () => rmSync(yamlPath)], ['invalid', () => writeFileSync(yamlPath, 'id: mini\nmetrics: [not, a, map]\n')]] as const) {
       writeFileSync(yamlPath, AGENT_ASSET_YAML.trimStart());
-      // Every row has provenance since 0006 (a row without, which the confirm built under 'unloaded', cannot exist): the
-      // confirm copies it and needs no YAML.
+      // Every row has provenance since 0006: the confirm copies it and needs no YAML.
       const at = what === 'gone' ? '2026-06-29T12:00:00.000Z' : '2026-06-29T13:00:00.000Z';
       const provisional = await insertObservation(w.db, {
         provenance: testProvenance('manual', true), assetId: 'mini', metricKey: 'staked_supply', observedAt: at, value: 80, status: 'provisional',

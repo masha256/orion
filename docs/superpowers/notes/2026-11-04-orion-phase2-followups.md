@@ -250,14 +250,14 @@ Conventions chosen (review):
   dropped, a key-shaped last segment after `/vN/` on any host and any 20+ character segment with a digit are dropped,
   except an EVM address or hash (`0x` + 40 or 64 hex) off the keyed hosts; URLs inside text are scrubbed too. The test fixture is the fake key of `tests/ingest/rpc.test.ts`, read from that file.
 - `confirm` copies the provisional row's provenance and adds `approved_by` / `approved_at` to a disclosure locator. It
-  never needs the asset YAML: a provisional row written before 0004 gets `config_hash` = `unloaded` when the YAML is
-  gone or invalid (`data confirm`, a `confirm_observation` approval).
+  never needs the asset YAML (`data confirm`, a `confirm_observation` approval). (Before 0006 a provisional row written
+  before 0004 got `config_hash` = `unloaded` when the YAML was gone or invalid; removed in Task 10 fix round 1.)
 - Income statement v2 `provenance` reads the rows when every stored day a revenue line reads has a mapped row
   (`basis: 'observations'`): `methods` splits each metric line's annualized amount by its rows' method (a manual day is
   disclosed; a periodic stream's provisional tail is derived; a derived/estimate line stays derived), `daysMeasured`
   counts the window days with a measured row (it was "days the line existed" for a young line, null otherwise), and
   `sources` lists the rows' `<rung>:<adapter | provider | host | chain>`. Otherwise (history not backfilled) it is the
-  config's, as before (`basis: 'config'`). No other v2 field and no legacy byte moves (test: tests/report/provenance.test.ts).
+  config's, as before (`basis: 'config'`; since Task 10 only for a pure input without provenance). No other v2 field and no legacy byte moves (test: tests/report/provenance.test.ts).
 - `latest_levels` rows (and so the `levels` snapshot body) now carry `sourceType` and `locator`.
 
 History backfill: `orion db backfill-provenance [--dry-run] [--json]` maps rows with no provenance by plan correction 1
@@ -580,12 +580,21 @@ and the table has no method to derive it from.
 - One derivation (`src/provenance/origin.ts`): `originOf({method, sourceType, locator, formula})` / `originOfRow` gives
   the old `source` value; `Observation.source` (so the CLI's and the analyst pack's `source` field, the flow-conflict
   and `--adopt` rule, the DefiLlama revision-window manual-row rule, the token backfill's skips, Solana's supply drop,
-  the revision check) all read it. Inputs are the method, the rung, `locator.adapter` (`ADAPTER_ORIGINS`: each
-  adapter's stamp; only contract-state adapters consult it, `solana.supply_burn_daily` is the one `api`) and the
-  formula prefix (`manual_*` is manual), per R10.2a. Table test: `tests/provenance/origin.test.ts` (the controller's
-  prod matrix plus the writer shapes prod lacks).
-- Writers no longer pass `source`. A fetched reading whose stamp would read back differently is refused
-  (`origin_mismatch`, `src/ingest/run.ts`), never stored under the wrong origin.
+  the revision check) all read it. Inputs are the method, the rung, `locator.adapter` (`ADAPTER_ORIGINS`: the
+  contract-state adapters only, the one rung `originOf` reads it for; `solana.supply_burn_daily` is the one `api`),
+  `locator.input_origin` (R10.7, below) and the formula prefix (`manual_*` is manual), per R10.2a. Table test:
+  `tests/provenance/origin.test.ts` (the controller's prod matrix plus the writer shapes prod lacks).
+- Writers no longer pass `source`. A fetched level or schedule reading whose stamp would read back differently is
+  refused (`origin_mismatch`, `src/ingest/run.ts`), never stored under the wrong origin. The series writers
+  (`writeApiFlow`, `writePeriodicPayments`) stamp `SERIES_ORIGIN` (`api`); `tests/provenance/adapterOrigins.test.ts`
+  runs every registered adapter once on fakes and fails when its writer's stamp is not what `originOf` reads back
+  (a contract-state series declared `onchain` would otherwise see its own rows as foreign conflicts and stall).
+- Derived rows (fix round 1, ruling R10.7): a derivation whose input metrics are sourced from DefiLlama or an adapter
+  (run.ts's `apiInputs > 0`, the old stamp) writes `input_origin: "api"` merged into its configured locator, and only
+  then, so a derivation over transfer scans keeps a byte-identical provenance; `originOf(derived)` = `manual` for
+  `manual_*`, else `api` with `input_origin`, else `api` on a third-party rung (rows written before R10.7), else
+  `onchain`. Every prod derived row has no `input_origin` and stays `onchain`. The derived branch of the guard is gone,
+  so Phase 3 R5's derivations over a first-party adapter are stored (as `api`).
 - `data set` lost `--source` (R10.3, the smaller change: a hand-entered row is a disclosure, origin `manual`;
   `--citation` stays required). `db backfill-provenance` and `src/provenance/backfill.ts` are gone (nothing can be
   null; it read `source`); `defillamaUrlOf` moved to `src/provenance/locator.ts` (the token backfill uses it).
@@ -596,9 +605,8 @@ and the table has no method to derive it from.
 - Runbook: `docs/ops/deploy.md`, "Phase 2 tail: release with 0006 (breaking)" (pre-deploy null check, stage then prod
   with `--breaking`, no rollback past it). `deploy.sh` / `orion-remote switch` already refuse a pending breaking
   migration without `--breaking`, dump first with it, and refuse a rollback after it: no gap, no new test.
-- Open (controller ruling): a derivation over a first-party or contract-state ADAPTER flow is stamped `api` by
-  `run.ts`, but its provenance (`derived`, rung `derived`) is the same as a derivation over transfer scans (`onchain`).
-  No asset config has one (prod: every derived row is over transfer scans), so `originOf` maps `derived/derived` to
-  `onchain` and the run.ts guard refuses such a reading (`origin_mismatch`) instead of storing it mislabelled. Making
-  it storable needs a ruling (e.g. a formula or locator marker, or derived = `onchain` by definition).
+- Fallbacks 0006 made unreachable, removed in fix round 1 (M-4): `confirmObservation`'s `by.configHash` /
+  `unloaded` branch (and `src/provenance/configHash.ts`): a confirm copies the row's own provenance; the income
+  statement's per-day "unbackfilled window" fallback to `basis: 'config'`: with the loader's provenance the basis is
+  always `observations`. `basis: 'config'` remains only for a pure input without provenance (unit tests, `yieldReport`).
 

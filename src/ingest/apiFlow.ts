@@ -5,6 +5,7 @@ import type { FlowConflict, SourceOutcome } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
 import { upsertToken, USD_TOKEN_REF, type ObservationTokens, type TokenInfo } from '../db/prices.js';
 import { fetchedProvenance } from '../provenance/locator.js';
+import { SERIES_ORIGIN } from '../provenance/origin.js';
 import { responseDigest } from '../provenance/types.js';
 import { MS_PER_DAY } from '../types.js';
 import { findFlowConflicts } from './flow.js';
@@ -73,7 +74,7 @@ export interface ApiFlowResult {
 async function storedApiDays(db: Db, assetId: string, metricKey: string): Promise<Map<string, number>> {
   const days = new Map<string, number>();
   for (const o of await listActiveObservations(db, assetId, metricKey)) {
-    if (o.source === 'api' && o.periodDays === 1) days.set(utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY), o.value);
+    if (o.source === SERIES_ORIGIN && o.periodDays === 1) days.set(utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY), o.value);
   }
   return days;
 }
@@ -128,7 +129,7 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
   //    a manual row inside the revision window is a decision already taken (AERO's 2026-09-09 artifact, replaced by hand):
   //    its days are left alone, so a 30-day revision window does not refuse the whole series over it. A rescan still
   //    refuses it unless --adopt.
-  const allConflicts = await findFlowConflicts(db, asset.id, metricKey, rangeStartMs, rangeEndMs, 'api');
+  const allConflicts = await findFlowConflicts(db, asset.id, metricKey, rangeStartMs, rangeEndMs, SERIES_ORIGIN);
   const honoured = cursor && !args.rescan && !args.adopt ? allConflicts.filter((c) => c.adoptable) : [];
   const conflicts = allConflicts.filter((c) => !honoured.includes(c));
   const manualDays = new Set<string>();
@@ -204,7 +205,7 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
           ...(tokens ? { tokens } : {}),
         })).id;
       }
-      result.written.push({ metricKey, value, observedAt, periodDays: 1, source: 'api', observationId });
+      result.written.push({ metricKey, value, observedAt, periodDays: 1, source: SERIES_ORIGIN, observationId });
       if (newest === null || day > newest) newest = day;
     }
     // The cursor never moves backwards; lastBlock is meaningless for an API series.

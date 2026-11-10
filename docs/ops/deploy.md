@@ -332,11 +332,22 @@ with nothing else in it. `db backfill-provenance` is gone with it (nothing can b
 `--source` (a hand-entered row is a disclosure, origin `manual`; `--citation` stays required).
 
 1. **Pre-deploy check, on each env right before its switch** (all three must be 0; any other count: stop, the
-   migration would fail on the first null and nothing would change, but find the writer first):
+   migration would fail on the first null and nothing would change; remedies below):
    ```
    ssh orion-prod sql-ro "select (select count(*) from observations where method is null or source_type is null or locator is null or code_version is null or config_hash is null) as obs_null, (select count(*) from observations where source_type = 'disclosure' and citation_url is null and code_version <> 'pre-v2') as disclosure_uncited, (select count(*) from latest_levels where source_type is null or locator is null) as levels_null"
    ```
    Staging has no `sql-ro` verb: as the env user (`sudo -iu orion-stage`), `o db query-ro "<the same select>"`.
+   Remedies, then run the check again:
+   - `obs_null` or `disclosure_uncited` > 0: every writer since release 2 sets these, so a writer still omits one. Find
+     it (the rows' `fetched_at` and `metric_key` name the run) and fix it in a release before this one.
+   - `levels_null` > 0: no writer leaves these null (the hourly levels read writes both); it is a row that has not been
+     rewritten since 0004. List them (prod: `sql-ro`; staging: `o db query-ro` as above): `select asset_id, metric_key,
+     observed_at from latest_levels where source_type is null or locator is null`. Then, per row:
+     - the asset is active and its YAML still declares the metric: `ssh orion-<env> job run-now levels` and wait for it
+       to finish (`jobs`): it rewrites every level metric of every active asset;
+     - the asset is paused (the hourly read skips it): `asset resume <a>`, `job run-now levels`, then
+       `asset pause <a> --reason <text>` again if it should stay paused;
+     - the asset is missing, or its YAML no longer declares the metric: `job run-now retention` deletes the row.
 2. **Order: stage, one scheduled nightly soak, then prod**, both with `--breaking`:
    ```
    scripts/release/deploy.sh stage <tag> --breaking     # switch: pg_dump first, then db migrate --breaking: applied [6]

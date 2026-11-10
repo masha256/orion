@@ -13,7 +13,7 @@ import type { Provenance } from '../../src/provenance/types.js';
 import { useTestDb } from '../helpers/db.js';
 import { TEST_PROVENANCE } from '../helpers/provenance.js';
 
-const BY = { approvedBy: 'test', configHash: 'test' };
+const BY = { approvedBy: 'test' };
 
 const testDb = useTestDb();
 
@@ -169,7 +169,7 @@ describe('provenance columns (0004)', () => {
   it('confirm copies the provisional row\'s provenance and records who approved it', async () => {
     const disclosed: Provenance = { method: 'disclosed', sourceType: 'disclosure', chain: null, locator: { citation_url: 'https://example.com/a', approved_by: null, approved_at: null }, codeVersion: 'old', configHash: 'h0' };
     const p = await insertObservation(db, { ...base, observedAt: '2026-06-30', value: 5, status: 'provisional', citationUrl: 'https://example.com/a', provenance: disclosed });
-    const c = await confirmObservation(db, p.id, '2026-07-01T00:00:00.000Z', { approvedBy: 'user', configHash: 'h1' });
+    const c = await confirmObservation(db, p.id, '2026-07-01T00:00:00.000Z', { approvedBy: 'user' });
     expect((await getProvenanceByIds(db, [c.id]))[0]).toMatchObject({
       method: 'disclosed', sourceType: 'disclosure', locator: { citation_url: 'https://example.com/a', approved_by: 'user', approved_at: '2026-07-01T00:00:00.000Z' },
       codeVersion: 'dev', configHash: 'h0',

@@ -320,8 +320,8 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
 
 /**
  * Per flow metric, the provenance of the row each day's value came from: the rows `dailyOf` reads (confirmed, one day)
- * or, for a periodic stream, `periodicDaily` (confirmed, spread over the days a payment covers). A row written before
- * 0004 and not yet backfilled has a null method.
+ * or, for a periodic stream, `periodicDaily` (confirmed, spread over the days a payment covers), so every day those
+ * series hold has an entry here.
  */
 async function provenanceByDay(db: Db, assetId: string, metrics: string[], periodic: Set<string>): Promise<Map<string, Map<string, DayProvenance>>> {
   const out = new Map<string, Map<string, DayProvenance>>(metrics.map((m) => [m, new Map()]));
@@ -330,7 +330,7 @@ async function provenanceByDay(db: Db, assetId: string, metrics: string[], perio
     const n = r.periodDays ?? 1;
     if (periodic.has(r.metricKey) ? n < 1 : n !== 1) continue;
     const end = utcDay(new Date(r.observedAt).getTime() - MS_PER_DAY);
-    const p: DayProvenance = { method: r.method, label: r.sourceType === null ? null : provenanceLabel(r.sourceType, r.chain, r.locator) };
+    const p: DayProvenance = { method: r.method, label: provenanceLabel(r.sourceType, r.chain, r.locator) };
     for (let i = 0; i < n; i++) out.get(r.metricKey)!.set(addDays(end, -i), p);
   }
   return out;

@@ -56,7 +56,7 @@ export interface ReportInput {
   checks?: CheckResult[];
   /**
    * Per flow metric and UTC day, the provenance of the stored row behind `daily`'s value (income statement v2 only; v1
-   * never reads it). Absent: the statement's provenance falls back to the config (`basis: 'config'`).
+   * never reads it). The loader always passes it; absent (a pure input), the statement's provenance is the config's (`basis: 'config'`).
    */
   provenance?: Map<string, Map<string, DayProvenance>>;
   /**
@@ -69,10 +69,10 @@ export interface ReportInput {
   priceBasis?: Map<string, Map<string, PriceBasis>>;
 }
 
-/** The method and `<rung>:<what>` label of the row a day's value came from; method null on unmapped history. */
+/** The method and `<rung>:<what>` label of the row a day's value came from (both NOT NULL since 0006). */
 export interface DayProvenance {
-  method: 'measured' | 'derived' | 'disclosed' | null;
-  label: string | null;
+  method: 'measured' | 'derived' | 'disclosed';
+  label: string;
 }
 
 /** Streams younger than this are left out of the second revenue growth figure (a new stream inflates 90d/90d). */

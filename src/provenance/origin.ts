@@ -10,11 +10,13 @@ import type { Locator, ProvenanceMethod } from './types.js';
  * - disclosed: a constant is `api` (the constant source stamped it so); anything else (a disclosure: `data set`, an
  *   approved observation proposal, the analyst's ledger, a confirmed provisional row, a pre-v2 seed) is `manual`.
  * - derived: a formula named `manual_*` (R17's correction of a DefiLlama day to the mean of its neighbours) is `manual`;
- *   a derivation over a third-party rung (DefiLlama) is `api`; any other derivation (over transfer scans) is `onchain`.
+ *   a derivation whose inputs are sourced from DefiLlama or an adapter (run.ts writes `input_origin: 'api'` into its
+ *   locator then, ruling R10.7) or that sits on a third-party rung (DefiLlama, rows written before R10.7) is `api`; any
+ *   other derivation (over transfer scans) is `onchain`.
  * - measured: a log or pool scan is `onchain`; a contract read is `onchain` unless its adapter declares otherwise
  *   (ADAPTER_ORIGINS: Solana's supply drop is an `api` series); an API rung (first party, market data, third party) is `api`.
  *
- * Inputs are the method, the rung, the locator's `adapter` and the formula's prefix only (R10.2a).
+ * Inputs are the method, the rung, the locator's `adapter` and `input_origin`, and the formula's prefix only (R10.2a, R10.7).
  */
 
 export interface OriginFields {
@@ -25,9 +27,12 @@ export interface OriginFields {
 }
 
 /**
- * The source each code adapter's readings stamp (`level(...)`, `source: ...` in the adapter, or the series writer it
- * feeds: an adapter's daily series is written by `writeApiFlow` as `api`). Only a contract-state adapter consults it; the
- * rest are listed so a new adapter has to say. Retired names whose rows history still holds stay listed.
+ * The origin a contract-state adapter's rows carry, by adapter name: the only rung where `originOf` needs the adapter
+ * (every other measured rung is `api` or `onchain` by the rung alone, so first-party and third-party adapters are not
+ * listed). A level or schedule stamps its reading's `source`; a daily series or periodic payments are stamped
+ * SERIES_ORIGIN by their writer (Solana's supply drop). tests/provenance/adapterOrigins.test.ts runs every registered
+ * adapter and fails when an entry here, or a missing one, disagrees with what its writer stamps. Retired names whose
+ * rows history still holds stay listed.
  */
 export const ADAPTER_ORIGINS: Readonly<Record<string, 'onchain' | 'api'>> = {
   'aero.emission_rate_annual': 'onchain', // retired (main d2dad4a), rows on prod
@@ -38,24 +43,18 @@ export const ADAPTER_ORIGINS: Readonly<Record<string, 'onchain' | 'api'>> = {
   'chain.v2_pool_twap_price': 'onchain',
   'chain.cl_pool_spot_price': 'onchain',
   'crv.emission_rate_annual': 'onchain',
-  'hype.total_supply': 'api',
-  'hype.staked_supply': 'api',
-  'hype.emission_rate_annual': 'api',
-  'hype.fund_buys_daily': 'api',
-  'hype.reserve_yield_payments': 'api',
-  'lit.treasury_buys_daily': 'api',
-  'lit.exchange_fees_daily': 'api',
-  'lit.app_fee_share': 'api',
-  'lit.staking_pool': 'api',
-  'lit.unlocks_next_year': 'api',
   'solana.token_supply': 'onchain',
   'solana.owner_balance': 'onchain',
   'solana.supply_burn_daily': 'api',
   'vvv.staker_emission_share': 'onchain',
   'vvv.diem_target_supply': 'onchain',
-  'vvv.staker_share_from_api': 'api',
-  'vvv.burn_history_tokens': 'api',
 };
+
+/** The origin the series writers (`writeApiFlow`, `writePeriodicPayments`) stamp on every row they write. */
+export const SERIES_ORIGIN = 'api' as const;
+
+/** The locator key a derivation over DefiLlama or adapter inputs carries (R10.7); written only with the value 'api'. */
+export const INPUT_ORIGIN_KEY = 'input_origin';
 
 const MANUAL_FORMULA = 'manual_';
 
@@ -65,6 +64,7 @@ export function originOf(p: OriginFields): ObservationSource {
       return p.sourceType === 'constant' ? 'api' : 'manual';
     case 'derived':
       if ((p.formula ?? '').startsWith(MANUAL_FORMULA)) return 'manual';
+      if (p.locator?.[INPUT_ORIGIN_KEY] === 'api') return 'api';
       return p.sourceType === 'third_party' ? 'api' : 'onchain';
     case 'measured':
       switch (p.sourceType) {
