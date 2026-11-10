@@ -238,7 +238,7 @@ export class Ledger {
         const realId = new Map<number, number>();
         for (const o of this.stagedObservations) {
           const row = await insertObservation(t, {
-            assetId: this.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value, source: 'manual',
+            assetId: this.assetId, metricKey: o.metricKey, observedAt: o.observedAt, periodDays: o.periodDays, value: o.value,
             sourceDetail: `research:${this.persona}:run ${ctx.agentRunId ?? 'none'}`, status: 'provisional', citationUrl: o.citationUrl,
             quotedText: o.quotedText, fetchedAt: nowIso,
             // The analyst's cited figure: disclosed, not yet approved (the user's confirm adds who and when).

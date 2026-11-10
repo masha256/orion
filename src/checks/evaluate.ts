@@ -5,6 +5,7 @@ import type { Db } from '../db/connection.js';
 import type { FetchRunDetail } from '../db/fetchRuns.js';
 import { listActiveObservations, type Observation } from '../db/observations.js';
 import { addDays, dayStartMs } from '../ingest/time.js';
+import { originOfRow, type OriginRow } from '../provenance/origin.js';
 import { MS_PER_DAY } from '../types.js';
 import { resolveChecks, type ResolvedCheck, type Term } from './schema.js';
 
@@ -166,12 +167,12 @@ async function evaluateOne(db: Db, store: Store, asset: AssetConfig, c: Resolved
     case 'revision': {
       const first = addDays(day, 1 - c.days);
       const detail: Record<string, unknown> = { ...tol, metric: c.metric, days: c.days };
-      const rows = await db.all<{ id: number; observed_at: string; value: number; source: string; superseded_by: number | null }>(
-        `SELECT id, observed_at, value, source, superseded_by FROM observations
+      const rows = (await db.all<{ id: number; observed_at: string; value: number; superseded_by: number | null } & OriginRow>(
+        `SELECT id, observed_at, value, superseded_by, method, source_type, locator, formula FROM observations
          WHERE asset_id = $1 AND metric_key = $2 AND period_days = 1 AND status = 'confirmed' AND observed_at >= $3 AND observed_at <= $4
          ORDER BY id`,
         [asset.id, c.metric, flowStamp(first), flowStamp(day)],
-      );
+      )).map((r) => ({ ...r, source: originOfRow(r) }));
       const active = await store.flowDay(c.metric, day);
       if (active === undefined) return incomplete({ ...detail, ...missingDetail([`${c.metric}@${day}`]) });
       // Per stamped day: the row in force, and the first row the same source wrote for that day.

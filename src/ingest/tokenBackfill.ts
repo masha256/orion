@@ -4,7 +4,7 @@ import type { Db } from '../db/connection.js';
 import { fillObservationTokens, getTokensByIds, isActiveObservation, listActiveObservations, type Observation } from '../db/observations.js';
 import { MS_PER_HOUR, storedPriceHours, upsertPrices, upsertToken, USD_TOKEN, type ObservationTokens, type TokenInfo } from '../db/prices.js';
 import { COINGECKO_PRICE_SOURCE, fetchHourlyRange, hourlyPriceRows } from '../prices/coingeckoHourly.js';
-import { defillamaUrlOf } from '../provenance/backfill.js';
+import { defillamaUrlOf } from '../provenance/locator.js';
 import { MS_PER_DAY, OrionError } from '../types.js';
 import { findAdapter } from './adapters/registry.js';
 import { memberToken, openDayScanner, readDecimals, scanUpperBound, uniqueTokens } from './flow.js';

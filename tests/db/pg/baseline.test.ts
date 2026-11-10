@@ -84,8 +84,8 @@ describe('baseline', () => {
             [config.schema, table],
           )
         ).map((c) => c.column_name);
-        // 0004 appends the provenance columns to observations, after every baseline column.
-        expect(pgCols, table).toEqual(table === 'observations' ? [...liteCols, ...PROVENANCE_COLUMNS] : liteCols);
+        // 0004 appends the provenance columns to observations, after every baseline column; 0006 drops `source`.
+        expect(pgCols, table).toEqual(table === 'observations' ? [...liteCols.filter((c) => c !== 'source'), ...PROVENANCE_COLUMNS] : liteCols);
       }
     } finally {
       lite.close();

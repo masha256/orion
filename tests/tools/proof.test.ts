@@ -7,7 +7,7 @@ import { openDb, type DatabaseConfig } from '../../src/db/connection.js';
 import { openPgDb, type PgDb } from '../../src/db/pg/pool.js';
 import { CARRIED_TABLES } from '../../tools/import-sqlite/carry.js';
 import { runCli } from '../../tools/import-sqlite/cli.js';
-import { importSqlite, type ImportManifest } from '../../tools/import-sqlite/importer.js';
+import { IMPORT_SCHEMA_LEVEL, importSqlite, type ImportManifest } from '../../tools/import-sqlite/importer.js';
 import { proveImport } from '../../tools/import-sqlite/proof.js';
 import { compareReports } from '../../tools/import-sqlite/reports.js';
 import { rowHash } from '../../tools/import-sqlite/rowHash.js';
@@ -36,11 +36,11 @@ describe('rowHash', () => {
 
     const f = buildSqliteFixture();
     dirs.push(f.dir);
-    const config = await createTestSchema();
+    const config = await createTestSchema({ upTo: IMPORT_SCHEMA_LEVEL });
     try {
       await importSqlite({ from: f.path, to: config, assetsDir: f.assetsDir });
       const lite = new Database(f.path, { readonly: true });
-      const db = await openDb(config);
+      const db = await openDb(config, { checkSchema: false }); // the import schema sits at IMPORT_SCHEMA_LEVEL
       try {
         for (const t of CARRIED_TABLES) {
           const sql = `SELECT ${t.columns.map((c) => c.name).join(', ')} FROM ${t.table} ORDER BY ${t.primaryKey.join(', ')}`;
@@ -69,7 +69,7 @@ describe('proof', () => {
   let f: SqliteFixture;
   let manifest: ImportManifest;
   beforeEach(async () => {
-    config = await createTestSchema();
+    config = await createTestSchema({ upTo: IMPORT_SCHEMA_LEVEL });
     pg = await openPgDb(config);
     f = buildSqliteFixture();
     dirs.push(f.dir);

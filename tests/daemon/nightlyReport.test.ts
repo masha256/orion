@@ -17,7 +17,7 @@ import { useTestDb } from '../helpers/db.js';
 import { FakeClock } from '../helpers/clock.js';
 import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 import { cleanupAfterAll, levelsContext, levelsWorld } from '../helpers/levelsWorld.js';
-import { TEST_PROVENANCE } from '../helpers/provenance.js';
+import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 const worlds: { cleanup(): void }[] = [];
@@ -338,8 +338,8 @@ reporting:
     for (let i = 0; i < 20; i++) {
       const day = addDays('2026-10-30', -i); // 3 days behind the 2026-11-02 report day
       await insertObservation(testDb(), {
-      provenance: TEST_PROVENANCE,
-        assetId: 'hype', metricKey: 'flow_usd.buyback', observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value: 2, source: 'api', fetchedAt: at(0),
+      provenance: testProvenance('api'),
+        assetId: 'hype', metricKey: 'flow_usd.buyback', observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value: 2, fetchedAt: at(0),
       });
     }
     await refresh('mini', 'done');

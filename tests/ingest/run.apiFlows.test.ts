@@ -9,7 +9,7 @@ import { DEFILLAMA_REVISION_DAYS, REVISION_DAYS } from '../../src/ingest/apiFlow
 import { fetchAsset, type FetchResult } from '../../src/ingest/run.js';
 import { harness, type Harness } from '../helpers/fetchHarness.js';
 import { useTestDb } from '../helpers/db.js';
-import { TEST_PROVENANCE } from '../helpers/provenance.js';
+import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -79,7 +79,7 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
 
   it('refuses to write over a manual row without --adopt, writes nothing on a dry run, and retires it with --adopt', async () => {
     const h = world(SERIES);
-    const manual = await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-18', periodDays: 7, value: 5000, source: 'manual', fetchedAt: '2026-09-18T00:00:00Z' });
+    const manual = await insertObservation(h.db, { provenance: testProvenance('manual'), assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-18', periodDays: 7, value: 5000, fetchedAt: '2026-09-18T00:00:00Z' });
     const refused = await fetch(h);
     expect(source(refused)).toMatchObject({ status: 'skipped', metricsWritten: [], conflicts: [{ observationId: manual.id, adoptable: true }] });
     expect(source(refused).notes.join('\n')).toMatch(/Re-run with --adopt/);
@@ -109,7 +109,7 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
   it('--adopt retires a manual row that overlaps only unchanged days, so nothing is counted twice', async () => {
     const h = world(SERIES);
     await fetch(h);
-    const manual = await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-18T06:00:00Z', periodDays: 1, value: 777, source: 'manual', fetchedAt: '2026-09-18T06:00:00Z' });
+    const manual = await insertObservation(h.db, { provenance: testProvenance('manual'), assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-18T06:00:00Z', periodDays: 1, value: 777, fetchedAt: '2026-09-18T06:00:00Z' });
     // A routine run leaves a manual row in the revision window alone (a decision already taken), days it covers included.
     const routine = await fetch(h);
     expect(source(routine)).toMatchObject({ status: 'ok', conflicts: [] });
@@ -127,7 +127,7 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
 
   it('reports no retirement when the transaction rolled back', async () => {
     const h = world({ ...SERIES, '2026-09-18': -5 });
-    const manual = await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-15', periodDays: 1, value: 5000, source: 'manual', fetchedAt: '2026-09-15T00:00:00Z' });
+    const manual = await insertObservation(h.db, { provenance: testProvenance('manual'), assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-15', periodDays: 1, value: 5000, fetchedAt: '2026-09-15T00:00:00Z' });
     const r = await fetch(h, { adopt: true });
     expect(source(r)).toMatchObject({ status: 'failed', retiredObservationIds: [] });
     expect(await listActiveObservations(h.db, 'hype', METRIC)).toHaveLength(1);
@@ -164,7 +164,7 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     const A = { '2026-09-10': 10, '2026-09-11': 11, '2026-09-13': 13, '2026-09-14': 14, '2026-09-15': 15, '2026-09-16': 16, '2026-09-17': 17, '2026-09-18': 18 };
     const h = world(A);
     await fetch(h);
-    const fill = await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-13T00:00:00Z', periodDays: 1, value: 12, source: 'manual', fetchedAt: '2026-09-19T00:00:00Z' });
+    const fill = await insertObservation(h.db, { provenance: testProvenance('manual'), assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-13T00:00:00Z', periodDays: 1, value: 12, fetchedAt: '2026-09-19T00:00:00Z' });
     const r = await fetch(h);
     expect(source(r)).toMatchObject({ status: 'ok', conflicts: [], retiredObservationIds: [] });
     expect(source(r).notes.join('\n')).not.toMatch(/skipped/);
@@ -196,7 +196,7 @@ describe('fetchAsset: a flow whose primary is a DefiLlama daily series', () => {
     const h = world(A);
     await fetch(h);
     // Covers 09-11T12:00 to 09-12T12:00: half of 09-11 and half of 09-12, both before the revision range 09-16..09-18.
-    const manual = await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-12T12:00:00Z', periodDays: 1, value: 777, source: 'manual', fetchedAt: '2026-09-19T00:00:00Z' });
+    const manual = await insertObservation(h.db, { provenance: testProvenance('manual'), assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-12T12:00:00Z', periodDays: 1, value: 777, fetchedAt: '2026-09-19T00:00:00Z' });
     const r = await fetch(world({ ...A, '2026-09-12': 12 }, { db: h.db }));
     expect(source(r)).toMatchObject({ status: 'ok', conflicts: [], retiredObservationIds: [] });
     expect(r.written).toEqual([]);
@@ -229,12 +229,12 @@ describe('fetchAsset: a DefiLlama series is read again 30 days back on every run
     expect((await byDay(h))['2026-09-12']).toBe(BASE['2026-09-11']); // outside the window: unchanged
   });
 
-  it('leaves a manual row inside the 30 days alone and writes every other revised day', async () => {
+  it.each([['a correction (R17 2a shape)', false], ['a cited disclosure (data set)', true]] as const)('leaves a manual row inside the 30 days alone and writes every other revised day: %s', async (_shape, cited) => {
     const h = world(BASE, { now: NOW }, null);
     await fetch(h);
-    const manual = await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-10T00:00:00Z', periodDays: 1, value: 1, source: 'manual', fetchedAt: '2026-09-24T00:00:00Z' });
+    const manual = await insertObservation(h.db, { ...(cited ? { citationUrl: 'https://example.test/c' } : {}), provenance: testProvenance('manual', cited), assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-10T00:00:00Z', periodDays: 1, value: 1, fetchedAt: '2026-09-24T00:00:00Z' });
     // The source still has its artifact on 09-09 (outside) and revises 09-20 (inside); a 09-15 manual row is inside.
-    const fix = await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-16T00:00:00Z', periodDays: 1, value: 2, source: 'manual', fetchedAt: '2026-09-24T00:00:00Z' });
+    const fix = await insertObservation(h.db, { ...(cited ? { citationUrl: 'https://example.test/c' } : {}), provenance: testProvenance('manual', cited), assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-16T00:00:00Z', periodDays: 1, value: 2, fetchedAt: '2026-09-24T00:00:00Z' });
     const r = await fetch(world({ ...BASE, '2026-09-15': 9999, '2026-09-20': 7777 }, { db: h.db, now: NOW }, null));
     expect(source(r)).toMatchObject({ status: 'ok', conflicts: [] });
     expect(r.written.map((w) => [w.observedAt.slice(0, 10), w.value])).toEqual([['2026-09-21', 7777]]);

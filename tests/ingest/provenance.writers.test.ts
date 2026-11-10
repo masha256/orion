@@ -150,7 +150,7 @@ describe('provenance: every writer fills it', () => {
 
   it('disclosure row: method disclosed, citation required', async () => {
     const base: NewObservation = {
-      assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-01', value: 1, source: 'manual', fetchedAt: '2026-09-01',
+      assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-09-01', value: 1, fetchedAt: '2026-09-01',
       provenance: { method: 'disclosed', sourceType: 'disclosure', chain: null, locator: { citation_url: null }, codeVersion: 'dev', configHash: 'h' },
     };
     await expect(insertObservation(testDb(), base)).rejects.toThrow(expect.objectContaining({ code: 'citation_required' }));

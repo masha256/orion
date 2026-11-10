@@ -31,7 +31,8 @@ export async function proveImport(opts: { from: string; to: DatabaseConfig; asse
   try {
     const plan = carryPlan(sqlite, loadAssetsDir(opts.assetsDir));
     const seqs = new Map((sqlite.prepare('SELECT name, seq FROM sqlite_sequence').all() as { name: string; seq: number }[]).map((r) => [r.name, r.seq]));
-    const db = await openDb(opts.to);
+    // The import's schema sits at IMPORT_SCHEMA_LEVEL, behind this build: read it without the schema check.
+    const db = await openDb(opts.to, { checkSchema: false });
     try {
       const tables: TableProof[] = [];
       for (const t of plan) {

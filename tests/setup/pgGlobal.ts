@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import type { DatabaseConfig } from '../../src/db/connection.js';
-import { applyMigrations } from '../../src/db/pg/migrate.js';
+import { applyMigrations, loadMigrations } from '../../src/db/pg/migrate.js';
 import { openPgDb } from '../../src/db/pg/pool.js';
 
 /**
@@ -77,9 +77,11 @@ export function newTestSchemaName(): string {
 
 /**
  * A fresh schema for one test file, migrated unless `migrate: false`; named `opts.schema` when given (a test schema
- * name, e.g. one a test freed by renaming). Drop it with `dropTestSchema` in `afterAll`.
+ * name, e.g. one a test freed by renaming); migrated only up to migration `upTo` when given (the SQLite importer writes
+ * into a 0005 schema). Breaking migrations are applied (a fresh schema has nothing to break). Drop it with
+ * `dropTestSchema` in `afterAll`.
  */
-export async function createTestSchema(opts: { migrate?: boolean; schema?: string } = {}): Promise<DatabaseConfig> {
+export async function createTestSchema(opts: { migrate?: boolean; schema?: string; upTo?: number } = {}): Promise<DatabaseConfig> {
   const schema = opts.schema ?? newTestSchemaName();
   if (!TEST_SCHEMA.test(schema)) throw new Error(`refusing to create ${schema}: not a test schema name`);
   const config: DatabaseConfig = { url: requireTestDatabaseUrl(), schema };
@@ -90,7 +92,7 @@ export async function createTestSchema(opts: { migrate?: boolean; schema?: strin
   if (opts.migrate !== false) {
     const db = await openPgDb(config);
     try {
-      await applyMigrations(db, {});
+      await applyMigrations(db, { breaking: true, ...(opts.upTo === undefined ? {} : { migrations: loadMigrations().slice(0, opts.upTo) }) });
     } finally {
       await db.close();
     }

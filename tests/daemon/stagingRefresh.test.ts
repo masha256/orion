@@ -130,7 +130,7 @@ function fakeRunner(o: { schema: string; ids?: number[]; restoreCode?: number })
   const run: CommandRunner = async (cmd, args) => {
     calls.push([cmd, ...args]);
     if (args.includes('-l')) return { code: 0, stdout: fakeToc(o.schema), stderr: '' };
-    if (args.includes('--data-only')) return { code: 0, stdout: fakeMigrationsCopy(o.schema, o.ids ?? [1, 2, 3, 4, 5]), stderr: '' };
+    if (args.includes('--data-only')) return { code: 0, stdout: fakeMigrationsCopy(o.schema, o.ids ?? loadMigrations().map((m) => m.id)), stderr: '' };
     if (args.includes('--clean')) {
       list = readFileSync(args[args.indexOf('-L') + 1]!, 'utf8');
       return o.restoreCode ? { code: o.restoreCode, stdout: '', stderr: 'pg_restore: error: could not execute query: ERROR:  boom\n' } : { code: 0, stdout: '', stderr: '' };
@@ -203,7 +203,7 @@ describe('stagingRefresh', () => {
 
   it('stagingRefresh: schema mismatch is refused before any restore command', async () => {
     await seedStaging(db());
-    for (const [ids, text] of [[[1], 'prod 1, staging 5'], [[1, 2, 3, 4, 5, 6], 'prod 6, staging 5']] as const) {
+    for (const [ids, text] of [[[1], 'prod 1, staging 6'], [[1, 2, 3, 4, 5, 6, 7], 'prod 7, staging 6']] as const) {
       const f = fakeRunner({ schema: db().schema, ids: [...ids] });
       const w = world();
       const out = await makeStagingRefreshHandler({ run: f.run })(job, w.ctx);
@@ -413,11 +413,11 @@ describe('stagingRefresh (real pg_dump / pg_restore)', () => {
         await prod.run("INSERT INTO jobs (kind, slot, run_after, priority, status, max_attempts) VALUES ('levels', '2026-11-08T08:15:00Z', '2026-11-08T08:15:00Z', 40, 'done', 1)");
         await prod.run("INSERT INTO coverage VALUES ('mini', 'p-prod', '2026-10-01T00:00:00Z'), ('other', 'p-prod', '2026-10-02T00:00:00Z')");
         for (let i = 0; i < 3; i++) {
-          await prod.run(`INSERT INTO observations (asset_id, metric_key, observed_at, value, source, status, fetched_at)
-            VALUES ('mini', 'price_usd', $1, $2, 'api', 'confirmed', $1)`, [`2026-11-0${i + 1}T00:00:00Z`, 10 + i]);
+          await prod.run(`INSERT INTO observations (asset_id, metric_key, observed_at, value, status, fetched_at, method, source_type, locator, code_version, config_hash)
+            VALUES ('mini', 'price_usd', $1, $2, 'confirmed', $1, 'measured', 'market_data', '{}', 'dev', 'h')`, [`2026-11-0${i + 1}T00:00:00Z`, 10 + i]);
         }
         await prod.run("INSERT INTO day_blocks VALUES (1, '2026-11-07', 100, 1762473600)");
-        await prod.run("INSERT INTO latest_levels VALUES ('prodonly', 'price_usd', 1, '2026-11-08T08:15:00Z', 'api', null, 1)");
+        await prod.run("INSERT INTO latest_levels VALUES ('prodonly', 'price_usd', 1, '2026-11-08T08:15:00Z', 'api', null, 1, 'market_data', '{}')");
       } finally {
         await prod.close();
       }
@@ -433,13 +433,13 @@ describe('stagingRefresh (real pg_dump / pg_restore)', () => {
       const running = await enqueueJob(staging, { kind: 'staging_refresh', assetId: null, slot: NOW });
       await staging.run("UPDATE jobs SET status = 'running', lease_owner = 'stage-daemon', attempts = 1 WHERE id = $1", [running!.id]);
       await staging.run("INSERT INTO daemon_heartbeat VALUES ('stage-daemon', 42, 'venus', 'orion-2026.11.08-1', $1, $1, $2, 'running', null)", [NOW, running!.id]);
-      await staging.run("INSERT INTO latest_levels VALUES ('mini', 'price_usd', 12, '2026-11-08T08:15:00Z', 'api', null, 1)");
+      await staging.run("INSERT INTO latest_levels VALUES ('mini', 'price_usd', 12, '2026-11-08T08:15:00Z', 'api', null, 1, 'market_data', '{}')");
       await staging.run("INSERT INTO watch_state VALUES ('mini', 'price_usd', 'change_pct', true, '2026-11-07T00:00:00Z', 12)");
       await staging.run("INSERT INTO snapshots_out (kind, seq, snapshot_id, sha256, body, created_at) VALUES ('levels', 1, 's1', 'x', '{}', $1)", [NOW]);
       await staging.run("INSERT INTO day_blocks VALUES (1, '2026-11-08', 200, 1762560000)");
       await staging.run("INSERT INTO coverage VALUES ('stageonly', 'p-stage', '2026-11-01T00:00:00Z')");
-      await staging.run(`INSERT INTO observations (asset_id, metric_key, observed_at, value, source, status, fetched_at)
-        VALUES ('stageonly', 'price_usd', '2026-11-05T00:00:00Z', 99, 'api', 'confirmed', '2026-11-05T00:00:00Z')`);
+      await staging.run(`INSERT INTO observations (asset_id, metric_key, observed_at, value, status, fetched_at, method, source_type, locator, code_version, config_hash)
+        VALUES ('stageonly', 'price_usd', '2026-11-05T00:00:00Z', 99, 'confirmed', '2026-11-05T00:00:00Z', 'measured', 'market_data', '{}', 'dev', 'h')`);
       const before = new Map<string, string>();
       for (const t of ENV_LOCAL_TABLES) before.set(t, await tableJson(staging, t));
 
@@ -458,8 +458,8 @@ describe('stagingRefresh (real pg_dump / pg_restore)', () => {
       for (const t of PROD_DATA_TABLES) expect({ t, rows: await tableJson(staging, t) }).toEqual({ t, rows: await tableJson(ref, t) });
       expect(await tableJson(staging, 'coverage')).not.toContain('stageonly');
       // Identity sequences come over with the data: a new row continues after prod's ids.
-      const next = await staging.one<{ id: number }>(`INSERT INTO observations (asset_id, metric_key, observed_at, value, source, status, fetched_at)
-        VALUES ('mini', 'price_usd', '2026-11-09T00:00:00Z', 1, 'api', 'confirmed', '2026-11-09T00:00:00Z') RETURNING id`);
+      const next = await staging.one<{ id: number }>(`INSERT INTO observations (asset_id, metric_key, observed_at, value, status, fetched_at, method, source_type, locator, code_version, config_hash)
+        VALUES ('mini', 'price_usd', '2026-11-09T00:00:00Z', 1, 'confirmed', '2026-11-09T00:00:00Z', 'measured', 'market_data', '{}', 'dev', 'h') RETURNING id`);
       expect(next!.id).toBe(4);
       expect((await migrationStatus(staging)).state).toBe('current');
       await ref.close();

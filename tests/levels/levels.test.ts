@@ -11,7 +11,7 @@ import { fakeHttp } from '../helpers/fakeHttp.js';
 import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
 import { watchAsset } from '../helpers/watchAsset.js';
-import { TEST_PROVENANCE } from '../helpers/provenance.js';
+import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -191,7 +191,7 @@ describe('runLevels', () => {
 
   it('levels: change_pct firings compare with the newest stored nightly row', async () => {
     const h = harness(testDb(), { loaded: watchAsset({ changePct: 5 }), routes: { 'https://api.example.test/stats': { price: '12', apr: 0.06, supply: { totalBaseUnit: (100n * 10n ** 18n).toString() } } } });
-    await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-19T00:45:00.000Z', value: 10, source: 'api', sourceDetail: null, fetchedAt: '2026-09-19T00:45:00.000Z' });
+    await insertObservation(h.db, { provenance: testProvenance('api'), assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-19T00:45:00.000Z', value: 10, sourceDetail: null, fetchedAt: '2026-09-19T00:45:00.000Z' });
     const out = await runLevels(h.db, [h.loaded], h.deps, NOW, 1);
     expect(out.perAsset[0].firings).toEqual([{ metric: 'stats_price', rule: 'change_pct', value: 12, previous: 10, day: '2026-09-19' }]);
   });
@@ -221,7 +221,7 @@ describe('toLatestLevels', () => {
 
 describe('latest_levels store', () => {
   it('deleteLatestLevels removes the rows the predicate does not keep', async () => {
-    const row = { assetId: 'a', metricKey: 'm', value: 1, observedAt: NOW.toISOString(), source: 'api', blockNumber: null, jobId: null, sourceType: null, locator: null };
+    const row = { assetId: 'a', metricKey: 'm', value: 1, observedAt: NOW.toISOString(), source: 'api', blockNumber: null, jobId: null, sourceType: 'market_data', locator: {} };
     await upsertLatestLevels(testDb(), [row, { ...row, metricKey: 'n' }, { ...row, assetId: 'b' }]);
     expect(await deleteLatestLevels(testDb(), (r) => r.assetId === 'a')).toBe(1);
     expect((await listLatestLevels(testDb())).map((r) => `${r.assetId}.${r.metricKey}`)).toEqual(['a.m', 'a.n']);

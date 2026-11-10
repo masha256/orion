@@ -1,9 +1,7 @@
 import type { Command } from 'commander';
-import { listAssetIds, loadAsset } from '../../config/load.js';
 import { openDb } from '../../db/connection.js';
 import { applyMigrations, migrationStatus, type MigrationStatus } from '../../db/pg/migrate.js';
 import { checkSingleStatement, queryReadOnly, urlForRole } from '../../db/queryRo.js';
-import { backfillProvenance, type BackfillResult } from '../../provenance/backfill.js';
 import { OrionError } from '../../types.js';
 import { databaseFor, guarded, output, withDb, type CliContext } from '../util.js';
 
@@ -12,15 +10,6 @@ function statusLines(s: MigrationStatus): string[] {
   for (const p of s.pending) lines.push(`  pending ${String(p.id).padStart(4, '0')}_${p.name}${p.breaking ? ' (breaking)' : ''}`);
   for (const id of s.changed) lines.push(`  CHANGED ${String(id).padStart(4, '0')}: the applied file differs from this build's`);
   return lines;
-}
-
-function backfillLines(r: BackfillResult): string[] {
-  const total = Object.values(r.mapped).reduce((s, n) => s + n, 0);
-  return [
-    `${r.dryRun ? 'would map' : 'mapped'} ${total} row(s) over ${Object.keys(r.mapped).length} metric(s); ${r.alreadySet} already had provenance; ${r.unmapped.length} cannot be mapped`,
-    ...Object.entries(r.mapped).sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, n]) => `  ${k}: ${n}`),
-    ...r.unmapped.map((u) => `  UNMAPPED #${u.id} ${u.assetId} ${u.metricKey} (${u.source}): ${u.reason}`),
-  ];
 }
 
 export function registerDb(program: Command, ctx: CliContext): void {
@@ -54,18 +43,6 @@ export function registerDb(program: Command, ctx: CliContext): void {
           result.applied.length === 0 ? 'nothing to apply' : `applied ${result.applied.join(', ')}`,
           ...statusLines(result.status),
         ]);
-      }),
-    );
-
-  db.command('backfill-provenance')
-    .description('map the provenance of every observation written before 0004 from its source columns and this release\'s asset YAML; --dry-run writes nothing')
-    .option('--dry-run', 'list what would be mapped and what cannot be, write nothing')
-    .option('--json', 'JSON output')
-    .action((opts: { dryRun?: boolean; json?: boolean }) =>
-      guarded(ctx, opts.json, async () => {
-        const assets = listAssetIds(ctx.configRoot).map((id) => loadAsset(ctx.configRoot, id));
-        const result = await withDb(ctx, (d) => backfillProvenance(d, assets, { dryRun: opts.dryRun === true }));
-        output(ctx, opts.json, result, () => backfillLines(result));
       }),
     );
 

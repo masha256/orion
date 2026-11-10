@@ -13,7 +13,7 @@ import { CG_CHART, harness, hourlyPrices, type Harness } from '../helpers/fetchH
 import { callKey } from '../helpers/fakeRpc.js';
 import { INGEST_ASSET_YAML, POOL, SAFE, TOKEN } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
-import { TEST_PROVENANCE } from '../helpers/provenance.js';
+import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 const E18 = 10n ** 18n;
@@ -229,7 +229,7 @@ describe('backfillTokens: USD-native first-party rows (ruling R18)', () => {
   const row = async (db: Db, assetId: string, metricKey: string, day: string, value: number, over: { source?: 'api' | 'manual'; detail?: string; periodDays?: number } = {}) =>
     await insertObservation(db, {
       assetId, metricKey, observedAt: new Date(ms(`${day}T00:00:00Z`) + (over.periodDays ?? 1) * 86_400_000).toISOString(), periodDays: over.periodDays ?? 1, value,
-      source: over.source ?? 'api', sourceDetail: over.detail ?? 'hyperliquid userFillsByTime 0xfefe @107 buys', fetchedAt: '2026-09-20T06:00:00Z', provenance: TEST_PROVENANCE,
+      sourceDetail: over.detail ?? 'hyperliquid userFillsByTime 0xfefe @107 buys', fetchedAt: '2026-09-20T06:00:00Z', provenance: testProvenance(over.source ?? 'api', true),
       ...(over.source === 'manual' ? { citationUrl: 'https://example.test/c' } : {}),
     });
 

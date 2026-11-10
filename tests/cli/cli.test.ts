@@ -154,8 +154,8 @@ describe('orion cli', () => {
 
   it('data set: a hand-entered figure is disclosed and needs --citation; confirm records who approved it', async () => {
     await expect(orion('data', 'set', 'mini', 'price_usd', '10', '--at', AS_OF)).rejects.toThrow(expect.objectContaining({ code: 'citation_required' }));
-    const o = JSON.parse(await orion('data', 'set', 'mini', 'price_usd', '10', '--at', AS_OF, '--source', 'onchain', '--citation', 'https://example.com/p', '--json'));
-    expect(o).toMatchObject({ source: 'onchain', citationUrl: 'https://example.com/p' }); // the legacy columns as given
+    const o = JSON.parse(await orion('data', 'set', 'mini', 'price_usd', '10', '--at', AS_OF, '--citation', 'https://example.com/p', '--json'));
+    expect(o).toMatchObject({ source: 'manual', citationUrl: 'https://example.com/p' }); // origin derived from the provenance (0006)
     expect(Object.keys(o)).not.toContain('provenance'); // the command's output is unchanged
     expect((await getProvenanceByIds(testDb(), [o.id]))[0]).toMatchObject({
       method: 'disclosed', sourceType: 'disclosure', chain: null, codeVersion: 'dev', configHash: expect.any(String),
@@ -168,25 +168,17 @@ describe('orion cli', () => {
     });
   });
 
-  it('data confirm works when the asset YAML is gone or invalid: config hash "unloaded"', async () => {
+  it('data confirm works when the asset YAML is gone or invalid: the row keeps its own config hash', async () => {
     const yaml = join(home, 'assets', 'mini.yaml');
     for (const [what, damage] of [['gone', () => rmSync(yaml)], ['invalid', () => writeFileSync(yaml, 'id: mini\nmetrics: [not, a, map]\n')]] as const) {
       writeFileSync(yaml, MINI_ASSET_YAML);
-      // A provisional row with provenance keeps its own config hash; one written before 0004 has none to keep.
+      // A provisional row keeps its own config hash (since 0006 every row has provenance: none is built under 'unloaded').
       const p = JSON.parse(await orion('data', 'set', 'mini', 'revenue_run_rate_usd', '1200', '--at', what === 'gone' ? '2026-06-20' : '2026-06-22', '--provisional', '--citation', 'https://example.com/post', '--json'));
       const [{ configHash }] = await getProvenanceByIds(testDb(), [p.id]);
-      const old = await testDb().run<{ id: number }>(
-        `INSERT INTO observations (asset_id, metric_key, observed_at, period_days, value, source, source_detail, status, citation_url, quoted_text, fetched_at)
-         VALUES ($1, $2, $3, NULL, $4, 'manual', NULL, 'provisional', 'https://example.com/post', NULL, $3) RETURNING id`,
-        ['mini', 'staked_supply', what === 'gone' ? '2026-06-21T00:00:00.000Z' : '2026-06-23T00:00:00.000Z', 80],
-      );
       damage();
       const c = JSON.parse(await orion('data', 'confirm', String(p.id), '--json'));
       expect(c, what).toMatchObject({ status: 'confirmed', value: 1200 });
       expect((await getProvenanceByIds(testDb(), [c.id]))[0], what).toMatchObject({ method: 'disclosed', configHash });
-      const c2 = JSON.parse(await orion('data', 'confirm', String(old.rows[0]!.id), '--json'));
-      expect(c2, what).toMatchObject({ status: 'confirmed', value: 80 });
-      expect((await getProvenanceByIds(testDb(), [c2.id]))[0], what).toMatchObject({ method: 'disclosed', configHash: 'unloaded' });
     }
   });
 

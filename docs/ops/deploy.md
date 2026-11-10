@@ -268,7 +268,7 @@ type o                                         # prints the function; `o db stat
    ```
    Steps 3-5 run on staging right after its switch, before its first nightly (02:45 UTC), and again on prod right after
    prod's switch, before prod's first nightly (00:45 UTC).
-3. **Provenance history** (Task 6): dry run first, then the real run.
+3. **Provenance history** (Task 6; release 2 only: the command is gone since 0006): dry run first, then the real run.
    ```
    o db backfill-provenance --dry-run --json > ~/home/backfill-provenance-dry.json
    o db backfill-provenance --json
@@ -320,6 +320,38 @@ after rolling forward again:
   forward, run step 4 again with `--backfill-days` covering the rollback days (183 is enough for any rollback shorter
   than that).
 - It stores no check results, so the days it covered have none; the newer release evaluates only the report day.
+
+## Phase 2 tail: release with 0006 (breaking)
+
+`0006_provenance_not_null` (Task 10, gate G3) makes `observations.method`, `source_type`, `locator`, `code_version` and
+`config_hash` NOT NULL (and `latest_levels.source_type` / `locator`), adds `observations_disclosure_citation` (a
+`disclosure` row needs a `citation_url`, except pre-v2 history), and drops `observations.source`: the origin
+(`onchain` / `api` / `manual`) every reader, the CLI and the analyst pack show is derived from the provenance
+(`src/provenance/origin.ts`, `originOf`). Its first line is `-- breaking`, so it ships as its own release (section 4)
+with nothing else in it. `db backfill-provenance` is gone with it (nothing can be null any more); `data set` lost
+`--source` (a hand-entered row is a disclosure, origin `manual`; `--citation` stays required).
+
+1. **Pre-deploy check, on each env right before its switch** (all three must be 0; any other count: stop, the
+   migration would fail on the first null and nothing would change, but find the writer first):
+   ```
+   ssh orion-prod sql-ro "select (select count(*) from observations where method is null or source_type is null or locator is null or code_version is null or config_hash is null) as obs_null, (select count(*) from observations where source_type = 'disclosure' and citation_url is null and code_version <> 'pre-v2') as disclosure_uncited, (select count(*) from latest_levels where source_type is null or locator is null) as levels_null"
+   ```
+   Staging has no `sql-ro` verb: as the env user (`sudo -iu orion-stage`), `o db query-ro "<the same select>"`.
+2. **Order: stage, one scheduled nightly soak, then prod**, both with `--breaking`:
+   ```
+   scripts/release/deploy.sh stage <tag> --breaking     # switch: pg_dump first, then db migrate --breaking: applied [6]
+   ssh orion-stage status                               # current <tag>; heartbeat; deploys.log breaking=1 dump=<file>
+   # after the soak passes (section 3):
+   scripts/release/deploy.sh prod <tag> --breaking
+   ```
+   Without `--breaking` the switch refuses before changing anything (`<tag> has a breaking migration pending (6)`). As
+   for the Phase 2 release, `staging_refresh` refuses a prod dump while the two envs differ (stage at 0006, prod at
+   0005): keep the gap between the two switches short and clear of the Sunday refresh.
+3. **No rollback past it.** A pre-0006 release inserts `source` and cannot run on the migrated schema, so `rollback`
+   is refused after this switch (`breaking=1`) and names the dump; going back means Mike restoring that dump (and losing
+   what was written since). Fix forward instead.
+4. **After the switch** (read-only): `report yield <a> --json` for every asset matches the previous release's output on
+   the same data (the controller's prod-copy proof, ruling R10.5), and `data show <a>` still lists each row's origin.
 
 ## Other verbs a deploy may need
 

@@ -17,7 +17,7 @@ const BY = { approvedBy: 'test', configHash: 'test' };
 
 const testDb = useTestDb();
 
-const base = { assetId: 'mini', metricKey: 'price_usd', source: 'manual' as const, fetchedAt: '2026-06-30T00:00:00Z' };
+const base = { assetId: 'mini', metricKey: 'price_usd', fetchedAt: '2026-06-30T00:00:00Z' };
 let db: Db;
 beforeEach(() => {
   db = testDb();
@@ -125,7 +125,7 @@ describe('provenance columns (0004)', () => {
   };
 
   it('writes and reads every provenance column; value, source and source_detail exactly as given; the locator scrubbed', async () => {
-    const o = await insertObservation(db, { ...base, source: 'onchain', sourceDetail: '{"day":"2026-06-29"}', observedAt: '2026-06-30', value: 0.1 + 0.2, provenance: full });
+    const o = await insertObservation(db, { ...base, sourceDetail: '{"day":"2026-06-29"}', observedAt: '2026-06-30', value: 0.1 + 0.2, provenance: full });
     expect(o).toMatchObject({ value: 0.1 + 0.2, source: 'onchain', sourceDetail: '{"day":"2026-06-29"}' });
     expect(Object.keys(o)).not.toContain('provenance'); // readers of Observation see the same shape as before
     const [p] = await getProvenanceByIds(db, [o.id]);
@@ -147,21 +147,23 @@ describe('provenance columns (0004)', () => {
     expect(await listActiveObservations(db, 'mini')).toEqual([]);
   });
 
-  it('a release-N-1 insert without the new columns still succeeds on 0004', async () => {
+  it('since 0006 a release-N-1 insert (it names `source`, no provenance) is refused, and so is a row missing a provenance column', async () => {
     // The insert release orion-2026.11.04.2 (f5f36fa) makes: src/db/observations.ts insertObservation's statement, verbatim.
-    const inserted = await db.run<{ id: number }>(
+    await expect(db.run(
       `INSERT INTO observations
          (asset_id, metric_key, observed_at, period_days, value, source, source_detail, status, citation_url, quoted_text, fetched_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING id`,
       ['mini', 'price_usd', '2026-06-30T00:00:00.000Z', null, 10, 'api', 'coingecko /coins/markets mini.current_price', 'confirmed', null, null, '2026-06-30T00:00:00.000Z'],
-    );
-    const id = Number(inserted.rows[0]!.id);
-    expect((await getObservationsByIds(db, [id]))[0]).toMatchObject({ value: 10, source: 'api' });
-    expect((await getProvenanceByIds(db, [id]))[0]).toMatchObject({ method: null, sourceType: null, locator: null, codeVersion: null, configHash: null });
-    // And the CHECKs allow NULL but refuse a value outside the ladder.
-    await expect(db.run("UPDATE observations SET source_type = 'indexer' WHERE id = $1", [id])).rejects.toThrow(/source_type_check/);
-    await expect(db.run("UPDATE observations SET method = 'guessed' WHERE id = $1", [id])).rejects.toThrow(/method_check/);
+    )).rejects.toThrow(/column "source"/);
+    await expect(db.run(
+      `INSERT INTO observations (asset_id, metric_key, observed_at, value, status, fetched_at, method, source_type, locator, code_version)
+       VALUES ('mini', 'price_usd', now(), 10, 'confirmed', now(), 'measured', 'market_data', '{}', 'dev')`,
+    )).rejects.toThrow(/config_hash/);
+    // The CHECKs still refuse a value outside the ladder.
+    const o = await insertObservation(db, { ...base, observedAt: '2026-06-30', value: 10, provenance: full });
+    await expect(db.run("UPDATE observations SET source_type = 'indexer' WHERE id = $1", [o.id])).rejects.toThrow(/source_type_check/);
+    await expect(db.run("UPDATE observations SET method = 'guessed' WHERE id = $1", [o.id])).rejects.toThrow(/method_check/);
   });
 
   it('confirm copies the provisional row\'s provenance and records who approved it', async () => {

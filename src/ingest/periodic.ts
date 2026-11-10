@@ -71,7 +71,7 @@ export async function writePeriodicPayments(args: PeriodicArgs): Promise<Written
       const observationId = dryRun
         ? null
         : (await insertObservation(h, {
-            assetId: asset.id, metricKey, observedAt, periodDays, value: p.value, source: 'api',
+            assetId: asset.id, metricKey, observedAt, periodDays, value: p.value,
             sourceDetail: `${args.detail}; covers ${p.from} to ${p.to}, paid ${p.paidAt}`, fetchedAt: nowIso,
             provenance: fetchedProvenance({ config: asset, hash: args.configHash }, metricKey, {
               // The ledger entries the payment sums (null when the source exposes none).

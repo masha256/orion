@@ -8,7 +8,7 @@ import type { IsV2 } from '../../src/report/incomeStatement.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import { MINI_REPORT_YAML } from '../helpers/assets.js';
 import { useTestDb } from '../helpers/db.js';
-import { TEST_PROVENANCE } from '../helpers/provenance.js';
+import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 const asset = parseAssetYaml(MINI_REPORT_YAML).config;
@@ -23,21 +23,23 @@ async function seed(db: Db, opts: { oneUnmapped?: boolean } = {}): Promise<void>
     const day = addDays(DAY, -i);
     const observedAt = `${addDays(day, 1)}T00:00:00.000Z`;
     if (opts.oneUnmapped && i === 3) {
-      // A row the previous release wrote (no provenance columns), not backfilled yet.
-      await db.run(
-        `INSERT INTO observations (asset_id, metric_key, observed_at, period_days, value, source, status, fetched_at) VALUES ('mini', 'flow_usd.fees', $1, 1, 100, 'onchain', 'confirmed', $2)`,
-        [observedAt, at],
-      );
+      // A row the previous release wrote (it inserts `source`, no provenance): refused on 0006, so the day is missing.
+      await expect(
+        db.run(
+          `INSERT INTO observations (asset_id, metric_key, observed_at, period_days, value, source, status, fetched_at) VALUES ('mini', 'flow_usd.fees', $1, 1, 100, 'onchain', 'confirmed', $2)`,
+          [observedAt, at],
+        ),
+      ).rejects.toThrow(/column "source"/);
       continue;
     }
     const cited = i >= 8;
     await insertObservation(db, {
-      assetId: 'mini', metricKey: 'flow_usd.fees', observedAt, periodDays: 1, value: 100, source: cited ? 'manual' : 'onchain', fetchedAt: at,
+      assetId: 'mini', metricKey: 'flow_usd.fees', observedAt, periodDays: 1, value: 100, fetchedAt: at,
       ...(cited ? { citationUrl: 'https://example.com/fix' } : {}), provenance: cited ? CITED : SCAN,
     });
   }
-  await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'price_usd', observedAt: at, value: 2, source: 'api', fetchedAt: at });
-  await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'total_supply', observedAt: at, value: 1_000_000, source: 'onchain', fetchedAt: at });
+  await insertObservation(db, { provenance: testProvenance('api'), assetId: 'mini', metricKey: 'price_usd', observedAt: at, value: 2, fetchedAt: at });
+  await insertObservation(db, { provenance: testProvenance('onchain'), assetId: 'mini', metricKey: 'total_supply', observedAt: at, value: 1_000_000, fetchedAt: at });
 }
 
 const statement = async (db: Db) => (await loadHolderYieldReport(db, asset, DAY)).incomeStatement as IsV2;
@@ -61,20 +63,10 @@ describe('income statement v2 provenance from observations (Task 6)', () => {
     expect(is.revenue.annualized).toBeCloseTo((1000 * 365) / 10, 9);
   });
 
-  it('a window row without provenance (history not backfilled): basis config, as before; the numbers and the legacy JSON are the same', async () => {
-    const mapped = testDb();
-    await seed(mapped);
-    const a = await statement(mapped);
-    const legacyA = await legacyOnly(mapped);
-    await testDb.reset();
+  it('a window row without provenance cannot exist since 0006 (the basis-config fallback for unbackfilled history is moot)', async () => {
     const db = testDb();
-    await seed(db, { oneUnmapped: true });
-    const b = await statement(db);
-    expect(b.provenance.basis).toBe('config');
-    expect(b.provenance.methods).toEqual({ measured: 1, derived: 0, disclosed: 0 });
-    expect(b.revenue.lines[0]!.daysMeasured).toBeNull();
-    expect(await legacyOnly(db)).toBe(legacyA); // values never move with provenance
-    const strip = (x: IsV2) => JSON.stringify({ ...x, provenance: null, revenue: { ...x.revenue, lines: x.revenue.lines.map((l) => ({ ...l, daysMeasured: null })) } });
-    expect(strip(b)).toBe(strip(a)); // only the provenance fields differ
+    await seed(db, { oneUnmapped: true }); // the previous release's insert (source, no provenance) is refused
+    const is = await statement(db);
+    expect(is.provenance.basis).toBe('observations');
   });
 });

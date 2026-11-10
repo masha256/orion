@@ -6,7 +6,7 @@ import { parseMarketChart } from '../../src/ingest/flow.js';
 import { COINGECKO_PRICE_SOURCE, fetchHourlyRange, hourlyPriceRows } from '../../src/prices/coingeckoHourly.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { useTestDb } from '../helpers/db.js';
-import { TEST_PROVENANCE } from '../helpers/provenance.js';
+import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 const REF = evmTokenRef(1, '0xD533a949740bb3306d119CC777fa900bA034cd52');
@@ -18,7 +18,7 @@ const at = (iso: string) => Date.parse(iso);
 async function flowRow(day: string, value: number, tokens?: { amount: number; hourly: number[] | null; ref?: string }, over: { metricKey?: string; fetchedAt?: string } = {}) {
   return await insertObservation(testDb(), {
     assetId: 'crv', metricKey: over.metricKey ?? 'flow_usd.fees', observedAt: new Date(at(`${day}T00:00:00Z`) + 86_400_000).toISOString(), periodDays: 1, value,
-    source: 'onchain', fetchedAt: over.fetchedAt ?? '2026-11-05T06:00:00Z', provenance: TEST_PROVENANCE,
+    fetchedAt: over.fetchedAt ?? '2026-11-05T06:00:00Z', provenance: testProvenance('onchain'),
     ...(tokens ? { tokens: { tokenRef: tokens.ref ?? REF, amount: tokens.amount, hourlyAmounts: tokens.hourly } } : {}),
   });
 }
@@ -115,7 +115,7 @@ describe('flow_usd_v', () => {
     expect(await view(priced.id)).toBeUndefined();
     expect(await view(again.id)).toMatchObject({ usd: 71 });
     const lvl = await insertObservation(testDb(), {
-      assetId: 'crv', metricKey: 'total_supply', observedAt: '2026-10-01T12:00:00Z', value: 1, source: 'onchain', fetchedAt: '2026-10-01T12:00:00Z', provenance: TEST_PROVENANCE,
+      assetId: 'crv', metricKey: 'total_supply', observedAt: '2026-10-01T12:00:00Z', value: 1, fetchedAt: '2026-10-01T12:00:00Z', provenance: testProvenance('onchain'),
     });
     expect(await view(lvl.id)).toBeUndefined();
     // A token flow is not in the view: its value is tokens, and legacy_usd must be dollars.

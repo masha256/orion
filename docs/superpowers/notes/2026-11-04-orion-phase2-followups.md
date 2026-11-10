@@ -569,3 +569,36 @@ Can wait (final review triage), by phase:
 
 Dropped (final review triage): T0 M2, M3, M8, `get_path` and ids containing `.`; T2 statementShape ids/of-only pins
 and the disclosure.e2e `preApprovalLitYaml` NOTE_NOW; T9 CoinGecko note wording.
+
+## Task 10 (gate G3): 0006 provenance NOT NULL, `observations.source` dropped (breaking release)
+
+Built: `0006_provenance_not_null.sql` (first line `-- breaking`): `observations.method`, `source_type`, `locator`,
+`code_version`, `config_hash` NOT NULL; `observations_disclosure_citation` = `CHECK (source_type <> 'disclosure' OR
+citation_url IS NOT NULL OR code_version = 'pre-v2')` (R17 exemption kept); `DROP COLUMN source`;
+`latest_levels.source_type` / `locator` NOT NULL. `latest_levels.source` stays: the `levels` snapshot body publishes it
+and the table has no method to derive it from.
+- One derivation (`src/provenance/origin.ts`): `originOf({method, sourceType, locator, formula})` / `originOfRow` gives
+  the old `source` value; `Observation.source` (so the CLI's and the analyst pack's `source` field, the flow-conflict
+  and `--adopt` rule, the DefiLlama revision-window manual-row rule, the token backfill's skips, Solana's supply drop,
+  the revision check) all read it. Inputs are the method, the rung, `locator.adapter` (`ADAPTER_ORIGINS`: each
+  adapter's stamp; only contract-state adapters consult it, `solana.supply_burn_daily` is the one `api`) and the
+  formula prefix (`manual_*` is manual), per R10.2a. Table test: `tests/provenance/origin.test.ts` (the controller's
+  prod matrix plus the writer shapes prod lacks).
+- Writers no longer pass `source`. A fetched reading whose stamp would read back differently is refused
+  (`origin_mismatch`, `src/ingest/run.ts`), never stored under the wrong origin.
+- `data set` lost `--source` (R10.3, the smaller change: a hand-entered row is a disclosure, origin `manual`;
+  `--citation` stays required). `db backfill-provenance` and `src/provenance/backfill.ts` are gone (nothing can be
+  null; it read `source`); `defillamaUrlOf` moved to `src/provenance/locator.ts` (the token backfill uses it).
+- `tools/import-sqlite` writes a schema at exactly 0005 (`IMPORT_SCHEMA_LEVEL`); then a release-2 build's
+  `db backfill-provenance`, then `db migrate --breaking`. `tools/phase2-proof/origin-check.ts` compares derived vs
+  stored origin on a prod copy before the copy is migrated (README run order); `prod_copy.py` needs no change (the copy
+  is migrated by the old release, so its columns match prod's), the new side's `db migrate` needs `--breaking`.
+- Runbook: `docs/ops/deploy.md`, "Phase 2 tail: release with 0006 (breaking)" (pre-deploy null check, stage then prod
+  with `--breaking`, no rollback past it). `deploy.sh` / `orion-remote switch` already refuse a pending breaking
+  migration without `--breaking`, dump first with it, and refuse a rollback after it: no gap, no new test.
+- Open (controller ruling): a derivation over a first-party or contract-state ADAPTER flow is stamped `api` by
+  `run.ts`, but its provenance (`derived`, rung `derived`) is the same as a derivation over transfer scans (`onchain`).
+  No asset config has one (prod: every derived row is over transfer scans), so `originOf` maps `derived/derived` to
+  `onchain` and the run.ts guard refuses such a reading (`origin_mismatch`) instead of storing it mislabelled. Making
+  it storable needs a ruling (e.g. a formula or locator marker, or derived = `onchain` by definition).
+

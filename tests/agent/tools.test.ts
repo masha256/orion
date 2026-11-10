@@ -10,7 +10,7 @@ import { AGENT_ASSET_YAML, agentWorld, DOC_CITE, PAGE_URL, QUOTE, STAKED_QUOTE, 
 import { sha256 } from '../../src/util/canonical.js';
 import { AS_OF } from '../helpers/obs.js';
 import { useTestDb } from '../helpers/db.js';
-import { TEST_PROVENANCE } from '../helpers/provenance.js';
+import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 const BY = { approvedBy: 'test', configHash: 'test' };
 
@@ -142,8 +142,8 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
   it('files an observation proposal against the last CONFIRMED value, the baseline approve checks it against', async () => {
     // An earlier run's figure is provisional: 1250. The confirmed value is still 1000.
     await insertObservation(w.db, {
-      provenance: TEST_PROVENANCE,
-      assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-20', value: 1250, source: 'manual', status: 'provisional',
+      provenance: testProvenance('manual', true),
+      assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-20', value: 1250, status: 'provisional',
       citationUrl: 'https://news.example.com/earlier', fetchedAt: AS_OF,
     });
     expect(await research()).toMatchObject({ isError: false, result: { recorded: false } });
@@ -264,11 +264,11 @@ describe('record_provisional_observation (spec section 15, Ruling 18): every fig
     // What the row does once the user confirms it, with the daily on-chain reads landing beneath it.
     const asset = fw.loaded.config;
     const onchain = async (observedAt: string, value: number) =>
-      await insertObservation(fw.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'emission_rate_annual', observedAt, value, source: 'onchain', fetchedAt: observedAt });
+      await insertObservation(fw.db, { provenance: testProvenance('onchain'), assetId: 'mini', metricKey: 'emission_rate_annual', observedAt, value, fetchedAt: observedAt });
     await onchain('2026-06-29T00:00:00Z', 10); // the seeded step is 0 at 2026-01-01; this is the chain's rate in force
     const row = await insertObservation(fw.db, {
-      provenance: TEST_PROVENANCE,
-      assetId: 'mini', metricKey: 'emission_rate_annual', observedAt: '2026-10-01', value: 5, source: 'manual', status: 'provisional', citationUrl: PAGE_URL, fetchedAt: AS_OF,
+      provenance: testProvenance('manual', true),
+      assetId: 'mini', metricKey: 'emission_rate_annual', observedAt: '2026-10-01', value: 5, status: 'provisional', citationUrl: PAGE_URL, fetchedAt: AS_OF,
     });
     expect(await valueInForce(fw.db, asset, 'emission_rate_annual', '2026-10-01T00:00:00Z')).toBe(10); // provisional: inert
     await confirmObservation(fw.db, row.id, AS_OF, BY);
@@ -349,8 +349,8 @@ describe('propose_change', () => {
 
   it('files confirming and rejecting an observation, with effect null', async () => {
     const provisional = await insertObservation(w.db, {
-      provenance: TEST_PROVENANCE,
-      assetId: 'mini', metricKey: 'staked_supply', observedAt: '2026-06-29T12:00:00Z', value: 80, source: 'manual', status: 'provisional',
+      provenance: testProvenance('manual', true),
+      assetId: 'mini', metricKey: 'staked_supply', observedAt: '2026-06-29T12:00:00Z', value: 80, status: 'provisional',
       citationUrl: 'https://example.com', fetchedAt: AS_OF,
     });
     expect((await propose({ kind: 'confirm_observation', observation_id: provisional.id })).isError).toBe(false);
@@ -681,8 +681,8 @@ describe('get_flow_total', () => {
     for (let i = 0; i < 92; i++) {
       if (skip.includes(dayOf(i))) continue;
       ids.push((await insertObservation(w.db, {
-      provenance: TEST_PROVENANCE,
-        assetId: 'mini', metricKey: FEES, observedAt: new Date(Q3_START + (i + 1) * DAY).toISOString(), periodDays: 1, value: i + 1, source: 'onchain', fetchedAt: AS_OF,
+      provenance: testProvenance('onchain'),
+        assetId: 'mini', metricKey: FEES, observedAt: new Date(Q3_START + (i + 1) * DAY).toISOString(), periodDays: 1, value: i + 1, fetchedAt: AS_OF,
       })).id);
     }
     return ids;
@@ -729,8 +729,8 @@ describe('get_flow_total', () => {
   it('ignores a committed provisional row: only confirmed rows are summed', async () => {
     await seedQ3(['2026-08-15']);
     const provisional = await insertObservation(w.db, {
-      provenance: TEST_PROVENANCE,
-      assetId: 'mini', metricKey: FEES, observedAt: '2026-08-16T00:00:00Z', periodDays: 1, value: 46, source: 'manual', fetchedAt: AS_OF,
+      provenance: testProvenance('manual', true),
+      assetId: 'mini', metricKey: FEES, observedAt: '2026-08-16T00:00:00Z', periodDays: 1, value: 46, fetchedAt: AS_OF,
       status: 'provisional', citationUrl: PAGE_URL, quotedText: QUOTE,
     });
     expect((await total()).result).toMatchObject({ total: (92 * 93) / 2 - 46, days_covered: 91, days_missing: ['2026-08-15'], rows: 91 });
@@ -741,8 +741,8 @@ describe('get_flow_total', () => {
     const ids = await seedQ3();
     // A confirmed two-day manual row for 2026-07-01 and 2026-07-02.
     const manual = await insertObservation(w.db, {
-      provenance: TEST_PROVENANCE,
-      assetId: 'mini', metricKey: FEES, observedAt: '2026-07-03T00:00:00Z', periodDays: 2, value: 7, source: 'manual', fetchedAt: AS_OF,
+      provenance: testProvenance('manual'),
+      assetId: 'mini', metricKey: FEES, observedAt: '2026-07-03T00:00:00Z', periodDays: 2, value: 7, fetchedAt: AS_OF,
     });
     // It shares observed_at with the daily row for 2026-07-02, which insertObservation supersedes, so it overlaps 07-01's row only.
     expect((await listActiveObservations(w.db, 'mini', FEES)).some((o) => o.id === ids[1])).toBe(false);
@@ -756,12 +756,12 @@ describe('get_flow_total', () => {
   it('leaves out superseded and rejected rows, and a row that straddles the edge of the range', async () => {
     await seedQ3(['2026-07-01']); // the straddling row below is the only row on 2026-07-01, so it overlaps nothing
     const rejected = await insertObservation(w.db, {
-      provenance: TEST_PROVENANCE,
-      assetId: 'mini', metricKey: FEES, observedAt: '2026-07-02T12:00:00Z', periodDays: 1, value: 1000, source: 'manual', fetchedAt: AS_OF,
+      provenance: testProvenance('manual'),
+      assetId: 'mini', metricKey: FEES, observedAt: '2026-07-02T12:00:00Z', periodDays: 1, value: 1000, fetchedAt: AS_OF,
     });
     await w.db.run("UPDATE observations SET status = 'rejected' WHERE id = $1", [rejected.id]);
     // Noon to noon: covers 2026-06-30 and 2026-07-01, half outside July, so July leaves it out.
-    await insertObservation(w.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: FEES, observedAt: '2026-07-01T12:00:00Z', periodDays: 1, value: 500, source: 'manual', fetchedAt: AS_OF });
+    await insertObservation(w.db, { provenance: testProvenance('manual'), assetId: 'mini', metricKey: FEES, observedAt: '2026-07-01T12:00:00Z', periodDays: 1, value: 500, fetchedAt: AS_OF });
     expect((await total({ from: '2026-07-01', to: '2026-07-31' })).result).toMatchObject({ total: (31 * 32) / 2 - 1, days_covered: 30, rows: 30, days_missing: ['2026-07-01'] });
     expect((await total({ from: '2026-06-30', to: '2026-07-31' })).result).toMatchObject({ total: (31 * 32) / 2 - 1 + 500, days_covered: 32, rows: 31, days_missing: [] });
   });

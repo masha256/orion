@@ -4,10 +4,11 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildProgram } from '../../src/cli/program.js';
 import type { DatabaseConfig } from '../../src/db/connection.js';
+import { applyMigrations } from '../../src/db/pg/migrate.js';
 import { openPgDb, type PgDb } from '../../src/db/pg/pool.js';
 import { CARRIED_TABLES } from '../../tools/import-sqlite/carry.js';
 import { runCli } from '../../tools/import-sqlite/cli.js';
-import { importSqlite, type ImportManifest } from '../../tools/import-sqlite/importer.js';
+import { IMPORT_SCHEMA_LEVEL, importSqlite, type ImportManifest } from '../../tools/import-sqlite/importer.js';
 import { devPaths } from '../helpers/db.js';
 import { buildSqliteFixture, FIXTURE_EXPECTED, FIXTURE_SEQUENCES, type SqliteFixture } from '../helpers/sqliteFixture.js';
 import { createTestSchema, dropTestSchema } from '../setup/pgGlobal.js';
@@ -18,7 +19,7 @@ const dirs: string[] = [];
 const extraSchemas: DatabaseConfig[] = [];
 
 beforeEach(async () => {
-  config = await createTestSchema();
+  config = await createTestSchema({ upTo: IMPORT_SCHEMA_LEVEL });
   pg = await openPgDb(config);
 });
 afterEach(async () => {
@@ -224,6 +225,10 @@ describe('import', () => {
 
   it('import: a carried weekly run without transcript still shows', async () => {
     await run(fixture());
+    // The import writes a 0005 schema; this build reads it after the release-2 provenance backfill (stood in for here)
+    // and 0006 (Task 10).
+    await pg.run("UPDATE observations SET method = 'measured', source_type = 'contract_state', locator = '{}', code_version = 'pre-v2', config_hash = 'pre-v2'");
+    expect(await applyMigrations(pg, { breaking: true })).toEqual({ applied: [6] });
     const home = mkdtempSync(join(tmpdir(), 'orion-import-home-'));
     dirs.push(home);
     const lines: string[] = [];

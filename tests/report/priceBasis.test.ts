@@ -8,7 +8,7 @@ import type { HolderYieldReport, ReportInput } from '../../src/report/holderYiel
 import { loadHolderYieldReport, yieldReport } from '../../src/report/load.js';
 import { MINI_REPORT_YAML } from '../helpers/assets.js';
 import { useTestDb } from '../helpers/db.js';
-import { TEST_PROVENANCE } from '../helpers/provenance.js';
+import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 /**
  * Task 8 (after G2): income statement v2 reads tokens x prices (flow_usd_v) where a row's hourly coverage is full, else
@@ -37,14 +37,14 @@ async function seed(db: Db, last: string, kind: (i: number) => Kind, days = 25, 
     const hourly = Array.from({ length: 24 }, (_, h) => (h === 12 ? 10 : k === 'partial' && h === 3 ? 1 : 0));
     if (k === 'hourly' || k === 'partial') await upsertPrices(db, REF, 'coingecko', [{ ts: `${day}T12:00:00.000Z`, priceUsd: 10.5 }], end);
     await insertObservation(db, {
-      provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value: 100,
-      source: k === 'none' ? 'api' : 'onchain', fetchedAt: fetched?.(i) ?? end,
+      provenance: testProvenance(k === 'none' ? 'api' : 'onchain'), assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value: 100,
+      fetchedAt: fetched?.(i) ?? end,
       ...(k === 'hourly' || k === 'partial' ? { tokens: { tokenRef: REF, amount: k === 'partial' ? 11 : 10, hourlyAmounts: hourly } } : {}),
       ...(k === 'usd' ? { tokens: { tokenRef: 'usd', amount: 100, hourlyAmounts: null } } : {}),
     });
   }
-  await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'price_usd', observedAt: end, value: 2, source: 'api', fetchedAt: end });
-  await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'total_supply', observedAt: end, value: 1_000_000, source: 'onchain', fetchedAt: end });
+  await insertObservation(db, { provenance: testProvenance('api'), assetId: 'mini', metricKey: 'price_usd', observedAt: end, value: 2, fetchedAt: end });
+  await insertObservation(db, { provenance: testProvenance('onchain'), assetId: 'mini', metricKey: 'total_supply', observedAt: end, value: 1_000_000, fetchedAt: end });
 }
 
 const legacyOf = async (db: Db, day = DAY) => (await loadHolderYieldReport(db, asset, day, { legacy: true })) as HolderYieldReport;

@@ -11,7 +11,7 @@ import { testDatabaseConfig, testDbPair, useTestDb } from '../helpers/db.js';
 import { GENESIS_TS, harness, NOW, type Harness } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML, POOL } from '../helpers/ingestAsset.js';
 import { watchAssetYaml } from '../helpers/watchAsset.js';
-import { TEST_PROVENANCE } from '../helpers/provenance.js';
+import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 /** The mini asset's one holder flow, reported over a week. */
 const REPORTING = 'reporting:\n  window_days: 7\n  haircuts: { fees: 0 }\n';
@@ -35,7 +35,7 @@ function world({ db = testDb(), ...over }: Parameters<typeof harness>[1] & { db?
 async function seedFees(lastDay: string, days: number, value: number, metricKey = 'flow_usd.fees') {
   for (let i = 0; i < days; i++) {
     const day = addDays(lastDay, -i);
-    await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, source: 'onchain', fetchedAt: NOW.toISOString() });
+    await insertObservation(h.db, { provenance: testProvenance('onchain'), assetId: 'mini', metricKey, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, fetchedAt: NOW.toISOString() });
   }
 }
 
@@ -77,7 +77,7 @@ describe('tickAsset', () => {
     ].join('\n');
     world({ loaded: reportAsset(INGEST_ASSET_YAML, statement) });
     await seedFees('2026-09-15', 12, 2);
-    await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'staker_emission_share', observedAt: '2026-09-19T00:45:00.000Z', value: 0.3, source: 'onchain', fetchedAt: '2026-09-19T00:45:00.000Z' });
+    await insertObservation(h.db, { provenance: testProvenance('onchain'), assetId: 'mini', metricKey: 'staker_emission_share', observedAt: '2026-09-19T00:45:00.000Z', value: 0.3, fetchedAt: '2026-09-19T00:45:00.000Z' });
     const { report, exitCode } = await tick();
     expect(exitCode).toBe(0);
     expect(report.holder_yield!.day).toBe('2026-09-18');

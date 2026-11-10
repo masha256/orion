@@ -9,7 +9,7 @@ import { addDays } from '../../src/ingest/time.js';
 import { holderYieldReport, type ReportLevels } from '../../src/report/holderYield.js';
 import { lastCompleteReportDay, loadHolderYieldReport, periodicDaily } from '../../src/report/load.js';
 import { useTestDb } from '../helpers/db.js';
-import { TEST_PROVENANCE } from '../helpers/provenance.js';
+import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -43,7 +43,7 @@ const flat = (first: string, n: number, v: number) => new Map(Array.from({ lengt
 async function seedDaily(db: Db, metricKey: string, lastDay: string, days: number, value: number) {
   for (let i = 0; i < days; i++) {
     const day = addDays(lastDay, -i);
-    await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'hype', metricKey, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, source: 'api', fetchedAt: '2026-10-11T00:00:00.000Z' });
+    await insertObservation(db, { provenance: testProvenance('api'), assetId: 'hype', metricKey, observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value, fetchedAt: '2026-10-11T00:00:00.000Z' });
   }
 }
 
@@ -285,7 +285,7 @@ describe('revenue streams: periodic settlement', () => {
   it('spreads each payment evenly over the days it covers, and runs the unpaid days at the last period\'s daily rate, provisional', async () => {
     const db = testDb();
     // 300 paid for 2026-01-01 .. 01-30 (30 days): 10 a day. Report day 02-05: 6 unpaid days.
-    await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'hype', metricKey: 'flow_usd.reserve', observedAt: '2026-01-31T00:00:00.000Z', periodDays: 30, value: 300, source: 'api', fetchedAt: '2026-02-06T00:00:00.000Z' });
+    await insertObservation(db, { provenance: testProvenance('api'), assetId: 'hype', metricKey: 'flow_usd.reserve', observedAt: '2026-01-31T00:00:00.000Z', periodDays: 30, value: 300, fetchedAt: '2026-02-06T00:00:00.000Z' });
     const p = await periodicDaily(db, 'hype', 'flow_usd.reserve', '2026-02-05');
     expect(p.days.get('2026-01-01')).toBe(10);
     expect(p.days.get('2026-01-30')).toBe(10);
@@ -293,7 +293,7 @@ describe('revenue streams: periodic settlement', () => {
     expect([...p.provisional].sort()).toEqual(['2026-01-31', '2026-02-01', '2026-02-02', '2026-02-03', '2026-02-04', '2026-02-05']);
     expect(p.days.get('2026-02-05')).toBe(10);
     // The next payment lands (330 for 01-31 .. 03-01): its days replace the provisional ones; nothing was stored for them.
-    await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'hype', metricKey: 'flow_usd.reserve', observedAt: '2026-03-02T00:00:00.000Z', periodDays: 30, value: 330, source: 'api', fetchedAt: '2026-02-06T00:00:00.000Z' });
+    await insertObservation(db, { provenance: testProvenance('api'), assetId: 'hype', metricKey: 'flow_usd.reserve', observedAt: '2026-03-02T00:00:00.000Z', periodDays: 30, value: 330, fetchedAt: '2026-02-06T00:00:00.000Z' });
     const q = await periodicDaily(db, 'hype', 'flow_usd.reserve', '2026-02-05');
     expect(q.days.get('2026-02-05')).toBe(11);
     expect(q.provisional.size).toBe(0);
@@ -305,7 +305,7 @@ describe('revenue streams: periodic settlement', () => {
     await seedDaily(db, 'flow_usd.trading', '2026-02-05', 40, 3);
     await seedDaily(db, 'flow_usd.buyback', '2026-02-05', 40, 2);
     // Started 01-25: one payment for 01-25 .. 02-01 (8 days, 80), unpaid since: 4 provisional days to 02-05.
-    await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'hype', metricKey: 'flow_usd.reserve', observedAt: '2026-02-02T00:00:00.000Z', periodDays: 8, value: 80, source: 'api', fetchedAt: '2026-02-06T00:00:00.000Z' });
+    await insertObservation(db, { provenance: testProvenance('api'), assetId: 'hype', metricKey: 'flow_usd.reserve', observedAt: '2026-02-02T00:00:00.000Z', periodDays: 8, value: 80, fetchedAt: '2026-02-06T00:00:00.000Z' });
     expect(await lastCompleteReportDay(db, asset)).toBe('2026-02-05');
     const r = await loadHolderYieldReport(db, asset, undefined, { legacy: true });
     const v = r.revenue!;

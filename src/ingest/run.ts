@@ -9,6 +9,7 @@ import { emptySourceOutcome, insertFetchRun, recentSourceStatuses, type FetchOut
 import { insertObservation, listActiveObservations } from '../db/observations.js';
 import { latestLevel } from '../observations/select.js';
 import { fetchedProvenance } from '../provenance/locator.js';
+import { originOf } from '../provenance/origin.js';
 import { responseDigest, type Json, type Provenance } from '../provenance/types.js';
 import type { SourceType } from '../report/sourceTypes.js';
 import { MS_PER_DAY, OrionError, STD_METRICS } from '../types.js';
@@ -150,6 +151,17 @@ function flowMetricsOf(metricKey: string, name: DerivedName, params: Record<stri
     throw new OrionError('invalid_source_config', `metrics.${metricKey}: ${name} "metrics" must list two or more different flow metrics`);
   }
   return many as string[];
+}
+
+/**
+ * Since 0006 a row's origin is derived from its provenance (`originOf`), never stored: a reading whose own stamp would
+ * read back differently is refused rather than stored under the wrong origin (a code bug: an adapter missing from, or
+ * declared wrong in, ADAPTER_ORIGINS; or a derivation over a first-party API series, which the provenance cannot tell
+ * apart from one over transfer scans). Null when they agree.
+ */
+function originMismatch(stamp: 'onchain' | 'api', p: Provenance): string | null {
+  const origin = originOf(p);
+  return origin === stamp ? null : `origin_mismatch: the reading is ${stamp} but its provenance (${p.method}, ${p.sourceType}) reads back as ${origin}; nothing was written`;
 }
 
 /** Rows read from an API (first party, third party or market data) carry a digest of the slice they were taken from. */
@@ -321,12 +333,17 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
           continue;
         }
         const { source, detail } = result.value;
+        const mismatch = originMismatch(source, provenanceOf(r.metricKey, steps[0]));
+        if (mismatch !== null) {
+          markFailed(outcome, `${r.metricKey}: ${mismatch}`);
+          continue;
+        }
         for (const step of steps) {
           const observedAt = new Date(step.observedAt).toISOString();
           const observationId = dryRun
             ? null
             : (await insertObservation(db, {
-                assetId: asset.id, metricKey: r.metricKey, observedAt, value: step.value, source, sourceDetail: detail, fetchedAt: startedAt,
+                assetId: asset.id, metricKey: r.metricKey, observedAt, value: step.value, sourceDetail: detail, fetchedAt: startedAt,
                 provenance: provenanceOf(r.metricKey, step),
               })).id;
           written.push({ metricKey: r.metricKey, value: step.value, observedAt, periodDays: null, source, observationId });
@@ -340,7 +357,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
         continue;
       }
       const v = result.value;
-      const refusal = validateReading(asset.metrics[r.metricKey], v.value);
+      const refusal = validateReading(asset.metrics[r.metricKey], v.value) ?? originMismatch(v.source, provenanceOf(r.metricKey, v));
       if (refusal !== null) {
         markFailed(outcome, `${r.metricKey}: ${refusal}`);
         continue;
@@ -348,7 +365,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       const observationId = dryRun
         ? null
         : (await insertObservation(db, {
-            assetId: asset.id, metricKey: r.metricKey, observedAt: v.observedAt, value: v.value, source: v.source,
+            assetId: asset.id, metricKey: r.metricKey, observedAt: v.observedAt, value: v.value,
             sourceDetail: v.detail, fetchedAt: startedAt, provenance: provenanceOf(r.metricKey, v),
           })).id;
       outcome.metricsWritten.push(r.metricKey);
@@ -501,7 +518,12 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     if (apiInputs > 0 && apiInputs < inputs.length) {
       throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: ${name} cannot sum API-series and on-chain flows`);
     }
-    const provenance: 'onchain' | 'api' = apiInputs > 0 ? 'api' : 'onchain';
+    const stamp: 'onchain' | 'api' = apiInputs > 0 ? 'api' : 'onchain';
+    const mismatch = originMismatch(stamp, fetchedProvenance(loaded, r.metricKey, { formula: `${name}@1` }));
+    if (mismatch !== null) {
+      markFailed(outcome, `${r.metricKey}: ${mismatch}`);
+      continue;
+    }
     const dailyOf = async (m: string): Promise<Map<string, number>> => {
       const d = await storedDailyFlow(db, asset.id, m);
       for (const p of scannedDaily.get(m) ?? []) d.set(p.day, p.value);
@@ -529,14 +551,14 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       const observationId = dryRun
         ? null
         : (await insertObservation(db, {
-            assetId: asset.id, metricKey: r.metricKey, observedAt, value: point.value, source: provenance,
+            assetId: asset.id, metricKey: r.metricKey, observedAt, value: point.value,
             sourceDetail: `derived ${name}(${flowMetric}, ${windowDays}d)`, fetchedAt: startedAt,
             provenance: fetchedProvenance(loaded, r.metricKey, {
               formula: `${name}@1`,
               inputs: [...flowMetrics.map((m) => ({ metric: m, from, to: point.day })), ...minusMetrics.map((m) => ({ metric: m, from, to: point.day, sign: -1 }))],
             }),
           })).id;
-      written.push({ metricKey: r.metricKey, value: point.value, observedAt, periodDays: null, source: provenance, observationId });
+      written.push({ metricKey: r.metricKey, value: point.value, observedAt, periodDays: null, source: stamp, observationId });
       if (r.metricKey === STD_METRICS.usageIndex) derivedIndex.push({ observedAt, value: point.value });
       wrote++;
     }

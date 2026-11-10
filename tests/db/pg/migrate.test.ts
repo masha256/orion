@@ -40,26 +40,29 @@ afterAll(async () => {
 });
 
 describe('migrate', () => {
-  it('migrate: the shipped migrations apply to an empty schema; a second run applies nothing; status is current', async () => {
+  it('migrate: the shipped migrations apply to an empty schema (0006 only with breaking); a second run applies nothing; status is current', async () => {
     const db = await emptySchema();
     const before = await migrationStatus(db);
-    expect(before).toMatchObject({ schema: db.schema, dbAt: 0, codeRequires: 5, applied: [], changed: [], state: 'behind' });
+    expect(before).toMatchObject({ schema: db.schema, dbAt: 0, codeRequires: 6, applied: [], changed: [], state: 'behind' });
     expect(before.pending).toEqual([
       { id: 1, name: 'baseline', breaking: false }, { id: 2, name: 'daemon', breaking: false }, { id: 3, name: 'checks', breaking: false },
-      { id: 4, name: 'provenance', breaking: false }, { id: 5, name: 'tokens_prices', breaking: false },
+      { id: 4, name: 'provenance', breaking: false }, { id: 5, name: 'tokens_prices', breaking: false }, { id: 6, name: 'provenance_not_null', breaking: true },
     ]);
 
-    expect(await applyMigrations(db, {})).toEqual({ applied: [1, 2, 3, 4, 5] });
+    await expect(applyMigrations(db, {})).rejects.toMatchObject({ code: 'migration_breaking', message: expect.stringContaining('6') });
+    expect((await migrationStatus(db)).dbAt).toBe(0);
+    expect(await applyMigrations(db, { breaking: true })).toEqual({ applied: [1, 2, 3, 4, 5, 6] });
     expect(await applyMigrations(db, {})).toEqual({ applied: [] });
     const after = await migrationStatus(db);
-    const [baseline, daemon, checks, provenance, tokensPrices] = loadMigrations();
-    expect(after).toMatchObject({ dbAt: 5, codeRequires: 5, pending: [], changed: [], state: 'current' });
+    const [baseline, daemon, checks, provenance, tokensPrices, notNull] = loadMigrations();
+    expect(after).toMatchObject({ dbAt: 6, codeRequires: 6, pending: [], changed: [], state: 'current' });
     expect(after.applied).toEqual([
       { id: 1, name: 'baseline', sha256: baseline!.sha256, appliedAt: expect.stringMatching(/Z$/) },
       { id: 2, name: 'daemon', sha256: daemon!.sha256, appliedAt: expect.stringMatching(/Z$/) },
       { id: 3, name: 'checks', sha256: checks!.sha256, appliedAt: expect.stringMatching(/Z$/) },
       { id: 4, name: 'provenance', sha256: provenance!.sha256, appliedAt: expect.stringMatching(/Z$/) },
       { id: 5, name: 'tokens_prices', sha256: tokensPrices!.sha256, appliedAt: expect.stringMatching(/Z$/) },
+      { id: 6, name: 'provenance_not_null', sha256: notNull!.sha256, appliedAt: expect.stringMatching(/Z$/) },
     ]);
     expect((await db.one<{ n: number }>('SELECT count(*) AS n FROM observations'))?.n).toBe(0);
   });
@@ -68,7 +71,7 @@ describe('migrate', () => {
     const db = await emptySchema();
     await db.run(`DROP SCHEMA ${db.schema}`);
     expect((await migrationStatus(db)).state).toBe('behind');
-    expect(await applyMigrations(db, {})).toEqual({ applied: [1, 2, 3, 4, 5] });
+    expect(await applyMigrations(db, { breaking: true })).toEqual({ applied: [1, 2, 3, 4, 5, 6] });
     expect((await migrationStatus(db)).state).toBe('current');
   });
 
@@ -191,7 +194,7 @@ describe('migrate', () => {
       `INSERT INTO observations (asset_id, metric_key, observed_at, period_days, value, source, status, fetched_at)
        VALUES ('crv', 'flow_usd.fees', '2026-10-02T00:00:00Z', 1, 12.5, 'onchain', 'confirmed', now())`,
     );
-    expect(await applyMigrations(db, {})).toEqual({ applied: [5] });
+    expect(await applyMigrations(db, { migrations: all.slice(0, 5) })).toEqual({ applied: [5] });
     const cols = async (table: string) =>
       await db.all<{ c: string; t: string; n: string; coll: string | null }>(
         `SELECT column_name AS c, data_type AS t, is_nullable AS n, collation_name AS coll FROM information_schema.columns
@@ -223,9 +226,59 @@ describe('migrate', () => {
     await expect(db.run("INSERT INTO prices VALUES ('eip155:1/0xnope', now(), 1, 'coingecko', now())")).rejects.toThrow(/foreign key/);
   });
 
+  it('0006 (breaking) on a populated table: provenance NOT NULL, the disclosure citation CHECK with the pre-v2 exemption, source dropped; values kept', async () => {
+    const db = await emptySchema();
+    const all = loadMigrations();
+    expect(all[5]).toMatchObject({ id: 6, name: 'provenance_not_null', breaking: true });
+    expect(all[5]!.sql.split('\n', 1)[0]).toBe('-- breaking');
+    expect(await applyMigrations(db, { migrations: all.slice(0, 5) })).toEqual({ applied: [1, 2, 3, 4, 5] });
+    const insert = (value: number, cols: string, vals: string) =>
+      db.run(
+        `INSERT INTO observations (asset_id, metric_key, observed_at, period_days, value, source, status, fetched_at${cols})
+         VALUES ('crv', 'flow_usd.fees', '2026-10-0${value}T00:00:00Z', 1, ${value}, 'onchain', 'confirmed', now()${vals})`,
+      );
+    const full = (sourceType: string, citation: string, codeVersion: string) =>
+      [", method, source_type, locator, code_version, config_hash, citation_url", `, 'measured', '${sourceType}', '{}', '${codeVersion}', 'h', ${citation}`] as const;
+    await insert(1, ...full('log_scan', 'NULL', 'abc'));
+    await insert(2, ...full('disclosure', 'NULL', 'pre-v2')); // R17 2b: a pre-v2 seed without a citation
+    await insert(3, ...full('disclosure', "'https://x.test'", 'abc'));
+    // A row with a null provenance column refuses the migration (the pre-deploy check must read 0 first), atomically.
+    await insert(4, ", method", ", 'measured'");
+    await expect(applyMigrations(db, { breaking: true })).rejects.toThrow(/null values/);
+    expect((await migrationStatus(db)).dbAt).toBe(5);
+    await db.run('DELETE FROM observations WHERE value = 4');
+    // A new-release disclosure without a citation refuses it too.
+    await insert(5, ...full('disclosure', 'NULL', 'abc'));
+    await expect(applyMigrations(db, { breaking: true })).rejects.toThrow(/observations_disclosure_citation/);
+    await db.run('DELETE FROM observations WHERE value = 5');
+    // latest_levels: every column the writers set.
+    await db.run(`INSERT INTO latest_levels (asset_id, metric_key, value, observed_at, source, source_type, locator) VALUES ('crv', 'price_usd', 1, now(), 'api', 'market_data', '{}')`);
+    expect(await applyMigrations(db, { breaking: true })).toEqual({ applied: [6] });
+    const cols = async (table: string) =>
+      await db.all<{ c: string; n: string }>(
+        'SELECT column_name AS c, is_nullable AS n FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position',
+        [db.schema, table],
+      );
+    const obs = await cols('observations');
+    expect(obs.map((x) => x.c)).not.toContain('source');
+    const nullable = Object.fromEntries(obs.map((x) => [x.c, x.n]));
+    for (const c of ['method', 'source_type', 'locator', 'code_version', 'config_hash']) expect(nullable[c], c).toBe('NO');
+    for (const c of ['chain', 'block_from', 'tx_refs', 'formula', 'inputs', 'citation_url', 'token_ref']) expect(nullable[c], c).toBe('YES');
+    const ll = Object.fromEntries((await cols('latest_levels')).map((x) => [x.c, x.n]));
+    expect(ll).toMatchObject({ source: 'NO', source_type: 'NO', locator: 'NO' });
+    expect((await db.all<{ value: number }>('SELECT value FROM observations ORDER BY id')).map((r) => r.value)).toEqual([1, 2, 3]);
+    // The view still reads the table; a release before 0006 (it inserts source) no longer can.
+    expect((await db.one<{ n: number }>('SELECT count(*)::int AS n FROM flow_usd_v'))?.n).toBe(3);
+    await expect(insert(6, ...full('log_scan', 'NULL', 'abc'))).rejects.toThrow(/column "source"/);
+    await expect(
+      db.run(`INSERT INTO observations (asset_id, metric_key, observed_at, value, status, fetched_at, method, source_type, locator, code_version, config_hash)
+              VALUES ('crv', 'm', now(), 1, 'confirmed', now(), 'disclosed', 'disclosure', '{}', 'abc', 'h')`),
+    ).rejects.toThrow(/observations_disclosure_citation/);
+  });
+
   it('a release-N-1 insert of every old anomaly kind still works on 0003', async () => {
     const db = await emptySchema();
-    await applyMigrations(db, {});
+    await applyMigrations(db, { breaking: true });
     // The insert a release without 0003 makes (src/db/anomalies.ts raiseAnomaly), one per kind it knows.
     const insert = (kind: string, dedupe: string) => db.run(
       `INSERT INTO anomalies (asset_id, kind, metric_key, dedupe_key, severity, status, detail_json, occurrences, first_seen_at, last_seen_at)

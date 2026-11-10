@@ -150,12 +150,19 @@ function checkReferences(tables: TableRows[]): void {
   }
 }
 
+/**
+ * The schema level the import writes into: 0005, the last one whose `observations` takes a row with `source` and no
+ * provenance. From 0006 on (Task 10) the column is gone and provenance is NOT NULL, so an import is followed by the
+ * release-2 build's `db backfill-provenance` and only then this build's `db migrate --breaking`.
+ */
+export const IMPORT_SCHEMA_LEVEL = 5;
+
 async function checkTarget(db: PgDb, plan: CarryPlan): Promise<number> {
   const status = await migrationStatus(db);
-  if (status.state !== 'current') {
+  if (status.changed.length > 0 || status.dbAt !== IMPORT_SCHEMA_LEVEL || status.applied.length !== IMPORT_SCHEMA_LEVEL) {
     throw new OrionError(
       'import_target_not_current',
-      `target schema ${db.schema} is ${status.state} (at ${status.dbAt}, this build needs ${status.codeRequires}): run orion db migrate`,
+      `target schema ${db.schema} is at ${status.dbAt} (${status.state}); the import needs it at exactly ${IMPORT_SCHEMA_LEVEL}: run orion db migrate with a release-2 build (migrations 0001-0005)`,
     );
   }
   const filled: string[] = [];

@@ -10,7 +10,7 @@ import { fakeRpc } from '../helpers/fakeRpc.js';
 import { CG_CHART, defaultCalls, GENESIS_TS, harness, hourlyPrices, LLAMA } from '../helpers/fetchHarness.js';
 import { POOL } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
-import { TEST_PROVENANCE } from '../helpers/provenance.js';
+import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -92,7 +92,7 @@ describe('fetchAsset: flows', () => {
 
   it('passes --adopt and --dry-run through to the scan', async () => {
     const h = harness(testDb());
-    await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-18', periodDays: 30, value: 5000, source: 'manual', fetchedAt: '2026-09-18T00:00:00Z' });
+    await insertObservation(h.db, { provenance: testProvenance('manual'), assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-18', periodDays: 30, value: 5000, fetchedAt: '2026-09-18T00:00:00Z' });
     const refused = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     expect(source(refused, FLOW_ID).status).toBe('skipped');
     expect(refused.outcome).toBe('partial');

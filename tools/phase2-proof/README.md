@@ -45,8 +45,12 @@ WT=$PWD                                         # this worktree
 npm run build                                   # the new side: $WT/dist
 P2_PROD_SSH='-i ~/.ssh/<prod key> -o IdentitiesOnly=yes orion-prod@<host>' \
   /usr/bin/python3 tools/phase2-proof/prod_copy.py "$P" "$OLD" "$WT"    # read $P/copy.json; stop on any mismatch
+# Task 10 (0006 drops observations.source): while the copy still has it, every row's derived origin must equal it.
+(cd "$P/new" && ORION_DATABASE_URL=<the copy's url> ORION_DB_SCHEMA="$(cat "$P/schema")" npx tsx "$WT/tools/phase2-proof/origin-check.ts") \
+  >"$P/origin-check.json"                       # exit 0 and equal == rows; else stop: the mismatching shapes are listed
 # The NEW dist's migrations on the copy (an older release opens a newer schema); no other ORION_* in the environment.
-(cd "$P/new" && ORION_HOME="$P/new" ORION_ENV_FILE="$P/new/.env" node "$WT/dist/cli/index.js" db migrate --json) \
+# From 0006 on the new side needs --breaking (it drops observations.source; the copy is scratch).
+(cd "$P/new" && ORION_HOME="$P/new" ORION_ENV_FILE="$P/new/.env" node "$WT/dist/cli/index.js" db migrate --breaking --json) \
   >"$P/migrate-new.json" 2>"$P/migrate-new.stderr"
 tools/phase2-proof/reports.sh "$OLD/dist" dist "$P/old" "$P/new" <D> "$P/out"
 /usr/bin/python3 tools/phase2-proof/expected.py "$P/out/old"          # once incomeStatement exists (reads yCRV's mix from $P/out/new)

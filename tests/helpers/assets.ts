@@ -3,7 +3,7 @@ import type { AssetConfig, IncomeStatementDef } from '../../src/config/schema.js
 import type { Db } from '../../src/db/connection.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { addDays } from '../../src/ingest/time.js';
-import { TEST_PROVENANCE } from './provenance.js';
+import { TEST_PROVENANCE, testProvenance } from './provenance.js';
 
 export const MINI_ASSET_YAML = `
 id: mini
@@ -79,8 +79,8 @@ export async function seedMiniReport(db: Db, lastDay: string, days = 25): Promis
   const at = `${addDays(lastDay, 1)}T00:00:00.000Z`;
   for (let i = 0; i < days; i++) {
     const day = addDays(lastDay, -i);
-    await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value: 100 + i, source: 'onchain', fetchedAt: at });
+    await insertObservation(db, { provenance: testProvenance('onchain'), assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value: 100 + i, fetchedAt: at });
   }
-  await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'price_usd', observedAt: at, value: 2, source: 'api', fetchedAt: at });
-  await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'total_supply', observedAt: at, value: 1_000_000, source: 'onchain', fetchedAt: at });
+  await insertObservation(db, { provenance: testProvenance('api'), assetId: 'mini', metricKey: 'price_usd', observedAt: at, value: 2, fetchedAt: at });
+  await insertObservation(db, { provenance: testProvenance('onchain'), assetId: 'mini', metricKey: 'total_supply', observedAt: at, value: 1_000_000, fetchedAt: at });
 }

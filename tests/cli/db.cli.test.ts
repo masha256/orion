@@ -64,40 +64,45 @@ describe('orion db', () => {
     const s = await schema({ migrate: false });
     const h = home();
     writeFileSync(join(h, '.env'), `ORION_DATABASE_URL=${requireTestDatabaseUrl()}\nORION_DB_SCHEMA=${s.schema}\n`);
-    const r = await orion({ home: h }, 'db', 'migrate', '--json');
-    expect(JSON.parse(r.out)).toMatchObject({ applied: [1, 2, 3, 4, 5], status: { schema: s.schema, state: 'current' } });
+    const r = await orion({ home: h }, 'db', 'migrate', '--breaking', '--json');
+    expect(JSON.parse(r.out)).toMatchObject({ applied: [1, 2, 3, 4, 5, 6], status: { schema: s.schema, state: 'current' } });
   });
 
-  it('db status on a fresh schema: state behind, pending [1 baseline, 2 daemon, 3 checks, 4 provenance, 5 tokens_prices]', async () => {
+  it('db status on a fresh schema: state behind, pending [1 baseline, 2 daemon, 3 checks, 4 provenance, 5 tokens_prices, 6 provenance_not_null (breaking)]', async () => {
     const s = await schema({ migrate: false });
     const r = await orion({ home: home(), database: s }, 'db', 'status', '--json');
     expect(r.exit).toEqual([]);
     expect(JSON.parse(r.out)).toEqual({
-      schema: s.schema, dbAt: 0, codeRequires: 5, applied: [],
+      schema: s.schema, dbAt: 0, codeRequires: 6, applied: [],
       pending: [
         { id: 1, name: 'baseline', breaking: false }, { id: 2, name: 'daemon', breaking: false }, { id: 3, name: 'checks', breaking: false }, { id: 4, name: 'provenance', breaking: false },
-        { id: 5, name: 'tokens_prices', breaking: false },
+        { id: 5, name: 'tokens_prices', breaking: false }, { id: 6, name: 'provenance_not_null', breaking: true },
       ],
       changed: [], state: 'behind',
     });
-    expect((await orion({ home: home(), database: s }, 'db', 'status')).out).toBe(`schema ${s.schema}: behind (database at 0, this build needs 5)\n  pending 0001_baseline\n  pending 0002_daemon\n  pending 0003_checks\n  pending 0004_provenance\n  pending 0005_tokens_prices`);
+    expect((await orion({ home: home(), database: s }, 'db', 'status')).out).toBe(`schema ${s.schema}: behind (database at 0, this build needs 6)\n  pending 0001_baseline\n  pending 0002_daemon\n  pending 0003_checks\n  pending 0004_provenance\n  pending 0005_tokens_prices\n  pending 0006_provenance_not_null (breaking)`);
     expect(await tables(s)).toEqual([]); // status reads only
   });
 
-  it('db migrate applies 0001 to 0005 once, then nothing', async () => {
+  it('db migrate refuses the breaking 0006 without --breaking; with it applies 0001 to 0006 once, then nothing', async () => {
     const s = await schema({ migrate: false });
-    const first = JSON.parse((await orion({ home: home(), database: s }, 'db', 'migrate', '--json')).out);
-    expect(first.applied).toEqual([1, 2, 3, 4, 5]);
-    expect(first.status).toMatchObject({ dbAt: 5, codeRequires: 5, pending: [], state: 'current' });
+    const refused = await orion({ home: home(), database: s }, 'db', 'migrate', '--json');
+    expect(JSON.parse(refused.out)).toMatchObject({ error: { code: 'migration_breaking' } });
+    expect(refused.exit).toEqual([1]);
+    expect(await tables(s)).not.toContain('observations'); // nothing applied
+    const first = JSON.parse((await orion({ home: home(), database: s }, 'db', 'migrate', '--breaking', '--json')).out);
+    expect(first.applied).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(first.status).toMatchObject({ dbAt: 6, codeRequires: 6, pending: [], state: 'current' });
     expect(first.status.applied).toEqual([
       { id: 1, name: 'baseline', sha256: expect.stringMatching(/^[0-9a-f]{64}$/), appliedAt: expect.stringMatching(/Z$/) },
       { id: 2, name: 'daemon', sha256: expect.stringMatching(/^[0-9a-f]{64}$/), appliedAt: expect.stringMatching(/Z$/) },
       { id: 3, name: 'checks', sha256: expect.stringMatching(/^[0-9a-f]{64}$/), appliedAt: expect.stringMatching(/Z$/) },
       { id: 4, name: 'provenance', sha256: expect.stringMatching(/^[0-9a-f]{64}$/), appliedAt: expect.stringMatching(/Z$/) },
       { id: 5, name: 'tokens_prices', sha256: expect.stringMatching(/^[0-9a-f]{64}$/), appliedAt: expect.stringMatching(/Z$/) },
+      { id: 6, name: 'provenance_not_null', sha256: expect.stringMatching(/^[0-9a-f]{64}$/), appliedAt: expect.stringMatching(/Z$/) },
     ]);
     const second = await orion({ home: home(), database: s }, 'db', 'migrate');
-    expect(second.out).toBe(`nothing to apply\nschema ${s.schema}: current (database at 5, this build needs 5)`);
+    expect(second.out).toBe(`nothing to apply\nschema ${s.schema}: current (database at 6, this build needs 6)`);
     expect(JSON.parse((await orion({ home: home(), database: s }, 'db', 'status', '--json')).out).state).toBe('current');
     expect(await tables(s)).toContain('observations');
   });
@@ -110,7 +115,7 @@ describe('orion db', () => {
       const h = home();
       const r = await orion({ home: h, database: s }, 'persona', 'assign', 'mini', 'analyst', '--json');
       expect(JSON.parse(r.out)).toEqual({
-        error: { code: 'schema_behind', message: `database schema ${s.schema} is at 0, this build needs 5: run orion db migrate` },
+        error: { code: 'schema_behind', message: `database schema ${s.schema} is at 0, this build needs 6: run orion db migrate` },
       });
       expect(r.exit).toEqual([1]);
       expect(await db.all('SELECT * FROM coverage')).toEqual([]);
@@ -178,7 +183,7 @@ describe('orion db', () => {
     const absent = await schema({ migrate: false });
     const a = await orion({ home: h, database: absent }, 'asset', 'registry', 'diff', '--json');
     expect(a.exit).toEqual([]);
-    expect(JSON.parse(a.out)).toMatchObject({ added: ['mini'], schemaPending: [1, 2, 3, 4, 5] });
+    expect(JSON.parse(a.out)).toMatchObject({ added: ['mini'], schemaPending: [1, 2, 3, 4, 5, 6] });
     expect(await tables(absent)).toEqual([]);
   });
 
@@ -186,7 +191,7 @@ describe('orion db', () => {
     const s = await schema({ migrate: true });
     const db = await openDb(s);
     try {
-      await db.run("INSERT INTO schema_migrations (id, name, sha256, applied_at) VALUES (6, 'from_a_newer_build', 'x', now())");
+      await db.run("INSERT INTO schema_migrations (id, name, sha256, applied_at) VALUES (7, 'from_a_newer_build', 'x', now())");
     } finally {
       await db.close();
     }
@@ -194,35 +199,10 @@ describe('orion db', () => {
     const r = await orion({ home: h, database: s }, 'persona', 'assign', 'mini', 'analyst', '--json');
     expect(r.exit).toEqual([]);
     expect(JSON.parse(r.out)).toMatchObject({ assetId: 'mini', persona: 'analyst' });
-    expect(JSON.parse((await orion({ home: h, database: s }, 'db', 'status', '--json')).out)).toMatchObject({ dbAt: 6, codeRequires: 5, state: 'ahead' });
+    expect(JSON.parse((await orion({ home: h, database: s }, 'db', 'status', '--json')).out)).toMatchObject({ dbAt: 7, codeRequires: 6, state: 'ahead' });
   });
 
-  it('db backfill-provenance: --dry-run --json lists what it would map and writes nothing; the real run maps it', async () => {
-    const s = await schema({ migrate: true });
-    const db = await openDb(s);
-    try {
-      const insert = (metric: string, source: string, citation: string | null) => db.run(
-        `INSERT INTO observations (asset_id, metric_key, observed_at, value, source, status, citation_url, fetched_at)
-         VALUES ('mini', $1, now(), 1, $2, 'confirmed', $3, now())`,
-        [metric, source, citation],
-      );
-      await insert('revenue_run_rate_usd', 'manual', 'https://example.com/c');
-      await insert('revenue_run_rate_usd', 'manual', null);
-      const h = home();
-      const dry = await orion({ home: h, database: s }, 'db', 'backfill-provenance', '--dry-run', '--json');
-      expect(dry.exit).toEqual([]);
-      expect(JSON.parse(dry.out)).toEqual({
-        dryRun: true, alreadySet: 0, mapped: { 'mini:revenue_run_rate_usd': 1 },
-        unmapped: [{ id: 2, assetId: 'mini', metricKey: 'revenue_run_rate_usd', source: 'manual', reason: 'manual_without_citation' }],
-      });
-      expect(await db.one('SELECT count(*)::bigint AS n FROM observations WHERE method IS NOT NULL')).toEqual({ n: 0 });
-      const text = await orion({ home: h, database: s }, 'db', 'backfill-provenance');
-      expect(text.out).toBe('mapped 1 row(s) over 1 metric(s); 0 already had provenance; 1 cannot be mapped\n  mini:revenue_run_rate_usd: 1\n  UNMAPPED #2 mini revenue_run_rate_usd (manual): manual_without_citation');
-      expect(await db.one('SELECT method, source_type, code_version, config_hash FROM observations WHERE id = 1')).toEqual({
-        method: 'disclosed', source_type: 'disclosure', code_version: 'pre-v2', config_hash: 'pre-v2',
-      });
-    } finally {
-      await db.close();
-    }
+  it('db backfill-provenance is gone with 0006 (nothing can be null): an unknown command', async () => {
+    await expect(orion({ home: home(), database: await schema({ migrate: true }) }, 'db', 'backfill-provenance', '--json')).rejects.toThrow(/unknown command 'backfill-provenance'/);
   });
 });

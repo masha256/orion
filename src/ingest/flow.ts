@@ -527,7 +527,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
             const token = tokenOf.get(m.metricKey)!;
             const tk = scan.tokens.get(m.metricKey)!;
             const o = await insertObservation(t, {
-              assetId: asset.id, metricKey: m.metricKey, observedAt, periodDays: 1, value: sums.get(m.metricKey)!, source: 'onchain',
+              assetId: asset.id, metricKey: m.metricKey, observedAt, periodDays: 1, value: sums.get(m.metricKey)!,
               sourceDetail: detail, fetchedAt: nowIso,
               provenance: fetchedProvenance({ config: asset, hash: args.configHash }, m.metricKey, {
                 blockFrom: Number(from.number), blockTo: Number(next.number) - 1, ...txRefsProvenance(scan.refs.get(m.metricKey)!),

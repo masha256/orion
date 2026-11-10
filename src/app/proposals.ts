@@ -107,7 +107,7 @@ export async function approveProposal(
         if (taken) stale(id, `observation #${taken.id} of ${change.metricKey} at ${at} now exists (${taken.status}, value ${taken.value}); reject it first if this proposal's value should replace it`);
         const row = await insertObservation(t, {
           assetId: p.assetId, metricKey: change.metricKey, observedAt: change.observedAt, periodDays: change.periodDays, value: change.value,
-          source: 'manual', status: 'confirmed', citationUrl: change.citationUrl, quotedText: change.quotedText, fetchedAt: nowIso,
+          status: 'confirmed', citationUrl: change.citationUrl, quotedText: change.quotedText, fetchedAt: nowIso,
           sourceDetail: `research:${p.persona}:run ${p.agentRunId ?? 'none'}; approved proposal #${id}`,
           // A figure the analyst filed from a citation and the user approved: disclosed, the citation required.
           provenance: disclosedProvenance(hash, {

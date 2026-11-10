@@ -28,16 +28,16 @@ describe('0002_daemon', () => {
     const migrations = loadMigrations();
     const daemon = migrations.find((m) => m.id === 2);
     expect(daemon).toMatchObject({ name: 'daemon', breaking: false }); // expand-only
-    expect(await applyMigrations(db, {})).toEqual({ applied: [1, 2, 3, 4, 5] });
+    expect(await applyMigrations(db, { breaking: true })).toEqual({ applied: [1, 2, 3, 4, 5, 6] });
     const rows = await db.all<{ id: number; name: string; sha256: string }>('SELECT id, name, sha256 FROM schema_migrations ORDER BY id');
-    expect(rows.map((r) => [r.id, r.name])).toEqual([[1, 'baseline'], [2, 'daemon'], [3, 'checks'], [4, 'provenance'], [5, 'tokens_prices']]);
+    expect(rows.map((r) => [r.id, r.name])).toEqual([[1, 'baseline'], [2, 'daemon'], [3, 'checks'], [4, 'provenance'], [5, 'tokens_prices'], [6, 'provenance_not_null']]);
     expect(rows[1]!.sha256).toBe(daemon!.sha256);
     expect(await applyMigrations(db, {})).toEqual({ applied: [] });
   });
 
   it('schema: every 0002 table exists in schema orion', async () => {
     const db = await emptySchema();
-    await applyMigrations(db, {});
+    await applyMigrations(db, { breaking: true });
     const tables = await db.all<{ name: string }>('SELECT tablename AS name FROM pg_tables WHERE schemaname = $1 ORDER BY tablename', [db.schema]);
     expect(tables.map((t) => t.name)).toEqual(expect.arrayContaining(DAEMON_TABLES));
     // Schema-unqualified: nothing landed in public or another schema.
@@ -54,7 +54,7 @@ describe('0002_daemon', () => {
 
   it('schema: the check constraints refuse unknown kinds, statuses and states', async () => {
     const db = await emptySchema();
-    await applyMigrations(db, {});
+    await applyMigrations(db, { breaking: true });
     const now = '2026-11-03T00:45:00.000Z';
     await expect(db.run("INSERT INTO jobs (kind, slot, run_after, priority, status, max_attempts) VALUES ('nope', $1, $1, 1, 'queued', 1)", [now])).rejects.toThrow(/jobs_kind_check/);
     await expect(db.run("INSERT INTO jobs (kind, slot, run_after, priority, status, max_attempts) VALUES ('levels', $1, $1, 1, 'lost', 1)", [now])).rejects.toThrow(/jobs_status_check/);

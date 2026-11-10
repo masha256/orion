@@ -8,7 +8,7 @@ import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.j
 import { CG_CHART, harness, hourlyPrices, NOW, type Harness } from '../helpers/fetchHarness.js';
 import { POOL, SAFE } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
-import { TEST_PROVENANCE } from '../helpers/provenance.js';
+import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -176,7 +176,7 @@ describe('scanFlowGroup', () => {
 
   it('refuses to write over manual rows without --adopt, and says what --adopt would do', async () => {
     const h = world();
-    const manual = await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-18', periodDays: 30, value: 5000, source: 'manual', fetchedAt: NOW.toISOString() });
+    const manual = await insertObservation(h.db, { provenance: testProvenance('manual'), assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-18', periodDays: 30, value: 5000, fetchedAt: NOW.toISOString() });
     const r = await scanFlowGroup(await argsFor(h));
     expect(r.outcome.status).toBe('skipped');
     expect(r.outcome.conflicts).toEqual([
@@ -190,8 +190,8 @@ describe('scanFlowGroup', () => {
 
   it('with --adopt, rejects the manual rows and writes the fetched ones', async () => {
     const h = world();
-    const manual = await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-18', periodDays: 30, value: 5000, source: 'manual', fetchedAt: NOW.toISOString() });
-    const older = await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-08-19', periodDays: 30, value: 4000, source: 'manual', fetchedAt: NOW.toISOString() });
+    const manual = await insertObservation(h.db, { provenance: testProvenance('manual'), assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-18', periodDays: 30, value: 5000, fetchedAt: NOW.toISOString() });
+    const older = await insertObservation(h.db, { provenance: testProvenance('manual'), assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-08-19', periodDays: 30, value: 4000, fetchedAt: NOW.toISOString() });
     const r = await scanFlowGroup(await argsFor(h, { adopt: true }));
     expect(r.outcome.status).toBe('ok');
     expect(r.outcome.retiredObservationIds).toEqual([manual.id]);
@@ -202,7 +202,7 @@ describe('scanFlowGroup', () => {
 
   it('never adopts over a row that is not manual', async () => {
     const h = world();
-    await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'flow_tokens.fees', observedAt: '2026-09-18', periodDays: 2, value: 9, source: 'api', fetchedAt: NOW.toISOString() });
+    await insertObservation(h.db, { provenance: testProvenance('api'), assetId: 'mini', metricKey: 'flow_tokens.fees', observedAt: '2026-09-18', periodDays: 2, value: 9, fetchedAt: NOW.toISOString() });
     const r = await scanFlowGroup(await argsFor(h, { adopt: true }));
     expect(r.outcome.status).toBe('skipped');
     expect(r.outcome.conflicts[0]).toMatchObject({ source: 'api', adoptable: false });
@@ -211,7 +211,7 @@ describe('scanFlowGroup', () => {
 
   it('finds conflicts by overlap, ignoring rows that only touch the range', async () => {
     const h = world();
-    const touching = await insertObservation(h.db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-16', periodDays: 30, value: 1, source: 'manual', fetchedAt: NOW.toISOString() });
+    const touching = await insertObservation(h.db, { provenance: testProvenance('manual'), assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: '2026-09-16', periodDays: 30, value: 1, fetchedAt: NOW.toISOString() });
     expect(await findFlowConflicts(h.db, 'mini', 'flow_usd.fees', ms('2026-09-16T00:00:00Z'), ms('2026-09-19T00:00:00Z'))).toEqual([]);
     expect((await findFlowConflicts(h.db, 'mini', 'flow_usd.fees', ms('2026-09-15T00:00:00Z'), ms('2026-09-19T00:00:00Z'))).map((c) => c.observationId)).toEqual([touching.id]);
   });

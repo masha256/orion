@@ -101,10 +101,18 @@ the same release step (`staging_refresh` refuses a dump whose migrations differ)
 backfills after its switch (`db backfill-provenance`, the yCRV by-sender `data fetch`, `data backfill-tokens`): the
 ordered commands and the rollback note are in `docs/ops/deploy.md`, "Phase 2 release (migrations 0003-0005)".
 
+`0006_provenance_not_null` (Task 10) is `-- breaking`: `db migrate` refuses it without `--breaking`. It makes the
+provenance columns NOT NULL and drops `observations.source` (the origin is derived: `src/provenance/origin.ts`);
+`db backfill-provenance` is gone with it. Its own release, stage then prod, no rollback past it: `docs/ops/deploy.md`,
+"Phase 2 tail: release with 0006 (breaking)".
+
 ## Importing a SQLite `.backup` and proving the copy (`tools/import-sqlite`)
 
 The tool is dev-only. It runs with `npx tsx` from the worktree and is not built into `dist/`. It reads a **copy** of
-a SQLite database (never the live file), and it writes only to an empty, migrated schema. Run it as the controller,
+a SQLite database (never the live file), and it writes only to an empty schema migrated to exactly 0005
+(`IMPORT_SCHEMA_LEVEL`: the last level whose `observations` has `source` and nullable provenance). After an import the
+schema needs a release-2 build's `db backfill-provenance` (0001-0005, e.g. `orion-2026.11.09.1`), then this build's
+`db migrate --breaking`. Migrate the target with that release-2 build, not this one. Run it as the controller,
 never in a subagent: the snapshot holds production data, and the fetch leg needs a `.env` copy.
 
 1. Snapshot, read-only:

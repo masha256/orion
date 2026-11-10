@@ -12,7 +12,7 @@ import type { OrionError } from '../../src/types.js';
 import { AGENT_ASSET_YAML, agentWorld, type AgentWorld } from '../helpers/agentWorld.js';
 import { AS_OF } from '../helpers/obs.js';
 import { useTestDb } from '../helpers/db.js';
-import { TEST_PROVENANCE } from '../helpers/provenance.js';
+import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -94,8 +94,8 @@ describe('approving anomaly proposals', () => {
 describe('approving observation proposals', () => {
   it('confirms a provisional observation and rejects an active one', async () => {
     const provisional = await insertObservation(w.db, {
-      provenance: TEST_PROVENANCE,
-      assetId: 'mini', metricKey: 'staked_supply', observedAt: '2026-06-29T12:00:00Z', value: 80, source: 'manual', status: 'provisional',
+      provenance: testProvenance('manual', true),
+      assetId: 'mini', metricKey: 'staked_supply', observedAt: '2026-06-29T12:00:00Z', value: 80, status: 'provisional',
       citationUrl: 'https://example.com', fetchedAt: AS_OF,
     });
     const confirmed = await approve((await file({ kind: 'confirm_observation', observationId: provisional.id, note: 'n' }, { status: 'provisional', active: true })).id);
@@ -108,21 +108,22 @@ describe('approving observation proposals', () => {
     expect(await codeOf(() => approve(again.id))).toBe('stale_proposal');
   });
 
-  it('confirm_observation works when the asset YAML is gone or invalid: config hash "unloaded"', async () => {
+  it('confirm_observation works when the asset YAML is gone or invalid: the row keeps its own config hash', async () => {
     for (const [what, damage] of [['gone', () => rmSync(yamlPath)], ['invalid', () => writeFileSync(yamlPath, 'id: mini\nmetrics: [not, a, map]\n')]] as const) {
       writeFileSync(yamlPath, AGENT_ASSET_YAML.trimStart());
-      // A provisional row written before 0004 (no provenance): the confirm builds one under the config hash.
-      const provisional = await w.db.run<{ id: number }>(
-        `INSERT INTO observations (asset_id, metric_key, observed_at, period_days, value, source, source_detail, status, citation_url, quoted_text, fetched_at)
-         VALUES ($1, $2, $3, NULL, $4, 'manual', NULL, 'provisional', 'https://example.com/post', NULL, $3) RETURNING id`,
-        ['mini', 'staked_supply', what === 'gone' ? '2026-06-29T12:00:00.000Z' : '2026-06-29T13:00:00.000Z', 80],
-      );
-      const p = await file({ kind: 'confirm_observation', observationId: Number(provisional.rows[0]!.id), note: 'n' }, { status: 'provisional', active: true });
+      // Every row has provenance since 0006 (a row without, which the confirm built under 'unloaded', cannot exist): the
+      // confirm copies it and needs no YAML.
+      const at = what === 'gone' ? '2026-06-29T12:00:00.000Z' : '2026-06-29T13:00:00.000Z';
+      const provisional = await insertObservation(w.db, {
+        provenance: testProvenance('manual', true), assetId: 'mini', metricKey: 'staked_supply', observedAt: at, value: 80, status: 'provisional',
+        citationUrl: 'https://example.com/post', fetchedAt: at,
+      });
+      const p = await file({ kind: 'confirm_observation', observationId: provisional.id, note: 'n' }, { status: 'provisional', active: true });
       damage();
       const confirmed = await approve(p.id);
       expect(confirmed.result, what).toMatchObject({ kind: 'observation', action: 'confirmed' });
       const id = (confirmed.result as { observationId: number }).observationId;
-      expect((await getProvenanceByIds(w.db, [id]))[0], what).toMatchObject({ configHash: 'unloaded' });
+      expect((await getProvenanceByIds(w.db, [id]))[0], what).toMatchObject({ method: 'disclosed', configHash: 'test' });
     }
   });
 
@@ -130,8 +131,8 @@ describe('approving observation proposals', () => {
     // A row edited in the database, or carried from an older build: approve locks the proposal's asset, and the nested
     // write on the other asset's row asks for that asset's lock, which is refused rather than taken mid-transaction.
     const theirs = await insertObservation(w.db, {
-      provenance: TEST_PROVENANCE,
-      assetId: 'other', metricKey: 'staked_supply', observedAt: '2026-06-29T12:00:00Z', value: 80, source: 'manual', status: 'provisional',
+      provenance: testProvenance('manual', true),
+      assetId: 'other', metricKey: 'staked_supply', observedAt: '2026-06-29T12:00:00Z', value: 80, status: 'provisional',
       citationUrl: 'https://example.com', fetchedAt: AS_OF,
     });
     for (const kind of ['confirm_observation', 'reject_observation'] as const) {
@@ -165,8 +166,8 @@ describe('approving observation proposals', () => {
   it('checks an observation proposal against the last CONFIRMED value, the baseline the move guard filed it against', async () => {
     // A provisional row is in force (1250). The confirmed value, which the proposal was filed against, is still 1000.
     await insertObservation(w.db, {
-      provenance: TEST_PROVENANCE,
-      assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-20', value: 1250, source: 'manual', status: 'provisional',
+      provenance: testProvenance('manual', true),
+      assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-20', value: 1250, status: 'provisional',
       citationUrl: 'https://news.example.com/earlier', fetchedAt: AS_OF,
     });
     const p = await file(
@@ -186,8 +187,8 @@ describe('approving observation proposals', () => {
     };
     const p = await file(change, { inForce: 1000 });
     const users = await insertObservation(w.db, {
-      provenance: TEST_PROVENANCE,
-      assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-10', value: 900, source: 'manual', fetchedAt: AS_OF,
+      provenance: testProvenance('manual'),
+      assetId: 'mini', metricKey: 'revenue_run_rate_usd', observedAt: '2026-06-10', value: 900, fetchedAt: AS_OF,
     });
     expect(await codeOf(() => approve(p.id))).toBe('stale_proposal');
     expect((await getObservationsByIds(w.db, [users.id]))[0]).toMatchObject({ supersededBy: null, status: 'confirmed' });

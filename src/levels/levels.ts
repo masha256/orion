@@ -12,7 +12,7 @@ import type { BlockRef, RpcFactory } from '../ingest/transport/rpc.js';
 import type { WrittenObservation } from '../ingest/types.js';
 import { locatorOfSource, scrubLocator } from '../provenance/locator.js';
 import { sourceTypeOf } from '../report/sourceTypes.js';
-import type { WatchFiring } from '../types.js';
+import { OrionError, type WatchFiring } from '../types.js';
 
 /** CoinGecko takes at most this many ids in one /coins/markets call. */
 export const MARKETS_BATCH = 250;
@@ -86,8 +86,10 @@ function readsChain(asset: AssetConfig, metricKey: string): boolean {
 /** A level's rung and scrubbed locator, from the asset config (the same mapping the observation writers use). */
 function levelProvenance(asset: AssetConfig, metricKey: string): Pick<LatestLevel, 'sourceType' | 'locator'> {
   const def = asset.metrics[metricKey];
-  if (def?.source === undefined) return { sourceType: null, locator: null };
-  return { sourceType: sourceTypeOf(def, asset.metrics), locator: scrubLocator(locatorOfSource(asset, metricKey, def.source)) };
+  const sourceType = def === undefined ? null : sourceTypeOf(def, asset.metrics);
+  // Unreachable for a fetched reading (fetchedProvenance refuses the same cases first); the columns are NOT NULL since 0006.
+  if (def?.source === undefined || sourceType === null) throw new OrionError('no_provenance', `metrics.${metricKey}: a level reading needs a configured source with a rung`);
+  return { sourceType, locator: scrubLocator(locatorOfSource(asset, metricKey, def.source)) };
 }
 
 /** One row per metric read: a level's reading; for a schedule, its newest step at or before `now` (none: no row). */

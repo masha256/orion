@@ -6,7 +6,7 @@ import { listJournal } from '../../src/db/journal.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { listProposals } from '../../src/db/proposals.js';
 import { useTestDb } from '../helpers/db.js';
-import { TEST_PROVENANCE } from '../helpers/provenance.js';
+import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 const testDb = useTestDb();
 
@@ -30,7 +30,7 @@ const commit = () => ledger.commit(db, { agentRunId: null, now: NOW });
 
 beforeEach(async () => {
   db = testDb();
-  priceId = (await insertObservation(db, { provenance: TEST_PROVENANCE, assetId: 'mini', metricKey: 'price_usd', observedAt: '2026-09-19', value: 10, source: 'onchain', fetchedAt: '2026-09-19' })).id;
+  priceId = (await insertObservation(db, { provenance: testProvenance('onchain'), assetId: 'mini', metricKey: 'price_usd', observedAt: '2026-09-19', value: 10, fetchedAt: '2026-09-19' })).id;
   ledger = new Ledger('mini', 'analyst', 'test');
 });
 
@@ -179,8 +179,8 @@ describe('the world changes mid-run', () => {
     research();
     ledger.setJournal({ thesis: 't', openQuestions: [], summary: 's', catalysts: [] });
     const users = await insertObservation(db, {
-      provenance: TEST_PROVENANCE,
-      assetId: 'mini', metricKey: 'staked_supply', observedAt: '2026-09-18', value: 50, source: 'manual', status: 'provisional',
+      provenance: testProvenance('manual', true),
+      assetId: 'mini', metricKey: 'staked_supply', observedAt: '2026-09-18', value: 50, status: 'provisional',
       citationUrl: 'https://example.com/user', fetchedAt: '2026-09-19',
     });
     await expect(commit()).rejects.toThrow(/already exists/);

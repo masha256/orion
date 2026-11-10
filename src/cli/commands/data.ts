@@ -10,7 +10,7 @@ import { hasSources } from '../../ingest/plan.js';
 import { fetchAsset, type FetchResult } from '../../ingest/run.js';
 import { confirmConfigHash } from '../../provenance/configHash.js';
 import { disclosedProvenance } from '../../provenance/locator.js';
-import { OrionError, type ObservationSource } from '../../types.js';
+import { OrionError } from '../../types.js';
 import { fetchSummary, ingestDepsFor, output, parseNumber, withDb, type CliContext } from '../util.js';
 
 interface FetchOpts {
@@ -24,7 +24,6 @@ interface FetchOpts {
 interface SetOpts {
   at?: string;
   periodDays?: string;
-  source: string;
   detail?: string;
   provisional?: boolean;
   citation?: string;
@@ -37,7 +36,6 @@ const collect = (value: string, previous: string[]): string[] => [...previous, v
 const anomalyLine = (a: Anomaly): string =>
   `#${a.id}  ${a.status}  ${a.severity}  ${a.kind}  ${a.metricKey || '(source)'}  ${a.dedupeKey}  x${a.occurrences}  last seen ${a.lastSeenAt}${a.note ? `  note: ${a.note}` : ''}`;
 
-const SOURCES: ObservationSource[] = ['onchain', 'api', 'manual'];
 
 function positiveDays(text: string | undefined, label: string): number | undefined {
   if (text === undefined) return undefined;
@@ -81,7 +79,6 @@ export function registerData(program: Command, ctx: CliContext): void {
     .description('record one observation')
     .option('--at <iso>', 'observed-at timestamp (default: now). For schedule metrics this is the effective date')
     .option('--period-days <n>', 'for flow metrics: days covered, ending at --at')
-    .option('--source <source>', 'onchain | api | manual', 'manual')
     .option('--detail <text>', 'where the number came from')
     .option('--provisional', 'store as provisional (requires --citation)')
     .option('--citation <url>', 'citation url')
@@ -91,7 +88,6 @@ export function registerData(program: Command, ctx: CliContext): void {
       const { config, hash } = loadAsset(ctx.configRoot, assetId);
       const def = config.metrics[metric];
       if (!def) throw new OrionError('unknown_metric', `metric "${metric}" is not defined in assets/${assetId}.yaml`);
-      if (!SOURCES.includes(opts.source as ObservationSource)) throw new OrionError('invalid_source', `source must be one of ${SOURCES.join(', ')}`);
       if (def.type === 'flow' && opts.periodDays === undefined) {
         throw new OrionError(
           'missing_period_days',
@@ -102,7 +98,7 @@ export function registerData(program: Command, ctx: CliContext): void {
         throw new OrionError('unexpected_period_days', `metric "${metric}" is a ${def.type} metric: --period-days applies only to flow metrics`);
       }
       const nowIso = ctx.now().toISOString();
-      // A figure typed in by hand is a disclosure whatever --source says (that column is still written as given): its
+      // A figure typed in by hand is a disclosure (its origin reads `manual`; there is no --source since 0006): its
       // provenance is the citation, so --citation is required (spec §3: citation_url NOT NULL when method = disclosed).
       const provenance = disclosedProvenance(hash, { citationUrl: opts.citation, approvedBy: 'user (data set)', approvedAt: nowIso });
       const o = await withDb(ctx, async (db) =>
@@ -112,7 +108,6 @@ export function registerData(program: Command, ctx: CliContext): void {
           observedAt: opts.at ?? nowIso,
           periodDays: opts.periodDays === undefined ? null : parseNumber(opts.periodDays, '--period-days'),
           value: parseNumber(value, 'value'),
-          source: opts.source as ObservationSource,
           sourceDetail: opts.detail ?? null,
           status: opts.provisional ? 'provisional' : 'confirmed',
           citationUrl: opts.citation ?? null,

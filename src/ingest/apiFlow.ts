@@ -198,7 +198,7 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
       if (!dryRun) {
         const tokens = seriesTokens(args.token, point!);
         observationId = (await insertObservation(h, {
-          assetId: asset.id, metricKey, observedAt, periodDays: 1, value, source: 'api', sourceDetail: args.detail, fetchedAt: nowIso,
+          assetId: asset.id, metricKey, observedAt, periodDays: 1, value, sourceDetail: args.detail, fetchedAt: nowIso,
           // The raw slice of the response the day's value was read from (null when the source exposes none).
           provenance: fetchedProvenance({ config: asset, hash: args.configHash }, metricKey, { responseDigest: responseDigest(point!.slice) }),
           ...(tokens ? { tokens } : {}),

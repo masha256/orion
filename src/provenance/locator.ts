@@ -77,6 +77,21 @@ export function chainOfSource(asset: AssetConfig, s: SourceConfig): string | nul
   return ADAPTER_SOURCE_TYPES[s.name] === 'contract_state' ? evm : null;
 }
 
+/** DefiLlama's API hosts: a row read from one is third party (the token backfill skips it). */
+const DEFILLAMA_HOSTS: ReadonlySet<string> = new Set(['api.llama.fi', 'coins.llama.fi', 'pro-api.llama.fi', 'yields.llama.fi']);
+
+/** The first URL in a source detail on a DefiLlama host, or null. */
+export function defillamaUrlOf(detail: string | null): string | null {
+  for (const [u] of (detail ?? '').matchAll(/\bhttps?:\/\/[^\s"'<>]+/g)) {
+    try {
+      if (DEFILLAMA_HOSTS.has(new URL(u).hostname)) return u;
+    } catch {
+      // not a URL
+    }
+  }
+  return null;
+}
+
 /** The method a source's rows carry (spec §2): a formula is derived, a constant is disclosed, everything read is measured. */
 export function methodOfSource(s: SourceConfig | undefined): ProvenanceMethod {
   if (s === undefined || s.type === 'constant') return 'disclosed';

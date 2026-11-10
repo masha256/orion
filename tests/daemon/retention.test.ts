@@ -63,7 +63,7 @@ describe('retention', () => {
     await insertRegistryRow(db(), 'gone', 'active', 'h', c);
     await setRegistryState(db(), 'gone', 'active', 'missing', c);
     const level = (a: string, m: string): Promise<unknown> =>
-      db().run("INSERT INTO latest_levels (asset_id, metric_key, value, observed_at, source) VALUES ($1, $2, 1, $3, 'x')", [a, m, NOW]);
+      db().run("INSERT INTO latest_levels (asset_id, metric_key, value, observed_at, source, source_type, locator) VALUES ($1, $2, 1, $3, 'x', 'market_data', '{}')", [a, m, NOW]);
     const watch = (a: string, m: string): Promise<unknown> =>
       db().run("INSERT INTO watch_state (asset_id, metric_key, rule, firing, since) VALUES ($1, $2, 'above 1', true, $3)", [a, m, NOW]);
     await level('mini', 'price_usd');

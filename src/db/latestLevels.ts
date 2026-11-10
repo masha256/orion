@@ -13,9 +13,9 @@ export interface LatestLevel {
   blockNumber: number | null;
   /** The job that wrote the row; null when written outside a job. */
   jobId: number | null;
-  /** The metric's rung and locator (0004); null on a row written before it. */
-  sourceType: string | null;
-  locator: Locator | null;
+  /** The metric's rung and locator (0004; NOT NULL since 0006). */
+  sourceType: string;
+  locator: Locator;
 }
 
 interface Row {
@@ -26,8 +26,8 @@ interface Row {
   source: string;
   block_number: number | null;
   job_id: number | null;
-  source_type: string | null;
-  locator: Locator | null;
+  source_type: string;
+  locator: Locator;
 }
 
 const toLevel = (r: Row): LatestLevel => ({
@@ -44,7 +44,7 @@ export async function upsertLatestLevels(db: Db, rows: LatestLevel[]): Promise<v
        ON CONFLICT (asset_id, metric_key) DO UPDATE SET
          value = excluded.value, observed_at = excluded.observed_at, source = excluded.source, block_number = excluded.block_number, job_id = excluded.job_id,
          source_type = excluded.source_type, locator = excluded.locator`,
-      [r.assetId, r.metricKey, r.value, r.observedAt, r.source, r.blockNumber, r.jobId, r.sourceType, r.locator === null ? null : JSON.stringify(scrubLocator(r.locator))],
+      [r.assetId, r.metricKey, r.value, r.observedAt, r.source, r.blockNumber, r.jobId, r.sourceType, JSON.stringify(scrubLocator(r.locator))],
     );
   }
 }

@@ -1,4 +1,5 @@
 import { scrubLocator } from '../provenance/scrub.js';
+import { originOfRow } from '../provenance/origin.js';
 import { codeVersion, disclosedProvenance, MAX_TX_REFS, type Json, type Locator, type Provenance, type ProvenanceMethod } from '../provenance/types.js';
 import type { SourceType } from '../report/sourceTypes.js';
 import { OrionError, type ObservationSource, type ObservationStatus } from '../types.js';
@@ -12,6 +13,7 @@ export interface Observation {
   observedAt: string;
   periodDays: number | null;
   value: number;
+  /** Derived from the row's provenance (`originOf`): the `source` column 0006 dropped held exactly this. */
   source: ObservationSource;
   sourceDetail: string | null;
   status: ObservationStatus;
@@ -27,13 +29,12 @@ export interface NewObservation {
   observedAt: string;
   periodDays?: number | null;
   value: number;
-  source: ObservationSource;
   sourceDetail?: string | null;
   status?: 'confirmed' | 'provisional';
   citationUrl?: string | null;
   quotedText?: string | null;
   fetchedAt: string;
-  /** Required (spec §3, plan correction 2): the 0004 columns are nullable, so this type is what makes provenance mandatory. */
+  /** Required (spec §3): the columns are NOT NULL since 0006, and the row's origin (`source`) is derived from it. */
   provenance: Provenance;
   /**
    * The row's amount in token units (0005, spec §4), written next to `value`, which keeps its meaning (USD for a
@@ -42,17 +43,17 @@ export interface NewObservation {
   tokens?: ObservationTokens;
 }
 
-/** The 0004 columns of a stored row; every field null on history the backfill has not mapped yet. */
+/** The provenance columns of a stored row (NOT NULL since 0006 where every writer sets them). */
 export interface StoredProvenance {
   id: number;
   metricKey: string;
   observedAt: string;
   periodDays: number | null;
   status: ObservationStatus;
-  method: ProvenanceMethod | null;
-  sourceType: SourceType | null;
+  method: ProvenanceMethod;
+  sourceType: SourceType;
   chain: string | null;
-  locator: Locator | null;
+  locator: Locator;
   blockFrom: number | null;
   blockTo: number | null;
   txCount: number | null;
@@ -62,8 +63,8 @@ export interface StoredProvenance {
   inputs: Json | null;
   formula: string | null;
   coverage: Json | null;
-  codeVersion: string | null;
-  configHash: string | null;
+  codeVersion: string;
+  configHash: string;
 }
 
 interface Row {
@@ -73,13 +74,16 @@ interface Row {
   observed_at: string;
   period_days: number | null;
   value: number;
-  source: ObservationSource;
   source_detail: string | null;
   status: ObservationStatus;
   citation_url: string | null;
   quoted_text: string | null;
   fetched_at: string;
   superseded_by: number | null;
+  method: ProvenanceMethod;
+  source_type: SourceType;
+  locator: Locator;
+  formula: string | null;
 }
 
 interface ProvenanceRow {
@@ -88,10 +92,10 @@ interface ProvenanceRow {
   observed_at: string;
   period_days: number | null;
   status: ObservationStatus;
-  method: ProvenanceMethod | null;
-  source_type: SourceType | null;
+  method: ProvenanceMethod;
+  source_type: SourceType;
   chain: string | null;
-  locator: Locator | null;
+  locator: Locator;
   block_from: number | null;
   block_to: number | null;
   tx_count: number | null;
@@ -101,8 +105,8 @@ interface ProvenanceRow {
   inputs: Json | null;
   formula: string | null;
   coverage: Json | null;
-  code_version: string | null;
-  config_hash: string | null;
+  code_version: string;
+  config_hash: string;
 }
 
 const PROVENANCE_COLUMNS =
@@ -152,7 +156,7 @@ function fromRow(r: Row): Observation {
     observedAt: r.observed_at,
     periodDays: r.period_days,
     value: r.value,
-    source: r.source,
+    source: originOfRow(r),
     sourceDetail: r.source_detail,
     status: r.status,
     citationUrl: r.citation_url,
@@ -224,15 +228,15 @@ export async function insertObservation(db: Db, input: NewObservation): Promise<
       );
       const inserted = await t.run<{ id: number }>(
         `INSERT INTO observations
-           (asset_id, metric_key, observed_at, period_days, value, source, source_detail, status, citation_url, quoted_text, fetched_at,
+           (asset_id, metric_key, observed_at, period_days, value, source_detail, status, citation_url, quoted_text, fetched_at,
             method, source_type, chain, locator, block_from, block_to, tx_count, tx_refs, tx_digest, response_digest, inputs, formula,
             coverage, code_version, config_hash, token_ref, amount, hourly_amounts)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                 $12, $13, $14, $15::jsonb, $16, $17, $18, $19::jsonb, $20, $21, $22::jsonb, $23, $24::jsonb, $25, $26,
-                 $27, $28, $29::jsonb)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                 $11, $12, $13, $14::jsonb, $15, $16, $17, $18::jsonb, $19, $20, $21::jsonb, $22, $23::jsonb, $24, $25,
+                 $26, $27, $28::jsonb)
          RETURNING id`,
         [
-          input.assetId, input.metricKey, observedAt, input.periodDays ?? null, input.value, input.source,
+          input.assetId, input.metricKey, observedAt, input.periodDays ?? null, input.value,
           input.sourceDetail ?? null, status, input.citationUrl ?? null, input.quotedText ?? null, fetchedAt,
           p.method, p.sourceType, p.chain, JSON.stringify(p.locator), p.blockFrom ?? null, p.blockTo ?? null, p.txCount ?? null,
           jsonParam(p.txRefs), p.txDigest ?? null, p.responseDigest ?? null, jsonParam(p.inputs), p.formula ?? null, jsonParam(p.coverage),
@@ -274,8 +278,8 @@ async function assetOf(db: Db, id: number): Promise<string> {
 
 /**
  * Confirms a provisional row as a new confirmed one. Its provenance is the provisional row's (a citation the analyst or a
- * person entered), marked approved by `by.approvedBy` at `nowIso`; a provisional row written before 0004 has none, so it is
- * built from its citation under `by.configHash`.
+ * person entered), marked approved by `by.approvedBy` at `nowIso`. Every row carries one since 0006; `by.configHash` is
+ * the fallback the confirm callers still pass (a row with none is built from its citation under it).
  */
 export async function confirmObservation(db: Db, id: number, nowIso: string, by: { approvedBy: string; configHash: string }): Promise<Observation> {
   const assetId = await assetOf(db, id);
@@ -284,13 +288,13 @@ export async function confirmObservation(db: Db, id: number, nowIso: string, by:
       const o = await activeProvisional(t, id);
       const [stored] = await getProvenanceByIds(t, [id]);
       const provenance: Provenance =
-        stored?.method && stored.sourceType && stored.locator
+        stored !== undefined
           ? {
               method: stored.method, sourceType: stored.sourceType, chain: stored.chain,
               locator: stored.sourceType === 'disclosure' ? { ...stored.locator, approved_by: by.approvedBy, approved_at: nowIso } : stored.locator,
               blockFrom: stored.blockFrom, blockTo: stored.blockTo, txCount: stored.txCount, txRefs: stored.txRefs, txDigest: stored.txDigest,
               responseDigest: stored.responseDigest, inputs: stored.inputs, formula: stored.formula, coverage: stored.coverage,
-              codeVersion: codeVersion(), configHash: stored.configHash ?? by.configHash,
+              codeVersion: codeVersion(), configHash: stored.configHash,
             }
           : disclosedProvenance(by.configHash, { citationUrl: o.citationUrl, approvedBy: by.approvedBy, approvedAt: nowIso });
       return insertObservation(t, {
@@ -299,7 +303,6 @@ export async function confirmObservation(db: Db, id: number, nowIso: string, by:
         observedAt: o.observedAt,
         periodDays: o.periodDays,
         value: o.value,
-        source: 'manual',
         sourceDetail: o.sourceDetail,
         status: 'confirmed',
         citationUrl: o.citationUrl,
