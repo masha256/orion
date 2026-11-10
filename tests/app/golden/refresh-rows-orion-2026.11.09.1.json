@@ -1,0 +1,151 @@
+{
+ "lit": {
+  "report": {
+   "schema_version": 2,
+   "tick_id": "tick_lit_20261103T004500Z",
+   "asset": "lit",
+   "started_at": "2026-11-03T00:45:00.000Z",
+   "ended_at": "2026-11-03T00:46:12.000Z",
+   "outcome": "completed",
+   "lock": null,
+   "ingest": {
+    "fetch_run_id": 4123,
+    "outcome": "ok",
+    "sources_failed": [],
+    "anomalies_raised": []
+   },
+   "holder_yield": {
+    "day": "2026-11-02",
+    "window_days": 91,
+    "price": 1.7,
+    "market_cap": 1020000000,
+    "fdv": 1700000000,
+    "revenue_annualized": 1408323.723926728,
+    "revenue_growth_annualized": 0.3387952207341187,
+    "payout_ratio": 0.28263770716672826,
+    "flows": [
+     {
+      "id": "buyback",
+      "bucket": "burn",
+      "net": 398045.3882791587,
+      "yield": 0.00023414434604656392
+     }
+    ],
+    "yields": {
+     "cash": 0,
+     "buyback": 0.00023414434604656392,
+     "shareholder": 0.00023414434604656392,
+     "dilution": 0.012,
+     "net_shareholder": -0.011765855653953437
+    },
+    "multiple": 4270.869730081509,
+    "holder_flow_growth_annualized": -0.5706328269481751,
+    "statement_revenue": 2004637.7572263647,
+    "statement_revenue_growth": 1.3379492568829234,
+    "gross_profit": 1408323.7239267277,
+    "statement_payout_ratio": 0.28263770716672826,
+    "payout_ratio_basis": "grossProfit",
+    "holder_flow_by_bucket": {
+     "burn": 398045.3882791587,
+     "hold": null,
+     "cash": null
+    },
+    "net_holder_yield": -0.011765855653953437,
+    "mcap_to_revenue": 508.8201079337553,
+    "mcap_to_holder_flow": 2562.5218380489055,
+    "scope": "complete",
+    "flags": [
+     "third_party: holders.buyback.cross_checks"
+    ]
+   },
+   "report_error": null,
+   "inbox": {
+    "observations": [],
+    "proposals": [],
+    "anomalies": []
+   },
+   "error": null
+  },
+  "fetchLines": [
+   "lit: 14 metrics, 0 anomalies"
+  ],
+  "alertFlags": [],
+  "levels": 9
+ },
+ "aero": {
+  "report": {
+   "schema_version": 2,
+   "tick_id": "tick_aero_20261103T004500Z",
+   "asset": "aero",
+   "started_at": "2026-11-03T00:45:00.000Z",
+   "ended_at": "2026-11-03T00:46:12.000Z",
+   "outcome": "completed",
+   "lock": null,
+   "ingest": {
+    "fetch_run_id": 4123,
+    "outcome": "ok",
+    "sources_failed": [],
+    "anomalies_raised": []
+   },
+   "holder_yield": {
+    "day": "2026-11-02",
+    "window_days": 91,
+    "price": 1.7,
+    "market_cap": 1020000000,
+    "fdv": 1700000000,
+    "revenue_annualized": 404066.6473330789,
+    "revenue_growth_annualized": -0.5086564772343497,
+    "payout_ratio": 1,
+    "flows": [
+     {
+      "id": "fees",
+      "bucket": "cash",
+      "net": 395985.31438641733,
+      "yield": 0.0011646626893718156
+     }
+    ],
+    "yields": {
+     "cash": 0.0011646626893718156,
+     "buyback": 0,
+     "shareholder": 0.0011646626893718156,
+     "dilution": 0.013,
+     "net_shareholder": -0.011835337310628184
+    },
+    "multiple": 858.6177003226318,
+    "holder_flow_growth_annualized": -0.5086564772343497,
+    "statement_revenue": 404066.6473330789,
+    "statement_revenue_growth": -0.5086564772343497,
+    "gross_profit": null,
+    "statement_payout_ratio": 1,
+    "payout_ratio_basis": "revenue",
+    "holder_flow_by_bucket": {
+     "burn": null,
+     "hold": null,
+     "cash": 395985.31438641733
+    },
+    "net_holder_yield": -0.011835337310628184,
+    "mcap_to_revenue": 2524.3360389485374,
+    "mcap_to_holder_flow": 2575.8531009678954,
+    "scope": "protocol_share_only",
+    "flags": [
+     "cost of revenue not measured: lp_fees",
+     "below the line not measured: bribes",
+     "payout ratio on revenue: cost of revenue not measured",
+     "third_party: revenue.fees, holders.voter_fees"
+    ]
+   },
+   "report_error": null,
+   "inbox": {
+    "observations": [],
+    "proposals": [],
+    "anomalies": []
+   },
+   "error": null
+  },
+  "fetchLines": [
+   "lit: 14 metrics, 0 anomalies"
+  ],
+  "alertFlags": [],
+  "levels": 9
+ }
+}

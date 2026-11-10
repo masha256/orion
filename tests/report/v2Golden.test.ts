@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { addDays } from '../../src/ingest/time.js';
@@ -54,10 +56,26 @@ function compute(): Record<string, { input: string; report: string }> {
   return out;
 }
 
+/**
+ * The golden is written ONLY under UPDATE_GOLDEN=1 (fix round 1, M3): a missing file fails the suite rather than being
+ * regenerated from the tree under test, which would make every case pass against itself.
+ */
+function readGolden(path: string, now: Record<string, { input: string; report: string }>, update = process.env.UPDATE_GOLDEN === '1'): Record<string, { input: string; report: string }> {
+  if (update) writeFileSync(path, `${JSON.stringify(now, null, 1)}\n`);
+  if (!existsSync(path)) throw new Error(`golden ${path} is missing: regenerate it only at the base commit, with UPDATE_GOLDEN=1`);
+  return JSON.parse(readFileSync(path, 'utf8')) as Record<string, { input: string; report: string }>;
+}
+
 describe('v2 report JSON, golden at cc59fa7 (Task 11)', () => {
   const now = compute();
-  if (process.env.UPDATE_GOLDEN === '1' || !existsSync(GOLDEN)) writeFileSync(GOLDEN, `${JSON.stringify(now, null, 1)}\n`);
-  const golden = JSON.parse(readFileSync(GOLDEN, 'utf8')) as Record<string, { input: string; report: string }>;
+  const golden = readGolden(GOLDEN, now);
+
+  it('a missing golden fails; it is never regenerated without UPDATE_GOLDEN=1', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'orion-v2golden-'));
+    const missing = join(dir, 'gone.json');
+    expect(() => readGolden(missing, now, false)).toThrow(/is missing/);
+    expect(existsSync(missing)).toBe(false);
+  });
 
   it('covers the 13 assets x 5 inputs', () => {
     expect(Object.keys(golden).sort()).toEqual(Object.keys(now).sort());

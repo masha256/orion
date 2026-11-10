@@ -7,7 +7,8 @@ import type { IncomeStatementDef } from './schema.js';
  * where it goes (cost of revenue to the supply side, holders by bucket, protocol, operating costs), and below_line holds
  * income users did not pay (third-party bribes, treasury programs). Every node is strict and nothing has a default, so the
  * parsed block is what the YAML says and an asset without it keeps its config hash. `window_days`, `volume`, `dilution`
- * and `burned_tokens` reuse `reporting`'s shapes: they are added to this base in `schema.ts`.
+ * and `burned_tokens` are added to this base in `schema.ts` (their shapes live there; `reporting`, which once shared
+ * them, was retired in Task 11).
  */
 
 const LineId = z.string().regex(/^[a-z0-9_]+$/);
@@ -108,7 +109,7 @@ export const IsBelowLineSchema = z.strictObject({
  */
 export const IsCheckSchema = CheckSchema;
 
-/** The block without the four keys shared with `reporting` (window_days, volume, dilution, burned_tokens; see schema.ts). */
+/** The block without the four keys `schema.ts` adds (window_days, volume, dilution, burned_tokens). */
 export const IncomeStatementBaseSchema = z.strictObject({
   category: CategorySchema,
   /** What revenue covers, shown with every figure. */
@@ -157,7 +158,8 @@ export const PARTITION_TOLERANCE_ABS = 1;
  * below-line line to holders, and no series read twice (a use of a revenue series goes through `of`; a `paid_metric` is
  * read by no other line; a flow split by `apportion` is read only by its set, whose by series a daily, tight sum check
  * proves partition its total, and whose by series put each line on its side: a use line's by is a revenue series, a
- * below_line line's is not). The shared reporting keys are checked in schema.ts. Messages are prefixed.
+ * below_line line's is not). The keys schema.ts adds (window_days, volume, burned_tokens, dilution) are checked there.
+ * Messages are prefixed.
  */
 export function incomeStatementIssues(asset: CheckAsset): string[] {
   const is = asset.income_statement;

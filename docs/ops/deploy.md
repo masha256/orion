@@ -379,6 +379,20 @@ breaking release, with no migration and no `--breaking`.
 - Snapshot `full` bodies: each asset's `report` is the v2 object without the v1 keys, under `schema:
   "orion.snapshot/2"`. A row the previous release queued (`orion.snapshot/1`) still verifies and publishes as written.
   The site / any reader of the snapshot repo must read the v2 fields before this release reaches prod.
+- v1 snapshot fields with **no direct v2 equivalent** (everything else maps: `flows` -> `holderFlow.lines`,
+  `holderFlowGrowth` -> `holderFlow.growth`, `supply` -> `dilution.supply`, `volume` -> `incomeStatement.volume`,
+  `yields` incl. `pegTrailing` and `dilutionLines` -> `incomeStatement.yields`, `crossCheck` / `disclosedGrowth` -> the
+  revenue line's, `outsideRevenue` -> `belowLine`, `income.checks` -> `checks`):
+  - `buckets.{burn,hold,cash}.growth` (per-bucket holder-flow growth): `holderFlow.byBucket` has no growth. Nearest:
+    re-sum the bucket's `holderFlow.lines[].growth.current` / `.prior` (each line carries its `bucket`).
+  - `revenueDisclosed.latestAt` / `previousAt` (the disclosure dates): v2 carries only their distances, the revenue
+    line's `disclosedGrowth.latestAgeDays` (latest disclosure to the report day) and `gapDays` (between the two).
+  - `revenue.streams[].metric` (each stream's series name): `revenue.lines[]` carries no metric. Nearest: the line's
+    `id`, `label`, `sourceTypes` and `provenance.sources`; holder lines do carry `metric`.
+  - `income.protocolMargin`: not printed. Nearest: `protocol.annualized / revenue.annualized`, on v2's revenue (gross
+    user-paid fees; v1 divided by its own protocol revenue, so the two differ where cost of revenue is measured).
+  - `revenue.basis`: no single field. Nearest: each revenue line's `method` (measured / derived / disclosed) and
+    `settlement`, and `provenance.methods`.
 - The default report day per asset is unchanged (gated on the same flows as before; yCRV on the statement's flows,
   ruling R11.6, which the controller checks on a prod copy).
 - Before the staging deploy: Raymond's soak script (`~/.hermes/profiles/raymond/scripts/orion-stage-soak.py`, outside

@@ -14,10 +14,10 @@ import { ALL_ASSETS } from '../helpers/syntheticReport.js';
 
 /**
  * Task 11 (G4): the analyst's context pack for each repo asset, on seeded rows (100 daily rows of every flow metric,
- * one row of every level), against the packs written at cc59fa7, before `holder_flows`/`reporting` were retired. The
- * flow rows in force must be exactly those (eligibility now reads income_statement's holder-flow lines); LIT's whole
- * pack is identical. `asset_config_yaml` is left out: it is the YAML text, which lost the retired blocks.
- * UPDATE_GOLDEN=1 rewrites the file (only ever at the base commit).
+ * one row of every level), against the packs written at cc59fa7, before `holder_flows`/`reporting` were retired. Every
+ * asset's whole pack is identical (fix round 1, I1: `revenue_streams` too, present on exactly the six assets cc59fa7
+ * listed it for). `asset_config_yaml` is left out: it is the YAML text, which lost the retired blocks.
+ * UPDATE_GOLDEN=1 rewrites the file (only ever at the base commit); a missing file fails.
  */
 const GOLDEN = fileURLToPath(new URL('./golden/packs-13.json', import.meta.url));
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -46,18 +46,23 @@ async function packOf(id: string): Promise<Record<string, unknown>> {
 }
 
 describe('context packs, golden at cc59fa7 (Task 11)', () => {
-  it('every asset: the same flow rows in force; LIT: the whole pack', { timeout: 120_000 }, async () => {
+  it('every asset: the whole pack (flow rows in force, revenue_streams, everything else)', { timeout: 120_000 }, async () => {
     const now: Record<string, Record<string, unknown>> = {};
     for (const id of ALL_ASSETS) now[id] = await packOf(id);
     if (process.env.UPDATE_GOLDEN === '1') writeFileSync(GOLDEN, `${JSON.stringify(now, null, 1)}\n`);
     const golden = JSON.parse(readFileSync(GOLDEN, 'utf8')) as Record<string, Record<string, unknown>>;
     expect(Object.keys(golden)).toEqual([...ALL_ASSETS]);
+    // Every asset that differs, named at once.
+    expect(ALL_ASSETS.filter((id) => JSON.stringify(now[id]) !== JSON.stringify(golden[id]))).toEqual([]);
     for (const id of ALL_ASSETS) {
-      expect(now[id]!.observations_in_force, id).toEqual(golden[id]!.observations_in_force);
       const flows = (now[id]!.observations_in_force as { metric: string }[]).filter((o) => o.metric.startsWith('flow_'));
       expect(flows.length, id).toBeGreaterThan(0);
+      expect(now[id], id).toEqual(golden[id]);
+      // toEqual ignores key order; the rendered pack is JSON text, so pin the bytes too.
+      expect(JSON.stringify(now[id]), id).toBe(JSON.stringify(golden[id]));
     }
-    expect(now.lit).toEqual(golden.lit);
+    // The golden itself: revenue_streams on exactly the assets cc59fa7 listed it for.
+    expect(ALL_ASSETS.filter((id) => 'revenue_streams' in golden[id]!)).toEqual(['hype', 'link', 'lit', 'pump', 'sky', 'uni']);
   });
 });
 

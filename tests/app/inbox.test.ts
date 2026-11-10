@@ -33,7 +33,7 @@ async function world() {
     sourceDetail: 'typed from the August report', citationUrl: 'https://example.com/aug', fetchedAt: T,
   });
   const withEffect = await insertProposal(db, {
-    assetId: 'mini', persona: 'analyst', agentRunId: runId, change: { kind: 'config', edits: [{ path: ['reporting', 'window_days'], value: 91 }] },
+    assetId: 'mini', persona: 'analyst', agentRunId: runId, change: { kind: 'config', edits: [{ path: ['income_statement', 'window_days'], value: 91 }] },
     filedAgainst: { value: 0 }, rationale: 'growth is faster than the band allows', evidence: [researched.id],
     effect: { '6m': { from: 10, to: 11 }, '12m': { from: 12, to: 14.5 } }, createdAt: T,
   });
@@ -112,7 +112,7 @@ describe('inbox', () => {
     // old effect, and the inbox must keep reading it.
     const w = await world();
     await insertProposal(w.db, {
-      assetId: 'mini', persona: 'analyst', agentRunId: w.runId, change: { kind: 'config', edits: [{ path: ['reporting', 'window_days'], value: 120 }] },
+      assetId: 'mini', persona: 'analyst', agentRunId: w.runId, change: { kind: 'config', edits: [{ path: ['income_statement', 'window_days'], value: 120 }] },
       filedAgainst: { value: 0.1 }, rationale: 'r', evidence: [], effect: { blocked: ['missing_metric:revenue_run_rate_usd'] }, createdAt: T,
     });
     const inbox = InboxSchema.parse(JSON.parse(JSON.stringify(await buildInbox(w.db, w.asset, T)))) as Inbox;

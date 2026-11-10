@@ -88,14 +88,17 @@ export async function buildContextPack(db: Db, loaded: LoadedAsset, ledger: Ledg
 }
 
 /**
- * The asset's metric revenue lines (income_statement): each with the share of its series the protocol keeps after the
+ * The asset's revenue streams: its income_statement revenue lines that read a metric AND declare a `settlement` (daily
+ * or periodic). Those are exactly the lines carried over from v1's `reporting.revenue` streams, so the pack is the one
+ * cc59fa7 wrote on all 13 assets (Task 11 fix round 1, I1: aero, cake, crv, cvxcrv, sdcrv and ycrv have metric lines
+ * with no settlement and list no streams, as before). Each carries the share of its series the protocol keeps after the
  * cost of revenue lines that pass part of it on (`of` with a `share`), when that is below 1 (LIT's Robinhood fees:
- * 0.5), because a flow total of the series does not apply it. Absent for an asset without metric revenue lines.
+ * 0.5), because a flow total of the series does not apply it. Absent for an asset without such lines.
  */
 function revenueStreams(asset: LoadedAsset['config']): { revenue_streams?: { id: string; metric: string; share?: number }[] } {
   const is = asset.income_statement;
   const streams = (is?.revenue ?? []).flatMap((r) => {
-    if (r.metric === undefined) return [];
+    if (r.metric === undefined || r.settlement === undefined) return [];
     const passedOn = (is?.cost_of_revenue ?? []).filter((c) => c.of === r.id).reduce((s, c) => s + (c.share ?? 1), 0);
     const share = 1 - passedOn;
     return [{ id: r.id, metric: r.metric, ...(share < 1 ? { share } : {}) }];

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
 import { emitTickReport, summarizeHolderYield, tickId, TickReportSchema, type TickReport } from '../../src/app/tickReport.js';
+import { formatAssetBlock } from '../../src/notify/format.js';
 import { yieldReport } from '../../src/report/load.js';
 import type { IsV2 } from '../../src/report/incomeStatement.js';
 import { repoAsset, syntheticInput } from '../helpers/syntheticReport.js';
@@ -16,6 +17,32 @@ function minimalReport(): TickReport {
     ingest: null, holder_yield: null, report_error: null, inbox: { observations: [], proposals: [], anomalies: [] }, error: null,
   };
 }
+
+/** The nightly block those 0f4b2fe rows print today: the statement's fields (fix round 1, M6). */
+const PRINTED_0F4B2FE: Record<string, string[]> = {
+  lit: [
+    "DECISIONS",
+    "nothing to decide",
+    "HOLDER YIELD LIT  2026-11-02 (91d window, scope complete)",
+    "price 1.70 | mcap 1.02B | FDV 1.70B",
+    "revenue 2.00M/yr (growth 133.79%/yr) | gross profit 1.41M/yr | payout ratio 28.26%",
+    "holder flow/yr: burn 398.05K",
+    "yields: cash 0.00% | buyback 0.02% | shareholder 0.02% | dilution 1.20% | net holder yield -1.18%",
+    "multiples: mcap/revenue 508.82x | mcap/holder flow 2.56Kx | holder-flow growth -57.06%/yr",
+    "flags: third_party: holders.buyback.cross_checks",
+  ],
+  aero: [
+    "DECISIONS",
+    "nothing to decide",
+    "HOLDER YIELD AERO  2026-11-02 (91d window, scope protocol_share_only)",
+    "price 1.70 | mcap 1.02B | FDV 1.70B",
+    "revenue 404.07K/yr (growth -50.87%/yr) | gross profit n/a | payout ratio 100.00% of revenue",
+    "holder flow/yr: cash 395.99K",
+    "yields: cash 0.12% | buyback 0.00% | shareholder 0.12% | dilution 1.30% | net holder yield -1.18%",
+    "multiples: mcap/revenue 2.52Kx | mcap/holder flow 2.58Kx | holder-flow growth -50.87%/yr",
+    "flags: cost of revenue not measured: lp_fees; below the line not measured: bribes; payout ratio on revenue: cost of revenue not measured; third_party: revenue.fees, holders.voter_fees",
+  ],
+};
 
 describe('emitTickReport', () => {
   it('writes a valid report as one JSON line, and appends it plus a newline to outFile', () => {
@@ -107,6 +134,20 @@ describe('summarizeHolderYield (Task 11b: every figure is the statement\'s)', ()
       yields: { cash: null, buyback: null, shareholder: null, dilution: null, net_shareholder: null }, multiple: null, holder_flow_growth_annualized: null,
       statement_error: 'boom',
     });
+  });
+
+  // Fix round 1, M6: what prod runs now. `refresh` job rows as release orion-2026.11.09.1 (0f4b2fe) writes them: v1
+  // fields AND the statement's in one holder_yield. Generated at 0f4b2fe with its own `summarizeHolderYield(yieldReport(
+  // syntheticInput(repoAsset(id)), { legacy: true }))` on the v1 fixture's envelope; never regenerated here.
+  it.each(['lit', 'aero'])('a %s job row written by release orion-2026.11.09.1 (v1 + statement fields) parses and prints', (id) => {
+    const rows = JSON.parse(readFileSync(new URL('./golden/refresh-rows-orion-2026.11.09.1.json', import.meta.url), 'utf8')) as Record<string, { report: TickReport }>;
+    const row = rows[id]!;
+    expect(row.report.holder_yield).toHaveProperty('revenue_annualized');
+    expect(row.report.holder_yield).toHaveProperty('statement_revenue');
+    expect(TickReportSchema.parse(row.report)).toEqual(row.report);
+    const block = formatAssetBlock({ symbol: id.toUpperCase(), report: row.report, job: { status: 'done', attempts: 1, error: null }, fetchLines: [], alertFlags: [] });
+    expect(block.alert).toBe(false);
+    expect(block.lines).toEqual(PRINTED_0F4B2FE[id]);
   });
 
   it('tick holder_yield from a v1 job row still parses (a release before Task 4: v1 fields only)', () => {

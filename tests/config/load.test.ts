@@ -4,10 +4,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { loadAsset, parseAssetObject, parseAssetYaml } from '../../src/config/load.js';
 import { registerAdapter } from '../../src/ingest/adapters/registry.js';
+import { yieldReport } from '../../src/report/load.js';
 import { canonicalJson } from '../../src/util/canonical.js';
 import { MINI_ASSET_YAML, MINI_HOLDER_YAML } from '../helpers/assets.js';
+import { syntheticInput } from '../helpers/syntheticReport.js';
 
 describe('canonicalJson', () => {
   it('sorts object keys recursively and keeps array order', () => {
@@ -55,6 +58,28 @@ describe('parseAssetYaml', () => {
   it('loads an asset that pays its holders nothing (no holder flow at all: the Lido case, template T10)', () => {
     const { config } = parseAssetYaml(MINI_ASSET_YAML);
     expect(config.income_statement).toBeUndefined();
+  });
+
+  // Fix round 1, M4: template T10's shape, an income statement with revenue and the remainder to the protocol and no
+  // `holders` section. It loads, and the report pins what the code does today: holder yield 0 (a number, never null and
+  // never a statement error), an empty holder flow with no bucket, no flags, payout ratio 0, the revenue all protocol.
+  it('the Lido shape (T10: revenue, remainder: protocol, no holders) loads and reports holder yield 0', () => {
+    const yaml = `${MINI_ASSET_YAML}income_statement:\n  category: lst\n  scope: complete\n  window_days: 91\n  revenue:\n    - { id: fees_rev, metric: flow_usd.fees }\n  remainder: protocol\n`;
+    const { config } = parseAssetYaml(yaml);
+    expect(config.income_statement!.holders).toBeUndefined();
+    expect(holderFlowMetrics(config.income_statement)).toEqual([]);
+    const r = yieldReport(syntheticInput(config));
+    expect(r.incomeStatementError).toBeUndefined();
+    const is = r.incomeStatement!;
+    expect(is.yields).toMatchObject({ cash: 0, buyback: 0, shareholder: 0, multiple: null });
+    expect(is.yields.netShareholder).toBe(-is.yields.dilution!);
+    expect(is.holderFlow).toMatchObject({ gross: 0, net: 0, fromRevenue: 0, fromBelowLine: 0, notMeasured: [], lines: [], byBucket: { burn: null, hold: null, cash: null } });
+    expect(is.flags).toEqual([]);
+    expect(is.ratios).toEqual({ takeRate: 1, payoutRatio: 0, payoutRatioBasis: 'grossProfit' });
+    expect(is.multiples.mcapToHolderFlow.total).toBeNull();
+    expect(is.protocol.remainder).toBe(true);
+    expect(is.protocol.annualized).toBeCloseTo(is.revenue.annualized!, 6);
+    expect(is.revenue.annualized).toBeGreaterThan(0);
   });
 });
 

@@ -22,7 +22,7 @@ orion report yield vvv
 
 ## Where things live
 
-- Human-authored, in git: `assets/*.yaml` (metrics, sources, cross-checks, holder flows, the `reporting` block), `personas/` and `skills/` (the disclosure analyst).
+- Human-authored, in git: `assets/*.yaml` (metrics, sources, cross-checks, the `income_statement` block: revenue, its uses and holder-flow lines, dilution, checks), `personas/` and `skills/` (the disclosure analyst).
 - Machine-written, in PostgreSQL 18 (since Phase 1.5b; schema `ORION_DB_SCHEMA`, default `orion`): observations, fetch runs, fetch cursors, anomalies, coverage, documents, agent runs and their transcripts, proposals, the journal. The SQLite `orion.db` of earlier releases is imported once with `tools/import-sqlite` and then archived. Its valuation-era tables, `config_versions` and `run_locks` are not carried. Setup, migrations, the import runbook and diagnostic queries are in `docs/ops/postgres.md`.
 
 ## Commands
@@ -43,7 +43,7 @@ orion data reject <obs_id>                # retire an observation; the row is ke
 orion data anomalies [asset] [--all]
 orion data ack <id> --note "..."          # understood and accepted; stays acknowledged when seen again
 orion data resolve <id> --note "..."      # the cause is fixed; a recurrence opens a new anomaly
-orion report yield [asset] [--day <yyyy-mm-dd>] [--json] [--legacy]
+orion report yield [asset] [--day <yyyy-mm-dd>] [--json]
 orion inbox vvv                           # provisional rows to confirm, pending proposals, open anomalies
 orion proposals list [asset] | show <id> | approve <id> [--note "..."] | reject <id> --note "..."
 orion doc add lit --url <post url> --file call.txt --kind machine_transcript   # append-only
@@ -71,7 +71,7 @@ Metrics with a `source:` in `assets/<id>.yaml` are fetched; the rest are entered
 
 ## The report
 
-`orion report yield <a>` covers the asset's `reporting.window_days` (91) up to its latest complete day: price, market cap (price x circulating supply), FDV (price x total supply), protocol revenue (the sum of the `reporting.revenue` streams) and its growth, holder flows by bucket (burn, hold, cash) with their yields on price, dilution, the payout ratio and the revenue multiple. Nothing in it is a forecast. Its JSON is the income statement v2 (`incomeStatement`: revenue, cost of revenue, gross profit, holders, protocol, below the line, holder flow by bucket, ratios, multiples, per-token figures, flags) with the price, market cap and FDV; `--legacy` adds the v1 keys (`flows`, `buckets`, `yields`, `income`, `revenue`, ...) in their v1 order, for one release.
+`orion report yield <a>` covers the asset's `income_statement.window_days` (91) up to its latest complete day: price, market cap (price x circulating supply), FDV (price x total supply), revenue (the sum of the `income_statement.revenue` lines) and its growth, cost of revenue and gross profit, holder flows by bucket (burn, hold, cash) with their yields on price, dilution, the payout ratio and the multiples. Nothing in it is a forecast. Its JSON is the income statement v2 (`incomeStatement`: revenue, cost of revenue, gross profit, holders, protocol, below the line, holder flow by bucket, ratios, multiples, per-token figures, flags) with the price, market cap and FDV. It is the only report: the v1 keys and `--legacy` were retired in Phase 2 Task 11 (`--legacy` is now refused).
 
 ## Development
 
