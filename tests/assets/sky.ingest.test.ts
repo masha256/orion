@@ -183,17 +183,18 @@ describe('assets/sky.yaml', () => {
   it('reports both halves as cash to stakers, and the treasury net payout as dilution', async () => {
     const w = world();
     await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps, { backfillDays: 362 });
-    const rep = await loadHolderYieldReport(w.db, config, undefined, { legacy: true });
+    const report = await loadHolderYieldReport(w.db, config);
+    const rep = report.incomeStatement!; // Task 11b: the v2 statement (v1 retired)
     expect(rep.day).toBe('2026-10-15');
     const ann = (x: number) => (x * 365) / 91;
-    expect(rep.flows).toEqual([
+    expect(rep.holderFlow.lines).toEqual([
       expect.objectContaining({ id: 'stakers', bucket: 'cash', haircut: 0, gross: expect.closeTo(ann(STAKERS_USD), 0) }),
       expect.objectContaining({ id: 'buyback', bucket: 'cash', haircut: 0, gross: expect.closeTo(ann(BUYBACK_USD), 0) }),
     ]);
-    expect(rep.buckets.cash!.net).toBeCloseTo(RUN_RATE, 0);
-    expect(rep.buckets.burn).toBeNull();
-    expect(rep.buckets.hold).toBeNull();
-    expect(rep.fdv).toBeCloseTo(SUPPLY * PRICE, 0);
+    expect(rep.holderFlow.byBucket.cash!.net).toBeCloseTo(RUN_RATE, 0);
+    expect(rep.holderFlow.byBucket.burn).toBeNull();
+    expect(rep.holderFlow.byBucket.hold).toBeNull();
+    expect(report.fdv).toBeCloseTo(SUPPLY * PRICE, 0);
     const net = ((357 * 1_200_000 + 100_000_000 - 91_000_000) * 365) / 357;
     expect(rep.yields.dilutionLines).toEqual([{ id: 'treasury_net', tokensPerYear: expect.closeTo(net, 0), yield: expect.closeTo(net / SUPPLY, 9) }]);
   });

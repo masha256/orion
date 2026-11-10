@@ -3,12 +3,19 @@
 
     compare.py <out> [--parity parity.json] [--reclass expected.json]
 
-<out>/old/<a>.json and <out>/new/<a>.json are `report yield <a> --day D --json`; with the new side's top-level
-`incomeStatement` deleted, the two must be the same JSON value: same keys in the same order, same types, numbers exactly
-equal (no tolerance). When the new side has no `incomeStatement` the raw bytes must be identical too. anomalies.json and
-proposals.json must be byte-identical. Every file must be non-empty and parseable, both sides must list the same assets,
-at least 13 of them, and <out>/status.tsv (side, file, exit code) must record exit 0 for every run. Each report's
-top-level `asset` must be its file name and its `day` the D in <out>/run.txt, on both sides.
+<out>/old/<a>.json and <out>/new/<a>.json are `report yield <a> --day D --json`. Per asset, by what the sides print:
+- the new side has v1 keys (V1_KEYS: a release with `--legacy`, Tasks 4-10): with its top-level `incomeStatement`
+  deleted it must be the same JSON value as the old side: same keys in the same order, same types, numbers exactly
+  equal (no tolerance); when it has no `incomeStatement` the raw bytes must be identical too.
+- the new side has no v1 key (Task 11b retired v1 and `--legacy`) and the old side has `incomeStatement` (a release
+  from Task 4 on): "old side's v2 == new side's v2" (ruling R11.2): the whole objects, same keys in the same order,
+  same types, every number at rel <= 1e-12 (V2_REL_TOL).
+- the new side has no v1 key and the old side has no `incomeStatement` (a release before Task 4, v1 only): the header
+  (HEADER_KEYS) must be equal exactly; the figures are compared through the two maps below.
+anomalies.json and proposals.json must be byte-identical. Every file must be non-empty and parseable, both sides must
+list the same assets, the 13 named ones (ASSETS_13) among them, and <out>/status.tsv (side, file, exit code) must
+record exit 0 for every run. Each report's top-level `asset` must be its file name and its `day` the D in
+<out>/run.txt, on both sides.
 
 --parity: {"<asset>": [[label, "<v2 path in new/<a>.json>", "<v1 path in old/<a>.json>"], ...]} (ruling R7): compare
 reads both values from the reports; they must agree at rel <= 1e-12. A path missing on either side fails; null equals
@@ -21,11 +28,13 @@ in either map. Nothing else has the floor: unreconciled.pct is a share (no USD f
 unreconciled.basis a string.
 Paths are dotted keys; a step `key[field=value]` selects the one element of the list at `key` whose `field` is `value`
 (e.g. `income.lines[id=vecrv_fees].annualized`); none or several matches is a missing path.
-Once any new-side report has `incomeStatement`, both maps are required and together must cover the 13 assets exactly
-once each: PARITY_ASSETS in --parity, RECLASS_ASSETS in --reclass, nothing else.
+Once any new-side report has `incomeStatement` while its old side has none (v1 against v2), both maps are required and
+together must cover the 13 assets exactly once each: PARITY_ASSETS in --parity, RECLASS_ASSETS in --reclass, nothing
+else. A v2-vs-v2 run needs neither (ruling R11.2: the maps are kept only for an old release still printing v1).
 
-Prints one line per asset (and per list file): `PASS <name>` or `FAIL <name>: <reason>`, then a summary. Exit 0 only on
-a full pass.
+Prints one line per asset (and per list file): `PASS <name>` or `FAIL <name>: <reason>`, then a summary; with --json,
+one JSON object {"ok": bool, "lines": [...]} instead (T0 M6: read the result from the exit code or that object, never
+by grepping the text). Exit 0 only on a full pass.
 """
 import argparse
 import json
@@ -33,8 +42,8 @@ import re
 import sys
 from pathlib import Path
 
-MIN_ASSETS = 13
 REL_TOL = 1e-12
+V2_REL_TOL = 1e-12
 # G2 decision 2: the residual-type fields, listed explicitly, and their absolute floor in USD.
 RESIDUAL_USD_PATHS = ("incomeStatement.unreconciled.annualized",)
 RESIDUAL_ABS_USD = 0.01
@@ -42,7 +51,13 @@ LIST_FILES = ("anomalies.json", "proposals.json")
 NOT_ASSETS = set(LIST_FILES) | {"expected.json", "parity.json"}
 PARITY_ASSETS = ("aero", "cake", "crv", "cvxcrv", "hype", "link", "pump", "sky", "uni", "vvv")
 RECLASS_ASSETS = ("sdcrv", "ycrv", "lit")
+# Coverage: every one of the 13 repo assets must be compared, not merely 13 of anything.
+ASSETS_13 = tuple(sorted(PARITY_ASSETS + RECLASS_ASSETS))
 V2_KEY = "incomeStatement"
+# The v1 report's keys (Task 11b removed them): their presence on the new side means it still prints v1 (--legacy).
+V1_KEYS = ("flows", "buckets", "yields", "holderFlowGrowth", "supply", "income", "revenue", "volume", "revenueDisclosed")
+# The figures v1 and v2 share outside the statement, compared exactly when a v2-only side meets a v1-only side.
+HEADER_KEYS = ("asset", "day", "windowDays", "price", "marketCap", "fdv")
 
 
 class Bad(Exception):
@@ -94,6 +109,44 @@ def first_diff(a, b, path="$"):
 
 def is_num(x):
     return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def first_diff_tol(a, b, path="$"):
+    """first_diff, but two numbers pass at rel <= V2_REL_TOL (int vs float of the same value too: JSON does not keep
+    the distinction a JS number has none of). Key order, lengths, strings, booleans and null stay exact."""
+    if is_num(a) and is_num(b):
+        r = rel_diff(a, b)
+        return None if r <= V2_REL_TOL else f"{path} ({json.dumps(a)} vs {json.dumps(b)}: rel {r:.3g} > {V2_REL_TOL:g})"
+    if type(a) is not type(b):
+        return f"{path} ({type(a).__name__} {json.dumps(a)[:60]} vs {type(b).__name__} {json.dumps(b)[:60]})"
+    if isinstance(a, dict):
+        ka, kb = list(a), list(b)
+        for i, (x, y) in enumerate(zip(ka, kb)):
+            if x != y:
+                return f"{path} (key #{i}: {x!r} vs {y!r})"
+            d = first_diff_tol(a[x], b[y], f"{path}.{x}")
+            if d:
+                return d
+        if len(ka) != len(kb):
+            extra = ka[len(kb):] or kb[len(ka):]
+            return f"{path} (key {extra[0]!r} only on the {'old' if len(ka) > len(kb) else 'new'} side)"
+        return None
+    if isinstance(a, list):
+        for i, (x, y) in enumerate(zip(a, b)):
+            d = first_diff_tol(x, y, f"{path}[{i}]")
+            if d:
+                return d
+        if len(a) != len(b):
+            return f"{path} (length {len(a)} vs {len(b)})"
+        return None
+    if a != b:
+        return f"{path} ({json.dumps(a)} vs {json.dumps(b)})"
+    return None
+
+
+def has_v1(obj):
+    """True when a report object carries any v1 key (a release that still prints v1)."""
+    return isinstance(obj, dict) and any(k in obj for k in V1_KEYS)
 
 
 def rel_diff(a, b):
@@ -259,12 +312,27 @@ def compare_asset(out, asset, status, parity, reclass, day):
         if obj.get("day") != day:
             return f"{side}: day is {json.dumps(obj.get('day'))}, not {day!r} (run.txt)"
     has_v2 = V2_KEY in new
-    legacy = {k: v for k, v in new.items() if k != V2_KEY}
-    d = first_diff(old, legacy)
-    if d:
-        return f"legacy differs at {d}"
-    if not has_v2 and old_raw != new_raw:
-        return "same JSON value but the bytes differ (formatting)"
+    if not has_v1(new) and V2_KEY in old:
+        # Ruling R11.2: no v1 on the new side, v2 on both: the old side's v2 report against the new side's.
+        d = first_diff_tol(old, new)
+        if d:
+            return f"v2 differs at {d}"
+        return None
+    if not has_v1(new) and has_v1(old):
+        # v1 only on the old side: the shared header exactly, the figures through the maps.
+        for k in HEADER_KEYS:
+            if k not in old or k not in new:
+                return f"header key {k!r} missing on the {'old' if k not in old else 'new'} side"
+            d = first_diff(old[k], new[k], f"$.{k}")
+            if d:
+                return f"header differs at {d}"
+    else:
+        legacy = {k: v for k, v in new.items() if k != V2_KEY}
+        d = first_diff(old, legacy)
+        if d:
+            return f"legacy differs at {d}"
+        if not has_v2 and old_raw != new_raw:
+            return "same JSON value but the bytes differ (formatting)"
     if parity is not None and asset in parity:
         r = check_parity(asset, new, old, parity[asset])
         if r:
@@ -283,6 +351,11 @@ def has_income_statement(path):
     except Bad:
         return False
     return isinstance(obj, dict) and V2_KEY in obj
+
+
+def needs_maps(out, assets):
+    """True when some asset's new side has incomeStatement and its old side has none: v2 figures against v1's."""
+    return any(has_income_statement(out / "new" / f"{a}.json") and not has_income_statement(out / "old" / f"{a}.json") for a in assets)
 
 
 def compare_list_file(out, name, status):
@@ -320,12 +393,13 @@ def compare_out(out, parity=None, reclass=None):
             lines.append(f"FAIL {a}: output only on the {side} side")
             ok = False
     assets = sorted(old_assets & new_assets)
-    if len(assets) < MIN_ASSETS:
-        lines.append(f"FAIL count: {len(assets)} assets on both sides, need at least {MIN_ASSETS}")
+    missing = [a for a in ASSETS_13 if a not in assets]
+    if missing:
+        lines.append(f"FAIL coverage: {len(missing)} of the 13 assets not on both sides: {', '.join(missing)}")
         ok = False
-    if any(has_income_statement(out / "new" / f"{a}.json") for a in sorted(new_assets)):
+    if needs_maps(out, sorted(new_assets)):
         if parity_map is None or reclass_map is None:
-            lines.append(f"FAIL setup: --parity and --reclass are both required (the new side has {V2_KEY})")
+            lines.append(f"FAIL setup: --parity and --reclass are both required (the new side has {V2_KEY}, the old side v1)")
             ok = False
         else:
             for e in coverage_errors(parity_map, reclass_map):
@@ -354,10 +428,14 @@ def main(argv=None):
     ap.add_argument("out", help="the directory reports.sh wrote (old/, new/, status.tsv)")
     ap.add_argument("--parity", help="the parity map: {asset: [[label, v2 path (new side), v1 path (old side)], ...]}")
     ap.add_argument("--reclass", help="expected.json from expected.py: {asset: {dotted path: value}}")
+    ap.add_argument("--json", action="store_true", help='print {"ok": bool, "lines": [...]} instead of the text lines')
     args = ap.parse_args(argv)
     ok, lines = compare_out(args.out, parity=args.parity, reclass=args.reclass)
-    for line in lines:
-        print(line)
+    if args.json:
+        print(json.dumps({"ok": ok, "lines": lines}))
+    else:
+        for line in lines:
+            print(line)
     return 0 if ok else 1
 
 

@@ -177,15 +177,16 @@ describe('assets/link.yaml', () => {
   it('reports the Reserve as a hold with the 5 percent haircut, and the releases as dilution', async () => {
     const w = world();
     await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps, { backfillDays: 370 });
-    const rep = await loadHolderYieldReport(w.db, config, undefined, { legacy: true });
+    const report = await loadHolderYieldReport(w.db, config);
+    const rep = report.incomeStatement!; // Task 11b: the v2 statement (v1 retired)
     expect(rep.day).toBe('2026-10-15');
     const gross = (13 * 100_000 * PRICE * 365) / 91;
-    expect(rep.flows).toEqual([expect.objectContaining({ id: 'reserve', bucket: 'hold', haircut: 0.05, gross: expect.closeTo(gross, 0), net: expect.closeTo(gross * 0.95, 0) })]);
-    expect(rep.buckets.hold!.net).toBeCloseTo(gross * 0.95, 0);
-    expect(rep.buckets.burn).toBeNull();
+    expect(rep.holderFlow.lines).toEqual([expect.objectContaining({ id: 'reserve', bucket: 'hold', haircut: 0.05, gross: expect.closeTo(gross, 0), net: expect.closeTo(gross * 0.95, 0) })]);
+    expect(rep.holderFlow.byBucket.hold!.net).toBeCloseTo(gross * 0.95, 0);
+    expect(rep.holderFlow.byBucket.burn).toBeNull();
     const fdv = 1_000_000_000 * PRICE;
-    expect(rep.fdv).toBeCloseTo(fdv, 0);
-    expect(rep.marketCap).toBeCloseTo(766_849_970 * PRICE, 0);
+    expect(report.fdv).toBeCloseTo(fdv, 0);
+    expect(report.marketCap).toBeCloseTo(766_849_970 * PRICE, 0);
     expect(rep.yields.buyback).toBeCloseTo((gross * 0.95) / fdv, 6);
     expect(rep.yields.dilutionLines).toEqual([{ id: 'releases', tokensPerYear: 70_000_000, yield: expect.closeTo(0.07, 6) }]);
     expect(rep.yields.dilution).toBeCloseTo(0.07, 6);

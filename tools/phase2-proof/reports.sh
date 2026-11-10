@@ -4,11 +4,12 @@
 #   reports.sh <old-dist> <new-dist> <home-old> <home-new> <D> <out>
 #
 # For each asset id in <home-new>/assets/*.yaml (13 required): `report yield <a> --day <D> --json` with each release,
-# into <out>/old/<a>.json and <out>/new/<a>.json; the new side adds --legacy only when its `report yield --help` lists
-# it. Then `data anomalies --all --json` -> anomalies.json and `proposals list --json` -> proposals.json per side.
+# into <out>/old/<a>.json and <out>/new/<a>.json, with identical flags on both sides (Task 11b retired --legacy: no
+# side gets it, whatever its release prints; compare.py decides v1-vs-v2 or v2-vs-v2 from the JSON itself). Then `data anomalies --all --json` -> anomalies.json and `proposals list --json` -> proposals.json per side.
 # stderr goes beside each output as <name>.stderr; every run's exit code is a row of <out>/status.tsv
 # (side TAB file TAB exit), which compare.py reads: a non-zero exit is a failure there, never a silent skip.
-# Exits 1 if any run exited non-zero. Compare with compare.py <out>.
+# <out>, <home-old> and <home-new> must be inside $TMPDIR (T0 M4: proof outputs and the homes' .env never land in the
+# repo or a home that outlives scratch). Exits 1 if any run exited non-zero, 2 on a refusal. Compare with compare.py <out>.
 set -uo pipefail
 
 die() { echo "reports.sh: $*" >&2; exit 2; }
@@ -21,6 +22,11 @@ HOME_NEW="$(realpath -m "$4")"
 D="$5"
 OUT="$(realpath -m "$6")"
 
+[ -n "${TMPDIR:-}" ] || die "TMPDIR is not set: cannot confine the proof outputs to scratch"
+TMP_ROOT="$(realpath -m "$TMPDIR")"
+for p in "$OUT" "$HOME_OLD" "$HOME_NEW"; do
+  case "$p/" in "$TMP_ROOT"/?*) ;; *) die "$p is not inside \$TMPDIR ($TMP_ROOT)" ;; esac
+done
 [ -f "$OLD_CLI" ] || die "no $OLD_CLI (old dist missing)"
 [ -f "$NEW_CLI" ] || die "no $NEW_CLI (new dist missing)"
 [[ "$D" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "D must be YYYY-MM-DD, got '$D'"
@@ -66,17 +72,11 @@ run() {
   fi
 }
 
-# Does the new CLI have --legacy (Task 4 adds it)?
-(cd "$HOME_NEW" && ORION_HOME="$HOME_NEW" ORION_ENV_FILE="$HOME_NEW/.env" node "$NEW_CLI" report yield --help) >"$OUT/new-report-yield-help.txt" 2>&1 \
-  || die "the new CLI's report yield --help failed (see $OUT/new-report-yield-help.txt)"
-[ -s "$OUT/new-report-yield-help.txt" ] || die "the new CLI's report yield --help printed nothing"
-legacy=()
-if grep -q -- '--legacy' "$OUT/new-report-yield-help.txt"; then legacy=(--legacy); fi
-printf 'legacy=%s\nassets=%s\nday=%s\n%s\n' "${legacy[*]:-none}" "${assets[*]}" "$D" "$schema" >"$OUT/run.txt"
+printf 'assets=%s\nday=%s\n%s\n' "${assets[*]}" "$D" "$schema" >"$OUT/run.txt"
 
 for a in "${assets[@]}"; do
   run old "$OLD_CLI" "$HOME_OLD" "$a.json" report yield "$a" --day "$D" --json
-  run new "$NEW_CLI" "$HOME_NEW" "$a.json" report yield "$a" --day "$D" --json "${legacy[@]}"
+  run new "$NEW_CLI" "$HOME_NEW" "$a.json" report yield "$a" --day "$D" --json
 done
 for side in old new; do
   cli="$OLD_CLI"; home="$HOME_OLD"
@@ -85,5 +85,5 @@ for side in old new; do
   run "$side" "$cli" "$home" proposals.json proposals list --json
 done
 
-echo "reports.sh: ${#assets[@]} assets, legacy flag: ${legacy[*]:-none}, $failures failed run(s); outputs in $OUT"
+echo "reports.sh: ${#assets[@]} assets, $failures failed run(s); outputs in $OUT"
 [ "$failures" -eq 0 ]

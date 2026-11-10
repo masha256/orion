@@ -27,7 +27,7 @@ describe('envelope', () => {
       schema: SNAPSHOT_SCHEMA, kind: 'levels', snapshot_id: '00000000-0000-4000-8000-000000000001', seq: 0,
       generated_at: NOW.toISOString(), env: 'stage', release_tag: 'orion-2026.11.03.1', sha256: sha256(canonicalJson(body)), body,
     });
-    expect(SNAPSHOT_SCHEMA).toBe('orion.snapshot/1');
+    expect(SNAPSHOT_SCHEMA).toBe('orion.snapshot/2'); // Task 11b: the full body's report lost the v1 keys
     // The same body with its keys in another order hashes the same.
     expect(buildEnvelope('levels', { a: { k: null, z: [3, { x: 2, y: 1 }] }, b: 2 }, opts).sha256).toBe(e.sha256);
     expect(buildEnvelope('levels', body, opts).snapshot_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
@@ -84,7 +84,7 @@ describe('files', () => {
 
     const manifest = JSON.parse(files['manifest.json']);
     expect(manifest).toEqual({
-      schema: 'orion.snapshot/1', env: 'stage', release_tag: 'orion-2026.11.03.1', generated_at: NOW.toISOString(),
+      schema: 'orion.snapshot/2', env: 'stage', release_tag: 'orion-2026.11.03.1', generated_at: NOW.toISOString(),
       full: { seq: 1, day: '2026-11-02', path: 'full/2026/2026-11-02.json', sha256: hex(files['full/2026/2026-11-02.json']) },
       levels: { seq: 1, generated_at: NOW.toISOString(), path: 'levels/latest.json', sha256: hex(files['levels/latest.json']) },
       assets: { path: 'assets.json', sha256: hex(files['assets.json']) },
@@ -101,6 +101,18 @@ describe('files', () => {
     expect(verifyManifest(bytes, `${sig.slice(0, -4)}AAA=`, PUBLIC_PEM)).toBe(false);
     expect(verifyManifest(bytes, 'not base64 at all', PUBLIC_PEM)).toBe(false);
     expect(signManifest(bytes, PRIVATE_PEM)).toBe(sig); // Ed25519 is deterministic
+  });
+
+  it('files: a row the previous release queued (orion.snapshot/1) publishes as written; an unknown schema is refused', async () => {
+    // Task 11b bumped the schema: an outbox row written before the upgrade must not wedge the publisher.
+    const old = { ...buildEnvelope('full', { day: '2026-11-02', assets: {} }, opts), schema: 'orion.snapshot/1' };
+    const full = await insertSnapshot(db(), { kind: 'full', day: '2026-11-02', envelope: old as SnapshotEnvelope });
+    const levels = await insertSnapshot(db(), { kind: 'levels', day: null, envelope: buildEnvelope('levels', { assets: {} }, opts) });
+    const files = buildFileSet({ full, levels, assets: {}, env: 'stage', releaseTag: 'orion-2026.11.03.1', now: NOW }, PRIVATE_PEM);
+    expect(JSON.parse(files['full/latest.json']).schema).toBe('orion.snapshot/1');
+    expect(JSON.parse(files['levels/latest.json']).schema).toBe('orion.snapshot/2');
+    const bad = await insertSnapshot(db(), { kind: 'full', day: '2026-11-03', envelope: { ...old, schema: 'orion.snapshot/9' } as SnapshotEnvelope });
+    expect(() => buildFileSet({ full: bad, levels, assets: {}, env: 'stage', releaseTag: null, now: NOW }, PRIVATE_PEM)).toThrow(expect.objectContaining({ code: 'snapshot_corrupt' }));
   });
 
   it('files: with no full snapshot yet the manifest says full null and no full files are written', async () => {

@@ -19,7 +19,7 @@ import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 /**
  * Final review M3: the v2-only reads (`listCheckResults`, the provenance read) sit inside C4's isolation. A throw there
  * gives `incomeStatement: null` and `incomeStatementError`; the report, the tick's holder_yield and the snapshot never
- * fail because of it (Task 11a: the v1-shaped keys are the statement's, so they are empty then; the header stands). The
+ * fail because of it (the header stands). The
  * seams: each read throws while its flag is set (the real function otherwise).
  */
 const seam = vi.hoisted(() => ({ checks: false, provenance: false }));
@@ -62,14 +62,13 @@ describe('a failing v2-only read (M3)', () => {
     it(`${which}: the report resolves, the header unchanged, incomeStatement null with the error`, async () => {
       const db = testDb();
       await seedMiniReport(db, '2026-10-10');
-      const clean = (await loadHolderYieldReport(db, asset, '2026-10-10', { legacy: true })) as unknown as Record<string, unknown>;
+      const clean = (await loadHolderYieldReport(db, asset, '2026-10-10')) as unknown as Record<string, unknown>;
       expect(clean.incomeStatement).toMatchObject({ schema: 2 });
       seam[which] = true;
-      const r = (await loadHolderYieldReport(db, asset, '2026-10-10', { legacy: true })) as unknown as Record<string, unknown>;
+      const r = (await loadHolderYieldReport(db, asset, '2026-10-10')) as unknown as Record<string, unknown>;
       expect(r.incomeStatement).toBeNull();
       expect(r.incomeStatementError).toMatch(which === 'checks' ? /check_results read failed/ : /bad jsonb locator/);
       for (const k of HEADER) expect(r[k], k).toEqual(clean[k]);
-      expect(r).toMatchObject({ flows: [], income: null });
       // The default (D9) shape too.
       const slim = await loadHolderYieldReport(db, asset, '2026-10-10');
       expect(slim).toMatchObject({ incomeStatement: null, incomeStatementError: r.incomeStatementError });

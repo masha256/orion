@@ -174,13 +174,14 @@ describe('assets/cake.yaml', () => {
   it('reports the burn against emissions in tokens, and the treasury share as protocol income', async () => {
     const w = world();
     await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
-    const rep = await loadHolderYieldReport(w.db, config, undefined, { legacy: true });
+    const report = await loadHolderYieldReport(w.db, config);
+    const rep = report.incomeStatement!; // Task 11b: the v2 statement (v1 retired)
     expect(rep.day).toBe('2026-10-11');
     expect(rep.yields.buyback).toBeCloseTo((13 * 550_000 * PRICE * 365) / 91 / (335_120_997 * PRICE), 6);
-    expect(rep.supply).toMatchObject({ burnedPerYear: expect.closeTo((13 * 550_000 * 365) / 91, 0) });
-    expect(rep.supply!.netPerYear).toBeLessThan(0);
-    expect(rep.income!.revenue.annualized).toBeCloseTo((13 * 750_000 * PRICE * 365) / 91, 0);
-    expect(rep.income!.payoutRatio).toBeCloseTo(550 / 750, 6);
+    expect(rep.dilution.supply).toMatchObject({ burnedPerYear: expect.closeTo((13 * 550_000 * 365) / 91, 0) });
+    expect(rep.dilution.supply!.netPerYear).toBeLessThan(0);
+    expect(rep.revenue.annualized).toBeCloseTo((13 * 750_000 * PRICE * 365) / 91, 0);
+    expect(rep.ratios.payoutRatio).toBeCloseTo(550 / 750, 6);
     expect(rep.volume!.annualized).toBeCloseTo(560_000 * 365, 0);
   });
 

@@ -5,13 +5,20 @@ import { OrionError } from '../types.js';
 import { canonicalJson, sha256 } from '../util/canonical.js';
 import { signManifest } from './sign.js';
 
-/** The snapshot format (spec 9.1); Phase 5 bumps it if a body change breaks readers. */
-export const SNAPSHOT_SCHEMA = 'orion.snapshot/1';
+/**
+ * The snapshot format (spec 9.1), bumped when a body change breaks readers. 2 (Task 11b, G4): a `full` body's per-asset
+ * `report` is the v2 `report yield --json` object, without the v1 keys (`flows`, `buckets`, `yields`, `holderFlowGrowth`,
+ * `supply`, `income`, `revenue`, `volume`, `revenueDisclosed`) that 1 carried; the `levels` body is unchanged.
+ */
+export const SNAPSHOT_SCHEMA = 'orion.snapshot/2';
+/** Envelopes the outbox may still hold: a row the previous release queued publishes as it was written. */
+export const KNOWN_SNAPSHOT_SCHEMAS: readonly string[] = ['orion.snapshot/1', SNAPSHOT_SCHEMA];
 
 export type SnapshotKind = 'full' | 'levels';
 
 export interface SnapshotEnvelope {
-  schema: typeof SNAPSHOT_SCHEMA;
+  /** SNAPSHOT_SCHEMA when built; a queued row of the previous release may carry an older KNOWN_SNAPSHOT_SCHEMAS one. */
+  schema: string;
   kind: SnapshotKind;
   /** uuid */
   snapshot_id: string;
@@ -90,7 +97,7 @@ export function buildFileSet(
 /** The row's envelope, checked against the row it came from (a hand-edited outbox row is refused, not published). */
 function parseEnvelope(row: OutboxRow, kind: SnapshotKind): SnapshotEnvelope {
   const e = JSON.parse(row.body) as SnapshotEnvelope;
-  if (row.kind !== kind || e.kind !== kind || e.seq !== row.seq || e.schema !== SNAPSHOT_SCHEMA || e.sha256 !== row.sha256 || sha256(canonicalJson(e.body)) !== e.sha256) {
+  if (row.kind !== kind || e.kind !== kind || e.seq !== row.seq || !KNOWN_SNAPSHOT_SCHEMAS.includes(e.schema) || e.sha256 !== row.sha256 || sha256(canonicalJson(e.body)) !== e.sha256) {
     throw new OrionError('snapshot_corrupt', `snapshots_out row ${row.id} (${row.kind} seq ${row.seq}) does not match its envelope`);
   }
   return e;

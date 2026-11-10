@@ -33,11 +33,6 @@ async function seed(db: Db): Promise<void> {
 }
 
 const statement = async (db: Db) => (await loadHolderYieldReport(db, asset, DAY)).incomeStatement as IsV2;
-const legacyOnly = async (db: Db) => {
-  const r = JSON.parse(JSON.stringify(await loadHolderYieldReport(db, asset, DAY, { legacy: true }))) as Record<string, unknown>;
-  delete r.incomeStatement;
-  return JSON.stringify(r);
-};
 
 describe('income statement v2 provenance from observations (Task 6)', () => {
   it('methods are the revenue share by the rows\' method, daysMeasured counts measured days, sources come from the rows', async () => {

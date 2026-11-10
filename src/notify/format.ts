@@ -92,8 +92,9 @@ const multipleOf = (x: number | null): string => (x === null ? 'n/a' : `${fmtNum
 
 /**
  * The holder-yield block. With the income statement v2 fields (spec 7): revenue, gross profit, holder flow by bucket, net
- * holder yield, multiples, scope and the statement's flags (`third_party`, not measured). A `refresh` row of the previous
- * release has none of them and prints the v1 block.
+ * holder yield, multiples, scope and the statement's flags (`third_party`, not measured); every figure is the
+ * statement's since Task 11b (T4 M2). A `refresh` row of a release before Task 4 has none of them and prints the v1
+ * block; a row whose statement threw (C4) has neither and prints the header and price (its ALERT line says why).
  */
 function holderYieldLines(sym: string, h: TickHolderYield): string[] {
   const y = h.yields;
@@ -111,10 +112,11 @@ function holderYieldLines(sym: string, h: TickHolderYield): string[] {
     if (h.flags && h.flags.length > 0) lines.push(`flags: ${h.flags.join('; ')}`);
     return lines;
   }
+  const head = [`HOLDER YIELD ${sym}  ${h.day} (${h.window_days}d window)`, `price ${fmtNum(h.price)} | mcap ${fmtNum(h.market_cap)} | FDV ${fmtNum(h.fdv)}`];
+  if (h.revenue_annualized === undefined) return head;
   return [
-    `HOLDER YIELD ${sym}  ${h.day} (${h.window_days}d window)`,
-    `price ${fmtNum(h.price)} | mcap ${fmtNum(h.market_cap)} | FDV ${fmtNum(h.fdv)}`,
-    `revenue ${fmtNum(h.revenue_annualized)}/yr (growth ${fmtPct(h.revenue_growth_annualized)}/yr) | payout ratio ${fmtPct(h.payout_ratio)}`,
+    ...head,
+    `revenue ${fmtNum(h.revenue_annualized)}/yr (growth ${fmtPct(h.revenue_growth_annualized ?? null)}/yr) | payout ratio ${fmtPct(h.payout_ratio ?? null)}`,
     `yields: cash ${fmtPct(y.cash)} | buyback ${fmtPct(y.buyback)} | shareholder ${fmtPct(y.shareholder)} | dilution ${fmtPct(y.dilution)} | net ${fmtPct(y.net_shareholder)}`,
     `multiple ${h.multiple === null ? 'n/a' : `${fmtNum(h.multiple)}x`} | holder-flow growth ${fmtPct(h.holder_flow_growth_annualized)}/yr`,
   ];

@@ -167,7 +167,8 @@ describe('assets/uni.yaml', () => {
   it('reports the burn against the Labs vest as dilution, and the gross swap fees as volume', async () => {
     const w = world();
     await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
-    const rep = await loadHolderYieldReport(w.db, config, undefined, { legacy: true });
+    const report = await loadHolderYieldReport(w.db, config);
+    const rep = report.incomeStatement!; // Task 11b: the v2 statement (v1 retired)
     expect(rep.day).toBe('2026-10-10');
     const mcap = 887_216_419 * PRICE;
     expect(rep.yields.buyback).toBeCloseTo((64_000 * 365 * PRICE) / mcap, 6);
@@ -177,9 +178,9 @@ describe('assets/uni.yaml', () => {
     expect(rep.yields.netShareholder).toBeCloseTo((64_000 * 365 - 20_000_000) / 887_216_419, 6);
     expect(rep.volume!.annualized).toBeCloseTo(4_600_000 * 365, 0);
     // In tokens: 64,000 a day burned (23.36M a year) against 20M vested: supply shrinks 3.36M a year.
-    expect(rep.supply).toMatchObject({ burnedPerYear: expect.closeTo(23_360_000, 0), addedPerYear: 20_000_000, netPerYear: expect.closeTo(-3_360_000, 0) });
-    expect(rep.supply!.netPct).toBeCloseTo(-3_360_000 / 887_216_419, 6);
-    expect(rep.income!.payoutRatio).toBeCloseTo(1);
+    expect(rep.dilution.supply).toMatchObject({ burnedPerYear: expect.closeTo(23_360_000, 0), addedPerYear: 20_000_000, netPerYear: expect.closeTo(-3_360_000, 0) });
+    expect(rep.dilution.supply!.netPct).toBeCloseTo(-3_360_000 / 887_216_419, 6);
+    expect(rep.ratios.payoutRatio).toBeCloseTo(1);
   });
 
   it('refuses to run without the Ethereum RPC URL', async () => {

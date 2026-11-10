@@ -1,30 +1,39 @@
 import { appendFileSync } from 'node:fs';
 import { z } from 'zod';
 import { CHECK_TYPES } from '../checks/schema.js';
-import type { HolderYieldReport } from '../report/legacy.js';
 import type { IsV2 } from '../report/incomeStatement.js';
+import type { YieldReport } from '../report/load.js';
 import { WATCH_RULES } from '../types.js';
 import { InboxSchema } from './inbox.js';
 
 const ErrorSchema = z.strictObject({ code: z.string(), message: z.string() });
 const num = z.number().nullable();
 
-/** The holder-yield block of a tick report: a copy of what `report yield` computes, never a number of its own. */
+/**
+ * The holder-yield block of a tick report: a copy of what `report yield` computes, never a number of its own. Since
+ * Task 11b every figure is the income statement's (T4 M2: no v1 source left): `flows`, `yields`, `multiple` and
+ * `holder_flow_growth_annualized` are its holder flow and yields, empty/null when it threw (C4).
+ */
 export const TickHolderYieldSchema = z.strictObject({
   day: z.string(),
   window_days: z.number().int(),
   price: num,
   market_cap: num,
   fdv: num,
-  revenue_annualized: num,
-  revenue_growth_annualized: num,
-  payout_ratio: num,
+  /**
+   * v1's revenue and payout ratio: only on a `refresh` job row a release before Task 11b wrote (kept optional so the
+   * nightly still reads it). The statement's are `statement_revenue`, `statement_revenue_growth`, `statement_payout_ratio`.
+   */
+  revenue_annualized: num.optional(),
+  revenue_growth_annualized: num.optional(),
+  payout_ratio: num.optional(),
+  /** The statement's measured holder-flow lines with a bucket. */
   flows: z.array(z.strictObject({ id: z.string(), bucket: z.enum(['burn', 'hold', 'cash']), net: num, yield: num })),
   yields: z.strictObject({ cash: num, buyback: num, shareholder: num, dilution: num, net_shareholder: num }),
   multiple: num,
   holder_flow_growth_annualized: num,
-  // Income statement v2 (spec 7, Task 4): copied from the report's `incomeStatement`. Optional, so a `refresh` job row the
-  // previous release wrote (v1, none of these) still parses; absent for an asset with no income_statement block.
+  // Income statement v2 (spec 7, Task 4): copied from the report's `incomeStatement`. Optional, so a `refresh` job row a
+  // release before Task 4 wrote (none of these) still parses; absent when the statement threw (`statement_error`).
   /** Revenue under v2 (gross user-paid fees, LIT's Robinhood gross included; sdCRV's bribes below the line). */
   statement_revenue: num.optional(),
   statement_revenue_growth: num.optional(),
@@ -43,28 +52,27 @@ export const TickHolderYieldSchema = z.strictObject({
   scope: z.enum(['complete', 'protocol_share_only', 'partial']).optional(),
   /** The statement's display flags: not-measured lines, third-party lines, the payout ratio basis. */
   flags: z.array(z.string()).optional(),
-  /** Computing the income statement threw (ruling C4): its message. The v1 fields above are unaffected. */
+  /** Computing the income statement threw (ruling C4): its message. The header fields above are unaffected. */
   statement_error: z.string().optional(),
 });
 
 export type TickHolderYield = z.infer<typeof TickHolderYieldSchema>;
 
-/** The tick's holder-yield block from the report's own numbers: copied, never rounded or recomputed. */
-export function summarizeHolderYield(r: HolderYieldReport): TickHolderYield {
+/** The tick's holder-yield block from the report's own numbers (the statement's): copied, never rounded or recomputed. */
+export function summarizeHolderYield(r: YieldReport): TickHolderYield {
+  const is = r.incomeStatement;
+  const y = is?.yields;
   return {
     day: r.day,
     window_days: r.windowDays,
     price: r.price,
     market_cap: r.marketCap,
     fdv: r.fdv,
-    revenue_annualized: r.revenue?.annualized ?? r.income?.revenue.annualized ?? null,
-    revenue_growth_annualized: r.revenue?.growth.annualized ?? r.income?.revenue.growth.annualized ?? null,
-    payout_ratio: r.income?.payoutRatio ?? null,
-    flows: r.flows.map((f) => ({ id: f.id, bucket: f.bucket, net: f.net, yield: f.yield })),
-    yields: { cash: r.yields.cash, buyback: r.yields.buyback, shareholder: r.yields.shareholder, dilution: r.yields.dilution, net_shareholder: r.yields.netShareholder },
-    multiple: r.yields.multiple,
-    holder_flow_growth_annualized: r.holderFlowGrowth.annualized,
-    ...(r.incomeStatement ? statementFields(r.incomeStatement) : {}),
+    flows: (is?.holderFlow.lines ?? []).flatMap((l) => (l.notMeasured !== undefined || l.bucket === null ? [] : [{ id: l.id, bucket: l.bucket, net: l.net, yield: l.yield }])),
+    yields: { cash: y?.cash ?? null, buyback: y?.buyback ?? null, shareholder: y?.shareholder ?? null, dilution: y?.dilution ?? null, net_shareholder: y?.netShareholder ?? null },
+    multiple: y?.multiple ?? null,
+    holder_flow_growth_annualized: is?.holderFlow.growth.annualized ?? null,
+    ...(is ? statementFields(is) : {}),
     ...(r.incomeStatementError !== undefined ? { statement_error: r.incomeStatementError } : {}),
   };
 }

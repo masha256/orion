@@ -125,7 +125,24 @@ class CompareTest(unittest.TestCase):
             out = OutDir(Path(d) / "out", assets=ASSETS[:12])
             ok, lines = compare.compare_out(out.root)
             self.assertFalse(ok)
-            self.assertTrue(any("12" in l and "13" in l for l in lines), lines)
+            self.assertTrue(any(l.startswith("FAIL coverage") and "ycrv" in l for l in lines), lines)
+
+    def test_coverage_needs_the_13_named_assets_not_13_of_anything(self):
+        # R11.2: 13 assets on both sides, but one is not a repo asset and yCRV is missing.
+        with tempfile.TemporaryDirectory() as d:
+            out = OutDir(Path(d) / "out", assets=ASSETS[:12] + ["foo"])
+            ok, lines = compare.compare_out(out.root)
+            self.assertFalse(ok)
+            cov = [l for l in lines if l.startswith("FAIL coverage")]
+            self.assertEqual(len(cov), 1, lines)
+            self.assertIn("ycrv", cov[0])
+
+    def test_extra_assets_beside_the_13_are_compared_too(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = OutDir(Path(d) / "out", assets=ASSETS + ["foo"])
+            ok, lines = compare.compare_out(out.root)
+            self.assertTrue(ok, lines)
+            self.assertIn("PASS foo", lines)
 
     def test_an_asset_missing_on_one_side_fails(self):
         (self.out.root / "new" / "sky.json").unlink()
@@ -629,6 +646,153 @@ class CleanupTest(unittest.TestCase):
         self.assertTrue(p.exists())
 
 
+def v2_report(asset, revenue=100.0):
+    """What a v2-only `report yield --json` prints (Task 11b): the header and incomeStatement, no v1 key."""
+    return {
+        "asset": asset,
+        "day": "2026-10-27",
+        "windowDays": 91,
+        "price": 1.25,
+        "marketCap": 1000.0,
+        "fdv": 2000.0,
+        "incomeStatement": {"revenue": {"annualized": revenue}, "lines": [{"id": "x", "annualized": 3.5}]},
+        "notes": [],
+    }
+
+
+class V2VsV2Test(unittest.TestCase):
+    """Ruling R11.2: once the new side prints no v1, the old side's v2 must equal the new side's at rel 1e-12."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out = OutDir(Path(self.tmp.name) / "out")
+        for a in ASSETS:
+            for side in ("old", "new"):
+                self.out.write(side, f"{a}.json", js_json(v2_report(a)))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_equal_v2_on_both_sides_passes_without_any_map(self):
+        ok, lines = compare.compare_out(self.out.root)
+        self.assertTrue(ok, lines)
+        self.assertFalse(any("setup" in l for l in lines), lines)
+
+    def test_a_v2_figure_within_1e12_rel_passes(self):
+        self.out.write("new", "crv.json", js_json(v2_report("crv", revenue=100.0 * (1 + 5e-13))))
+        ok, lines = compare.compare_out(self.out.root)
+        self.assertTrue(ok, lines)
+
+    def test_a_v2_figure_off_by_more_than_1e12_rel_fails_and_names_the_path(self):
+        self.out.write("new", "crv.json", js_json(v2_report("crv", revenue=100.0 * (1 + 3e-12))))
+        ok, lines = compare.compare_out(self.out.root)
+        self.assertFalse(ok)
+        crv = [l for l in lines if l.startswith("FAIL crv")]
+        self.assertEqual(len(crv), 1, lines)
+        self.assertIn("v2 differs at $.incomeStatement.revenue.annualized", crv[0])
+
+    def test_int_vs_float_of_the_same_value_passes_in_v2_mode(self):
+        obj = v2_report("uni")
+        obj["windowDays"] = 91.0
+        self.out.write("new", "uni.json", js_json(obj))
+        ok, lines = compare.compare_out(self.out.root)
+        self.assertTrue(ok, lines)
+
+    def test_key_order_a_string_a_null_or_a_missing_key_is_still_a_difference(self):
+        cases = {
+            "key order": lambda o: dict(reversed(list(o.items()))),
+            "string": lambda o: {**o, "notes": ["x"]},
+            "null": lambda o: {**o, "fdv": None},
+            "missing key": lambda o: {k: v for k, v in o.items() if k != "notes"},
+        }
+        for name, edit in cases.items():
+            with self.subTest(name):
+                self.out.write("new", "sky.json", js_json(edit(v2_report("sky"))))
+                ok, lines = compare.compare_out(self.out.root)
+                self.assertFalse(ok, lines)
+                self.assertTrue(any(l.startswith("FAIL sky") for l in lines), lines)
+        self.out.write("new", "sky.json", js_json(v2_report("sky")))
+
+    def test_a_new_side_still_printing_v1_is_held_to_the_legacy_check(self):
+        new = report("hype")
+        new["incomeStatement"] = {"revenue": {"annualized": 100.0}}
+        self.out.write("new", "hype.json", js_json(new))
+        ok, lines = compare.compare_out(self.out.root)
+        self.assertFalse(ok)
+        self.assertTrue(any(l.startswith("FAIL hype") and "legacy differs" in l for l in lines), lines)
+
+
+class V1OldSideTest(unittest.TestCase):
+    """An old release printing v1 only, against a v2-only new side: the header exactly, the figures through the maps."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out = OutDir(Path(self.tmp.name) / "out")
+        for a in ASSETS:
+            old = report(a)
+            old["windowDays"], old["marketCap"], old["fdv"] = 91, 1000.0, 2000.0
+            self.out.write("old", f"{a}.json", js_json(old))
+            self.out.write("new", f"{a}.json", js_json(v2_report(a)))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def maps(self):
+        root = self.out.root
+        pair = ["revenue", "incomeStatement.revenue.annualized", "income.revenue.annualized"]
+        (root / "parity.json").write_text(json.dumps({a: [pair] for a in compare.PARITY_ASSETS}))
+        (root / "expected.json").write_text(json.dumps({a: {"incomeStatement.revenue.annualized": 100.0} for a in compare.RECLASS_ASSETS}))
+        return dict(parity=root / "parity.json", reclass=root / "expected.json")
+
+    def test_the_maps_are_required(self):
+        ok, lines = compare.compare_out(self.out.root)
+        self.assertFalse(ok)
+        self.assertTrue(any(l.startswith("FAIL setup") and "--parity" in l for l in lines), lines)
+
+    def test_with_the_maps_it_passes(self):
+        ok, lines = compare.compare_out(self.out.root, **self.maps())
+        self.assertTrue(ok, lines)
+
+    def test_a_header_difference_fails(self):
+        new = v2_report("link")
+        new["price"] = 1.26
+        self.out.write("new", "link.json", js_json(new))
+        ok, lines = compare.compare_out(self.out.root, **self.maps())
+        self.assertFalse(ok)
+        self.assertTrue(any(l.startswith("FAIL link") and "header differs at $.price" in l for l in lines), lines)
+
+    def test_a_parity_figure_that_moved_fails(self):
+        self.out.write("new", "cake.json", js_json(v2_report("cake", revenue=101.0)))
+        ok, lines = compare.compare_out(self.out.root, **self.maps())
+        self.assertFalse(ok)
+        self.assertTrue(any(l.startswith("FAIL cake") for l in lines), lines)
+
+
+class JsonOutputTest(unittest.TestCase):
+    """T0 M6: the result is read from the exit code or the --json object, never by grepping the text."""
+
+    def run_main(self, out, *extra):
+        r = subprocess.run([sys.executable, str(HERE / "compare.py"), str(out), "--json", *extra], capture_output=True, text=True)
+        return r.returncode, json.loads(r.stdout)
+
+    def test_a_pass_is_exit_0_and_ok_true(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = OutDir(Path(d) / "out")
+            code, obj = self.run_main(out.root)
+            self.assertEqual(code, 0)
+            self.assertIs(obj["ok"], True)
+            self.assertEqual(sum(1 for l in obj["lines"] if l.startswith("PASS ")), 15)
+
+    def test_a_fail_is_exit_1_and_ok_false(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = OutDir(Path(d) / "out")
+            out.write("new", "vvv.json", js_json(report("vvv", revenue=99.0)))
+            code, obj = self.run_main(out.root)
+            self.assertEqual(code, 1)
+            self.assertIs(obj["ok"], False)
+            self.assertTrue(any(l.startswith("FAIL vvv") for l in obj["lines"]), obj)
+
+
 # A dist whose CLI, like a release's (src/cli/paths.ts resolvePaths), exits 1 unless ORION_HOME is set and, here,
 # ORION_ENV_FILE is exactly <ORION_HOME>/.env; otherwise it prints JSON (and a --legacy-free help text).
 STRICT_CLI = r"""
@@ -668,18 +832,108 @@ class ReportsTest(unittest.TestCase):
         (h / ".env").write_text("ORION_DATABASE_URL=postgresql://nobody@/none\nORION_DB_SCHEMA=p2proof_20261104t000000z\n")
         return h
 
+    def reports(self, old, new, h_old, h_new, day, out, tmpdir=None):
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ORION_")}
+        env["TMPDIR"] = str(self.root if tmpdir is None else tmpdir)
+        return subprocess.run(
+            ["bash", str(HERE / "reports.sh"), str(old), str(new), str(h_old), str(h_new), day, str(out)],
+            capture_output=True, text=True, env=env,
+        )
+
     def test_reports_sh_passes_orion_env_file_for_a_release_on_both_sides(self):
         old, new = self.release("orion-old"), self.release("orion-new")
         h_old, h_new, out = self.home("old"), self.home("new"), self.root / "out"
-        env = {k: v for k, v in os.environ.items() if not k.startswith("ORION_")}
-        r = subprocess.run(
-            ["bash", str(HERE / "reports.sh"), str(old), str(new), str(h_old), str(h_new), "2026-10-27", str(out)],
-            capture_output=True, text=True, env=env,
-        )
+        r = self.reports(old, new, h_old, h_new, "2026-10-27", out)
         self.assertEqual(r.returncode, 0, r.stderr)
         rows = [l.split("\t") for l in (out / "status.tsv").read_text().splitlines()]
         self.assertEqual(len(rows), 2 * (len(ASSETS) + 2))
         self.assertTrue(all(row[2] == "0" for row in rows), rows)
+
+    def test_both_sides_get_identical_flags_and_no_legacy(self):
+        # Task 11b: no --help probe, no --legacy on either side, whatever the release prints.
+        old, new = self.release("orion-old"), self.release("orion-new")
+        out = self.root / "out"
+        r = self.reports(old, new, self.home("old"), self.home("new"), "2026-10-27", out)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for a in ASSETS:
+            o = json.loads((out / "old" / f"{a}.json").read_text())["args"]
+            n = json.loads((out / "new" / f"{a}.json").read_text())["args"]
+            self.assertEqual(o, ["report", "yield", a, "--day", "2026-10-27", "--json"])
+            self.assertEqual(n, o)
+        self.assertNotIn("legacy", (out / "run.txt").read_text())
+        self.assertIn("day=2026-10-27", (out / "run.txt").read_text())
+
+    # T0 M7: every refusal exits 2 before any run, and writes no output.
+    def assert_refused(self, r, out, needle):
+        self.assertEqual(r.returncode, 2, (r.stdout, r.stderr))
+        self.assertIn(needle, r.stderr)
+        self.assertFalse((out / "status.tsv").exists())
+
+    def test_t0_m4_out_and_homes_outside_tmpdir_are_refused(self):
+        old, new = self.release("orion-old"), self.release("orion-new")
+        h_old, h_new = self.home("old"), self.home("new")
+        with tempfile.TemporaryDirectory() as other:
+            elsewhere = Path(other)
+            cases = {
+                "out": (h_old, h_new, elsewhere / "out"),
+                "home-old": (elsewhere, h_new, self.root / "out"),
+                "home-new": (h_old, elsewhere, self.root / "out"),
+                "tmpdir itself": (h_old, h_new, self.root),
+                "escape with ..": (h_old, h_new, self.root / ".." / elsewhere.name / "out"),
+            }
+            for name, (ho, hn, out) in cases.items():
+                with self.subTest(name):
+                    r = self.reports(old, new, ho, hn, "2026-10-27", out)
+                    self.assert_refused(r, out, "not inside $TMPDIR")
+            self.assertEqual(list(elsewhere.iterdir()), [])
+
+    def test_t0_m4_an_unset_tmpdir_is_refused(self):
+        old, new = self.release("orion-old"), self.release("orion-new")
+        out = self.root / "out"
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ORION_") and k != "TMPDIR"}
+        r = subprocess.run(
+            ["bash", str(HERE / "reports.sh"), str(old), str(new), str(self.home("old")), str(self.home("new")), "2026-10-27", str(out)],
+            capture_output=True, text=True, env=env,
+        )
+        self.assert_refused(r, out, "TMPDIR is not set")
+
+    def test_t0_m7_refusal_paths(self):
+        old, new = self.release("orion-old"), self.release("orion-new")
+        h_old, h_new, out = self.home("old"), self.home("new"), self.root / "out"
+        r = self.reports(old, new, h_old, h_new, "27-10-2026", out)
+        self.assert_refused(r, out, "D must be YYYY-MM-DD")
+        r = self.reports(self.root / "nodist", new, h_old, h_new, "2026-10-27", out)
+        self.assert_refused(r, out, "old dist missing")
+        r = self.reports(old, self.root / "nodist", h_old, h_new, "2026-10-27", out)
+        self.assert_refused(r, out, "new dist missing")
+        r = self.reports(old, new, h_old, h_new, "2026-10-27", out, tmpdir=self.root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.reports(old, new, h_old, h_new, "2026-10-27", out)  # out already holds outputs
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("already holds outputs", r.stderr)
+
+    def test_t0_m7_home_and_schema_refusals(self):
+        old, new = self.release("orion-old"), self.release("orion-new")
+        h_old, h_new, out = self.home("old"), self.home("new"), self.root / "out"
+        env_old = (h_old / ".env").read_text()
+        cases = {
+            "no .env": (lambda: (h_old / ".env").unlink(), "no " + str(h_old.resolve()) + "/.env"),
+            "no database url": (lambda: (h_old / ".env").write_text("ORION_DB_SCHEMA=p2proof_20261104t000000z\n"), "has no ORION_DATABASE_URL"),
+            "different schemas": (lambda: (h_old / ".env").write_text(env_old.replace("p2proof_20261104t000000z", "p2proof_other")), "different databases"),
+            "not a p2proof schema": (
+                lambda: [(h / ".env").write_text(env_old.replace("p2proof_20261104t000000z", "orion")) for h in (h_old, h_new)],
+                "not a p2proof_* schema",
+            ),
+            "12 assets": (lambda: (h_new / "assets" / "ycrv.yaml").unlink(), "need 13"),
+        }
+        for name, (break_it, needle) in cases.items():
+            with self.subTest(name):
+                break_it()
+                r = self.reports(old, new, h_old, h_new, "2026-10-27", out)
+                self.assert_refused(r, out, needle)
+                (h_old / ".env").write_text(env_old)
+                (h_new / ".env").write_text(env_old)
+                (h_new / "assets" / "ycrv.yaml").write_text("id: ycrv\n")
 
 
 if __name__ == "__main__":

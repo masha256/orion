@@ -21,8 +21,8 @@ import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 /**
  * Task 4 ruling C4: an exception inside incomeStatementV2 never fails the report, the tick or the snapshot. The seam:
- * incomeStatementV2 throws while `boom.on` is set (the real function otherwise). Task 11a: the v1-shaped keys are the
- * statement's (src/report/legacy.ts), so with it they are empty (no flows, null yields), not v1's own figures.
+ * incomeStatementV2 throws while `boom.on` is set (the real function otherwise). Since Task 11 every figure is the
+ * statement's, so with it the tick's flows are empty and its yields null; the header (price, market cap, FDV) stands.
  */
 const MESSAGE = 'income statement v2: holders.x reads no series';
 const boom = vi.hoisted(() => ({ on: false }));
@@ -46,50 +46,47 @@ beforeEach(() => {
   boom.on = true;
 });
 
-const V1_KEYS = ['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'flows', 'buckets', 'yields', 'holderFlowGrowth', 'supply', 'income', 'revenue', 'volume', 'revenueDisclosed', 'notes'];
+const KEYS = ['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'incomeStatement'];
 
 describe('a throwing income statement v2 (C4)', () => {
-  it('the report: incomeStatement null and incomeStatementError; the header stands (legacy and default)', () => {
+  it('the report: incomeStatement null and incomeStatementError; the header stands', () => {
     const input = syntheticInput(repoAsset('lit'));
     boom.on = false;
     const ok = yieldReport(input);
     boom.on = true;
-    const legacy = JSON.parse(JSON.stringify(yieldReport(input, { legacy: true }))) as Record<string, unknown>;
-    expect(Object.keys(legacy)).toEqual([...V1_KEYS, 'incomeStatement', 'incomeStatementError']);
-    expect(legacy).toMatchObject({ incomeStatement: null, incomeStatementError: MESSAGE, flows: [], income: null, yields: { cash: null, multiple: null } });
-    for (const k of ['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'notes'] as const) expect(legacy[k]).toEqual(ok[k]);
-    const slim = yieldReport(input);
-    expect(Object.keys(slim)).toEqual(['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'incomeStatement', 'incomeStatementError', 'notes']);
-    expect(slim).toMatchObject({ incomeStatement: null, incomeStatementError: MESSAGE });
+    const r = JSON.parse(JSON.stringify(yieldReport(input))) as Record<string, unknown>;
+    expect(Object.keys(r)).toEqual([...KEYS, 'incomeStatementError', 'notes']);
+    expect(r).toMatchObject({ incomeStatement: null, incomeStatementError: MESSAGE });
+    for (const k of ['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'notes'] as const) expect(r[k]).toEqual(ok[k]);
   });
 
   it('without the throw: no incomeStatementError key', () => {
     boom.on = false;
-    const input = syntheticInput(repoAsset('lit'));
-    const legacy = yieldReport(input, { legacy: true });
-    expect(Object.keys(legacy)).toEqual([...V1_KEYS, 'incomeStatement']);
-    expect(legacy.incomeStatement).toMatchObject({ schema: 2 });
+    const r = yieldReport(syntheticInput(repoAsset('lit')));
+    expect(Object.keys(r)).toEqual([...KEYS, 'notes']);
+    expect(r.incomeStatement).toMatchObject({ schema: 2 });
   });
 
   it('loadHolderYieldReport (DB) resolves with the error; report yield text prints it', async () => {
     const asset = parseAssetYaml(MINI_REPORT_YAML).config;
     const db = testDb();
     await seedMiniReport(db, '2026-10-10');
-    const r = await loadHolderYieldReport(db, asset, '2026-10-10', { legacy: true });
+    const r = await loadHolderYieldReport(db, asset, '2026-10-10');
     expect(r).toMatchObject({ incomeStatement: null, incomeStatementError: MESSAGE, day: '2026-10-10' });
     expect(reportLines(r)).toContain(`  income statement unavailable: ${MESSAGE}`);
   });
 
   it('the tick holder_yield: the header fields, empty flows and null yields, statement_error set, schema valid', () => {
     const input = syntheticInput(repoAsset('lit'));
-    const h = summarizeHolderYield(yieldReport(input, { legacy: true }));
-    expect(h).toMatchObject({ day: input.day, flows: [], revenue_annualized: null, multiple: null, statement_error: MESSAGE });
+    const h = summarizeHolderYield(yieldReport(input));
+    expect(h).toMatchObject({ day: input.day, flows: [], multiple: null, holder_flow_growth_annualized: null, statement_error: MESSAGE });
+    expect(h).not.toHaveProperty('revenue_annualized'); // v1's (Task 11b): only on an older release's job row
     expect(h.statement_revenue).toBeUndefined();
     expect(TickHolderYieldSchema.parse(h)).toEqual(h);
   });
 
   it('the nightly block: one ALERT line for the asset, and the asset counts as an alert', () => {
-    const holder_yield = summarizeHolderYield(yieldReport(syntheticInput(repoAsset('lit')), { legacy: true }));
+    const holder_yield = summarizeHolderYield(yieldReport(syntheticInput(repoAsset('lit'))));
     const report: TickReport = {
       schema_version: 2, tick_id: 'tick_lit_20261103T004500Z', asset: 'lit', started_at: '2026-11-03T00:45:00.000Z', ended_at: '2026-11-03T00:46:10.000Z',
       outcome: 'completed', lock: null, ingest: { fetch_run_id: 7, outcome: 'ok', sources_failed: [], anomalies_raised: [] },
@@ -121,7 +118,7 @@ describe('a throwing income statement v2 (C4)', () => {
     const body = (await fullBody(db, root, await listRegistry(db), '2026-11-02')) as { assets: Record<string, { report: Record<string, unknown>; report_error: string | null }> };
     const mini = body.assets.mini!;
     expect(mini.report_error).toBeNull();
-    expect(Object.keys(mini.report)).toEqual([...V1_KEYS, 'incomeStatement', 'incomeStatementError']);
+    expect(Object.keys(mini.report)).toEqual([...KEYS, 'incomeStatementError', 'notes']);
     expect(mini.report).toMatchObject({ incomeStatement: null, incomeStatementError: MESSAGE, day: '2026-11-02' });
   });
 });

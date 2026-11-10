@@ -182,7 +182,7 @@ describe('snapshot bodies', () => {
     });
   });
 
-  it('full snapshot body carries incomeStatement and the legacy keys', async () => {
+  it('full snapshot body carries the v2 report only (orion.snapshot/2, Task 11b)', async () => {
     const h = home();
     writeFileSync(join(h.root, 'assets', 'mini.yaml'), MINI_REPORT_YAML);
     await insertRegistryRow(db(), 'mini', 'active', 'h', change('2026-09-01T00:00:00.000Z'));
@@ -190,11 +190,8 @@ describe('snapshot bodies', () => {
     const body = (await fullBody(db(), h.root, await listRegistry(db()), '2026-11-02')) as { assets: Record<string, { report: Record<string, unknown>; report_day: string; report_error: string | null }> };
     const mini = body.assets.mini!;
     expect(mini).toMatchObject({ report_day: '2026-11-02', report_error: null });
-    // P2: the --legacy object, v1 keys in v1 order, incomeStatement last.
-    expect(Object.keys(mini.report)).toEqual([
-      'asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'flows', 'buckets', 'yields', 'holderFlowGrowth', 'supply', 'income', 'revenue',
-      'volume', 'revenueDisclosed', 'notes', 'incomeStatement',
-    ]);
+    // The `report yield --json` object: no v1 key (the reason for orion.snapshot/2).
+    expect(Object.keys(mini.report)).toEqual(['asset', 'day', 'windowDays', 'price', 'marketCap', 'fdv', 'incomeStatement', 'notes']);
     expect(mini.report.incomeStatement).toMatchObject({ schema: 2, day: '2026-11-02', revenue: { annualized: expect.any(Number) } });
   });
 
@@ -208,7 +205,7 @@ describe('snapshot bodies', () => {
     expect(rows.map((r) => [r.kind, r.seq, r.day])).toEqual([['levels', 1, null], ['full', 1, '2026-11-02']]);
     expect(full.id).toBe(rows[1].id);
     expect(JSON.parse(rows[0].body)).toMatchObject({
-      schema: 'orion.snapshot/1', kind: 'levels', seq: 1, env: 'stage', release_tag: 'orion-2026.11.03.1', generated_at: at(0),
+      schema: 'orion.snapshot/2', kind: 'levels', seq: 1, env: 'stage', release_tag: 'orion-2026.11.03.1', generated_at: at(0),
       body: { assets: { mini: { state: 'active', levels: [] } } },
     });
   });

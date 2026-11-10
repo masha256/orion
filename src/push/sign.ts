@@ -8,7 +8,8 @@ import { createPrivateKey, createPublicKey, sign, verify, type KeyObject } from 
  *  1. `verifyManifest(manifest.json bytes, manifest.json.sig, public key)` is true;
  *  2. every file the manifest names (`full.path`, `levels.path`, `assets.path`) has the sha256 the manifest gives,
  *     over its exact bytes;
- *  3. `schema` is one it knows (`orion.snapshot/1`), in the manifest and in each envelope;
+ *  3. `schema` is one it knows (`orion.snapshot/2` since Task 11b; `/1` for an envelope queued before it), in the
+ *     manifest and in each envelope;
  *  4. `full.seq` / `levels.seq` is newer than the one it holds (per kind).
  */
 

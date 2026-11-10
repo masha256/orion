@@ -82,7 +82,7 @@ export async function tickAsset(db: OrionDb, loaded: LoadedAsset, deps: TickDeps
       // Every live asset has an income_statement block; one without has no report to build, which is not a failure.
       if (!asset.income_statement) return;
       try {
-        report.holder_yield = summarizeHolderYield(await loadHolderYieldReport(db, asset, undefined, { legacy: true }));
+        report.holder_yield = summarizeHolderYield(await loadHolderYieldReport(db, asset));
       } catch (err) {
         report.report_error = { code: 'report_unavailable', message: message(err).slice(0, 300) };
         deps.onProgress?.(`report unavailable: ${report.report_error.message}`);

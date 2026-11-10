@@ -149,10 +149,10 @@ worktree at the release's commit with `dist/` built, `CLI` = `node $WT/dist/cli/
    ```
    and compare `$ST data anomalies --all` / `$ST proposals list --all` with `$CLI ... --json` on `$P/new`.
    Both sides are the same release, so the bytes match either way, but they must print the same shape: from Phase 2 on
-   (D9) `report yield --json` is the income statement v2 object and the v1 keys need `--legacy`, which `orion-remote`
-   does not pass. So the reference runs without `--legacy` too. A byte comparison of the v1 keys across two releases
-   (the cutover proof, `tools/import-sqlite/cli.ts reports`; the Phase 2 proof, `tools/phase2-proof/reports.sh`) runs
-   the new side with `--legacy` when its `report yield --help` lists it, and compares it without `incomeStatement`.
+   (D9) `report yield --json` is the income statement v2 object. Releases before Task 11 printed the v1 keys only with
+   `--legacy`, which `orion-remote` does not pass; since Task 11 there is no v1 and no `--legacy`. So the reference runs
+   without it. The Phase 2 proof (`tools/phase2-proof/reports.sh`) runs both sides with identical flags and compares v2
+   against v2 (README there).
 3. **Activate.** `for a in aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv; do $ST asset activate $a --for
    mike; done`, then `$ST asset registry` (13 active). Optionally `$ST job run-now refresh <a>` per asset for data now;
    otherwise the first refreshes come with the nightly (an asset activated after a slot began gets none for that slot).
@@ -364,7 +364,26 @@ with nothing else in it. `db backfill-provenance` is gone with it (nothing can b
 4. **After the switch** (read-only): `report yield <a> --json` for every asset matches the previous release's output on
    the same data (the controller's prod-copy proof, ruling R10.5), and `data show <a>` still lists each row's origin.
 
-## Other verbs a deploy may need
+## Phase 2 tail: Task 11 release (v1 retired, gate G4)
+
+Release note: **Task 11 retires v1: `report yield` prints v2 only (no `--legacy`, no v1 key, in JSON or text);
+snapshot schema `orion.snapshot/2`; the outbox still accepts `/1` envelopes.** It ships one release after the 0006
+breaking release, with no migration and no `--breaking`.
+- Config: `holder_flows` and `reporting` are gone from the asset schema (Task 11a). A YAML or a config proposal still
+  carrying either is refused by name (`invalid_asset_config`) at load, at filing and at approve; every asset's config
+  hash moved (the parsed config changed), so the first signal per asset after the switch lists `config`.
+- The tick report's `holder_yield` reads the statement only: `flows`, `yields`, `multiple` and
+  `holder_flow_growth_annualized` are the statement's, `revenue_annualized` / `revenue_growth_annualized` /
+  `payout_ratio` are gone (optional when reading a job row an older release wrote). The nightly Slack block reads the
+  statement's figures.
+- Snapshot `full` bodies: each asset's `report` is the v2 object without the v1 keys, under `schema:
+  "orion.snapshot/2"`. A row the previous release queued (`orion.snapshot/1`) still verifies and publishes as written.
+  The site / any reader of the snapshot repo must read the v2 fields before this release reaches prod.
+- The default report day per asset is unchanged (gated on the same flows as before; yCRV on the statement's flows,
+  ruling R11.6, which the controller checks on a prod copy).
+- Before the staging deploy: Raymond's soak script (`~/.hermes/profiles/raymond/scripts/orion-stage-soak.py`, outside
+  the repo) must not pass `--legacy` anywhere (the CLI refuses an unknown option) and must read v2 fields only.
+
 
 ```
 ssh orion-<env> status [--json]       # release, heartbeat, registry, last jobs, next slots, soak, last nightly

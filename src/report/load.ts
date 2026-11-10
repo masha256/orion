@@ -9,7 +9,6 @@ import { addDays, utcDay } from '../ingest/time.js';
 import { MS_PER_DAY, STD_METRICS } from '../types.js';
 import { reportHeader, type DayProvenance, type ReportInput, type ReportLevels } from './holderYield.js';
 import { incomeStatementV2, type IsV2 } from './incomeStatement.js';
-import { legacyView, type HolderYieldReport } from './legacy.js';
 
 /**
  * Every flow metric the report reads: income_statement's revenue, uses, paid_metric, below-line flows, apportion by and
@@ -144,9 +143,8 @@ export async function lastCompleteReportDay(db: Db, asset: AssetConfig): Promise
 }
 
 /**
- * `report yield --json` (D9): the income statement v2 with the figures it shares with the header. Absent for an asset
- * with no `income_statement` block (it has no report). Task 11a: the v1 keys behind `--legacy` are rebuilt from the
- * statement (src/report/legacy.ts) until Task 11b removes them.
+ * `report yield --json` (D9): the income statement v2 with the figures it shares with the header. Since Task 11 (G4)
+ * the only report: there is no `--legacy` and no v1 key. An asset with no `income_statement` block has no report.
  */
 export interface YieldReport {
   asset: string;
@@ -159,11 +157,6 @@ export interface YieldReport {
   incomeStatement: IsV2 | null;
   incomeStatementError?: string;
   notes: string[];
-}
-
-export interface ReportOptions {
-  /** The v1-shaped keys (src/report/legacy.ts) in v1 key order, `incomeStatement` appended last. */
-  legacy?: boolean;
 }
 
 /**
@@ -181,33 +174,27 @@ function statementOf(input: ReportInput): { incomeStatement: IsV2 } | { incomeSt
 }
 
 /** The report object for one input (pure). */
-export function yieldReport(input: ReportInput, opts: { legacy: true }): HolderYieldReport;
-export function yieldReport(input: ReportInput, opts?: ReportOptions): YieldReport | HolderYieldReport;
-export function yieldReport(input: ReportInput, opts: ReportOptions = {}): YieldReport | HolderYieldReport {
-  return assembleReport(input, opts);
+export function yieldReport(input: ReportInput): YieldReport {
+  return assembleReport(input);
 }
 
 /**
  * `yieldReport`, or with `v2ReadError` (a statement-only DB read threw, M3): the statement is not computed and carries
  * that error.
  */
-function assembleReport(input: ReportInput, opts: ReportOptions, v2ReadError?: string): YieldReport | HolderYieldReport {
+function assembleReport(input: ReportInput, v2ReadError?: string): YieldReport {
   // The header's figures and notes, on the series the statement reads (Task 8: the same basis as its yields).
   const head = reportHeader(input.statementDaily === undefined ? input : { ...input, daily: input.statementDaily });
   const withIs = v2ReadError !== undefined ? { incomeStatement: null, incomeStatementError: v2ReadError.slice(0, 300) } : statementOf(input);
   const base = { asset: input.asset.id, day: input.day, windowDays: head.windowDays, price: head.price, marketCap: head.marketCap, fdv: head.fdv };
-  if (opts.legacy) return { ...legacyView({ ...base, notes: head.notes }, withIs.incomeStatement), ...withIs };
   return { ...base, ...withIs, notes: head.notes };
 }
 
 /**
- * The asset's report for `day` (default: its last complete report day): the D9 shape; with `legacy`, the v1-shaped keys
- * plus `incomeStatement` (Task 11a: the tick's summary and the snapshot body still read them). Throws for an asset with
- * no income_statement block.
+ * The asset's report for `day` (default: its last complete report day): the D9 shape, which `report yield`, the tick's
+ * summary and the snapshot body all read (Task 11b). Throws for an asset with no income_statement block.
  */
-export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day: string | undefined, opts: { legacy: true }): Promise<HolderYieldReport>;
-export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: string, opts?: ReportOptions): Promise<YieldReport | HolderYieldReport>;
-export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: string, opts: ReportOptions = {}): Promise<YieldReport | HolderYieldReport> {
+export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: string): Promise<YieldReport> {
   const is = asset.income_statement;
   if (!is) throw new Error(`assets/${asset.id}.yaml has no income_statement block`);
   const target = day ?? (await lastCompleteReportDay(db, asset));
@@ -281,7 +268,7 @@ export async function loadHolderYieldReport(db: Db, asset: AssetConfig, day?: st
       asset, day: target, daily, provisional, levels, ...(checks.length > 0 ? { checks } : {}), ...(provenance ? { provenance } : {}),
       ...(statement ? { statementDaily: statement.daily, priceBasis: statement.basis } : {}),
     },
-    opts, v2ReadError,
+    v2ReadError,
   );
 }
 

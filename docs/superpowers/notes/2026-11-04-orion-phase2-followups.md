@@ -610,3 +610,34 @@ and the table has no method to derive it from.
   statement's per-day "unbackfilled window" fallback to `basis: 'config'`: with the loader's provenance the basis is
   always `observations`. `basis: 'config'` remains only for a pure input without provenance (unit tests, `yieldReport`).
 
+## Task 11 (gate G4): v1 retired, `holder_flows` / `reporting` gone, `--legacy` removed
+
+Built in two commits (ruling R11.1).
+- 11a (config): `holder_flows` and `reporting` deleted from the asset schema: refused by name at load, at config-proposal
+  filing and at approve (YAML untouched). Eligibility and the agent pack read `income_statement`; the pack's flow set
+  (holders + below-line-to-holders metrics) equals the old `holder_flows` metrics per asset (pinned against cc59fa7).
+  The "at least one holder_flows" requirement is lifted, so a protocol paying holders nothing (Lido-type) can be
+  onboarded, and T10 lost its dummy buyback flow. All 13 config hashes re-pinned. Fixture edits (R11.7):
+  `tests/fixtures/hype.yaml` and `aero.yaml` lose `holder_flows`; `lit-q3-run.json` edit path `reporting.dilution` ->
+  `income_statement.dilution`.
+- 11b (report): `report yield` has no `--legacy` and no v1 key (JSON and text); `src/report/legacy.ts` is gone. The tick's
+  `holder_yield` and the nightly Slack block read only the statement (T4 M2); v1's `revenue_annualized`,
+  `revenue_growth_annualized`, `payout_ratio` are optional, read only from an older release's job row. Snapshot `full`
+  bodies are v2 only: `SNAPSHOT_SCHEMA` = `orion.snapshot/2`, `KNOWN_SNAPSHOT_SCHEMAS` still verifies a queued `/1`
+  envelope. T4 M3 (fragile cli text assertion) rewritten; T3/4 M-d (a "missing day" flag fired on a null cost level)
+  fixed.
+- Default report day unchanged for 12 assets (pinned per asset against cc59fa7). **R11.6 yCRV:** its default day is now
+  gated on the statement's flows (`yearn_gross_fees`, `yearn_gross_incentives`, ...); `yearn_styc_fee` dropped from the
+  gate because no statement line reads it. The by-sender flows come from the same shared transfer scan as
+  `yearn_gross` (R20: the nightly writes every member), so they advance together; the controller verifies yCRV's
+  default day on a prod copy equals cc59fa7's.
+- Proof harness (R11.2): `reports.sh` runs both sides with identical flags (no `--help` probe, no `--legacy`) and refuses
+  an `<out>` or home outside `$TMPDIR` (T0 M4); `compare.py` compares v2 vs v2 (rel 1e-12) when the new side prints no
+  v1, keeps the parity/reclass maps only for a v1-only old release, requires the 13 named assets, and has `--json` (T0
+  M6); every `reports.sh` refusal is tested (T0 M7).
+- **Phase 3 proof note:** Phase 3's spec §7 compares `--legacy` output across releases. After this release there is no
+  `--legacy`: Phase 3 (and every later phase) compares v2 only, `reports.sh` + `compare.py` as they are now.
+- Left in place on purpose: `src/report/parity.ts` / `tools/phase2-proof/parity.json` (v1 paths, read only against an
+  old v1-only release) and `tools/import-sqlite/reports.ts` (the retired SQLite cutover proof; its `--legacy` probe is
+  optional and finds none).
+

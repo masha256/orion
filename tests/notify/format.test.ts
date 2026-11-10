@@ -243,7 +243,7 @@ describe('holder-yield block v2 (spec 7, Task 4)', () => {
     // Every repo asset's real-shaped block (its own config's flags, scope and buckets; synthetic series), symbol CVXCRV.
     const blocks = ALL_ASSETS.map((id) => {
       const input = syntheticInput(repoAsset(id));
-      const holder_yield = summarizeHolderYield(yieldReport(input, { legacy: true }));
+      const holder_yield = summarizeHolderYield(yieldReport(input));
       return { id, holder_yield, lines: formatAssetBlock(run({ symbol: 'CVXCRV' }, { ...cleanReport(), holder_yield })).lines };
     });
     const longest = blocks.reduce((a, b) => (b.lines.join('\n').length > a.lines.join('\n').length ? b : a));

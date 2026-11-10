@@ -551,6 +551,8 @@ export function incomeStatementV2(input: ReportInput): IsV2 {
   // Cost of revenue and gross profit.
   const costItems = (is.cost_of_revenue ?? []).map((l) => ({ id: l.id, v: useValue(l) }));
   const costAgg = agg(costItems);
+  /** Cost lines read as a level (a run rate, an apportioned line with no mix) that have no value. */
+  const costNoReading = costItems.filter((x) => x.v.kind === 'level' && !finite(x.v.value)).map((x) => x.id);
   const costMeasured = aggAnnual(costAgg);
   const costAnnual = costAgg.nm.length > 0 ? null : costMeasured;
   const hasLevel = revAgg.levels.length > 0 || costAgg.levels.length > 0;
@@ -972,6 +974,8 @@ export function incomeStatementV2(input: ReportInput): IsV2 {
   for (const [why, ids] of noMix) flags.push(`apportion mix n/a: ${ids.join(', ')} (${why})`);
   if (holdersAgg.nm.length > 0) flags.push(`payout ratio n/a: holders not measured: ${holdersAgg.nm.join(', ')}`);
   else if (!gpMeasured && costAgg.nm.length > 0) flags.push('payout ratio on revenue: cost of revenue not measured');
+  // A cost level with no reading (T3/4 M-d, Task 11b) is neither a line nobody measures nor a missing day: say which.
+  else if (!gpMeasured && revenueAnnual !== null && costNoReading.length > 0) flags.push(`payout ratio on revenue: cost of revenue has no reading: ${costNoReading.join(', ')}`);
   // A data gap (a measured line missing a day) is not a line nobody measures: say which.
   else if (!gpMeasured && revenueAnnual !== null) flags.push('payout ratio on revenue: cost of revenue has a missing day');
   for (const r of revLines) for (const f of r.disclosedGrowth?.flags ?? []) flags.push(`disclosed revenue: ${f}`);

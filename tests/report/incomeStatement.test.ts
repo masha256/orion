@@ -68,6 +68,31 @@ function run(isBlock: string, over: Partial<ReportInput> = {}) {
 
 const year = (perDay: number) => (perDay * W * 365) / W;
 
+describe('the payout-ratio basis flag (T3/4 M-d, Task 11b)', () => {
+  const flag = (v2: { flags: string[] }) => v2.flags.filter((f) => f.startsWith('payout ratio'));
+
+  it('a cost line with no reading (an apportioned cost with no mix) says so, not "a missing day"', () => {
+    // The mix's total is zero over the window: the cost is a null level, so gross profit is null and the ratio is on revenue.
+    const noMix = `${BASE.replace('revenue: [ { id: fees, metric: flow_usd.fees } ]', 'revenue: [ { id: fees, metric: flow_usd.fees }, { id: side, metric: flow_usd.bribes } ]')
+      .replace('{ id: lp, to: lps, metric: flow_usd.lp }', '{ id: lp, to: lps, metric: flow_usd.lp, apportion: { by: flow_usd.bribes, total: flow_usd.burn } }')}  checks: [ { id: part, type: sum, total: [ flow_usd.burn ], parts: [ flow_usd.bribes ], window_days: 1, tolerance_pct: 0.000001 } ]
+`;
+    expect(noMix).toContain('apportion');
+    const zero = new Map([...Array(20).keys()].map((i) => [addDays(DAY, -i), 0] as const));
+    const { v2 } = run(noMix, { daily: new Map([['flow_usd.fees', flat(20, 10)], ['flow_usd.lp', flat(20, 2)], ['flow_usd.burn', zero], ['flow_usd.treasury', flat(20, 2)], ['flow_usd.keepers', flat(20, 0.5)], ['flow_usd.bribes', flat(20, 1)]]) });
+    expect(v2.grossProfit.annualized).toBeNull();
+    expect(v2.ratios.payoutRatioBasis).toBe('revenue');
+    expect(flag(v2)).toEqual(['payout ratio on revenue: cost of revenue has no reading: lp']);
+  });
+
+  it('a measured cost line missing a day still says "a missing day"', () => {
+    const gap = flat(20, 2);
+    gap.delete(DAY);
+    const { v2 } = run(BASE, { daily: new Map([['flow_usd.fees', flat(20, 10)], ['flow_usd.lp', gap], ['flow_usd.burn', flat(20, 5)], ['flow_usd.treasury', flat(20, 2)], ['flow_usd.keepers', flat(20, 0.5)], ['flow_usd.bribes', flat(20, 1)]]) });
+    expect(v2.grossProfit.annualized).toBeNull();
+    expect(flag(v2)).toEqual(['payout ratio on revenue: cost of revenue has a missing day']);
+  });
+});
+
 describe('income statement v2 identities', () => {
   it('revenue - cost = gross profit', () => {
     const { v2 } = run(BASE);
