@@ -5,7 +5,8 @@
 #        [--deploy-key-stage <pubkey file>] [--deploy-key-prod <pubkey file>] [--backup-disk <dir>] [--nut] \
 #        [--with-watcher]
 # then, once /etc/pgbackrest/pgbackrest.conf has no REPLACE_ME left:
-#   sudo ./orion-host.sh --hostname <h> --ssh-from ... --enable-backups --dump-recipient <age public key>
+#   sudo ./orion-host.sh --hostname <h> --ssh-from ... --enable-backups --dump-recipient <age public key> \
+#        [--backup-deadman-url-file <file>]
 #
 #   --hostname <h>          this server's hostname; the script refuses to run on a host with another name
 #   --pg-datadir <dir>      the 18/main cluster's data directory (absolute; default: the package's
@@ -23,6 +24,10 @@
 #                           Off by default; the pins are the watcher's real ones since plan 1.5c Task 11 (R-c18)
 #   --enable-backups        step 2: stanza-create, WAL archiving on, pgbackrest check, root backup/dump timers
 #   --dump-recipient <age1...>  age public key the nightly pg_dump is encrypted to (kept in /etc/orion/dump-recipient)
+#   --backup-deadman-url-file <f>  (with --enable-backups) a file holding the healthchecks.io ping URL of the backups
+#                           check, one https:// line; kept in /etc/orion/backup-deadman-url (root:postgres 640). The
+#                           full/diff backup units ping it on success and <url>/fail on failure; orion-pg-dump pings
+#                           only <url>/fail. A file, not the URL itself, so it is not in ps or the shell history.
 #   --dry-run               print every command and file it would write; changes nothing; needs no root
 #   --force-os              run on another Ubuntu codename than resolute
 #
@@ -51,6 +56,8 @@ ORION_REMOTE=/usr/local/bin/orion-remote
 # test hook (test/run.sh): another path for the pgBackRest config; never set it on the server
 PGBR_CONF=${ORION_PROVISION_PGBACKREST_CONF:-/etc/pgbackrest/pgbackrest.conf}
 RECIPIENT_FILE=/etc/orion/dump-recipient
+DEADMAN_FILE=/etc/orion/backup-deadman-url
+BACKUP_PING=/usr/local/sbin/orion-backup-ping
 SYSTEMD_DIR=/etc/systemd/system
 REFRESH_DIR=/home/orion-refresh
 REFRESH_GROUP=orion-refresh
@@ -67,6 +74,8 @@ NUT=0
 WITH_WATCHER=0
 ENABLE_BACKUPS=0
 DUMP_RECIPIENT=''
+DEADMAN_URL_FILE=''
+DEADMAN_URL=''
 need_arg() { [[ $# -ge 2 && -n $2 ]] || die "$1 needs a value"; }
 while (($#)); do
   case $1 in
@@ -80,6 +89,7 @@ while (($#)); do
     --with-watcher) WITH_WATCHER=1 ;;
     --enable-backups) ENABLE_BACKUPS=1 ;;
     --dump-recipient) need_arg "$@"; DUMP_RECIPIENT=$2; shift ;;
+    --backup-deadman-url-file) need_arg "$@"; DEADMAN_URL_FILE=$2; shift ;;
     --dry-run) DRY_RUN=1 ;;
     --force-os) FORCE_OS=1 ;;
     -h | --help) usage; exit 0 ;;
@@ -197,6 +207,21 @@ if ((ENABLE_BACKUPS)); then
   if [[ -z $DUMP_RECIPIENT && ! -s $RECIPIENT_FILE ]]; then
     die "--enable-backups needs --dump-recipient <age public key> (none stored in $RECIPIENT_FILE yet)"
   fi
+fi
+# --backup-deadman-url-file: one https:// line; the URL is a secret of sorts (anyone holding it can ping the check), so
+# it is never printed, and only read here
+if [[ -n $DEADMAN_URL_FILE ]]; then
+  ((ENABLE_BACKUPS)) || die "--backup-deadman-url-file is only used with --enable-backups"
+  [[ -r $DEADMAN_URL_FILE ]] || die "--backup-deadman-url-file: cannot read $DEADMAN_URL_FILE"
+  [[ $(grep -cv '^[[:space:]]*$' "$DEADMAN_URL_FILE") -eq 1 ]] ||
+    die "--backup-deadman-url-file: $DEADMAN_URL_FILE must hold exactly one line (the check's ping URL)"
+  DEADMAN_URL=$(grep -v '^[[:space:]]*$' "$DEADMAN_URL_FILE" | tr -d '[:space:]')
+  url_re='^https://[^[:space:]"\\]+$' # no quote or backslash: it goes into a curl config line
+  [[ $DEADMAN_URL =~ $url_re ]] ||
+    die "--backup-deadman-url-file: $DEADMAN_URL_FILE does not hold an https:// URL (e.g. https://hc-ping.com/<uuid>)"
+  [[ $DEADMAN_URL != */fail && $DEADMAN_URL != */start ]] ||
+    die "--backup-deadman-url-file: give the check's plain ping URL, without /fail or /start"
+  log_ok "--backup-deadman-url-file $DEADMAN_URL_FILE holds an https:// ping URL"
 fi
 
 # ================================================================== packages
@@ -487,19 +512,31 @@ EOF
   pg_apply
 
   write_file /usr/local/sbin/orion-pg-dump 755 root:root quiet <"$here/files/orion-pg-dump"
+  write_file "$BACKUP_PING" 755 root:root quiet <"$here/files/orion-backup-ping"
+  if [[ -n $DEADMAN_URL ]]; then
+    # quiet: a dry run must not print the URL
+    printf '%s\n' "$DEADMAN_URL" | write_file "$DEADMAN_FILE" 640 root:postgres quiet
+  elif [[ $(path_state "$DEADMAN_FILE") == exists ]]; then
+    log_ok "backup dead-man URL from $DEADMAN_FILE"
+  else
+    log_note "no backup dead-man URL: the backup units run without pinging healthchecks.io (add --backup-deadman-url-file <file>)"
+  fi
   # on /home, not the root filesystem (venus: / is 10G, /home 870G)
   ensure_dir /home/orion-backups 700 postgres:postgres
   ensure_dir /home/orion-backups/dumps 700 postgres:postgres
 
   units_changed=0
-  # unit <name> <description> <OnCalendar> <paths it needs mounted> <ExecStart> [ExecStartPost]
+  # unit <name> <description> <OnCalendar> <paths it needs mounted> <ExecStart> <ping mode> [ExecStartPost]
+  # ExecStopPost runs after every run, good or bad, with SERVICE_RESULT set; orion-backup-ping always exits 0, so
+  # a ping problem never fails the unit
   unit() {
-    local name=$1 desc=$2 cal=$3 mounts=$4 exec=$5 post=${6:-}
+    local name=$1 desc=$2 cal=$3 mounts=$4 exec=$5 ping=$6 post=${7:-}
     {
       printf '[Unit]\nDescription=%s (Orion, spec §10.1)\nAfter=%s.service\nRequiresMountsFor=%s\n\n' \
         "$desc" "$PG_SERVICE" "$mounts"
       printf '[Service]\nType=oneshot\nUser=postgres\nGroup=postgres\nExecStart=%s\n' "$exec"
       [[ -n $post ]] && printf 'ExecStartPost=%s\n' "$post"
+      printf 'ExecStopPost=%s %s %%n\n' "$BACKUP_PING" "$ping"
       true
     } | write_file "$SYSTEMD_DIR/$name.service" 644 root:root
     ((CHANGED)) && units_changed=1
@@ -509,11 +546,11 @@ EOF
     return 0
   }
   unit orion-backup-full "pgBackRest full backup" "Sun *-*-* 09:00:00 UTC" "$DATADIR" \
-    "/usr/bin/pgbackrest --stanza=orion --type=full backup" "/usr/bin/pgbackrest --stanza=orion check"
+    "/usr/bin/pgbackrest --stanza=orion --type=full backup" report "/usr/bin/pgbackrest --stanza=orion check"
   unit orion-backup-diff "pgBackRest differential backup" "Mon..Sat *-*-* 09:00:00 UTC" "$DATADIR" \
-    "/usr/bin/pgbackrest --stanza=orion --type=diff backup" "/usr/bin/pgbackrest --stanza=orion check"
+    "/usr/bin/pgbackrest --stanza=orion --type=diff backup" report "/usr/bin/pgbackrest --stanza=orion check"
   unit orion-pg-dump "encrypted pg_dump of orion_prod and orion_stage" "*-*-* 08:30:00 UTC" \
-    "/home/orion-backups /home/orion-refresh" "/usr/local/sbin/orion-pg-dump"
+    "/home/orion-backups /home/orion-refresh" "/usr/local/sbin/orion-pg-dump" fail-only
   ((units_changed)) && run systemctl daemon-reload
   for t in orion-backup-full orion-backup-diff orion-pg-dump; do
     if [[ $(systemctl is-enabled "$t.timer" 2>/dev/null) == enabled ]] && systemctl is-active --quiet "$t.timer" 2>/dev/null; then
@@ -619,6 +656,11 @@ if ((ENABLE_BACKUPS)); then
   for t in orion-backup-full orion-backup-diff orion-pg-dump; do
     selfcheck "$t.timer is active" systemctl is-active --quiet "$t.timer"
   done
+  if [[ -e $DEADMAN_FILE ]]; then
+    selfcheck "postgres can read $DEADMAN_FILE" as postgres test -r "$DEADMAN_FILE"
+  else
+    printf 'SKIP: backup dead-man URL (none: --backup-deadman-url-file)\n'
+  fi
 else
   printf 'SKIP: pgbackrest check (backups not enabled yet: --enable-backups)\n'
 fi

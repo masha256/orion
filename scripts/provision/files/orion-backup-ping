@@ -1,0 +1,60 @@
+#!/bin/bash
+# orion-backup-ping: the healthchecks.io dead-man ping for the Orion backup units (spec §10.1).
+# Installed by scripts/provision/orion-host.sh --enable-backups as /usr/local/sbin/orion-backup-ping (root:root 755) and
+# run as postgres from each backup unit's ExecStopPost, where systemd sets SERVICE_RESULT, EXIT_CODE and EXIT_STATUS:
+#
+#   orion-backup-ping report <unit>     success -> ping <url>; any other result -> ping <url>/fail
+#                                        (orion-backup-full, orion-backup-diff: ExecStopPost runs after the backup AND
+#                                        its `pgbackrest check`, so success means both passed)
+#   orion-backup-ping fail-only <unit>  failure -> ping <url>/fail; success sends nothing (orion-pg-dump: the dump
+#                                        runs at 08:30, before the 09:00 backup that the check's schedule expects)
+#
+# The URL is read from /etc/orion/backup-deadman-url (root:postgres 640, written by orion-host.sh
+# --backup-deadman-url-file). No file means no ping (backups without a check), never an error. The URL reaches curl
+# through its config on stdin, so it is never on a command line. The body names the unit and its result, which
+# healthchecks.io shows in the check's event log.
+# Always exits 0: a ping problem must never turn a good backup into a failed unit. It says so on stderr (the journal).
+set -uo pipefail
+
+url_file=${ORION_BACKUP_DEADMAN_FILE:-/etc/orion/backup-deadman-url} # test hook: never set it on the server
+mode=${1:-}
+unit=${2:-unknown}
+case $mode in
+  report | fail-only) ;;
+  *)
+    echo "usage: orion-backup-ping report|fail-only <unit>" >&2
+    exit 0
+    ;;
+esac
+
+if [[ ! -e $url_file ]]; then
+  echo "orion-backup-ping: no $url_file; nothing pinged" >&2
+  exit 0
+fi
+if ! url=$(tr -d '[:space:]' <"$url_file" 2>/dev/null); then
+  echo "orion-backup-ping: cannot read $url_file; nothing pinged" >&2
+  exit 0
+fi
+url_re='^https://[^[:space:]"\\]+$' # no quote or backslash: it goes into a curl config line
+if [[ ! $url =~ $url_re ]]; then
+  echo "orion-backup-ping: $url_file does not hold an https:// URL; nothing pinged" >&2
+  exit 0
+fi
+
+result=${SERVICE_RESULT:-unknown}
+if [[ $result == success ]]; then
+  [[ $mode == report ]] || exit 0
+  target=$url
+else
+  target=${url%/}/fail
+fi
+
+body="unit=$unit result=$result exit_code=${EXIT_CODE:-} exit_status=${EXIT_STATUS:-}"
+if printf 'url = "%s"\n' "$target" |
+  curl --config - --fail --silent --show-error --proto '=https' --max-time 10 --retry 5 --retry-delay 5 \
+    --output /dev/null --data-raw "$body"; then
+  echo "orion-backup-ping: $unit $result -> pinged$([[ $target == "$url" ]] || echo ' /fail')" >&2
+else
+  echo "orion-backup-ping: $unit $result -> ping FAILED (curl exit $?); the check will go red by itself" >&2
+fi
+exit 0

@@ -13,6 +13,7 @@ them with sudo**. Each one is idempotent: running it again changes nothing and s
 | `files/github-known-hosts` | github.com's pinned SSH host keys, installed as each Orion user's `~/.ssh/known_hosts` |
 | `files/watcher-requirements.txt` | the disclosure watcher's pinned Python requirements (`--with-watcher`) |
 | `files/orion-pg-dump` | nightly encrypted `pg_dump`, installed by `--enable-backups` as `/usr/local/sbin/orion-pg-dump` |
+| `files/orion-backup-ping` | the backup units' healthchecks.io ping (`ExecStopPost`), installed by `--enable-backups` as `/usr/local/sbin/orion-backup-ping` |
 | `files/env.template`, `files/pgbackrest.conf.tmpl` | templates for `~/shared/.env` and `/etc/pgbackrest/pgbackrest.conf` (created once, never overwritten) |
 | `lib.sh` | shared helpers |
 | `test/run.sh` | the test harness (shellcheck + every script with `--dry-run` as non-root) |
@@ -196,7 +197,25 @@ directory. Then: stores the recipient in `/etc/orion/dump-recipient`,
 Each unit has `RequiresMountsFor=` on the paths it writes (the data directory; `/home/orion-backups`,
 `/home/orion-refresh`).
 
-**Paste back:** the `PASS:`/`FAIL:` lines, now including `archive_mode is on`, `pgbackrest check` and the three timers.
+**Dead-man ping (healthchecks.io `backups` check, cron `0 9 * * *` UTC, grace 2 h).** Every unit's `ExecStopPost`
+runs `/usr/local/sbin/orion-backup-ping`, which reads the check's ping URL from `/etc/orion/backup-deadman-url`
+(root:postgres 640) and passes it to curl on stdin (never on a command line):
+
+| unit | on success | on failure (backup, `pgbackrest check` or dump) |
+|---|---|---|
+| `orion-backup-full`, `orion-backup-diff` | ping `<url>` (after the backup AND its `pgbackrest check`) | ping `<url>/fail` |
+| `orion-pg-dump` | nothing (its 08:30 run is before the 09:00 slot the check expects) | ping `<url>/fail` |
+
+The ping body (`unit=... result=...`) shows in the check's event log. The script always exits 0, so a ping problem
+never fails a good backup; it logs to the unit's journal instead. With no URL file the units run without pinging, and
+the script says so in a `note:`. To give it the URL, put it in a file (one line, `https://hc-ping.com/<uuid>`, the
+check's plain URL, without `/fail`), so it stays out of `ps` and the shell history, and add
+`--backup-deadman-url-file <file>` to the `--enable-backups` run. The file is stored once; later runs may drop the flag.
+Test a ping by hand with `sudo systemctl start orion-backup-diff.service` (one extra diff backup, about 15 s), then
+look at the check's event log and `journalctl -u orion-backup-diff -n 5`.
+
+**Paste back:** the `PASS:`/`FAIL:` lines, now including `archive_mode is on`, `pgbackrest check`, the three timers
+and `postgres can read /etc/orion/backup-deadman-url`.
 Then set the Spaces lifecycle rule for `dumps/` (30 days) yourself; the 12 monthlies of spec §10.1 are not automated
 yet.
 

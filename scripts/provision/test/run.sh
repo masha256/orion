@@ -365,6 +365,89 @@ for re in 'out=/home/orion-backups/dumps$' 'refresh=/home/orion-refresh$'; do
 done
 if grep -Fxq 'pg1-path=@PG1PATH@' "$prov/files/pgbackrest.conf.tmpl"; then ok "pgbackrest.conf.tmpl takes pg1-path from the data directory"; else bad "pgbackrest.conf.tmpl takes pg1-path from the data directory"; fi
 
+# Backup dead-man ping (healthchecks.io "backups" check): every backup unit runs orion-backup-ping from ExecStopPost;
+# the URL comes from a file, is stored root:postgres 640 and is never printed
+for re in \
+  'create /usr/local/sbin/orion-backup-ping .*755 root:root' \
+  '^ *\+ ExecStopPost=/usr/local/sbin/orion-backup-ping report %n$' \
+  '^ *\+ ExecStopPost=/usr/local/sbin/orion-backup-ping fail-only %n$' \
+  'note: no backup dead-man URL' \
+  'SKIP: backup dead-man URL'; do
+  expect host-backups "$re"
+done
+hc_url=https://hc-ping.com/0b9e3c1a-test-not-a-real-check
+printf '%s\n' "$hc_url" >"$tmp/hc.url"
+run_case host-backups-deadman 0 env ORION_PROVISION_PGBACKREST_CONF="$tmp/pgbr-filled.conf" \
+  "${H[@]}" --ssh-from 192.168.0.201 --enable-backups --dump-recipient "$recipient" --backup-deadman-url-file "$tmp/hc.url"
+expect host-backups-deadman 'ok: --backup-deadman-url-file .* holds an https:// ping URL'
+expect host-backups-deadman '/etc/orion/backup-deadman-url .*640 root:postgres'
+expect_not host-backups-deadman 'hc-ping\.com|0b9e3c1a'
+expect_not host-backups-deadman 'note: no backup dead-man URL'
+printf 'http://hc-ping.com/x\n' >"$tmp/hc-http.url"
+printf '%s\n%s\n' "$hc_url" "$hc_url" >"$tmp/hc-two.url"
+printf '%s/fail\n' "$hc_url" >"$tmp/hc-fail.url"
+printf 'https://hc-ping.com/x"y\n' >"$tmp/hc-quote.url"
+for c in http two fail quote; do
+  run_case "host-deadman-$c" nonzero env ORION_PROVISION_PGBACKREST_CONF="$tmp/pgbr-filled.conf" \
+    "${H[@]}" --enable-backups --dump-recipient "$recipient" --backup-deadman-url-file "$tmp/hc-$c.url"
+  expect_not "host-deadman-$c" '^(would|do): '
+done
+run_case host-deadman-missing nonzero env ORION_PROVISION_PGBACKREST_CONF="$tmp/pgbr-filled.conf" \
+  "${H[@]}" --enable-backups --dump-recipient "$recipient" --backup-deadman-url-file "$tmp/no-such.url"
+run_case host-deadman-no-backups nonzero "${H[@]}" --backup-deadman-url-file "$tmp/hc.url"
+expect host-deadman-no-backups 'only used with --enable-backups'
+expect_not host-deadman-no-backups '^(would|do): '
+
+# orion-backup-ping itself, against a fake curl that records its config (stdin) and arguments
+pingbin=$tmp/pingbin
+mkdir -p "$pingbin"
+cat >"$pingbin/curl" <<'EOF'
+#!/bin/bash
+cat >>"$PING_LOG.cfg"
+printf '%s\n' "$*" >>"$PING_LOG.args"
+exit "${FAKE_CURL_RC:-0}"
+EOF
+chmod 755 "$pingbin/curl"
+ping_case() { # ping_case <name> <url file> <SERVICE_RESULT> <mode> [FAKE_CURL_RC]
+  local name=$1 file=$2 result=$3 mode=$4 rc=${5:-0}
+  rm -f "$tmp/$name.ping.cfg" "$tmp/$name.ping.args"
+  run_case "ping-$name" 0 env PATH="$pingbin:$PATH" PING_LOG="$tmp/$name.ping" FAKE_CURL_RC="$rc" \
+    ORION_BACKUP_DEADMAN_FILE="$file" SERVICE_RESULT="$result" EXIT_CODE=exited EXIT_STATUS=0 \
+    bash "$prov/files/orion-backup-ping" "$mode" orion-backup-diff.service
+}
+pinged() { # pinged <name> <exact url line | none>
+  if [[ $2 == none ]]; then
+    if [[ ! -e $tmp/$1.ping.cfg ]]; then ok "ping-$1 sends nothing"; else bad "ping-$1 sends nothing" "$(cat "$tmp/$1.ping.cfg")"; fi
+  elif grep -Fxq "url = \"$2\"" "$tmp/$1.ping.cfg" 2>/dev/null; then
+    ok "ping-$1 pings $2"
+  else
+    bad "ping-$1 pings $2" "$(cat "$tmp/$1.ping.cfg" 2>/dev/null)"
+  fi
+}
+ping_case report-ok "$tmp/hc.url" success report
+pinged report-ok "$hc_url"
+if grep -q -- '--data-raw unit=orion-backup-diff.service result=success' "$tmp/report-ok.ping.args" 2>/dev/null &&
+  ! grep -q 'hc-ping' "$tmp/report-ok.ping.args"; then
+  ok "ping-report-ok: body names unit and result; URL not in curl's arguments"
+else
+  bad "ping-report-ok: body names unit and result; URL not in curl's arguments" "$(cat "$tmp/report-ok.ping.args" 2>/dev/null)"
+fi
+ping_case report-bad "$tmp/hc.url" exit-code report
+pinged report-bad "$hc_url/fail"
+ping_case failonly-ok "$tmp/hc.url" success fail-only
+pinged failonly-ok none
+ping_case failonly-bad "$tmp/hc.url" timeout fail-only
+pinged failonly-bad "$hc_url/fail"
+ping_case no-file "$tmp/no-such.url" success report
+pinged no-file none
+expect ping-no-file 'nothing pinged'
+ping_case bad-url "$tmp/hc-http.url" success report
+pinged bad-url none
+ping_case curl-down "$tmp/hc.url" success report 7
+expect ping-curl-down 'ping FAILED \(curl exit 7\)'
+ping_case bad-mode "$tmp/hc.url" success bogus
+pinged bad-mode none
+
 # --pg-datadir (spec §2.4: venus has a 10G root, so the cluster lives on /home). A fresh box: the package creates
 # 18/main at the default, then the script drops and re-creates it in the new place, before any drop-in, hba or role.
 dd=$tmp/pgroot/18/main
