@@ -398,6 +398,60 @@ breaking release, with no migration and no `--breaking`.
 - Before the staging deploy: Raymond's soak script (`~/.hermes/profiles/raymond/scripts/orion-stage-soak.py`, outside
   the repo) must not pass `--legacy` anywhere (the CLI refuses an unknown option) and must read v2 fields only.
 
+## Phase 3 R1 release
+
+The release that carries Phase 3 R0b + R1 (`feat/phase3-third-party`): migration 0007 (expand-only: `jobs.params_json`, no
+`--breaking`), the `backfill` job kind, `orion data purge`, and three new `orion-remote` verbs, so the one-time
+backfills and purges of this and later Phase 3 releases run over the deploy keys, with no `sudo -iu orion-<env>`.
+`ST`/`PR` = the stage/prod ssh commands above. In deploy order:
+
+1. **Once, before the staging deploy: Mike re-runs `orion-host.sh`** (installs the new `/usr/local/bin/orion-remote`,
+   which is a copy from the checkout it runs from, independent of any release). Raymond makes a fixed snapshot of
+   `scripts/provision/` at the release sha, outside any worktree (never the moving worktree; non-destructive, so a
+   re-run changes nothing):
+   ```
+   SHA=<release sha>; D=/home/hermes/orion-provision-$SHA
+   test -e "$D" || (mkdir -p "$D" && git -C /home/hermes/git/orion archive "$SHA" scripts/provision | tar -x -C "$D")
+   ```
+   Mike copies `$D/scripts/provision` to venus and runs it with the same flags as before (scripts/provision/README.md
+   §4; add `--enable-backups` / `--with-watcher` if they are already on, both idempotent):
+   ```
+   sudo ./orion-host.sh --hostname venus --pg-datadir /home/postgres/18/main \
+        --ssh-from 192.168.0.201 --ssh-from 100.109.70.114 --ssh-from 192.168.0.112 \
+        --deploy-key-stage /tmp/deploy-stage.pub --deploy-key-prod /tmp/deploy-prod.pub
+   ```
+   Paste back the SELF-CHECK. Check: `$ST job run-now backfill x --metrics A --backfill-days 1` exits 64 with
+   `orion-remote: bad metric in --metrics` (the new orion-remote; the old one says `unknown or misplaced option`), and
+   nothing is queued. The new orion-remote works with the older release still current (its other verbs are
+   unchanged), but the three new verbs reach Orion only on this release or later: on an older release they fail with
+   Orion's own "unknown command" / unknown option or job kind error (nothing written).
+2. **Then the per-env steps** (deploy, backfills, purges), below.
+
+Verb reference (output is JSON; every list is comma-separated with no spaces, at most 20 metrics, each
+`[a-z0-9_.]{1,64}`; days 1..400; a refusal exits 64 before Orion runs and is logged without its arguments):
+
+```
+ssh orion-<env> job run-now backfill <asset> --metrics <k1,k2,...> --backfill-days <1..400>
+    # queues a backfill job (Orion: --metric once per item); the daemon runs it at priority 70, one attempt, no retry
+    $ST job run-now backfill vvv --metrics flow_tokens.burn,flow_usd.burn --backfill-days 3
+ssh orion-<env> data compare-usd <asset> [--days <1..400>]      # read-only (default 91 days)
+    $ST data compare-usd vvv --days 91
+ssh orion-<env> data purge <asset> --metrics <k1,k2,...> [--source-type <rung>] [--yes]
+    # a dry run without --yes; --yes first writes the rows to ~/home/purged/<asset>-<metric>-<UTCstamp>.json, then
+    # deletes. <rung>: contract_state, log_scan, first_party_api, pool_scan, disclosure, derived, constant,
+    # market_data, third_party. Prod purges only on Mike's go.
+    $PR data purge lit --metrics unlocks_next_year --source-type third_party      # dry run: prints the counts
+```
+
+- **Size a backfill:** a backfill must be sized to finish inside the 4 h clearance before the env's nightly; split it by
+  --backfill-days otherwise. (It defers while the env's nightly is under 4 h away, and while that night's refresh /
+  nightly_report jobs are unfinished; stage nightly 02:45 UTC, prod 00:45 UTC.) Watch it with `jobs --since <iso>`.
+- **Rollback across this release:** before `rollback` to a release older than this one, let running backfills finish or
+  drain the daemon (an older daemon fails a queued backfill job with "no handler", no retry). `jobs` shows any
+  `backfill` still `queued` or `running`; re-queue it after a roll forward.
+
+<!-- release block: Task 8 -->
+
 
 ```
 ssh orion-<env> status [--json]       # release, heartbeat, registry, last jobs, next slots, soak, last nightly

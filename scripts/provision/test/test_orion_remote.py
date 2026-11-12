@@ -889,6 +889,104 @@ class VerbTests(RemoteCase):
         self.assertEqual(self.log_lines()[-1].split(' ', 2)[2], 'inbox 2 exit 3')
 
 
+RUNGS = ('contract_state', 'log_scan', 'first_party_api', 'pool_scan', 'disclosure', 'derived', 'constant', 'market_data',
+         'third_party')  # src/db/pg/migrations/0004_provenance.sql's CHECK on observations.source_type
+
+
+class Phase3VerbTests(RemoteCase):
+    """Phase 3 R0b: job run-now backfill, data purge, data compare-usd (multi-value args comma-separated: parse() refuses
+    a repeated flag)."""
+
+    def setUp(self):
+        super().setUp()
+        self.release(TAG, current=True)
+
+    def last(self, cmd):
+        rc, _out, err = self.remote(cmd)
+        self.assertEqual(rc, 0, f'{cmd}: {err}')
+        return self.node_argv()[-1]
+
+    def assert_refused(self, cmds, secret=None):
+        """Each command exits 64 before Orion runs, and remote.log has `refused` without the argument text."""
+        n = len(self.calls())
+        for cmd in cmds:
+            rc, _out, _err = self.remote(cmd)
+            self.assertEqual(rc, 64, cmd)
+            line = self.log_lines()[-1]
+            self.assertTrue(line.endswith(' refused'), (cmd, line))
+            for word in cmd.split()[2:]:
+                if len(word) > 2 and word not in ('run-now', 'backfill', 'purge', 'compare-usd'):
+                    self.assertNotIn(word, line, (cmd, line))
+            if secret:
+                self.assertNotIn(secret, line)
+        self.assertEqual(len(self.calls()), n)
+
+    def test_backfill_passes_each_metric(self):
+        self.assertEqual(self.last('job run-now backfill aero --metrics flow.fees,flow_usd.fees --backfill-days 100'),
+                         ['job', 'run-now', 'backfill', 'aero', '--metric', 'flow.fees', '--metric', 'flow_usd.fees',
+                          '--backfill-days', '100', '--by', 'raymond', '--json'])
+        self.assertEqual(self.last('job run-now backfill lit --backfill-days 1 --metrics flow.buyback'),
+                         ['job', 'run-now', 'backfill', 'lit', '--metric', 'flow.buyback', '--backfill-days', '1', '--by', 'raymond', '--json'])
+        twenty = ','.join(f'flow.m{i}' for i in range(20))
+        self.assertEqual(self.last(f'job run-now backfill aero --metrics {twenty} --backfill-days 400').count('--metric'), 20)
+        self.assertEqual(self.log_lines()[-1].split(' ', 2)[2], 'job 8 ok')
+        # every part is required
+        self.assert_refused(['job run-now backfill aero --metrics flow.fees', 'job run-now backfill aero --backfill-days 10',
+                             'job run-now backfill --metrics flow.fees --backfill-days 10', 'job run-now backfill aero',
+                             'job run-now backfill aero --metrics flow.fees --metrics flow.x --backfill-days 10',
+                             'job run-now backfill aero --metrics flow.fees --backfill-days 10 --slot 2026-11-03T00:45:00Z'])
+
+    def test_backfill_refuses_empty_item(self):
+        self.assert_refused([f'job run-now backfill aero --metrics {m} --backfill-days 10'
+                             for m in ('flow.a,,flow.b', 'flow.a,', ',flow.a', ',', "''", "'flow.a, flow.b'")])
+
+    def test_backfill_refuses_bad_metric(self):
+        self.assert_refused([f'job run-now backfill aero --metrics {m} --backfill-days 10'
+                             for m in ('A', 'flow.a,A', 'a/b', 'flow.a,a/b', 'x' * 65, "'a;id'", 'flow.a,$(id)')])
+        too_many = ','.join(f'flow.m{i}' for i in range(21))
+        self.assert_refused([f'job run-now backfill aero --metrics {too_many} --backfill-days 10'], secret='flow.m20')
+        self.assertEqual(self.last(f"job run-now backfill aero --metrics {'x' * 64} --backfill-days 10")[5], 'x' * 64)
+
+    def test_backfill_days_range(self):
+        self.assert_refused([f'job run-now backfill aero --metrics flow.fees --backfill-days {d}'
+                             for d in ('0', '401', '1e3', '-1', '10.5', '00000', '+5', "' 10'")])
+        self.assertEqual(self.last('job run-now backfill aero --metrics flow.fees --backfill-days 400')[7], '400')
+
+    def test_backfill_on_kinds_other_than_backfill_refused(self):
+        self.assert_refused(['job run-now refresh aero --metrics flow.fees', 'job run-now refresh aero --backfill-days 10',
+                             'job run-now levels --metrics flow.fees --backfill-days 10',
+                             'job run-now nightly_report --slot 2026-11-03T00:45:00Z --backfill-days 10'])
+        # the existing kinds are unchanged
+        self.assertEqual(self.last('job run-now refresh aero'), ['job', 'run-now', 'refresh', 'aero', '--by', 'raymond', '--json'])
+
+    def test_purge_dry_run_by_default(self):
+        argv = self.last('data purge aero --metrics flow.fees,flow_usd.fees')
+        self.assertEqual(argv, ['data', 'purge', 'aero', '--metric', 'flow.fees', '--metric', 'flow_usd.fees', '--json'])
+        self.assertNotIn('--yes', argv)
+        self.assertEqual(self.last('data purge aero --metrics flow.fees --source-type third_party'),
+                         ['data', 'purge', 'aero', '--metric', 'flow.fees', '--source-type', 'third_party', '--json'])
+        self.assertEqual(self.last('data purge aero --metrics flow.fees --source-type third_party --yes'),
+                         ['data', 'purge', 'aero', '--metric', 'flow.fees', '--source-type', 'third_party', '--yes', '--json'])
+        self.assert_refused(['data purge aero', 'data purge --metrics flow.fees', 'data purge aero --metrics flow.a,,flow.b',
+                             'data purge aero --metrics A', 'data purge aero --metrics flow.fees --yes yes',
+                             'data purge aero --metrics flow.fees --force', 'data purge aero --metrics flow.fees --json'])
+
+    def test_purge_source_type_is_a_known_rung(self):
+        for rung in RUNGS:
+            self.assertEqual(self.last(f'data purge aero --metrics flow.fees --source-type {rung}')[5:7], ['--source-type', rung])
+        self.assert_refused([f'data purge aero --metrics flow.fees --source-type {t}'
+                             for t in ('defillama', 'coingecko', 'THIRD_PARTY', 'third_party,log_scan', 'third_partyx',
+                                       "'third_party '", 'onchain', "''")])
+
+    def test_compare_usd_passthrough(self):
+        self.assertEqual(self.last('data compare-usd aero'), ['data', 'compare-usd', 'aero', '--json'])
+        self.assertEqual(self.last('data compare-usd aero --days 91'), ['data', 'compare-usd', 'aero', '--days', '91', '--json'])
+        self.assertEqual(self.last('data compare-usd aero --days 400')[4], '400')
+        self.assert_refused(['data compare-usd', 'data compare-usd AERO', 'data compare-usd aero --days 0',
+                             'data compare-usd aero --days 401', 'data compare-usd aero --days 1e3',
+                             'data compare-usd aero --json', 'data compare-usd aero lit'])
+
+
 class RecoveryTests(RemoteCase):
     """M-11: an orion-remote that died between drain and restart (ssh drop, OOM) leaves ~/.deploy-pending behind."""
 
