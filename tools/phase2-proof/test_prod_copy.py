@@ -241,6 +241,30 @@ class HomesTest(unittest.TestCase):
                 self.assertEqual(env.read_text().splitlines(), [
                     f"ORION_DATABASE_URL={prod_copy.DEV_URL}", "ORION_DB_SCHEMA=p2proof_20261107t000000z"])
 
+    def test_the_old_release_migrates_the_fresh_scratch_schema_with_breaking(self):
+        # 0006 is `-- breaking`: without --breaking the old release refuses a fresh schema (migration_breaking).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for src in ("rel", "wt"):
+                for d in ("assets", "personas", "skills"):
+                    (root / src / d).mkdir(parents=True)
+            seen = []
+
+            def run(argv, **kw):
+                seen.append((argv, kw))
+                return subprocess.CompletedProcess(argv, 1, stdout="", stderr="stop here")
+
+            def never(*a, **kw):
+                raise AssertionError("prod or psql read before the old release migrated")
+
+            with self.assertRaises(prod_copy.CopyError):
+                prod_copy.copy_prod(root / "p", root / "rel", root / "wt", never, never, run=run)
+            self.assertEqual(len(seen), 1)
+            argv, kw = seen[0]
+            self.assertEqual(argv, ["node", str(root / "rel" / "dist" / "cli" / "index.js"), "db", "migrate", "--breaking", "--json"])
+            self.assertEqual(kw["cwd"], str(root / "p" / "old"))
+            self.assertEqual(kw["env"]["ORION_HOME"], str(root / "p" / "old"))
+
     def test_cli_refuses_without_p2_prod_ssh_before_writing_anything(self):
         with tempfile.TemporaryDirectory() as tmp:
             P = Path(tmp) / "p"

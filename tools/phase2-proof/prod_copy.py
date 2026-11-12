@@ -9,8 +9,11 @@ Prod is only ever read through orion-remote's `sql-ro` verb (prod_ro.py: a READ 
   schema            p2proof_<UTC stamp, lowercase>, written before anything is created in Postgres (cleanup.py reads it)
   old/, new/        homes. old/ gets the OLD release's assets/ personas/ skills/, new/ the worktree's; each has a
                     mode-600 .env of two lines, ORION_DATABASE_URL (orion_dev) and ORION_DB_SCHEMA (the same schema)
-  migrate-old.json  `db migrate --json` by the OLD release (ORION_HOME=<P>/old, ORION_ENV_FILE=<P>/old/.env): the
-                    schema then sits at the release's migration level, which must equal prod's max(schema_migrations.id)
+  migrate-old.json  `db migrate --breaking --json` by the OLD release (ORION_HOME=<P>/old, ORION_ENV_FILE=<P>/old/.env):
+                    the schema then sits at the release's migration level, which must equal prod's
+                    max(schema_migrations.id). --breaking because 0006 is `-- breaking` and refuses a fresh schema
+                    without it (migration_breaking); the target is always a fresh p2proof_* scratch schema, and prod
+                    itself already applied 0006
   copy.json         per table: prod count, rows copied, local count; the observations per-asset sums, prod vs local
 Steps: migrate (old release) -> refuse unless local migration level = prod's and the table and column sets match ->
 truncate -> per table, page by id (`id > last and id <= top`, top = prod's max(id) read first, so rows the daemon adds
@@ -235,10 +238,12 @@ def copy_prod(P, release, worktree, sql_ro, psql, run=subprocess.run):
     (P / "schema").write_text(schema + "\n")
     make_homes(P, release, worktree, schema)
 
-    # 1. The local schema at the old release's migration level, which must be prod's.
+    # 1. The local schema at the old release's migration level, which must be prod's. --breaking: 0006 is `-- breaking`
+    #    and the target is a fresh scratch schema (prod already applied it).
     env = {k: v for k, v in os.environ.items() if not k.startswith("ORION_")}
     env.update(ORION_HOME=str(P / "old"), ORION_ENV_FILE=str(P / "old" / ".env"))
-    r = run(["node", str(Path(release) / "dist" / "cli" / "index.js"), "db", "migrate", "--json"], cwd=str(P / "old"),
+    r = run(["node", str(Path(release) / "dist" / "cli" / "index.js"), "db", "migrate", "--breaking", "--json"],
+            cwd=str(P / "old"),
             env=env, capture_output=True, text=True)
     (P / "migrate-old.json").write_text(r.stdout + r.stderr)
     if r.returncode != 0:

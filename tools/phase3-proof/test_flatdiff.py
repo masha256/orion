@@ -270,6 +270,53 @@ class FlatdiffTest(unittest.TestCase):
                 for p in forbidden:
                     self.assertFalse(flatdiff.glob_match(e["glob"], p), (a, e["glob"], p))
 
+    def test_the_committed_allowlist_bounds_lit_dilution_derived_fields(self):
+        # R21: LIT's +0.066% unlock change (Lighter's 500M vs DefiLlama's 499.67M) moves every dilution-derived field.
+        golden = json.loads((HERE.parent.parent / "tests" / "report" / "golden" / "v2-report-13.json").read_text())
+        old = json.loads(golden["lit/stored"]["report"])
+        allow = (HERE / "r1-allowlist.json").read_text()
+
+        def bumped(f):
+            r = json.loads(json.dumps(old))
+            s = r["incomeStatement"]
+            d, y, pt = s["dilution"], s["yields"], s["perToken"]
+            unlocks = next(x for x in d["releases"] if x["id"] == "unlocks")
+            line = next(x for x in y["dilutionLines"] if x["id"] == "unlocks")
+            for obj, k in ((d, "pct"), (d, "tokensPerYear"), (unlocks, "tokensPerYear"), (unlocks, "yield"),
+                           (line, "tokensPerYear"), (line, "yield"), (y, "dilution"), (y, "netShareholder"),
+                           (s["holderFlow"], "netOfDilution"), (pt, "dilution"), (pt["holderFlow"], "netOfDilution")):
+                obj[k] *= f
+            sup = d["supply"]
+            sup["netPerYear"] += sup["addedPerYear"] * (f - 1)
+            sup["addedPerYear"] *= f
+            sup["netPct"] = sup["netPerYear"] / pt["totalSupply"]
+            fdv = pt["perTokenFdv"]
+            fdv["dilution"] *= f
+            fdv["holderFlow"]["netOfDilution"] *= f
+            return r
+
+        moved = ["incomeStatement.yields.dilution", "incomeStatement.yields.netShareholder", "incomeStatement.holderFlow.netOfDilution",
+                 "incomeStatement.perToken.dilution", "incomeStatement.perToken.holderFlow.netOfDilution",
+                 "incomeStatement.perToken.perTokenFdv.dilution", "incomeStatement.perToken.perTokenFdv.holderFlow.netOfDilution",
+                 "incomeStatement.dilution.pct", "incomeStatement.dilution.tokensPerYear",
+                 "incomeStatement.dilution.releases[id=unlocks].yield", "incomeStatement.yields.dilutionLines[id=unlocks].yield",
+                 "incomeStatement.dilution.supply.netPerYear"]
+        code, res, _ = self.run_cli(old, bumped(1.00066), allow)
+        self.assertEqual(code, 0, res["unallowed"])
+        for p in moved:
+            entries = next(d for d in res["diffs"] if d["path"] == p)["entries"]
+            self.assertTrue(any("rel" in e["detail"] or "abs" in e["detail"] for e in entries), (p, entries))
+        code, res, _ = self.run_cli(old, bumped(1.001), allow)
+        self.assertEqual(code, 1)
+        # Every rel-0.0007 path fails at +0.1%; supply.netPerYear (+12k tokens) stays inside its abs 100000.
+        rel_paths = [p for p in moved if not p.endswith("netPerYear")] + [
+            "incomeStatement.dilution.releases[id=unlocks].tokensPerYear", "incomeStatement.yields.dilutionLines[id=unlocks].tokensPerYear"]
+        self.assertEqual(sorted(res["unallowed"]), sorted(rel_paths))
+        # PUMP: the same paths, rel 1e-12.
+        pump = {e["glob"]: e for e in flatdiff.load_allowlist(HERE / "r1-allowlist.json")["pump"]}
+        for p in moved[:-1]:
+            self.assertTrue(any(flatdiff.glob_match(g, p) and e.get("rel") == 1e-12 for g, e in pump.items() if g != "incomeStatement.dilution.*"), p)
+
 
 if __name__ == "__main__":
     unittest.main()

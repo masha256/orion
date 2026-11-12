@@ -46,10 +46,17 @@ R1 shows as `[0]` removed plus the `[]` leaf added. Two numbers of equal value a
 
 `r1-allowlist.json` (brief Step 2): CAKE, UNI `incomeStatement.volume` and `incomeStatement.volume.*` (volume becomes
 not_measured); LIT `incomeStatement.dilution.*` (no bound) and the unlocks line's `tokensPerYear` at rel 0.0007 (the
-+0.066%); PUMP the same two paths at rel 1e-12; VVV the business line's `crossCheck` fields. All 12 changed assets:
-TODO placeholders for the provenance / flags listing paths (`incomeStatement.provenance.thirdParty*`,
-`incomeStatement.provenance.sources*`, `incomeStatement.flags*`), filled from the first diff run. AERO has no entry
-(its report must be `cmp`-identical); revenue, cost of revenue, holder flow, yields and grades get none.
++0.066%: Lighter's 500M vs DefiLlama's 499.67M). Ruling R21: the change flows into every dilution-derived field, so
+LIT also bounds at rel 0.0007 `yields.dilution`, `yields.netShareholder`, `holderFlow.netOfDilution`,
+`perToken.dilution`, `perToken.holderFlow.netOfDilution`, `perToken.perTokenFdv.*`, `dilution.pct`,
+`dilution.tokensPerYear`, the unlocks line's `yield` (`dilution.releases[id=unlocks]`) and both fields of
+`yields.dilutionLines[id=unlocks]` (all under `incomeStatement.`), and `dilution.supply.netPerYear` at abs 100000
+tokens (added minus burned, so its relative change can exceed 0.07%). PUMP has the same paths at rel 1e-12. VVV the
+business line's `crossCheck` fields. All 12 changed assets: TODO placeholders for the provenance / flags / checks
+listing paths (`incomeStatement.provenance.thirdParty*`, `incomeStatement.provenance.sources*`,
+`incomeStatement.flags*`, `incomeStatement.checks*`), filled from the first diff run. AERO has no entry (its report
+must be `cmp`-identical); revenue, cost of revenue, holder flow and grades get none beyond the R21 dilution-derived
+fields.
 
 ## Run (controller)
 

@@ -1,7 +1,7 @@
 {
   "_comment": [
     "Phase 3 R1 release proof allowlist for tools/phase3-proof/flatdiff.py (format: README.md).",
-    "AERO has no entry: its report must be cmp-identical. Revenue, cost of revenue, holder flow, yields and grades get no entry (brief Step 2).",
+    "AERO has no entry: its report must be cmp-identical. Revenue, cost of revenue, holder flow and grades get no entry (brief Step 2); the only holder-flow / yields entries are LIT's and PUMP's dilution-derived fields (ruling R21: LIT rel 0.0007, supply.netPerYear abs 100000; PUMP rel 1e-12).",
     "Entries with \"todo\": true are inert placeholders: the controller replaces each with the exact listing paths the first diff run shows (glob + reason) and drops the todo flag."
   ],
   "*": [],
@@ -28,6 +28,11 @@
       "glob": "incomeStatement.flags*",
       "todo": true,
       "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.checks*",
+      "todo": true,
+      "reason": "fill from the first diff run"
     }
   ],
   "crv": [
@@ -43,6 +48,11 @@
     },
     {
       "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.checks*",
       "todo": true,
       "reason": "fill from the first diff run"
     }
@@ -62,6 +72,11 @@
       "glob": "incomeStatement.flags*",
       "todo": true,
       "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.checks*",
+      "todo": true,
+      "reason": "fill from the first diff run"
     }
   ],
   "hype": [
@@ -77,6 +92,11 @@
     },
     {
       "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.checks*",
       "todo": true,
       "reason": "fill from the first diff run"
     }
@@ -96,6 +116,11 @@
       "glob": "incomeStatement.flags*",
       "todo": true,
       "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.checks*",
+      "todo": true,
+      "reason": "fill from the first diff run"
     }
   ],
   "lit": [
@@ -109,6 +134,66 @@
       "reason": "LIT unlocks line tokens: cited schedule vs the old read, +0.066% (plan figure), bound rel 0.0007"
     },
     {
+      "glob": "incomeStatement.yields.dilution",
+      "rel": 0.0007,
+      "reason": "LIT unlocks line: Lighter's cited 500M schedule vs DefiLlama's 499.67M, a +0.066% unlock change that flows into yields.dilution (R21), bound rel 0.0007"
+    },
+    {
+      "glob": "incomeStatement.yields.netShareholder",
+      "rel": 0.0007,
+      "reason": "LIT unlocks line: Lighter's cited 500M schedule vs DefiLlama's 499.67M, a +0.066% unlock change that flows into yields.netShareholder (R21), bound rel 0.0007"
+    },
+    {
+      "glob": "incomeStatement.holderFlow.netOfDilution",
+      "rel": 0.0007,
+      "reason": "LIT unlocks line: Lighter's cited 500M schedule vs DefiLlama's 499.67M, a +0.066% unlock change that flows into holderFlow.netOfDilution (R21), bound rel 0.0007"
+    },
+    {
+      "glob": "incomeStatement.perToken.dilution",
+      "rel": 0.0007,
+      "reason": "LIT unlocks line: Lighter's cited 500M schedule vs DefiLlama's 499.67M, a +0.066% unlock change that flows into perToken.dilution (R21), bound rel 0.0007"
+    },
+    {
+      "glob": "incomeStatement.perToken.holderFlow.netOfDilution",
+      "rel": 0.0007,
+      "reason": "LIT unlocks line: Lighter's cited 500M schedule vs DefiLlama's 499.67M, a +0.066% unlock change that flows into perToken.holderFlow.netOfDilution (R21), bound rel 0.0007"
+    },
+    {
+      "glob": "incomeStatement.perToken.perTokenFdv.*",
+      "rel": 0.0007,
+      "reason": "LIT unlocks line: Lighter's cited 500M schedule vs DefiLlama's 499.67M, a +0.066% unlock change that flows into perToken.perTokenFdv.* (R21), bound rel 0.0007"
+    },
+    {
+      "glob": "incomeStatement.dilution.pct",
+      "rel": 0.0007,
+      "reason": "LIT unlocks line: Lighter's cited 500M schedule vs DefiLlama's 499.67M, a +0.066% unlock change that flows into dilution.pct (R21), bound rel 0.0007"
+    },
+    {
+      "glob": "incomeStatement.dilution.tokensPerYear",
+      "rel": 0.0007,
+      "reason": "LIT unlocks line: Lighter's cited 500M schedule vs DefiLlama's 499.67M, a +0.066% unlock change that flows into dilution.tokensPerYear (R21), bound rel 0.0007"
+    },
+    {
+      "glob": "incomeStatement.dilution.releases[id=unlocks].yield",
+      "rel": 0.0007,
+      "reason": "LIT unlocks line: Lighter's cited 500M schedule vs DefiLlama's 499.67M, a +0.066% unlock change that flows into dilution.releases[id=unlocks].yield (R21), bound rel 0.0007"
+    },
+    {
+      "glob": "incomeStatement.yields.dilutionLines[id=unlocks].tokensPerYear",
+      "rel": 0.0007,
+      "reason": "LIT unlocks line: Lighter's cited 500M schedule vs DefiLlama's 499.67M, a +0.066% unlock change that flows into yields.dilutionLines[id=unlocks].tokensPerYear (R21), bound rel 0.0007"
+    },
+    {
+      "glob": "incomeStatement.yields.dilutionLines[id=unlocks].yield",
+      "rel": 0.0007,
+      "reason": "LIT unlocks line: Lighter's cited 500M schedule vs DefiLlama's 499.67M, a +0.066% unlock change that flows into yields.dilutionLines[id=unlocks].yield (R21), bound rel 0.0007"
+    },
+    {
+      "glob": "incomeStatement.dilution.supply.netPerYear",
+      "abs": 100000,
+      "reason": "LIT unlocks line: Lighter's cited 500M schedule vs DefiLlama's 499.67M, a +0.066% unlock change: supply.netPerYear is added minus burned, so its relative change can exceed 0.07% (LIT delta ~92k tokens); bound abs 100000 tokens (R21)"
+    },
+    {
       "glob": "incomeStatement.provenance.thirdParty*",
       "todo": true,
       "reason": "fill from the first diff run"
@@ -120,6 +205,11 @@
     },
     {
       "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.checks*",
       "todo": true,
       "reason": "fill from the first diff run"
     }
@@ -136,6 +226,66 @@
       "reason": "PUMP unlocks line tokens: cited Blockworks schedule equals the old read (rel 1e-12)"
     },
     {
+      "glob": "incomeStatement.yields.dilution",
+      "rel": 1e-12,
+      "reason": "PUMP unlocks line: the cited Blockworks schedule equals the old read, so yields.dilution must be unchanged (R21, rel 1e-12)"
+    },
+    {
+      "glob": "incomeStatement.yields.netShareholder",
+      "rel": 1e-12,
+      "reason": "PUMP unlocks line: the cited Blockworks schedule equals the old read, so yields.netShareholder must be unchanged (R21, rel 1e-12)"
+    },
+    {
+      "glob": "incomeStatement.holderFlow.netOfDilution",
+      "rel": 1e-12,
+      "reason": "PUMP unlocks line: the cited Blockworks schedule equals the old read, so holderFlow.netOfDilution must be unchanged (R21, rel 1e-12)"
+    },
+    {
+      "glob": "incomeStatement.perToken.dilution",
+      "rel": 1e-12,
+      "reason": "PUMP unlocks line: the cited Blockworks schedule equals the old read, so perToken.dilution must be unchanged (R21, rel 1e-12)"
+    },
+    {
+      "glob": "incomeStatement.perToken.holderFlow.netOfDilution",
+      "rel": 1e-12,
+      "reason": "PUMP unlocks line: the cited Blockworks schedule equals the old read, so perToken.holderFlow.netOfDilution must be unchanged (R21, rel 1e-12)"
+    },
+    {
+      "glob": "incomeStatement.perToken.perTokenFdv.*",
+      "rel": 1e-12,
+      "reason": "PUMP unlocks line: the cited Blockworks schedule equals the old read, so perToken.perTokenFdv.* must be unchanged (R21, rel 1e-12)"
+    },
+    {
+      "glob": "incomeStatement.dilution.pct",
+      "rel": 1e-12,
+      "reason": "PUMP unlocks line: the cited Blockworks schedule equals the old read, so dilution.pct must be unchanged (R21, rel 1e-12)"
+    },
+    {
+      "glob": "incomeStatement.dilution.tokensPerYear",
+      "rel": 1e-12,
+      "reason": "PUMP unlocks line: the cited Blockworks schedule equals the old read, so dilution.tokensPerYear must be unchanged (R21, rel 1e-12)"
+    },
+    {
+      "glob": "incomeStatement.dilution.releases[id=unlocks].yield",
+      "rel": 1e-12,
+      "reason": "PUMP unlocks line: the cited Blockworks schedule equals the old read, so dilution.releases[id=unlocks].yield must be unchanged (R21, rel 1e-12)"
+    },
+    {
+      "glob": "incomeStatement.yields.dilutionLines[id=unlocks].tokensPerYear",
+      "rel": 1e-12,
+      "reason": "PUMP unlocks line: the cited Blockworks schedule equals the old read, so yields.dilutionLines[id=unlocks].tokensPerYear must be unchanged (R21, rel 1e-12)"
+    },
+    {
+      "glob": "incomeStatement.yields.dilutionLines[id=unlocks].yield",
+      "rel": 1e-12,
+      "reason": "PUMP unlocks line: the cited Blockworks schedule equals the old read, so yields.dilutionLines[id=unlocks].yield must be unchanged (R21, rel 1e-12)"
+    },
+    {
+      "glob": "incomeStatement.dilution.supply.netPerYear",
+      "rel": 1e-12,
+      "reason": "PUMP unlocks line: the cited Blockworks schedule equals the old read, so dilution.supply.netPerYear must be unchanged (R21, rel 1e-12)"
+    },
+    {
       "glob": "incomeStatement.provenance.thirdParty*",
       "todo": true,
       "reason": "fill from the first diff run"
@@ -147,6 +297,11 @@
     },
     {
       "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.checks*",
       "todo": true,
       "reason": "fill from the first diff run"
     }
@@ -166,6 +321,11 @@
       "glob": "incomeStatement.flags*",
       "todo": true,
       "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.checks*",
+      "todo": true,
+      "reason": "fill from the first diff run"
     }
   ],
   "sky": [
@@ -181,6 +341,11 @@
     },
     {
       "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.checks*",
       "todo": true,
       "reason": "fill from the first diff run"
     }
@@ -208,6 +373,11 @@
       "glob": "incomeStatement.flags*",
       "todo": true,
       "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.checks*",
+      "todo": true,
+      "reason": "fill from the first diff run"
     }
   ],
   "vvv": [
@@ -233,6 +403,11 @@
       "glob": "incomeStatement.flags*",
       "todo": true,
       "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.checks*",
+      "todo": true,
+      "reason": "fill from the first diff run"
     }
   ],
   "ycrv": [
@@ -248,6 +423,11 @@
     },
     {
       "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.checks*",
       "todo": true,
       "reason": "fill from the first diff run"
     }
