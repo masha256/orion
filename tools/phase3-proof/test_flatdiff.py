@@ -262,7 +262,7 @@ class FlatdiffTest(unittest.TestCase):
         self.assertTrue(any(e["glob"].startswith("incomeStatement.revenue.lines[id=business].crossCheck") for e in entries["vvv"]))
         twelve = ["cake", "crv", "cvxcrv", "hype", "link", "lit", "pump", "sdcrv", "sky", "uni", "vvv", "ycrv"]
         for a in twelve:
-            self.assertTrue(any(e.get("todo") for e in entries[a]), a)
+            self.assertFalse(any(e.get("todo") for e in entries[a]), a)  # the addendum replaced every placeholder
         forbidden = ("incomeStatement.revenue.annualized", "incomeStatement.costOfRevenue.annualized", "incomeStatement.holderFlow.net",
                      "incomeStatement.yields.cash")
         for a, es in entries.items():
@@ -308,14 +308,203 @@ class FlatdiffTest(unittest.TestCase):
             self.assertTrue(any("rel" in e["detail"] or "abs" in e["detail"] for e in entries), (p, entries))
         code, res, _ = self.run_cli(old, bumped(1.001), allow)
         self.assertEqual(code, 1)
-        # Every rel-0.0007 path fails at +0.1%; supply.netPerYear (+12k tokens) stays inside its abs 100000.
+        # Every rel-0.0007 path fails at +0.1% (supply.addedPerYear too, since fix round 1); supply.netPerYear (+12k
+        # tokens) and supply.netPct (+1.2e-5) stay inside their abs 100000 / 0.0001.
         rel_paths = [p for p in moved if not p.endswith("netPerYear")] + [
-            "incomeStatement.dilution.releases[id=unlocks].tokensPerYear", "incomeStatement.yields.dilutionLines[id=unlocks].tokensPerYear"]
+            "incomeStatement.dilution.releases[id=unlocks].tokensPerYear", "incomeStatement.yields.dilutionLines[id=unlocks].tokensPerYear",
+            "incomeStatement.dilution.supply.addedPerYear"]
         self.assertEqual(sorted(res["unallowed"]), sorted(rel_paths))
         # PUMP: the same paths, rel 1e-12.
         pump = {e["glob"]: e for e in flatdiff.load_allowlist(HERE / "r1-allowlist.json")["pump"]}
         for p in moved[:-1]:
             self.assertTrue(any(flatdiff.glob_match(g, p) and e.get("rel") == 1e-12 for g, e in pump.items() if g != "incomeStatement.dilution.*"), p)
+
+    # --- fix round 1 -----------------------------------------------------------------------------------------------
+
+    def golden_lit(self):
+        golden = json.loads((HERE.parent.parent / "tests" / "report" / "golden" / "v2-report-13.json").read_text())
+        return json.loads(golden["lit/stored"]["report"])
+
+    def test_the_committed_allowlist_bounds_lit_dilution_outside_the_unlocks_line(self):
+        # I-1: holder-flow-derived burnedPerYear, emissionsPerYear and the supply totals must not move freely, and no
+        # release line may appear or vanish.
+        old = self.golden_lit()
+        allow = (HERE / "r1-allowlist.json").read_text()
+        D = "incomeStatement.dilution"
+
+        def mutated(fn):
+            r = json.loads(json.dumps(old))
+            fn(r["incomeStatement"]["dilution"])
+            return r
+
+        def setk(*keys, value=None, scale=None):
+            def fn(d):
+                obj = d
+                for k in keys[:-1]:
+                    obj = obj[k]
+                obj[keys[-1]] = obj[keys[-1]] * scale if scale is not None else value
+            return fn
+
+        probes = {
+            "burnedPerYear -> 0": (setk("supply", "burnedPerYear", value=0), [f"{D}.supply.burnedPerYear"]),
+            "burnedPerYear -> null": (setk("supply", "burnedPerYear", value=None), [f"{D}.supply.burnedPerYear"]),
+            "burnedPerYear +1e-12": (setk("supply", "burnedPerYear", scale=1 + 1e-12), [f"{D}.supply.burnedPerYear"]),
+            "emissionsPerYear x2": (setk("emissionsPerYear", scale=2), [f"{D}.emissionsPerYear"]),
+            "emissionsPerYear +1 token": (setk("emissionsPerYear", value=old["incomeStatement"]["dilution"]["emissionsPerYear"] + 1),
+                                          [f"{D}.emissionsPerYear"]),
+            "addedPerYear x1.001": (setk("supply", "addedPerYear", scale=1.001), [f"{D}.supply.addedPerYear"]),
+            "netPct +0.0002": (setk("supply", "netPct", value=old["incomeStatement"]["dilution"]["supply"]["netPct"] + 0.0002),
+                               [f"{D}.supply.netPct"]),
+            "a new 9e9 release line": (lambda d: d["releases"].append({"id": "x", "tokensPerYear": 9e9, "yield": 9.0}),
+                                       [f"{D}.releases[id=x].id", f"{D}.releases[id=x].tokensPerYear", f"{D}.releases[id=x].yield"]),
+            "the unlocks line removed": (lambda d: d["releases"].clear(),
+                                         [f"{D}.releases", f"{D}.releases[id=unlocks].id", f"{D}.releases[id=unlocks].tokensPerYear",
+                                          f"{D}.releases[id=unlocks].yield"]),
+            "a new field under dilution": (lambda d: d.update(newField=1), [f"{D}.newField"]),
+        }
+        for name, (fn, bad) in probes.items():
+            code, res, err = self.run_cli(old, mutated(fn), allow)
+            self.assertEqual(code, 1, (name, res))
+            for p in bad:
+                self.assertIn(p, res["unallowed"], name)
+        # In bound: addedPerYear +0.066%, netPct +0.00005 pass.
+        ok = mutated(lambda d: (setk("supply", "addedPerYear", scale=1.00066)(d),
+                                setk("supply", "netPct", value=d["supply"]["netPct"] + 0.00005)(d)))
+        self.assertEqual(self.run_cli(old, ok, allow)[0], 0)
+        lit = {e["glob"]: e for e in flatdiff.load_allowlist(HERE / "r1-allowlist.json")["lit"]}
+        self.assertEqual(lit[f"{D}.supply.burnedPerYear"]["abs"], 0)
+        self.assertEqual(lit[f"{D}.emissionsPerYear"]["abs"], 0)
+        self.assertEqual(lit[f"{D}.supply.addedPerYear"]["rel"], 0.0007)
+        self.assertEqual(lit[f"{D}.supply.netPct"]["abs"], 0.0001)
+        # No unbounded LIT entry matches any release-line path, existing or new.
+        for g, e in lit.items():
+            if "rel" not in e and "abs" not in e and not e.get("todo"):
+                for p in (f"{D}.releases[id=x].tokensPerYear", f"{D}.releases[id=unlocks].tokensPerYear", f"{D}.releases",
+                          f"{D}.supply.burnedPerYear"):
+                    self.assertFalse(flatdiff.glob_match(g, p), (g, p))
+
+    def test_the_committed_allowlist_never_matches_holder_flow_paths(self):
+        entries = flatdiff.load_allowlist(HERE / "r1-allowlist.json")
+        for p in ("incomeStatement.dilution.supply.burnedPerYear", "incomeStatement.holderFlow.byBucket.burn.net",
+                  "incomeStatement.holders.byBucket.burn.annualized"):
+            for a, es in entries.items():
+                for e in es:
+                    if flatdiff.glob_match(e["glob"], p):
+                        # Only an exact entry (abs 0, or PUMP's rel 1e-12) may match a holder-flow path.
+                        self.assertTrue(e.get("todo") or (e.get("abs") == 0 and "rel" not in e) or (e.get("rel", 1) <= 1e-12 and "abs" not in e),
+                                        (a, e["glob"], p))
+
+    def test_a_dotted_key_and_nested_keys_do_not_collide(self):
+        self.assertNotEqual(set(flatdiff.flatten({"a": {"b": 1}})), set(flatdiff.flatten({"a.b": 1})))
+        self.assertEqual(flatdiff.flatten({"a.b": 1}), {"a\\.b": 1})
+        # Brackets and backslashes in a key are escaped too, so a key can't fake a list step or an escape.
+        self.assertNotEqual(set(flatdiff.flatten({"a": [1]})), set(flatdiff.flatten({"a[0]": 1})))
+        self.assertNotEqual(set(flatdiff.flatten({"a\\": {"b": 1}})), set(flatdiff.flatten({"a\\.b": 1})))
+        # The reviewer's probe: the nested value changed, the dotted one did not -> both paths differ, exit 1.
+        old = {**report(), "x": {"a": {"b": 1}, "a.b": 1}}
+        new = {**report(), "x": {"a": {"b": 2}, "a.b": 1}}
+        code, res, _ = self.run_cli(old, new, {"lit": []})
+        self.assertEqual(code, 1)
+        self.assertEqual(res["unallowed"], ["x.a.b"])
+        old2 = {**report(), "x": {"a": {"b": 1}}}
+        new2 = {**report(), "x": {"a.b": 1}}
+        code, res, _ = self.run_cli(old2, new2, {"lit": []})
+        self.assertEqual(code, 1)
+        self.assertEqual(sorted(res["unallowed"]), ["x.a.b", "x.a\\.b"])
+
+    def test_numeric_and_string_ids_do_not_collide(self):
+        flat = flatdiff.flatten({"l": [{"id": 1, "v": 10}, {"id": "1", "v": 20}]})
+        self.assertEqual(flat, {"l[id=#1].id": 1, "l[id=#1].v": 10, "l[id=1].id": "1", "l[id=1].v": 20})
+        # A string id that looks like a tag or holds a bracket is escaped.
+        self.assertEqual(set(flatdiff.flatten({"l": [{"id": "#1"}, {"id": 1}]})), {"l[id=\\#1].id", "l[id=#1].id"})
+        self.assertEqual(set(flatdiff.flatten({"l": [{"id": "a]b"}]})), {"l[id=a\\]b].id"})
+        # The reviewer's probe: the first element's value changed -> exit 1.
+        old = {**report(), "l": [{"id": 1, "v": 10}, {"id": "1", "v": 20}]}
+        new = {**report(), "l": [{"id": 1, "v": 11}, {"id": "1", "v": 20}]}
+        code, res, _ = self.run_cli(old, new, {"lit": []})
+        self.assertEqual(code, 1)
+        self.assertEqual(res["unallowed"], ["l[id=#1].v"])
+        # A number id changing type is a removed + added element, not "same".
+        code, res, _ = self.run_cli({**report(), "l": [{"id": 1}]}, {**report(), "l": [{"id": "1"}]}, {"lit": []})
+        self.assertEqual(code, 1)
+
+    def test_golden_report_paths_are_unescaped(self):
+        # Real reports use identifier keys and string ids, so the committed globs keep their plain form.
+        golden = json.loads((HERE.parent.parent / "tests" / "report" / "golden" / "v2-report-13.json").read_text())
+        for k, v in golden.items():
+            if isinstance(v, dict) and isinstance(v.get("report"), str):
+                for p in flatdiff.flatten(json.loads(v["report"])):
+                    self.assertNotIn("\\", p, (k, p))
+                    self.assertNotIn("[id=#", p, (k, p))
+
+    def test_a_duplicate_asset_key_in_the_allowlist_exits_2(self):
+        dup = '{"lit": [{"glob": "price", "reason": "x"}], "lit": []}'
+        code, _, err = self.run_cli({**report(), "price": 1.8}, report(), dup)
+        self.assertEqual(code, 2)
+        self.assertIn("duplicate", err)
+        # A duplicate key inside an entry too (the second glob would silently win).
+        dup2 = '{"lit": [{"glob": "price", "glob": "incomeStatement.*", "reason": "x"}]}'
+        self.assertEqual(self.run_cli(report(), report(), dup2)[0], 2)
+
+    def test_a_bare_star_or_blank_glob_exits_2(self):
+        for g in ("*", "**", "*.burnedPerYear", " ", ""):
+            for where in ("lit", "*"):
+                code, _, err = self.run_cli(report(), report(), {where: [{"glob": g, "reason": "y"}]})
+                self.assertEqual(code, 2, (g, where))
+                self.assertIn("glob", err)
+        # A glob with a literal first segment is fine.
+        self.assertEqual(self.run_cli(report(), report(), {"lit": [{"glob": "incomeStatement.*", "reason": "y"}]})[0], 0)
+
+    # --- controller addendum (the real prod-copy run) ---------------------------------------------------------------
+
+    def test_flatdiff_compiles_without_warnings(self):
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            compile((HERE / "flatdiff.py").read_text(), "flatdiff.py", "exec")
+
+    def test_lit_net_of_dilution_fields_are_bounded_rel_0_0008_on_their_own(self):
+        lit = flatdiff.load_allowlist(HERE / "r1-allowlist.json")["lit"]
+        net = ["incomeStatement.holderFlow.netOfDilution", "incomeStatement.perToken.holderFlow.netOfDilution",
+               "incomeStatement.perToken.perTokenFdv.holderFlow.netOfDilution", "incomeStatement.yields.netShareholder"]
+        old = self.golden_lit()
+        for p in net:
+            matching = [e for e in lit if flatdiff.glob_match(e["glob"], p)]
+            self.assertEqual([(e["glob"], e.get("rel"), "abs" in e) for e in matching], [(p, 0.0008, False)], p)
+        # rel 0.000729 (the real run) passes, 0.00081 fails, on each of the four.
+        for f, want in ((1.000729, 0), (1.00081, 1)):
+            new = json.loads(json.dumps(old))
+            s = new["incomeStatement"]
+            for obj in (s["holderFlow"], s["perToken"]["holderFlow"], s["perToken"]["perTokenFdv"]["holderFlow"]):
+                obj["netOfDilution"] *= f
+            s["yields"]["netShareholder"] *= f
+            code, res, _ = self.run_cli(old, new, (HERE / "r1-allowlist.json").read_text())
+            self.assertEqual(code, want, (f, res["unallowed"]))
+            if want:
+                self.assertEqual(sorted(res["unallowed"]), sorted(net))
+
+    def test_the_committed_allowlist_has_exact_provenance_entries_and_no_todo(self):
+        entries = flatdiff.load_allowlist(HERE / "r1-allowlist.json")
+        for a, es in entries.items():
+            for e in es:
+                self.assertNotIn("todo", e, (a, e["glob"]))
+                if a in ("lit", "vvv") and not e["glob"].startswith(("incomeStatement.dilution", "incomeStatement.yields",
+                                                                      "incomeStatement.holderFlow", "incomeStatement.perToken",
+                                                                      "incomeStatement.revenue.lines[id=business].crossCheck")):
+                    self.assertNotIn("*", e["glob"], (a, e["glob"]))
+        listing = lambda a: sorted(e["glob"] for e in entries[a] if e["glob"].startswith(("incomeStatement.flags", "incomeStatement.provenance", "incomeStatement.checks")))
+        self.assertEqual(listing("lit"), sorted(["incomeStatement.flags", "incomeStatement.flags[0]", "incomeStatement.provenance.thirdParty",
+                                                 "incomeStatement.provenance.thirdParty[0]"]))
+        self.assertEqual(listing("vvv"), sorted(["incomeStatement.flags[3]", "incomeStatement.provenance.sources[2]", "incomeStatement.provenance.thirdParty",
+                                                 "incomeStatement.provenance.thirdParty[0]", "incomeStatement.provenance.thirdParty[1]"]))
+        for a in ("crv", "cvxcrv", "hype", "link", "sdcrv", "sky", "ycrv", "cake", "uni", "pump"):
+            self.assertEqual(listing(a), [], a)
+        # A provenance / flags / checks change on a no-diff asset now fails.
+        old = {**report("crv"), "incomeStatement": {**report("crv")["incomeStatement"], "flags": ["x"]}}
+        new = {**report("crv"), "incomeStatement": {**report("crv")["incomeStatement"], "flags": []}}
+        code, res, _ = self.run_cli(old, new, (HERE / "r1-allowlist.json").read_text(), asset="crv")
+        self.assertEqual(code, 1)
+        self.assertEqual(sorted(res["unallowed"]), ["incomeStatement.flags", "incomeStatement.flags[0]"])
 
 
 if __name__ == "__main__":

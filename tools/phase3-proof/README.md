@@ -20,6 +20,11 @@ unique scalar `id` is keyed by it (`incomeStatement.dilution.releases[id=unlocks
 R1 shows as `[0]` removed plus the `[]` leaf added. Two numbers of equal value are equal (`2` vs `2.0`); `true` is not
 `1`. The top-level `asset` of both files must be `--asset`.
 
+No two values share a path. A backslash, `.` or `[` inside a key is escaped with a backslash (`{"a.b": 1}` is
+`a\.b`, `{"a": {"b": 1}}` is `a.b`). A number id is tagged `#` (`[id=#1]`); a string id escapes a backslash, `]`
+and a leading `#` (`[id=1]` is the string `"1"`). Should two values still flatten to one path, or a file repeat a key,
+flatdiff exits 2. Real reports use identifier keys and string ids, so their paths carry no escapes.
+
 ## Allowlist format
 
 ```json
@@ -31,7 +36,9 @@ R1 shows as `[0]` removed plus the `[]` leaf added. Two numbers of equal value a
 ```
 
 - Keys: an asset id, or `*` (applies to every asset). Entry keys: `glob` (required), `reason` (required, non-empty),
-  `rel` / `abs` (optional, finite, >= 0), `todo` (optional bool). Any other key, or a malformed value, exits 2.
+  `rel` / `abs` (optional, finite, >= 0), `todo` (optional bool). Any other key, a malformed value, a duplicate key
+  (an asset listed twice, say: JSON would keep only the last) or a glob that is blank or starts with `*` (a bare `*`
+  would allow everything; name the first path segment literally) exits 2.
 - Glob: only `*` is special and matches any run of characters including `.` and `[...]`; brackets are literal; the
   glob must match the whole path. `incomeStatement.volume.*` does not match `incomeStatement.volume` itself (list both
   when the object itself may become null).
@@ -45,16 +52,22 @@ R1 shows as `[0]` removed plus the `[]` leaf added. Two numbers of equal value a
 - An applicable entry that matched no differing path is listed as `WARN unmatched` (no effect on the exit code).
 
 `r1-allowlist.json` (brief Step 2): CAKE, UNI `incomeStatement.volume` and `incomeStatement.volume.*` (volume becomes
-not_measured); LIT `incomeStatement.dilution.*` (no bound) and the unlocks line's `tokensPerYear` at rel 0.0007 (the
-+0.066%: Lighter's 500M vs DefiLlama's 499.67M). Ruling R21: the change flows into every dilution-derived field, so
-LIT also bounds at rel 0.0007 `yields.dilution`, `yields.netShareholder`, `holderFlow.netOfDilution`,
-`perToken.dilution`, `perToken.holderFlow.netOfDilution`, `perToken.perTokenFdv.*`, `dilution.pct`,
-`dilution.tokensPerYear`, the unlocks line's `yield` (`dilution.releases[id=unlocks]`) and both fields of
-`yields.dilutionLines[id=unlocks]` (all under `incomeStatement.`), and `dilution.supply.netPerYear` at abs 100000
-tokens (added minus burned, so its relative change can exceed 0.07%). PUMP has the same paths at rel 1e-12. VVV the
-business line's `crossCheck` fields. All 12 changed assets: TODO placeholders for the provenance / flags / checks
-listing paths (`incomeStatement.provenance.thirdParty*`, `incomeStatement.provenance.sources*`,
-`incomeStatement.flags*`, `incomeStatement.checks*`), filled from the first diff run. AERO has no entry (its report
+not_measured); LIT the unlocks line's `tokensPerYear` at rel 0.0007 (the +0.066%: Lighter's 500M vs DefiLlama's
+499.67M). LIT has no unbounded dilution glob (fix round 1): `dilution.releases[id=unlocks].id`,
+`dilution.emissionsPerYear` and `dilution.supply.burnedPerYear` (buyback burns: holder flow) are exact (abs 0),
+`dilution.supply.addedPerYear` is rel 0.0007 and `dilution.supply.netPct` abs 0.0001, so a release line added or
+removed has no entry and fails. Ruling R21: the change flows into every dilution-derived field, so
+LIT also bounds at rel 0.0007 `yields.dilution`, `perToken.dilution`, `perToken.perTokenFdv.dilution`,
+`dilution.pct`, `dilution.tokensPerYear`, the unlocks line's `yield` (`dilution.releases[id=unlocks]`) and both fields
+of `yields.dilutionLines[id=unlocks]` (all under `incomeStatement.`), and `dilution.supply.netPerYear` at abs 100000
+tokens (added minus burned, so its relative change can exceed 0.07%). The four net-of-dilution fields
+(`holderFlow.netOfDilution`, `perToken.holderFlow.netOfDilution`, `perToken.perTokenFdv.holderFlow.netOfDilution`,
+`yields.netShareholder`) each get their own rel 0.0008: net = holder flow - dilution, so the +0.066% moves the net by
+~0.073% (the prod-copy run: rel 0.000729). PUMP has the R21 paths at rel 1e-12. VVV the business line's `crossCheck`
+fields. Provenance / flags (controller addendum, from the prod-copy run; exact paths, no globs): LIT
+`incomeStatement.flags`, `flags[0]`, `provenance.thirdParty`, `provenance.thirdParty[0]`; VVV `flags[3]`,
+`provenance.sources[2]`, `provenance.thirdParty`, `provenance.thirdParty[0]`, `provenance.thirdParty[1]`. Every other
+asset showed no provenance / flags / checks diff and has no entry there. No `todo` placeholder remains. AERO has no entry (its report
 must be `cmp`-identical); revenue, cost of revenue, holder flow and grades get none beyond the R21 dilution-derived
 fields.
 

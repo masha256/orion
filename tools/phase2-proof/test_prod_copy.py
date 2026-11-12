@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -257,13 +258,21 @@ class HomesTest(unittest.TestCase):
             def never(*a, **kw):
                 raise AssertionError("prod or psql read before the old release migrated")
 
-            with self.assertRaises(prod_copy.CopyError):
+            inherited = {"ORION_DATABASE_URL": "postgresql://prod-must-not-leak@/orion", "ORION_DB_SCHEMA": "public",
+                         "ORION_ENV_FILE": "/home/orion-prod/.env", "ORION_HOME": "/home/orion-prod/home"}
+            with mock.patch.dict(os.environ, inherited), self.assertRaises(prod_copy.CopyError):
                 prod_copy.copy_prod(root / "p", root / "rel", root / "wt", never, never, run=run)
             self.assertEqual(len(seen), 1)
             argv, kw = seen[0]
             self.assertEqual(argv, ["node", str(root / "rel" / "dist" / "cli" / "index.js"), "db", "migrate", "--breaking", "--json"])
             self.assertEqual(kw["cwd"], str(root / "p" / "old"))
             self.assertEqual(kw["env"]["ORION_HOME"], str(root / "p" / "old"))
+            # The scratch-only safety of --breaking: the env file is <P>/old/.env (DEV_URL + the fresh schema), and no
+            # inherited ORION_* (a prod ORION_DATABASE_URL above all) reaches the migrate.
+            self.assertEqual(kw["env"]["ORION_ENV_FILE"], str(root / "p" / "old" / ".env"))
+            self.assertNotIn("ORION_DATABASE_URL", kw["env"])
+            self.assertNotIn("ORION_DB_SCHEMA", kw["env"])
+            self.assertEqual(sorted(k for k in kw["env"] if k.startswith("ORION_")), ["ORION_ENV_FILE", "ORION_HOME"])
 
     def test_cli_refuses_without_p2_prod_ssh_before_writing_anything(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -437,8 +437,8 @@ ssh orion-<env> job run-now backfill <asset> --metrics <k1,k2,...> --backfill-da
 ssh orion-<env> data compare-usd <asset> [--days <1..400>]      # read-only (default 91 days)
     $ST data compare-usd vvv --days 91
 ssh orion-<env> data purge <asset> --metrics <k1,k2,...> [--source-type <rung>] [--yes]
-    # a dry run without --yes; --yes first writes the rows to ~/home/purged/<asset>-<metric>-<UTCstamp>.json, then
-    # deletes. <rung>: contract_state, log_scan, first_party_api, pool_scan, disclosure, derived, constant,
+    # a dry run without --yes; --yes first writes every metric's rows to ONE file per call,
+    # ~/home/purged/<asset>-<first metric>[+N]-<UTCstamp>.json (src/db/purge.ts), then deletes. <rung>: contract_state, log_scan, first_party_api, pool_scan, disclosure, derived, constant,
     # market_data, third_party. Prod purges only on Mike's go.
     $PR data purge lit --metrics unlocks_next_year --source-type third_party      # dry run: prints the counts
 ```

@@ -1,17 +1,22 @@
 #!/usr/bin/python3
-"""Flattening diff of one asset's report before and after a release, against an allowlist (Phase 3 R1 proof).
+r"""Flattening diff of one asset's report before and after a release, against an allowlist (Phase 3 R1 proof).
 
     flatdiff.py <old.json> <new.json> --allow <allowlist.json> --asset <a> [--json]
 
 <old.json> and <new.json> are `report yield <a> --day D --json` (a JSON object whose top-level `asset` must be <a>).
 Both are flattened to `path -> scalar`: dict keys are joined with `.`; a list whose elements are all objects with a
 unique scalar `id` is keyed `key[id=<id>]`, any other list by index `key[<i>]`; an empty object or list is itself a
-leaf (`{}` / `[]`), so `[] -> [x]` shows. Every path that differs is printed, as `added` (only in new), `removed`
+leaf (`{}` / `[]`), so `[] -> [x]` shows. No two values share a path: `\`, `.` and `[` in a key are escaped with `\`
+(`{"a.b": 1}` is `a\.b`, not `a.b`); a string id escapes `\`, `]` and a leading `#`, and a number id is tagged `#`
+(id 1 is `[id=#1]`, id "1" is `[id=1]`); a collision anyway is refused (exit 2). Real reports use identifier keys and
+string ids, so their paths carry no escapes. Every path that differs is printed, as `added` (only in new), `removed`
 (only in old) or `changed` (old -> new). Two numbers of equal value are equal (int vs float: JSON from JS has no such
 distinction); a bool is not a number.
 
 Allowlist: {"<asset>" | "*": [{"glob": "<path glob>", "rel": <float, optional>, "abs": <float, optional>,
-"reason": "<text, required>", "todo": <bool, optional>}, ...]}; top-level keys starting with `_` are comments. In a
+"reason": "<text, required>", "todo": <bool, optional>}, ...]}; top-level keys starting with `_` are comments; a
+duplicate key anywhere is refused, and so is a glob that is blank or starts with `*` (a bare `*` would allow
+everything: a glob must name at least its first path segment literally). In a
 glob only `*` is special: it matches any run of characters, `.` and `[...]` included; everything else (brackets too)
 is literal, and the glob must match the whole path. The entries that apply are <asset>'s and `*`'s. A differing path
 is allowed when at least one applicable entry matches it and EVERY applicable entry matching it holds:
@@ -43,6 +48,15 @@ class Bad(Exception):
     """An input that cannot take part in the comparison (exit 2)."""
 
 
+def _no_dup_keys(pairs):
+    out = {}
+    for k, v in pairs:
+        if k in out:
+            raise Bad(f"duplicate key {json.dumps(k)}")
+        out[k] = v
+    return out
+
+
 def load_json(path, what):
     try:
         raw = Path(path).read_bytes()
@@ -51,9 +65,11 @@ def load_json(path, what):
     if not raw.strip():
         raise Bad(f"{what} {path}: empty")
     try:
-        return json.loads(raw.decode("utf-8"))
+        return json.loads(raw.decode("utf-8"), object_pairs_hook=_no_dup_keys)
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
         raise Bad(f"{what} {path}: unparseable ({e})") from None
+    except Bad as e:
+        raise Bad(f"{what} {path}: {e} (last-wins would hide an entry or a value)") from None
 
 
 def load_report(path, what, asset):
@@ -93,8 +109,10 @@ def load_allowlist(path):
             unknown = sorted(set(e) - ENTRY_KEYS)
             if unknown:
                 raise Bad(f"{where}: unknown key(s) {', '.join(unknown)} (allowed: {', '.join(sorted(ENTRY_KEYS))})")
-            if not isinstance(e.get("glob"), str) or not e["glob"]:
+            if not isinstance(e.get("glob"), str) or not e["glob"].strip():
                 raise Bad(f"{where}: `glob` must be a non-empty string")
+            if e["glob"].startswith(STAR):
+                raise Bad(f"{where}: `glob` {e['glob']!r} starts with `*`: name the first path segment literally")
             if not isinstance(e.get("reason"), str) or not e["reason"].strip():
                 raise Bad(f"{where}: `reason` is required (non-empty string)")
             for k in ("rel", "abs"):
@@ -106,30 +124,48 @@ def load_allowlist(path):
     return out
 
 
+def key_step(k):
+    """A dict key as a path segment: backslash, `.` and `[` escaped with a backslash."""
+    return re.sub(r"([\\.\[])", r"\\\1", k)
+
+
+def id_step(i):
+    """`[id=...]` for a list element's id: a number is tagged `#`; a string escapes backslash, `]` and a leading `#`."""
+    if isinstance(i, str):
+        s = re.sub(r"([\\\]])", r"\\\1", i)
+        return "[id=" + ("\\" if s.startswith("#") else "") + s + "]"
+    return f"[id=#{json.dumps(i)}]"
+
+
 def _id_keyed(items):
     if not items or not all(isinstance(x, dict) and "id" in x for x in items):
         return False
     ids = [x["id"] for x in items]
     if not all(isinstance(i, (str, int, float)) and not isinstance(i, bool) for i in ids):
         return False
-    return len(set(map(json.dumps, ids))) == len(ids)
+    return len(set(map(id_step, ids))) == len(ids)
 
 
 def flatten(value, prefix=""):
-    """{path: scalar} of a parsed JSON value (see the module doc for the path syntax)."""
+    """{path: scalar} of a parsed JSON value (see the module doc for the path syntax); Bad on a path collision."""
     out = {}
+
+    def leaf(path, node):
+        if path in out:
+            raise Bad(f"two values flatten to the path {path!r}")
+        out[path] = node
 
     def walk(node, path):
         if isinstance(node, dict) and node:
             for k, v in node.items():
-                walk(v, f"{path}.{k}" if path else k)
+                walk(v, f"{path}.{key_step(k)}" if path else key_step(k))
         elif isinstance(node, list) and node:
             keyed = _id_keyed(node)
             for i, v in enumerate(node):
-                step = f"[id={v['id']}]" if keyed else f"[{i}]"
+                step = id_step(v["id"]) if keyed else f"[{i}]"
                 walk(v, f"{path}{step}")
         else:
-            out[path or "$"] = node
+            leaf(path or "$", node)
 
     walk(value, prefix)
     return out
@@ -235,7 +271,11 @@ def main(argv=None):
     except Bad as e:
         print(f"flatdiff: {e}", file=sys.stderr)
         return 2
-    res = diff(old, new, allow, args.asset)
+    try:
+        res = diff(old, new, allow, args.asset)
+    except Bad as e:
+        print(f"flatdiff: {e}", file=sys.stderr)
+        return 2
     if args.json:
         print(json.dumps(res))
     else:
