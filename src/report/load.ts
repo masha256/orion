@@ -1,4 +1,4 @@
-import type { AssetConfig } from '../config/schema.js';
+import { volumeMetrics, type AssetConfig } from '../config/schema.js';
 import type { Db } from '../db/connection.js';
 import { listCheckResults } from '../db/checkResults.js';
 import { listActiveObservations, listActiveProvenance } from '../db/observations.js';
@@ -24,7 +24,7 @@ export function reportFlowMetrics(asset: AssetConfig): string[] {
     ...(is.below_line ?? []).flatMap((b) => [b.metric, b.apportion?.by, b.apportion?.total]),
     // Only a sum check's totals: the other check types read their own series, which must never move the report day.
     ...(is.checks ?? []).flatMap((c) => (c.type === 'sum' ? c.total : [])),
-    ...(is.volume ?? []),
+    ...volumeMetrics(is.volume),
     ...(is.burned_tokens ?? []),
   ].filter((m): m is string => m !== undefined))];
 }

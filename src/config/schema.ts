@@ -37,8 +37,17 @@ const MetricDefSchema = z.strictObject({
 
 /** The trailing window for every series, and the length of each half of a growth comparison. */
 const WindowDaysSchema = z.number().int().min(7).max(365);
-/** Flow metrics whose sum is the gross the protocol handles (e.g. the CRV a locker collects before its cut). */
-const VolumeSchema = z.array(z.string()).min(1);
+/**
+ * Flow metrics whose sum is the gross the protocol handles (e.g. the CRV a locker collects before its cut), or
+ * `{ not_measured: <reason> }` when the asset has a gross series but Orion reads none (Phase 3: a retired third-party
+ * series). Not measured is never 0: the report shows no figure and the reason. The list form parses exactly as before.
+ */
+const VolumeSchema = z.union([z.array(z.string()).min(1), z.strictObject({ not_measured: z.string().min(1).max(200) })]);
+
+/** The flow metrics a `volume` value lists: none for the not_measured form. */
+export function volumeMetrics(volume: string[] | { not_measured: string } | undefined): string[] {
+  return Array.isArray(volume) ? volume : [];
+}
 /**
  * Supply released to the market outside the emission schedule (UNI's Labs vest from the Timelock): a level in tokens per
  * year, optionally capped by a level in tokens (what governance has approved so far). Added to the report's dilution
@@ -138,11 +147,11 @@ export const AssetConfigSchema = z
 /** The checks on income_statement's volume, burned_tokens and dilution, prefixed by block. */
 function sharedReportingIssues(
   metrics: Record<string, { type: string; unit: string }>,
-  block: { volume?: string[]; burned_tokens?: string[]; dilution?: { id: string; metric: string; cap_metric?: string }[] },
+  block: { volume?: string[] | { not_measured: string }; burned_tokens?: string[]; dilution?: { id: string; metric: string; cap_metric?: string }[] },
   where: string,
 ): string[] {
   const out: string[] = [];
-  const list = block.volume ?? [];
+  const list = volumeMetrics(block.volume);
   if (new Set(list).size !== list.length) out.push(`${where}: volume lists a metric twice`);
   for (const m of list) if (metrics[m]?.type !== 'flow') out.push(`${where}: volume "${m}" is not a flow metric`);
   for (const m of block.burned_tokens ?? []) {

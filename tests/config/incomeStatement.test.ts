@@ -238,6 +238,35 @@ describe('income_statement schema', () => {
     refused(pr, /below_line\.grants to protocol takes no bucket, haircut, recipient_base, valued_per or capture_rule/);
   });
 
+  it('volume may be { not_measured: <reason> } (1-200 chars, no other key), parsed exactly as written (Phase 3 Task 5)', () => {
+    const nm = base();
+    nm.volume = { not_measured: 'gross swap volume: DefiLlama series retired, no on-chain read yet' };
+    expect(parse(nm).config.income_statement).toStrictEqual(nm);
+    const long = base();
+    long.volume = { not_measured: 'x'.repeat(200) };
+    expect(() => parse(long)).not.toThrow();
+    const tooLong = base();
+    tooLong.volume = { not_measured: 'x'.repeat(201) };
+    expect(() => parse(tooLong)).toThrow();
+    const empty = base();
+    empty.volume = { not_measured: '' };
+    expect(() => parse(empty)).toThrow();
+    const extra = base();
+    extra.volume = { not_measured: 'x', extra: 1 };
+    expect(() => parse(extra)).toThrow();
+    const bare = base();
+    bare.volume = {};
+    expect(() => parse(bare)).toThrow();
+    const listEmpty = base();
+    listEmpty.volume = [];
+    expect(() => parse(listEmpty)).toThrow();
+  });
+
+  it('the volume list form parses to the same array as before (config hash unchanged)', () => {
+    const { config } = parse(base());
+    expect(config.income_statement!.volume).toStrictEqual(['flow_usd.core']);
+  });
+
   it('metric, flow and line references are checked', () => {
     const is = base();
     is.revenue[0].metric = 'flow_usd.missing';

@@ -247,8 +247,11 @@ export interface IsV2 {
     notMeasured: string[];
     lines: HolderFlowLineOut[];
   };
-  /** The statement's `volume` series (v1's volume figure): null without a volume list. */
-  volume: { metrics: string[]; annualized: number | null; growth: Growth } | null;
+  /**
+   * The statement's `volume` series (v1's volume figure): null without a volume block. For `volume: { not_measured }`
+   * no metrics, no figure (never 0) and `notMeasured` = the reason; the list form has no `notMeasured` key.
+   */
+  volume: { metrics: string[]; annualized: number | null; growth: Growth; notMeasured?: string } | null;
   dilution: {
     /** Annual supply growth from emissions and releases (v1 yields.dilution). */
     pct: number | null;
@@ -864,12 +867,15 @@ export function incomeStatementV2(input: ReportInput): IsV2 {
   });
 
   // Volume (v1's figure over the same series): the window's sum across the listed series, annualized, and its growth.
-  const volume: IsV2['volume'] = is.volume
-    ? (() => {
-        const s = windowSum(daily, is.volume, day, W);
-        return { metrics: is.volume, annualized: s === null ? null : (s * DAYS_PER_YEAR) / W, growth: growthOf(daily, is.volume, day, W) };
-      })()
-    : null;
+  const vol = is.volume;
+  const volume: IsV2['volume'] = vol === undefined
+    ? null
+    : !Array.isArray(vol)
+      ? { metrics: [], annualized: null, growth: noSeries('not measured'), notMeasured: vol.not_measured }
+      : (() => {
+          const s = windowSum(daily, vol, day, W);
+          return { metrics: vol, annualized: s === null ? null : (s * DAYS_PER_YEAR) / W, growth: growthOf(daily, vol, day, W) };
+        })();
 
   // Tokens a year added (v1's dilution numerator): emissions plus the income_statement.dilution releases (null when one
   // is unread).

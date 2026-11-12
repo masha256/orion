@@ -198,7 +198,7 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     // Every revenue and volume line is a report-only flow; a report-only flow may also be a record only (e.g. the whole
     // fee, of which only the protocol's part is revenue).
     const incomeMetrics = [...is.revenue, ...(is.cost_of_revenue ?? []), ...(is.protocol ?? []), ...(is.operating_costs ?? [])].flatMap((l) => (l.metric ? [l.metric] : []));
-    expect(reportFlows).toEqual(expect.arrayContaining([...incomeMetrics.filter((m) => config.metrics[m]?.monitor_only), ...(is.volume ?? [])]));
+    expect(reportFlows).toEqual(expect.arrayContaining([...incomeMetrics.filter((m) => config.metrics[m]?.monitor_only), ...((is.volume ?? []) as string[])]));
     expect(plan.flowGroups.map((g) => g.members.map((m) => m.metricKey))).toEqual([...flowIds.map((id) => [`flow_usd.${id}`]), ...reportFlows.map((m) => [m])]);
     expect(plan.derived).toEqual([]);
   });

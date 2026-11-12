@@ -609,9 +609,26 @@ describe('fix round 1: shape (M1 volume, M6)', () => {
   it.each(['cake', 'cvxcrv', 'uni'])('%s: volume is v1 volume (annualized, growth, metrics)', (id) => {
     const input = syntheticInput(repoAsset(id));
     const v2 = incomeStatementV2(input);
-    const metrics = input.asset.income_statement!.volume!;
+    const metrics = input.asset.income_statement!.volume as string[];
     const sum = windowSum(input.daily, metrics, input.day, 91)!;
     expect(v2.volume).toEqual({ metrics, annualized: (sum * 365) / 91, growth: growthOf(input.daily, metrics, input.day, 91) });
+  });
+
+  it.each(['cake', 'cvxcrv', 'uni'])('%s: the list form output carries no notMeasured key (byte-identical)', (id) => {
+    const v2 = incomeStatementV2(syntheticInput(repoAsset(id)));
+    expect(Object.keys(v2.volume!)).toEqual(['metrics', 'annualized', 'growth']);
+  });
+
+  it('volume { not_measured } reads no metric and reports no figure, never 0 (Phase 3 Task 5)', () => {
+    const block = `${BASE}  volume: { not_measured: "gross volume not measured" }\n`;
+    const { v2 } = run(block);
+    expect(v2.volume).toStrictEqual({
+      metrics: [], annualized: null,
+      growth: { current: null, prior: null, change: null, annualized: null, note: 'not measured' },
+      notMeasured: 'gross volume not measured',
+    });
+    expect(Object.keys(v2.volume!)).toEqual(['metrics', 'annualized', 'growth', 'notMeasured']);
+    expect(reportFlowMetrics(toy(block))).toEqual(reportFlowMetrics(toy(BASE)));
   });
 
   it('volume is null without a volume list', () => {
