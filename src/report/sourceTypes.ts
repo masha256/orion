@@ -23,7 +23,9 @@ export const LISTING_RUNGS: ReadonlySet<SourceType> = new Set(['contract_state',
 /**
  * Each code adapter's rung, by name, read from what the adapter calls: chain reads are contract state, a protocol's own
  * API is first party. `lit.unlocks_next_year` reads DefiLlama's emissions dataset (its default url), so it is third party
- * although the other `lit.*` adapters read Lighter. An adapter missing here has no rung (null) until it is added.
+ * although the other `lit.*` adapters read Lighter. `schedule.unlocks_next_year` reads nothing: it computes a schedule the
+ * asset YAML cites, so it is a disclosure (its rows are `disclosed` and carry the citation). An adapter missing here has
+ * no rung (null) until it is added.
  */
 export const ADAPTER_SOURCE_TYPES: Readonly<Record<string, SourceType>> = {
   'cake.emission_rate_annual': 'contract_state',
@@ -42,6 +44,7 @@ export const ADAPTER_SOURCE_TYPES: Readonly<Record<string, SourceType>> = {
   'lit.app_fee_share': 'first_party_api',
   'lit.staking_pool': 'first_party_api',
   'lit.unlocks_next_year': 'third_party',
+  'schedule.unlocks_next_year': 'disclosure',
   'solana.token_supply': 'contract_state',
   'solana.owner_balance': 'contract_state',
   'solana.supply_burn_daily': 'contract_state',

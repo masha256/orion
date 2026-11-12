@@ -357,7 +357,10 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
         continue;
       }
       const v = result.value;
-      const refusal = validateReading(asset.metrics[r.metricKey], v.value) ?? originMismatch(v.source, provenanceOf(r.metricKey, v));
+      const prov = provenanceOf(r.metricKey, v);
+      // A disclosed row needs its citation (0006's CHECK): a disclosure-rung adapter that returned none fails the read.
+      const uncited = prov.method === 'disclosed' && prov.sourceType === 'disclosure' && !v.citation?.url ? 'a disclosure-rung reading needs its citation; nothing was written' : null;
+      const refusal = validateReading(asset.metrics[r.metricKey], v.value) ?? originMismatch(v.source, prov) ?? uncited;
       if (refusal !== null) {
         markFailed(outcome, `${r.metricKey}: ${refusal}`);
         continue;
@@ -366,7 +369,8 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
         ? null
         : (await insertObservation(db, {
             assetId: asset.id, metricKey: r.metricKey, observedAt: v.observedAt, value: v.value,
-            sourceDetail: v.detail, fetchedAt: startedAt, provenance: provenanceOf(r.metricKey, v),
+            sourceDetail: v.detail, fetchedAt: startedAt, provenance: prov,
+            ...(v.citation ? { citationUrl: v.citation.url, quotedText: v.citation.quote } : {}),
           })).id;
       outcome.metricsWritten.push(r.metricKey);
       written.push({ metricKey: r.metricKey, value: v.value, observedAt: v.observedAt, periodDays: null, source: v.source, observationId });

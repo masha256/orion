@@ -7,8 +7,10 @@ import type { Locator, ProvenanceMethod } from './types.js';
  * `observations.source` column is gone and this is the one function every reader uses in its place. It is what the
  * column held, row for row (rulings R10.2 / R10.2a, proved on the prod copy before the drop):
  *
- * - disclosed: a constant is `api` (the constant source stamped it so); anything else (a disclosure: `data set`, an
- *   approved observation proposal, the analyst's ledger, a confirmed provisional row, a pre-v2 seed) is `manual`.
+ * - disclosed: a constant is `api` (the constant source stamped it so), and so is a cited schedule an adapter computes
+ *   (rung `disclosure` with `locator.adapter`: `schedule.unlocks_next_year` stamps `api`); anything else (a disclosure:
+ *   `data set`, an approved observation proposal, the analyst's ledger, a confirmed provisional row, a pre-v2 seed, none
+ *   of which has an adapter in its locator) is `manual`.
  * - derived: a formula named `manual_*` (R17's correction of a DefiLlama day to the mean of its neighbours) is `manual`;
  *   a derivation whose inputs are sourced from DefiLlama or an adapter (run.ts writes `input_origin: 'api'` into its
  *   locator then, ruling R10.7) or that sits on a third-party rung (DefiLlama, rows written before R10.7) is `api`; any
@@ -61,7 +63,7 @@ const MANUAL_FORMULA = 'manual_';
 export function originOf(p: OriginFields): ObservationSource {
   switch (p.method) {
     case 'disclosed':
-      return p.sourceType === 'constant' ? 'api' : 'manual';
+      return p.sourceType === 'constant' || typeof p.locator?.adapter === 'string' ? 'api' : 'manual';
     case 'derived':
       if ((p.formula ?? '').startsWith(MANUAL_FORMULA)) return 'manual';
       if (p.locator?.[INPUT_ORIGIN_KEY] === 'api') return 'api';

@@ -40,9 +40,11 @@ export interface ScheduleStepReading {
  * What a source returned, with the source's own timestamp. Series are for cross-checks only; they never become
  * observations. `schedule_steps` is a schedule metric's primary reading when the source knows future steps too (a
  * coded halving): the step in force first, then each later step, every one written as its own observation.
+ * A level's `citation` (a cited schedule: `schedule.unlocks_next_year`, rung `disclosure`) becomes the row's
+ * `citation_url` / `quoted_text`; every other level leaves it unset and its row's citation columns null.
  */
 export type SourceValue =
-  | { kind: 'level'; value: number; observedAt: string; source: 'onchain' | 'api'; detail: string; slice?: Json }
+  | { kind: 'level'; value: number; observedAt: string; source: 'onchain' | 'api'; detail: string; slice?: Json; citation?: { url: string; quote: string } }
   | { kind: 'schedule_steps'; steps: ScheduleStepReading[]; source: 'onchain' | 'api'; detail: string }
   | { kind: 'daily_series'; points: DailyPoint[]; detail: string; token?: TokenInfo }
   | { kind: 'monthly_series'; points: MonthlyPoint[]; detail: string }

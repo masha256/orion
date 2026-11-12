@@ -5,6 +5,7 @@ import { crvAdapters } from './crv.js';
 import { evmAdapters } from './evm.js';
 import { hypeAdapters } from './hype.js';
 import { litAdapters } from './lit.js';
+import { scheduleAdapters } from './schedule.js';
 import { solanaAdapters } from './solana.js';
 import { vvvAdapters } from './vvv.js';
 
@@ -53,4 +54,4 @@ export function adapterNames(): string[] {
 }
 
 // Asset-specific adapters register here.
-for (const adapter of [...vvvAdapters, ...hypeAdapters, ...crvAdapters, ...cakeAdapters, ...litAdapters, ...solanaAdapters, ...evmAdapters]) registerAdapter(adapter);
+for (const adapter of [...vvvAdapters, ...hypeAdapters, ...crvAdapters, ...cakeAdapters, ...litAdapters, ...solanaAdapters, ...evmAdapters, ...scheduleAdapters]) registerAdapter(adapter);

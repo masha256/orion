@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolve } from 'node:path';
 import { adapterNames } from '../../src/ingest/adapters/registry.js';
-import { ADAPTER_ENDPOINTS, collectUses, loadAssets, registerIsCurrent, renderRegister, TERMS } from '../../tools/sources-register/generate.js';
+import { ADAPTER_ENDPOINTS, collectUses, loadAssets, registerIsCurrent, renderRegister, sourceKey, TERMS } from '../../tools/sources-register/generate.js';
 
 const root = resolve(import.meta.dirname, '..', '..');
 
@@ -13,6 +13,14 @@ describe('sources register (docs/ops/sources-register.md)', () => {
 
   it('every registered adapter has its endpoints listed, so a new adapter cannot skip the register', () => {
     expect(Object.keys(ADAPTER_ENDPOINTS).sort()).toEqual(adapterNames());
+  });
+
+  it('schedule.unlocks_next_year reads no endpoint: the register lists its citation url, and a missing one fails', () => {
+    const asset = loadAssets(root)[0]!;
+    const url = 'https://blockworks.com/token-transparency/filing/pump';
+    expect(ADAPTER_ENDPOINTS['schedule.unlocks_next_year']!({ citation: { url, quote: 'q' }, schedules: [] }, asset)).toEqual([{ kind: 'http', url }]);
+    expect(sourceKey(ADAPTER_ENDPOINTS['schedule.unlocks_next_year']!({ citation: { url, quote: 'q' } }, asset)[0]!)).toBe('blockworks.com');
+    expect(() => sourceKey(ADAPTER_ENDPOINTS['schedule.unlocks_next_year']!({}, asset)[0]!)).toThrow(/has no URL/);
   });
 
   it('a new asset reading an unregistered host fails generation, naming the host and the asset', () => {

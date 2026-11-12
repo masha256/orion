@@ -5,6 +5,7 @@ import { loadAsset } from '../../src/config/load.js';
 import type { Observation } from '../../src/db/observations.js';
 import { adapterNames, getAdapter } from '../../src/ingest/adapters/registry.js';
 import type { SourceContext, SourceValue } from '../../src/ingest/types.js';
+import { methodOfSource } from '../../src/provenance/locator.js';
 import { ADAPTER_ORIGINS, originOf, SERIES_ORIGIN } from '../../src/provenance/origin.js';
 import { ADAPTER_SOURCE_TYPES } from '../../src/report/sourceTypes.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
@@ -18,7 +19,8 @@ import { fixture, sourceCtx } from '../helpers/sourceCtx.js';
  * another origin (a contract-state series declared `onchain` would see its own rows as foreign conflicts and stall). Every
  * registered adapter is run once here on fakes; its writer's stamp (a level's or schedule's `source`; `SERIES_ORIGIN`
  * for a daily series or periodic payments, which `writeApiFlow` / `writePeriodicPayments` stamp) must equal
- * `originOf(measured, its rung, { adapter })`, and a contract-state adapter must be declared in ADAPTER_ORIGINS.
+ * `originOf(its method, its rung, { adapter })` (method `measured`, or `disclosed` on the disclosure rung:
+ * `schedule.unlocks_next_year`), and a contract-state adapter must be declared in ADAPTER_ORIGINS.
  */
 type Stamp = 'onchain' | 'api';
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -46,7 +48,7 @@ function mismatches(stamps: ReadonlyMap<string, Stamp | null>): string[] {
     const sourceType = ADAPTER_SOURCE_TYPES[name];
     if (sourceType === 'contract_state' && ADAPTER_ORIGINS[name] === undefined) out.push(`${name}: a contract-state adapter missing from ADAPTER_ORIGINS`);
     if (stamp === null) continue;
-    const origin = originOf({ method: 'measured', sourceType, locator: { adapter: name, params: {} }, formula: null });
+    const origin = originOf({ method: methodOfSource({ type: 'adapter', name, params: {} }), sourceType, locator: { adapter: name, params: {} }, formula: null });
     if (origin !== stamp) out.push(`${name}: stamps ${stamp}, reads back ${origin}`);
   }
   return out.sort();
@@ -194,6 +196,11 @@ const SAMPLES: Record<string, () => Promise<SourceValue>> = {
     const http = fakeHttp({ 'https://defillama-datasets.llama.fi/emissions/lighter': { documentedData: { data: [{ label: 'Team', data: linear }] } } });
     return getAdapter('lit.unlocks_next_year').run(sourceCtx({ nowIso: '2026-10-16T12:00:00.000Z', http }), { allocations: ['Team'] });
   },
+  'schedule.unlocks_next_year': async () =>
+    getAdapter('schedule.unlocks_next_year').run(sourceCtx({ nowIso: '2026-11-12T00:46:41.000Z' }), {
+      citation: { url: 'https://blockworks.com/token-transparency/filing/pump', quote: 'then vest linearly over three years to July 2029' },
+      schedules: [{ label: 'team', tokens: 150e9, linear: { start: '2026-07-12', years: 3 } }],
+    }),
   'solana.token_supply': async () => getAdapter('solana.token_supply').run(solCtx(), { mint: 'token' }),
   'solana.owner_balance': async () => getAdapter('solana.owner_balance').run(solCtx(), { mint: 'token', owner: 'burn_wallet_a' }),
   'solana.supply_burn_daily': async () =>

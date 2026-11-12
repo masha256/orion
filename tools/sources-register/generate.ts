@@ -60,6 +60,10 @@ const chainRpc = (asset: AssetConfig, adapter: string): Endpoint[] => {
   if (asset.ingest === undefined) throw new Error(`asset ${asset.id}: adapter ${adapter} reads the chain but the asset has no ingest block`);
   return [{ kind: 'rpc', chainId: asset.ingest.chain_id, env: asset.ingest.rpc_url_env }];
 };
+const citationUrl = (params: AdapterParams): string => {
+  const c = params.citation;
+  return c !== null && typeof c === 'object' && typeof (c as { url?: unknown }).url === 'string' ? (c as { url: string }).url : '';
+};
 const solRpc = (params: AdapterParams): Endpoint => ({ kind: 'solana_rpc', env: str(params, 'rpc_url_env', DEFAULT_SOL_RPC_ENV) });
 
 /**
@@ -88,6 +92,8 @@ export const ADAPTER_ENDPOINTS: Record<string, (params: AdapterParams, asset: As
   'lit.app_fee_share': (p) => [http(str(p, 'url', LIGHTER_APP))],
   'lit.staking_pool': (p) => [http(str(p, 'api', LIGHTER_API)), http(str(p, 'explorer', LIGHTER_EXPLORER))],
   'lit.unlocks_next_year': (p) => [http(str(p, 'url', LLAMA_EMISSIONS))],
+  // Reads nothing: the schedule is in the asset YAML. Its citation url is the source a reader (and the register) checks.
+  'schedule.unlocks_next_year': (p) => [http(citationUrl(p))],
   'solana.token_supply': (p) => [solRpc(p)],
   'solana.owner_balance': (p) => [solRpc(p)],
   // The day's price from CoinGecko's market chart; `history` stitches DefiLlama's summary before the first supply read.

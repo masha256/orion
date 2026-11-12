@@ -92,9 +92,13 @@ export function defillamaUrlOf(detail: string | null): string | null {
   return null;
 }
 
-/** The method a source's rows carry (spec §2): a formula is derived, a constant is disclosed, everything read is measured. */
+/**
+ * The method a source's rows carry (spec §2): a formula is derived, a constant is disclosed, and so is an adapter on the
+ * disclosure rung (a cited schedule it computes: `schedule.unlocks_next_year`); everything read is measured.
+ */
 export function methodOfSource(s: SourceConfig | undefined): ProvenanceMethod {
   if (s === undefined || s.type === 'constant') return 'disclosed';
+  if (s.type === 'adapter' && ADAPTER_SOURCE_TYPES[s.name] === 'disclosure') return 'disclosed';
   return s.type === 'derived' ? 'derived' : 'measured';
 }
 
