@@ -1,0 +1,255 @@
+{
+  "_comment": [
+    "Phase 3 R1 release proof allowlist for tools/phase3-proof/flatdiff.py (format: README.md).",
+    "AERO has no entry: its report must be cmp-identical. Revenue, cost of revenue, holder flow, yields and grades get no entry (brief Step 2).",
+    "Entries with \"todo\": true are inert placeholders: the controller replaces each with the exact listing paths the first diff run shows (glob + reason) and drops the todo flag."
+  ],
+  "*": [],
+  "cake": [
+    {
+      "glob": "incomeStatement.volume",
+      "reason": "CAKE volume is not_measured since R1 (DefiLlama gross swap fees removed): the object changes shape"
+    },
+    {
+      "glob": "incomeStatement.volume.*",
+      "reason": "CAKE volume is not_measured since R1: metrics emptied, annualized/growth null, notMeasured reason added"
+    },
+    {
+      "glob": "incomeStatement.provenance.thirdParty*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.provenance.sources*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    }
+  ],
+  "crv": [
+    {
+      "glob": "incomeStatement.provenance.thirdParty*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.provenance.sources*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    }
+  ],
+  "cvxcrv": [
+    {
+      "glob": "incomeStatement.provenance.thirdParty*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.provenance.sources*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    }
+  ],
+  "hype": [
+    {
+      "glob": "incomeStatement.provenance.thirdParty*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.provenance.sources*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    }
+  ],
+  "link": [
+    {
+      "glob": "incomeStatement.provenance.thirdParty*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.provenance.sources*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    }
+  ],
+  "lit": [
+    {
+      "glob": "incomeStatement.dilution.*",
+      "reason": "LIT unlocks_next_year now reads the cited schedule (Lighter's X post) instead of the third-party page: dilution moves with the unlocks line"
+    },
+    {
+      "glob": "incomeStatement.dilution.releases[id=unlocks].tokensPerYear",
+      "rel": 0.0007,
+      "reason": "LIT unlocks line tokens: cited schedule vs the old read, +0.066% (plan figure), bound rel 0.0007"
+    },
+    {
+      "glob": "incomeStatement.provenance.thirdParty*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.provenance.sources*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    }
+  ],
+  "pump": [
+    {
+      "glob": "incomeStatement.dilution.*",
+      "rel": 1e-12,
+      "reason": "PUMP unlocks_next_year now reads the cited Blockworks schedule: dilution must be unchanged (rel 1e-12)"
+    },
+    {
+      "glob": "incomeStatement.dilution.releases[id=unlocks].tokensPerYear",
+      "rel": 1e-12,
+      "reason": "PUMP unlocks line tokens: cited Blockworks schedule equals the old read (rel 1e-12)"
+    },
+    {
+      "glob": "incomeStatement.provenance.thirdParty*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.provenance.sources*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    }
+  ],
+  "sdcrv": [
+    {
+      "glob": "incomeStatement.provenance.thirdParty*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.provenance.sources*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    }
+  ],
+  "sky": [
+    {
+      "glob": "incomeStatement.provenance.thirdParty*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.provenance.sources*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    }
+  ],
+  "uni": [
+    {
+      "glob": "incomeStatement.volume",
+      "reason": "UNI volume is not_measured since R1 (DefiLlama gross swap fees removed): the object changes shape"
+    },
+    {
+      "glob": "incomeStatement.volume.*",
+      "reason": "UNI volume is not_measured since R1: metrics emptied, annualized/growth null, notMeasured reason added"
+    },
+    {
+      "glob": "incomeStatement.provenance.thirdParty*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.provenance.sources*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    }
+  ],
+  "vvv": [
+    {
+      "glob": "incomeStatement.revenue.lines[id=business].crossCheck",
+      "reason": "VVV business line: the DefiLlama revenue_proxy cross-check is dropped in R1"
+    },
+    {
+      "glob": "incomeStatement.revenue.lines[id=business].crossCheck.*",
+      "reason": "VVV business line: crossCheck metric/annualized/sourceType removed with the DefiLlama revenue_proxy cross-check (R1)"
+    },
+    {
+      "glob": "incomeStatement.provenance.thirdParty*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.provenance.sources*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    }
+  ],
+  "ycrv": [
+    {
+      "glob": "incomeStatement.provenance.thirdParty*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.provenance.sources*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    },
+    {
+      "glob": "incomeStatement.flags*",
+      "todo": true,
+      "reason": "fill from the first diff run"
+    }
+  ]
+}
