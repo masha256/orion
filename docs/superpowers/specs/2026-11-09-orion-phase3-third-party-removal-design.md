@@ -7,6 +7,9 @@
   in R7); D8 order R0 -> R8 as written; D9 yes; D10 yes; D11 yes (CAKE fix ships alone; Mike: "cake to stage ok").
 - R0 CAKE: tag `orion-2026.11.10.1` = `fix/cake-pending-burn` 0ecc69e on main 0f4b2fe. It is staged after AERO's
   orion-2026.11.09.1 reaches prod, so AERO's soak gate is not invalidated. Prod needs its own soak and Mike's go.
+- 2026-11-12: R0 CAKE shipped (`orion-2026.11.10.1` on prod 2026-11-11). Phase 2 closed: prod `orion-2026.11.11.1` =
+  1de531d (0006 provenance NOT NULL, `observations.source` dropped, v1/`--legacy` retired). Branch rebased onto main
+  763868e; Phase 3 code builds on it (no `observations.source`, no `holder_flows`/`reporting` keys, v2-only proofs).
 Drafted 2026-11-09 (#orion-dev "go on 2"). Branch `feat/phase3-third-party` from main 0f4b2fe (release
 orion-2026.11.09.1, AERO post-merger). Nothing here is built yet; the next step is the plan. Umbrella: `2026-10-28-orion-coinrevs-core-roadmap.md` (Phase 3; decision 1 history
 deletion; decision 4 order: 3 and 5 in parallel). Phase 2 inputs: `2026-10-28-orion-data-strategy-income-v2-design.md`
@@ -218,7 +221,8 @@ burner + v2 (fix/cake-pending-burn)", on Mike's go after the fix is staged.
 ## 7. Proof and acceptance (every release)
 
 - Suite green and typecheck, no skips left uncounted (load-sensitive files rerun alone).
-- A read-only prod copy. Other assets: `report yield --day D` v2 and `--legacy`, `cmp` identical. Changed assets:
+- A read-only prod copy. Other assets: `report yield --day D` v2, `cmp` identical (`--legacy` and v1 are gone since
+  `orion-2026.11.11.1`, Phase 2 Task 11: compare v2 only, `tools/phase2-proof/reports.sh` + `compare.py` as they are). Changed assets:
   before = prod's own `report yield <a> --day D`; after = the branch on the copy.
 - A sign-off table covers every day the report reads (growth reads 2 x 91 days).
 - `git grep` for the retired hosts returns only tests and docs at R8.
