@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -913,10 +914,14 @@ class Phase3VerbTests(RemoteCase):
             rc, _out, _err = self.remote(cmd)
             self.assertEqual(rc, 64, cmd)
             line = self.log_lines()[-1]
-            self.assertTrue(line.endswith(' refused'), (cmd, line))
-            for word in cmd.split()[2:]:
-                if len(word) > 2 and word not in ('run-now', 'backfill', 'purge', 'compare-usd'):
-                    self.assertNotIn(word, line, (cmd, line))
+            # M-5: the words as orion-remote sees them (shlex, quotes removed), not the raw text. After `<ISO> <user> `
+            # the line is exactly `<verb> <argc> refused`, and no argument value (of any length) is in it.
+            words = shlex.split(cmd)
+            tail = line.split(' ', 2)[2]
+            self.assertEqual(tail, f'{words[0]} {len(words)} refused', (cmd, line))
+            for word in words[1:]:
+                if word != '' and word != str(len(words)):
+                    self.assertNotIn(word, tail, (cmd, line))
             if secret:
                 self.assertNotIn(secret, line)
         self.assertEqual(len(self.calls()), n)
@@ -977,6 +982,16 @@ class Phase3VerbTests(RemoteCase):
         self.assert_refused([f'data purge aero --metrics flow.fees --source-type {t}'
                              for t in ('defillama', 'coingecko', 'THIRD_PARTY', 'third_party,log_scan', 'third_partyx',
                                        "'third_party '", 'onchain', "''")])
+
+    def test_trailing_newline_refused(self):
+        """M-1: a value is matched whole (re.fullmatch): `$` alone would let a quoted trailing newline through."""
+        self.assert_refused(["job run-now backfill aero --metrics 'flow_usd.burn\n' --backfill-days 10",
+                             "job run-now backfill aero --metrics 'flow.fees,flow_usd.burn\n' --backfill-days 10",
+                             "job run-now backfill aero --metrics flow.fees --backfill-days '3\n'",
+                             "data compare-usd aero --days '3\n'",
+                             "data purge aero --metrics flow.fees --source-type 'third_party\n' --yes",
+                             "data purge 'aero\n' --metrics flow.fees",
+                             "job run-now 'refresh\n' aero"])
 
     def test_compare_usd_passthrough(self):
         self.assertEqual(self.last('data compare-usd aero'), ['data', 'compare-usd', 'aero', '--json'])

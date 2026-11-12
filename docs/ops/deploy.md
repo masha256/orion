@@ -444,14 +444,19 @@ ssh orion-<env> data purge <asset> --metrics <k1,k2,...> [--source-type <rung>] 
 ```
 
 - **Size a backfill:** a backfill must be sized to finish inside the 4 h clearance before the env's nightly; split it by
-  --backfill-days otherwise. (It defers while the env's nightly is under 4 h away, and while that night's refresh /
-  nightly_report jobs are unfinished; stage nightly 02:45 UTC, prod 00:45 UTC.) Watch it with `jobs --since <iso>`.
-- **Rollback across this release:** before `rollback` to a release older than this one, let running backfills finish or
-  drain the daemon (an older daemon fails a queued backfill job with "no handler", no retry). `jobs` shows any
-  `backfill` still `queued` or `running`; re-queue it after a roll forward.
+  --backfill-days otherwise. (It defers while the env's nightly is under 4 h away, while a nightly began under 2 h ago
+  (it waits until that slot + 2 h), and while that nightly's refresh / nightly_report jobs are unfinished; stage nightly
+  02:45 UTC, prod 00:45 UTC. Queued at 00:50 UTC on prod, it starts at 02:45 UTC at the earliest.) Watch it with
+  `jobs --since <iso>`.
+- **Rollback across this release:** the deploy keys have no drain verb, and `rollback` drains with a 30 min wait: while
+  a backfill runs past that, the drain times out and `rollback` aborts (exit 1, nothing switched). So before `rollback`
+  to a release older than this one, run `ssh orion-<env> jobs` and wait until no `backfill` job is `running` (a running
+  one holds the worker). A `backfill` still `queued` when the older release takes over fails "no handler" there, with
+  no retry: re-queue it with `job run-now backfill ...` after rolling forward again.
 
 <!-- release block: Task 8 -->
 
+## The ssh verbs (any release)
 
 ```
 ssh orion-<env> status [--json]       # release, heartbeat, registry, last jobs, next slots, soak, last nightly

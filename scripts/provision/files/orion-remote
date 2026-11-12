@@ -91,7 +91,8 @@ TEXT_MAX = 2000
 
 # The job kinds `orion job run-now` takes (src/db/jobs.ts JOB_KINDS; tests/release/orionRemote.test.ts checks them).
 JOB_KINDS = ('refresh', 'nightly_report', 'levels', 'snapshot_push', 'disclosure_watch', 'staging_refresh', 'retention', 'backfill')
-# The nine source types (rungs) of observations.source_type: src/db/pg/migrations/0004_provenance.sql's CHECK.
+# The nine source types (rungs) of observations.source_type: src/db/pg/migrations/0004_provenance.sql's CHECK
+# (src/db/purge.ts SOURCE_TYPES; tests/release/orionRemote.test.ts checks them).
 RUNGS = ('contract_state', 'log_scan', 'first_party_api', 'pool_scan', 'disclosure', 'derived', 'constant', 'market_data',
          'third_party')
 METRICS_MAX = 20  # items in a --metrics list
@@ -262,8 +263,10 @@ def text_value(what):
 
 
 def pattern(regex, what):
+    """The whole value must match (fullmatch, M-1): `$` alone also matches before a final newline, which a quoted
+    argument can carry."""
     def check(v):
-        if not regex.match(v):
+        if not regex.fullmatch(v):
             raise Refused(f'bad {what}: expected {regex.pattern}')
         return v
     return check
@@ -271,7 +274,7 @@ def pattern(regex, what):
 
 def count(lo, hi, what):
     def check(v):
-        if not COUNT_RE.match(v) or not lo <= int(v) <= hi:
+        if not COUNT_RE.fullmatch(v) or not lo <= int(v) <= hi:
             raise Refused(f'{what} must be a number from {lo} to {hi}')
         return v
     return check
@@ -285,7 +288,7 @@ def metric_list(v):
     if any(i == '' for i in items):
         raise Refused('--metrics has an empty item (k1,k2,... with no spaces)')
     for i in items:
-        if not METRIC_RE.match(i):
+        if not METRIC_RE.fullmatch(i):
             raise Refused(f'bad metric in --metrics: expected {METRIC_RE.pattern}')
     return items
 
@@ -766,7 +769,7 @@ def check_members(t, tag):
 
 def prune(env, keep_also):
     rel = env.path('releases')
-    tags = sorted((t for t in os.listdir(rel) if TAG_RE.match(t)), key=tag_key)
+    tags = sorted((t for t in os.listdir(rel) if TAG_RE.fullmatch(t)), key=tag_key)
     protected = set(tags[-KEEP_RELEASES:]) | {t for t in keep_also if t}
     for t in tags:
         if t not in protected:
