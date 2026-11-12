@@ -309,7 +309,7 @@ class FlatdiffTest(unittest.TestCase):
         code, res, _ = self.run_cli(old, bumped(1.001), allow)
         self.assertEqual(code, 1)
         # Every rel-0.0007 path fails at +0.1% (supply.addedPerYear too, since fix round 1); supply.netPerYear (+12k
-        # tokens) and supply.netPct (+1.2e-5) stay inside their abs 100000 / 0.0001.
+        # tokens) and supply.netPct (+1.2e-5) stay inside their abs 120000 / 0.00013.
         rel_paths = [p for p in moved if not p.endswith("netPerYear")] + [
             "incomeStatement.dilution.releases[id=unlocks].tokensPerYear", "incomeStatement.yields.dilutionLines[id=unlocks].tokensPerYear",
             "incomeStatement.dilution.supply.addedPerYear"]
@@ -375,7 +375,7 @@ class FlatdiffTest(unittest.TestCase):
         self.assertEqual(lit[f"{D}.supply.burnedPerYear"]["abs"], 0)
         self.assertEqual(lit[f"{D}.emissionsPerYear"]["abs"], 0)
         self.assertEqual(lit[f"{D}.supply.addedPerYear"]["rel"], 0.0007)
-        self.assertEqual(lit[f"{D}.supply.netPct"]["abs"], 0.0001)
+        self.assertEqual(lit[f"{D}.supply.netPct"]["abs"], 0.00013)
         # No unbounded LIT entry matches any release-line path, existing or new.
         for g, e in lit.items():
             if "rel" not in e and "abs" not in e and not e.get("todo"):
@@ -505,6 +505,141 @@ class FlatdiffTest(unittest.TestCase):
         code, res, _ = self.run_cli(old, new, (HERE / "r1-allowlist.json").read_text(), asset="crv")
         self.assertEqual(code, 1)
         self.assertEqual(sorted(res["unallowed"]), ["incomeStatement.flags", "incomeStatement.flags[0]"])
+
+    # --- final fix wave --------------------------------------------------------------------------------------------
+
+    def test_old_new_absent_pin_the_value(self):
+        P = "incomeStatement.provenance.sources[1]"
+        old = report(asset="vvv")
+        gone = report(asset="vvv")
+        gone["incomeStatement"]["provenance"]["sources"] = ["disclosure:manual"]
+        swapped = report(asset="vvv")
+        swapped["incomeStatement"]["provenance"]["sources"][1] = "third_party:somewhere.else"
+        pinned = {"vvv": [{"glob": P, "old": "third_party:defillama", "absent": "new", "reason": "removed"}]}
+        # The pinned removal passes.
+        code, res, _ = self.run_cli(old, gone, pinned, asset="vvv")
+        self.assertEqual(code, 0, res)
+        # A replacement value at the same index fails (it is a change, not a removal).
+        code, res, _ = self.run_cli(old, swapped, pinned, asset="vvv")
+        self.assertEqual(code, 1, res)
+        self.assertEqual(res["unallowed"], [P])
+        # A different old value fails too.
+        other = report(asset="vvv")
+        other["incomeStatement"]["provenance"]["sources"][1] = "third_party:x"
+        code, res, _ = self.run_cli(other, gone, pinned, asset="vvv")
+        self.assertEqual(code, 1, res)
+        # Without the pin the replacement passes: that was the hole.
+        loose = {"vvv": [{"glob": P, "reason": "removed"}]}
+        self.assertEqual(self.run_cli(old, swapped, loose, asset="vvv")[0], 0)
+        # `new` pins the added value; `absent: "old"` requires an added path; values are JSON-equal (type too).
+        Q = "incomeStatement.flags"
+        a = {**report(), "incomeStatement": {**report()["incomeStatement"]}}
+        b = {**report(), "incomeStatement": {**report()["incomeStatement"], "flags": []}}
+        c = {**report(), "incomeStatement": {**report()["incomeStatement"], "flags": {}}}
+        d = {**report(), "incomeStatement": {**report()["incomeStatement"], "flags": ["x"]}}
+        add = {"lit": [{"glob": Q, "absent": "old", "new": [], "reason": "flags becomes []"},
+                       {"glob": Q + "[0]", "absent": "old", "new": "x", "reason": "x"}]}
+        self.assertEqual(self.run_cli(a, b, add)[0], 0)
+        self.assertEqual(self.run_cli(a, c, add)[0], 1)  # {} is not []
+        self.assertEqual(self.run_cli(b, a, add)[0], 1)  # a removal, not an addition
+        d_old = {**report(), "incomeStatement": {**report()["incomeStatement"], "flags": ["y"]}}
+        self.assertEqual(self.run_cli(d_old, d, add)[0], 1)  # [0] changed y -> x: old was present
+        # Numbers compare by value (2 == 2.0), never a bool.
+        num = {"lit": [{"glob": "price", "old": 1.7, "new": 2, "reason": "x"}]}
+        self.assertEqual(self.run_cli(report(), {**report(), "price": 2.0}, num)[0], 0)
+        self.assertEqual(self.run_cli(report(), {**report(), "price": 2.5}, num)[0], 1)
+        # A pin and a bound on one entry: both must hold.
+        both = {"lit": [{"glob": "price", "old": 1.7, "rel": 0.1, "reason": "x"}]}
+        self.assertEqual(self.run_cli(report(), {**report(), "price": 1.8}, both)[0], 0)
+        self.assertEqual(self.run_cli({**report(), "price": 1.71}, {**report(), "price": 1.8}, both)[0], 1)
+
+    def test_malformed_pins_exit_2(self):
+        bad = [
+            {"lit": [{"glob": "x", "reason": "y", "absent": "both"}]},
+            {"lit": [{"glob": "x", "reason": "y", "absent": True}]},
+            {"lit": [{"glob": "x", "reason": "y", "absent": "old", "old": 1}]},
+            {"lit": [{"glob": "x", "reason": "y", "absent": "new", "new": 1}]},
+        ]
+        for allow in bad:
+            code, _, err = self.run_cli(report(), report(), allow)
+            self.assertEqual(code, 2, allow)
+            self.assertTrue(err, allow)
+        # `old: null` is a real pin (the value null), not "no pin".
+        allow = {"lit": [{"glob": "price", "old": None, "reason": "y"}]}
+        self.assertEqual(self.run_cli(report(), {**report(), "price": 1.8}, allow)[0], 1)
+        self.assertEqual(self.run_cli({**report(), "price": None}, {**report(), "price": 1.8}, allow)[0], 0)
+
+    def test_the_committed_lit_vvv_string_entries_are_value_pinned(self):
+        lit = {e["glob"]: e for e in flatdiff.load_allowlist(HERE / "r1-allowlist.json")["lit"]}
+        vvv = {e["glob"]: e for e in flatdiff.load_allowlist(HERE / "r1-allowlist.json")["vvv"]}
+        pins = lambda e: {k: e[k] for k in ("old", "new", "absent") if k in e}
+        S = "incomeStatement."
+        self.assertEqual(pins(lit[S + "flags"]), {"absent": "old", "new": []})
+        self.assertEqual(pins(lit[S + "flags[0]"]), {"old": "third_party: holders.buyback.cross_checks", "absent": "new"})
+        self.assertEqual(pins(lit[S + "provenance.thirdParty"]), {"absent": "old", "new": []})
+        self.assertEqual(pins(lit[S + "provenance.thirdParty[0]"]), {"old": "holders.buyback.cross_checks", "absent": "new"})
+        self.assertEqual(pins(vvv[S + "flags[3]"]), {"old": "third_party: revenue.business.cross_check, holders.burn.cross_checks", "absent": "new"})
+        self.assertEqual(pins(vvv[S + "provenance.sources[2]"]), {"old": "third_party:api.llama.fi", "absent": "new"})
+        self.assertEqual(pins(vvv[S + "provenance.thirdParty"]), {"absent": "old", "new": []})
+        self.assertEqual(pins(vvv[S + "provenance.thirdParty[0]"]), {"old": "revenue.business.cross_check", "absent": "new"})
+        self.assertEqual(pins(vvv[S + "provenance.thirdParty[1]"]), {"old": "holders.burn.cross_checks", "absent": "new"})
+        # The reviewer's probes on a LIT-shaped pair: a replacement flag / thirdParty path fails.
+        allow = (HERE / "r1-allowlist.json").read_text()
+        base = self.golden_lit()
+        old = json.loads(json.dumps(base))
+        old["incomeStatement"]["flags"] = ["third_party: holders.buyback.cross_checks"]
+        old["incomeStatement"]["provenance"]["thirdParty"] = ["holders.buyback.cross_checks"]
+        new = json.loads(json.dumps(base))
+        new["incomeStatement"]["flags"] = []
+        new["incomeStatement"]["provenance"]["thirdParty"] = []
+        code, res, _ = self.run_cli(old, new, allow)
+        self.assertEqual(code, 0, res["unallowed"])
+        for k, sub in (("flags", None), ("thirdParty", "provenance")):
+            bad = json.loads(json.dumps(new))
+            (bad["incomeStatement"][sub] if sub else bad["incomeStatement"])[k] = ["some other entry"]
+            code, res, _ = self.run_cli(old, bad, allow)
+            self.assertEqual(code, 1, k)
+
+    def test_the_committed_lit_bounds_hold_for_10_to_12_tranches(self):
+        # I-2: the window (now, now + 365 d] holds 10 tranches on 2026-11-12, 11 from 2026-11-29, 12 from 2026-12-29
+        # (through 2027-01-28 at least). Per tranche, the real run's old/new unlock tokens (10 tranches).
+        OLD_T, NEW_T = 138796789.0155082 / 10, 138888888.8888889 / 10
+        BURNED, TOTAL = 11780930.923076928, 981909280
+        allow = (HERE / "r1-allowlist.json").read_text()
+        S = "incomeStatement."
+
+        def lit(n, t):
+            r = self.golden_lit()
+            s = r["incomeStatement"]
+            s["perToken"]["totalSupply"] = TOTAL
+            tokens = n * t
+            d = s["dilution"]
+            d.update(pct=tokens / TOTAL, tokensPerYear=tokens, emissionsPerYear=0,
+                     releases=[{"id": "unlocks", "tokensPerYear": tokens, "yield": tokens / TOTAL}])
+            d["supply"] = {"burnedPerYear": BURNED, "addedPerYear": tokens, "netPerYear": tokens - BURNED,
+                           "netPct": (tokens - BURNED) / TOTAL}
+            line = next(x for x in s["yields"]["dilutionLines"] if x["id"] == "unlocks")
+            line.update({"tokensPerYear": tokens, "yield": tokens / TOTAL})
+            s["yields"]["dilution"] = tokens / TOTAL
+            s["perToken"]["dilution"] = tokens / TOTAL * 10
+            s["perToken"]["perTokenFdv"]["dilution"] = tokens / TOTAL * 3
+            if t == NEW_T:
+                for obj in (s["holderFlow"], s["perToken"]["holderFlow"], s["perToken"]["perTokenFdv"]["holderFlow"]):
+                    obj["netOfDilution"] *= 1.000729
+                s["yields"]["netShareholder"] *= 1.000729
+            return r
+
+        for n in (10, 11, 12):
+            code, res, _ = self.run_cli(lit(n, OLD_T), lit(n, NEW_T), allow)
+            self.assertEqual(code, 0, (n, res["unallowed"]))
+        # 14 tranches (beyond the schedule's window) breaks both abs bounds, and only those.
+        code, res, _ = self.run_cli(lit(14, OLD_T), lit(14, NEW_T), allow)
+        self.assertEqual(code, 1)
+        self.assertEqual(sorted(res["unallowed"]), [S + "dilution.supply.netPct", S + "dilution.supply.netPerYear"])
+        lit_entries = {e["glob"]: e for e in flatdiff.load_allowlist(HERE / "r1-allowlist.json")["lit"]}
+        for g in (S + "dilution.supply.netPerYear", S + "dilution.supply.netPct"):
+            self.assertIn("10-12 tranche", lit_entries[g]["reason"], g)
+            self.assertIn("2027-01-28", lit_entries[g]["reason"], g)
 
 
 if __name__ == "__main__":

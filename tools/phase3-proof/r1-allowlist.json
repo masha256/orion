@@ -1,8 +1,9 @@
 {
   "_comment": [
     "Phase 3 R1 release proof allowlist for tools/phase3-proof/flatdiff.py (format: README.md).",
-    "AERO has no entry: its report must be cmp-identical. Revenue, cost of revenue, holder flow and grades get no entry (brief Step 2); the only holder-flow / yields entries are LIT's and PUMP's dilution-derived fields (ruling R21: LIT rel 0.0007, the four net-of-dilution fields rel 0.0008, supply.netPerYear abs 100000; PUMP rel 1e-12). LIT has no unbounded dilution glob (fix round 1): every dilution path is an exact entry, burnedPerYear and emissionsPerYear at abs 0, so a new or removed release line fails.",
-    "No todo placeholders remain (controller addendum from the prod-copy run): LIT and VVV list the exact provenance / flags paths that run showed; every other asset showed no provenance / flags / checks diff and gets no entry there."
+    "AERO has no entry: its report must be cmp-identical. Revenue, cost of revenue, holder flow and grades get no entry (brief Step 2); the only holder-flow / yields entries are LIT's and PUMP's dilution-derived fields (ruling R21: LIT rel 0.0007, the four net-of-dilution fields rel 0.0008, supply.netPerYear abs 120000 and supply.netPct abs 0.00013 (the 10-12 tranche range, valid through 2027-01-28; final review I-2); PUMP rel 1e-12). LIT has no unbounded dilution glob (fix round 1): every dilution path is an exact entry, burnedPerYear and emissionsPerYear at abs 0, so a new or removed release line fails.",
+    "No todo placeholders remain (controller addendum from the prod-copy run): LIT and VVV list the exact provenance / flags paths that run showed; every other asset showed no provenance / flags / checks diff and gets no entry there.",
+    "Value pins (final review Minor 1): every LIT / VVV flags / provenance entry carries the exact `old` / `new` value from the prod-copy run (`absent` names the side the path is missing from), so only that removal or addition passes and a replacement value fails. The indexes are positional: if the env's pre-deploy report has the entry at another index, re-derive the globs from it (flatdiff fails closed until then)."
   ],
   "*": [],
   "cake": [
@@ -87,8 +88,8 @@
     },
     {
       "glob": "incomeStatement.dilution.supply.netPerYear",
-      "abs": 100000,
-      "reason": "LIT unlocks line: Lighter's cited 500M schedule vs DefiLlama's 499.67M, a +0.066% unlock change: supply.netPerYear is added minus burned, so its relative change can exceed 0.07% (LIT delta ~92k tokens); bound abs 100000 tokens (R21)"
+      "abs": 120000,
+      "reason": "LIT unlocks line: Lighter's cited 500M schedule vs DefiLlama's 499.67M, a +0.066% unlock change: supply.netPerYear is added minus burned, so its relative change can exceed 0.07%; the delta is ~9,210 tokens per monthly tranche in the (now, now + 365 d] window: 10 tranches (92,100) on 2026-11-12, 11 (101,310) from 2026-11-29, 12 (110,520) from 2026-12-29; bound abs 120000 tokens covers the 10-12 tranche range, valid for a release run through 2027-01-28 (re-derive after that) (R21, final review I-2)"
     },
     {
       "glob": "incomeStatement.dilution.releases[id=unlocks].id",
@@ -112,24 +113,32 @@
     },
     {
       "glob": "incomeStatement.dilution.supply.netPct",
-      "abs": 0.0001,
-      "reason": "LIT unlocks line: Lighter's cited 500M schedule vs DefiLlama's 499.67M, a +0.066% unlock change: supply.netPct is supply.netPerYear / totalSupply, a difference of two terms like netPerYear (abs 100000 tokens); bound abs 0.0001 (fix round 1, I-1)"
+      "abs": 0.00013,
+      "reason": "LIT unlocks line: Lighter's cited 500M schedule vs DefiLlama's 499.67M, a +0.066% unlock change: supply.netPct is supply.netPerYear / totalSupply, a difference of two terms like netPerYear; the delta is 9.38e-5 at 10 tranches (2026-11-12), 1.03e-4 at 11 (from 2026-11-29), 1.13e-4 at 12 (from 2026-12-29); bound abs 0.00013 covers the 10-12 tranche range, valid for a release run through 2027-01-28 (re-derive after that) (fix round 1 I-1, final review I-2)"
     },
     {
       "glob": "incomeStatement.flags",
-      "reason": "LIT: the buyback cross-check (third_party) is gone with R1, so flags becomes [] (prod-copy run: added [])"
+      "absent": "old",
+      "new": [],
+      "reason": "LIT: the buyback cross-check (third_party) is gone with R1, so flags becomes [] (prod-copy run: added []); value-pinned: only this exact removal/addition is allowed, a replacement fails (final review Minor 1)"
     },
     {
       "glob": "incomeStatement.flags[0]",
-      "reason": "LIT: the buyback cross-check (third_party) is gone with R1 (prod-copy run: removed \"third_party: holders.buyback.cross_checks\")"
+      "old": "third_party: holders.buyback.cross_checks",
+      "absent": "new",
+      "reason": "LIT: the buyback cross-check (third_party) is gone with R1 (prod-copy run: removed \"third_party: holders.buyback.cross_checks\"); value-pinned: only this exact removal/addition is allowed, a replacement fails (final review Minor 1)"
     },
     {
       "glob": "incomeStatement.provenance.thirdParty",
-      "reason": "LIT: the buyback cross-check (third_party) is gone with R1, so provenance.thirdParty becomes [] (prod-copy run: added [])"
+      "absent": "old",
+      "new": [],
+      "reason": "LIT: the buyback cross-check (third_party) is gone with R1, so provenance.thirdParty becomes [] (prod-copy run: added []); value-pinned: only this exact removal/addition is allowed, a replacement fails (final review Minor 1)"
     },
     {
       "glob": "incomeStatement.provenance.thirdParty[0]",
-      "reason": "LIT: the buyback cross-check (third_party) is gone with R1 (prod-copy run: removed \"holders.buyback.cross_checks\")"
+      "old": "holders.buyback.cross_checks",
+      "absent": "new",
+      "reason": "LIT: the buyback cross-check (third_party) is gone with R1 (prod-copy run: removed \"holders.buyback.cross_checks\"); value-pinned: only this exact removal/addition is allowed, a replacement fails (final review Minor 1)"
     }
   ],
   "pump": [
@@ -227,23 +236,33 @@
     },
     {
       "glob": "incomeStatement.flags[3]",
-      "reason": "VVV: the business line's DefiLlama crossCheck is gone with R1, so its third-party flag goes (prod-copy run)"
+      "old": "third_party: revenue.business.cross_check, holders.burn.cross_checks",
+      "absent": "new",
+      "reason": "VVV: the business line's DefiLlama crossCheck is gone with R1, so its third-party flag goes (prod-copy run); value-pinned: only this exact removal/addition is allowed, a replacement fails (final review Minor 1)"
     },
     {
       "glob": "incomeStatement.provenance.sources[2]",
-      "reason": "VVV: the business line's DefiLlama crossCheck is gone with R1 (prod-copy run: removed \"third_party:api.llama.fi\")"
+      "old": "third_party:api.llama.fi",
+      "absent": "new",
+      "reason": "VVV: the business line's DefiLlama crossCheck is gone with R1 (prod-copy run: removed \"third_party:api.llama.fi\"); value-pinned: only this exact removal/addition is allowed, a replacement fails (final review Minor 1)"
     },
     {
       "glob": "incomeStatement.provenance.thirdParty",
-      "reason": "VVV: the business line's DefiLlama crossCheck is gone with R1, so provenance.thirdParty empties (prod-copy run)"
+      "absent": "old",
+      "new": [],
+      "reason": "VVV: the business line's DefiLlama crossCheck is gone with R1, so provenance.thirdParty empties (prod-copy run); value-pinned: only this exact removal/addition is allowed, a replacement fails (final review Minor 1)"
     },
     {
       "glob": "incomeStatement.provenance.thirdParty[0]",
-      "reason": "VVV: the business line's DefiLlama crossCheck is gone with R1 (prod-copy run)"
+      "old": "revenue.business.cross_check",
+      "absent": "new",
+      "reason": "VVV: the business line's DefiLlama crossCheck is gone with R1 (prod-copy run); value-pinned: only this exact removal/addition is allowed, a replacement fails (final review Minor 1)"
     },
     {
       "glob": "incomeStatement.provenance.thirdParty[1]",
-      "reason": "VVV: the business line's DefiLlama crossCheck is gone with R1 (prod-copy run)"
+      "old": "holders.burn.cross_checks",
+      "absent": "new",
+      "reason": "VVV: the business line's DefiLlama crossCheck is gone with R1 (prod-copy run); value-pinned: only this exact removal/addition is allowed, a replacement fails (final review Minor 1)"
     }
   ],
   "ycrv": []

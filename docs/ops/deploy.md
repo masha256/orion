@@ -447,35 +447,43 @@ ssh orion-<env> data purge <asset> --metrics <k1,k2,...> [--source-type <rung>] 
   --backfill-days otherwise. (It defers while the env's nightly is under 4 h away, while a nightly began under 2 h ago
   (it waits until that slot + 2 h), and while that nightly's refresh / nightly_report jobs are unfinished; stage nightly
   02:45 UTC, prod 00:45 UTC. Queued at 00:50 UTC on prod, it starts at 02:45 UTC at the earliest.) Watch it with
-  `jobs --since <iso>`.
+  `jobs --since <iso>`. The daemon has one worker: while a backfill runs, every other job waits for it, the hourly
+  `levels` job included (its watch fire/clear posts and the `levels` snapshot), and on prod so does the
+  `ORION_DEADMAN_URL` ping (docs/ops/daemon.md), so a backfill of more than an hour or two can trip the prod dead-man.
 - **Rollback across this release:** the deploy keys have no drain verb, and `rollback` drains with a 30 min wait: while
   a backfill runs past that, the drain times out and `rollback` aborts (exit 1, nothing switched). So before `rollback`
   to a release older than this one, run `ssh orion-<env> jobs` and wait until no `backfill` job is `running` (a running
   one holds the worker). A `backfill` still `queued` when the older release takes over fails "no handler" there, with
   no retry: re-queue it with `job run-now backfill ...` after rolling forward again.
 
-**Per-env release block** (after step 1 above; no `--breaking`; R1 itself queues no `backfill`). The order is: **stage,
-one scheduled nightly soak (section 3), then prod on Mike's go.** As in the Phase 2 release, `staging_refresh` (Sunday
-10:30 UTC, stage only) refuses a prod dump while the two envs differ (stage at 0007, prod at 0006: `schema mismatch
-...`) and alerts; nothing is restored. Before deploying stage, check that no Sunday 10:30 UTC falls between the planned
-stage switch and the planned prod switch (stage switch, then stage's next 02:45 UTC nightly, then the soak check and
-Mike's go). If one does, deploy stage after that Sunday's refresh. Run the block on stage, and after the soak, the same
-block on prod (`<env>` = `stage`, then `prod`; `ssh orion-<env>` = `$ST` / `$PR`). The 12 assets whose config changes in
-R1 (every asset but AERO, whose report must stay byte-identical): `cake crv cvxcrv hype link lit pump sdcrv sky uni vvv
-ycrv`.
+**Per-env release block** (after step 1 above; no `--breaking`; R1 itself queues no `backfill` beyond stage's one smoke
+backfill, step 4). The order is: **stage, one scheduled nightly soak (section 3), then prod on Mike's go.** As in the
+Phase 2 release, `staging_refresh` (Sunday 10:30 UTC, stage only) refuses a prod dump while the two envs differ (stage
+at 0007, prod at 0006: `schema mismatch ...`) and alerts; nothing is restored. Before deploying stage, check that no
+Sunday 10:30 UTC falls between the planned stage switch and the planned prod switch (stage switch, then stage's next
+02:45 UTC nightly, then the soak check and Mike's go). If one does, deploy stage after that Sunday's refresh. Run the
+block on stage, and after the soak, the same block on prod (`<env>` = `stage`, then `prod`; `ssh orion-<env>` = `$ST` /
+`$PR`). The 12 assets whose config changes in R1 (every asset but AERO, whose report must stay byte-identical): `cake
+crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv`.
+
+**Do not let a scheduled nightly slot (stage 02:45 UTC, prod 00:45 UTC) fall between step 0 and step 3**: the nightly
+writes new observations inside the step-0 reports' asOf (a report for day `d` reads levels as of the end of `d + 1`),
+and step 3 then STOPs on every asset. Start step 0 with enough time to reach step 3 before the next slot. For the same
+reason the report check (step 3) comes before any refresh: `job run-now refresh` writes price, supply and staking
+levels "now", inside that asOf, and moves price, market cap and every yield.
 
 0. **Before the switch: save the pre-deploy reports** (read-only, on the release still current), the 12 and AERO,
    on the machine running the deploy:
    ```
-   mkdir -p ~/r1-<env>/before ~/r1-<env>/after
+   mkdir -p ~/r1-<env>/before ~/r1-<env>/after ~/r1-<env>/mid ~/r1-<env>/purged
    for a in aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv; do
      ssh orion-<env> report yield $a > ~/r1-<env>/before/$a.json || { echo "STOP: $a exit $?"; break; }
    done
    ```
    Each file's top-level `day` is that asset's report day (read it with
-   `python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["day"])' ~/r1-<env>/before/<a>.json`); step 6
-   reports the same day, since CAKE's, UNI's and VVV's default day may move with this release (they no longer wait on the
-   removed DefiLlama series).
+   `python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["day"])' ~/r1-<env>/before/<a>.json`); steps 3, 5
+   and 9 report the same day, since CAKE's, UNI's and VVV's default day may move with this release (they no longer
+   wait on the removed DefiLlama series).
 1. **Deploy:**
    ```
    scripts/release/deploy.sh <env> <tag>        # switch runs db migrate: applied [7]; no --breaking (0007 is expand-only)
@@ -489,43 +497,8 @@ ycrv`.
    `~/deploys.log` (in the deploy report and in `status`) shows `switch <from> -> <tag> migrations=7 breaking=0`. The
    deploy keys have no `db status` verb; the switch report's migrations applied `[7]` is the schema check (as the env
    user, `o db status` must name current = 7, pending none).
-3. **Refresh LIT and PUMP before any purge** (ruling R14: the refresh rewrites `latest_levels` for
-   `unlocks_next_year` from the new `schedule` source, so the purge of the third-party rows leaves no stale third-party
-   level):
-   ```
-   ssh orion-<env> job run-now refresh lit
-   ssh orion-<env> job run-now refresh pump
-   ssh orion-<env> jobs --since <iso of the switch>        # repeat until both refresh jobs are `done`
-   ```
-   A refresh that ends `failed`: stop, do not purge; bring the job row and `logs 50` to the thread.
-4. **Purge dry runs** (nothing is deleted without `--yes`), one per pair, and paste each output's counts into the
-   thread. The first four are orphans (metric no longer configured: no `--source-type`); the last two drop the
-   `third_party` rows of the still-configured `unlocks_next_year` (its current source is the new schedule):
-   ```
-   ssh orion-<env> data purge cake --metrics flow_usd.fees,flow_usd.llama_revenue
-   ssh orion-<env> data purge lit  --metrics flow_usd.fees,flow_usd.llama_revenue
-   ssh orion-<env> data purge uni  --metrics flow_usd.swap_fees
-   ssh orion-<env> data purge vvv  --metrics flow_usd.revenue_proxy
-   ssh orion-<env> data purge lit  --metrics unlocks_next_year --source-type third_party
-   ssh orion-<env> data purge pump --metrics unlocks_next_year --source-type third_party
-   ```
-   A refusal (a configured metric without `--source-type`, the metric's current source type, an open anomaly, a kept
-   row referencing a purged one) writes nothing: stop and bring it to Mike. On prod, compare the counts with stage's and
-   with the Task 7 prod-copy rehearsal.
-5. **On Mike's go (per env, given in the thread after he has seen the dry-run counts): the same six with `--yes`:**
-   ```
-   ssh orion-<env> data purge cake --metrics flow_usd.fees,flow_usd.llama_revenue --yes
-   ssh orion-<env> data purge lit  --metrics flow_usd.fees,flow_usd.llama_revenue --yes
-   ssh orion-<env> data purge uni  --metrics flow_usd.swap_fees --yes
-   ssh orion-<env> data purge vvv  --metrics flow_usd.revenue_proxy --yes
-   ssh orion-<env> data purge lit  --metrics unlocks_next_year --source-type third_party --yes
-   ssh orion-<env> data purge pump --metrics unlocks_next_year --source-type third_party --yes
-   ```
-   Each deleted count must equal its dry run's. Before deleting, each call writes its rows to one file,
-   `~/home/purged/<asset>-<first metric>[+N]-<UTCstamp>.json` on that env (`$ORION_HOME/purged/`; six files per env,
-   e.g. `cake-flow_usd.fees+1-<stamp>.json`); with the nightly `pg_dump` they are the only copy of the purged rows, so
-   keep them (the Phase 3 followups note lists them).
-6. **Report check against the pre-deploy reports** (read-only), on each asset's step-0 day:
+3. **Report check against the pre-deploy reports, right after the switch, before any refresh** (read-only), on each
+   asset's step-0 day:
    ```
    for a in cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv; do
      d=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["day"])' ~/r1-<env>/before/$a.json)
@@ -533,15 +506,108 @@ ycrv`.
      python3 tools/phase3-proof/flatdiff.py ~/r1-<env>/before/$a.json ~/r1-<env>/after/$a.json \
        --allow tools/phase3-proof/r1-allowlist.json --asset $a || echo "STOP: $a flatdiff exit $?"
    done
+   d=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["day"])' ~/r1-<env>/before/aero.json)
+   ssh orion-<env> report yield aero --day $d > ~/r1-<env>/after/aero.json
+   cmp ~/r1-<env>/before/aero.json ~/r1-<env>/after/aero.json || echo "STOP: aero differs"
    ```
-   Every asset must exit 0 (every differing path allowed). Exit 1 (an unallowed path) or 2 (bad input): stop, paste the
-   output and bring it to Mike (on stage: no prod deploy). Read every printed diff path anyway:
-   any `perTokenFdv` revenue / grossProfit / holderFlow.total move is a stop (ruling R22: FDV does not move in R1).
-   AERO is not in the 12: its report on its step-0 day must be byte-identical (`ssh orion-<env> report yield aero --day
-   <its day> > ~/r1-<env>/after/aero.json; cmp ~/r1-<env>/before/aero.json ~/r1-<env>/after/aero.json`).
+   Every asset must exit 0 (every differing path allowed) and AERO must be byte-identical (it is not in the 12 and has
+   no allowlist entry). Exit 1 (an unallowed path) or 2 (bad input), or an AERO difference: stop, paste the output and
+   bring it to Mike (on stage: no prod deploy). At this point LIT and PUMP still read the old third-party unlock row
+   (the schedule row arrives with step 5's refresh), so their unlock entries print `WARN unmatched` (no effect on the
+   exit code); LIT's and VVV's flags / provenance entries match, each pinned to the exact removed value. Those entries
+   are positional (`flags[3]` is where prod's report holds VVV's flag): if an env holds the entry at another index,
+   flatdiff fails closed; re-derive the index from that env's `before/<a>.json` (tools/phase3-proof/README.md) and
+   bring it to the thread, never drop the pin. Read every printed diff path anyway: any `perTokenFdv` revenue /
+   grossProfit / holderFlow.total move is a stop (ruling R22: FDV does not move in R1).
+4. **Stage only: the smoke backfill** (ruling R25: the backfill handler's first real run; keyless Hyperliquid). It
+   comes after step 3, so its re-read rows cannot move HYPE's comparison:
+   ```
+   ssh orion-stage job run-now backfill hype --metrics flow_usd.af_buys_direct --backfill-days 3
+   ssh orion-stage jobs --since <iso of the switch>       # repeat until the backfill job is `done`
+   ```
+   Check the Slack lines: `ORION BACKFILL stage HYPE started: ...` and the done line (duration, rows per metric). It
+   defers while stage's 02:45 UTC nightly is under 4 h away (and until 2 h after a nightly that began under 2 h ago):
+   `jobs` shows it queued; let it wait, or run this step after the window. A `failed` job or an ALERT line: stop, bring
+   the job row and `logs 50` to the thread (no prod deploy). Not on prod.
+5. **Refresh LIT and PUMP before any purge, check the new unlock rows, save `mid/`** (ruling R14: the refresh rewrites
+   `latest_levels` for `unlocks_next_year` from the new `schedule` source, so a later purge of the third-party rows
+   leaves no stale third-party level):
+   ```
+   ssh orion-<env> job run-now refresh lit
+   ssh orion-<env> job run-now refresh pump
+   ssh orion-<env> jobs --since <iso of the switch>        # repeat until both refresh jobs are `done`
+   ssh orion-<env> data show lit unlocks_next_year
+   ssh orion-<env> data show pump unlocks_next_year
+   ```
+   A refresh that ends `failed`: stop, do not purge; bring the job row and `logs 50` to the thread. The newest
+   `unlocks_next_year` row must be, for LIT, 138,888,888.89 tokens (10 monthly tranches of 500M / 36 in the next 365
+   days; 152,777,777.78 = 11 tranches from 2026-11-29, 166,666,666.67 = 12 from 2026-12-29), source type disclosure,
+   method disclosed, citing Lighter's x.com post; for PUMP 82,500,000,000 tokens, citing the Blockworks article. Any
+   other value or citation: stop. Then save the post-refresh reports on the step-0 days, the comparison base for the
+   purges:
+   ```
+   for a in aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv; do
+     d=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["day"])' ~/r1-<env>/before/$a.json)
+     ssh orion-<env> report yield $a --day $d > ~/r1-<env>/mid/$a.json || echo "STOP: $a exit $?"
+   done
+   ```
+6. **Purge dry runs of the four orphan pairs** (nothing is deleted without `--yes`; ruling R27). Each metric is no
+   longer configured (no `--source-type`) and no report reads it. Paste each output's counts into the thread:
+   ```
+   ssh orion-<env> data purge cake --metrics flow_usd.fees,flow_usd.llama_revenue
+   ssh orion-<env> data purge lit  --metrics flow_usd.fees,flow_usd.llama_revenue
+   ssh orion-<env> data purge uni  --metrics flow_usd.swap_fees
+   ssh orion-<env> data purge vvv  --metrics flow_usd.revenue_proxy
+   ```
+   A refusal (a configured metric without `--source-type`, the metric's current source type, an open anomaly, a kept
+   row referencing a purged one) writes nothing: stop and bring it to Mike. On prod, compare the counts with stage's and
+   with the Task 7 prod-copy rehearsal (cake 398, lit 191, uni 191, vvv 345).
+7. **On Mike's go (per env, given in the thread after he has seen the dry-run counts): the same four with `--yes`:**
+   ```
+   ssh orion-<env> data purge cake --metrics flow_usd.fees,flow_usd.llama_revenue --yes
+   ssh orion-<env> data purge lit  --metrics flow_usd.fees,flow_usd.llama_revenue --yes
+   ssh orion-<env> data purge uni  --metrics flow_usd.swap_fees --yes
+   ssh orion-<env> data purge vvv  --metrics flow_usd.revenue_proxy --yes
+   ```
+   Each deleted count must equal its dry run's. Before deleting, each call writes its rows to one file,
+   `~/home/purged/<asset>-<first metric>[+N]-<UTCstamp>.json` on that env (`$ORION_HOME/purged/`; one file per call,
+   e.g. `cake-flow_usd.fees+1-<stamp>.json`); with the nightly `pg_dump` they are the only copy of the purged rows, so
+   keep them (the Phase 3 followups note lists them). If a nightly slot has passed since `mid/` was saved, save `mid/`
+   again (step 5's loop) right before this step.
+8. **Gated, only on Mike's pick: the LIT / PUMP third-party unlock purges** (ruling R27; a separate decision from step
+   7). These rows are still read: a report for day `d` reads `unlocks_next_year` as of the end of `d + 1`, so for any day
+   whose asOf ends before step 5's refresh (in practice two or more days before the deploy day) it finds no `schedule`
+   row and reads the third-party one. Deleting them (LIT 31 rows, PUMP 29 on the prod copy: 2026-10-16 .. the deploy
+   day) nulls `dilution`, `yields.dilution`, `yields.netShareholder`, `holderFlow.netOfDilution` and the per-token
+   dilution in each such `report yield lit|pump --day <earlier day>` (about four weeks of history: ad-hoc historical
+   reports, a re-run of an old nightly slot, any later history consumer). The nightly and the snapshot (yesterday's
+   day) are unaffected after the deploy day. Levels cannot be
+   backfilled, so the loss is permanent. Mike picks one:
+   - **(a) purge now** (spec D6): run the dry runs, paste the counts, then on his go the `--yes` pair:
+     ```
+     ssh orion-<env> data purge lit  --metrics unlocks_next_year --source-type third_party
+     ssh orion-<env> data purge pump --metrics unlocks_next_year --source-type third_party
+     ssh orion-<env> data purge lit  --metrics unlocks_next_year --source-type third_party --yes
+     ssh orion-<env> data purge pump --metrics unlocks_next_year --source-type third_party --yes
+     ```
+     Each deleted count must equal its dry run's; two more export files per env.
+   - **(b) keep the third-party rows until R8**: skip this step. Nothing reads them for a day from the deploy day on
+     (step 5's refresh already moved `latest_levels` to the schedule source).
+9. **After the purge(s): compare against `mid/`** (read-only; the prod-copy rehearsal showed the purges byte-neutral for
+   the step-0 day, whose asOf includes step 5's schedule row):
+   ```
+   for a in aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv; do
+     d=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["day"])' ~/r1-<env>/before/$a.json)
+     ssh orion-<env> report yield $a --day $d > ~/r1-<env>/purged/$a.json
+     cmp ~/r1-<env>/mid/$a.json ~/r1-<env>/purged/$a.json || echo "STOP: $a differs from mid/"
+   done
+   ```
+   Every report must be byte-identical to its `mid/` copy. A difference: stop and bring both files to the thread. Run
+   it after step 7, and again after step 8 when Mike picks (a).
 
-Stage: steps 0-6, then the soak (one scheduled 02:45 UTC nightly on the new tag, section 3). Prod: on Mike's go after
-the soak passes, steps 0-6 with `<env>` = `prod`, step 5 again only on Mike's go for prod.
+Stage: steps 0-9 (step 4 is stage-only), then the soak (one scheduled 02:45 UTC nightly on the new tag, section 3).
+Prod: on Mike's go after the soak passes, steps 0-9 with `<env>` = `prod` and without step 4; steps 7 and 8 again only
+on Mike's go for prod.
 
 ## The ssh verbs (any release)
 

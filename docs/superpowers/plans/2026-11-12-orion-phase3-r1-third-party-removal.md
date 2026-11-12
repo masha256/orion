@@ -44,8 +44,8 @@ from fresh measurements.
   retry. If the env's next nightly slot is less than 4 h away when it starts, it defers to 2 h after that slot. Why not
   a synchronous verb: a multi-hour SSH call dies with the connection, and it races deploys (a switch drains the daemon,
   not a stray CLI process).
-- **P2 `data purge` is a remote verb that dry-runs by default.** `--yes` deletes, after writing the rows to
-  `$ORION_HOME/purged/<asset>-<metric>-<UTCstamp>.json`. It refuses (a) the rows of a metric's current source type,
+- **P2 `data purge` is a remote verb that dry-runs by default.** `--yes` deletes, after writing the rows to one file
+  per call, `$ORION_HOME/purged/<asset>-<first metric>[+N]-<UTCstamp>.json`. It refuses (a) the rows of a metric's current source type,
   (b) a metric with an open anomaly, and (c) a kept row that references a deleted row. Prod purges run only on Mike's go.
 - **P3 R0b and R1 ship as one release** (0007 is expand-only; R1's value moves are the two below).
 - **P4 Unlock citations.** LIT: Lighter's own post (team 26%, investors 24% = 500M; 1-year lock, 3-year vest; the

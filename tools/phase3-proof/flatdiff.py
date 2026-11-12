@@ -14,6 +14,7 @@ string ids, so their paths carry no escapes. Every path that differs is printed,
 distinction); a bool is not a number.
 
 Allowlist: {"<asset>" | "*": [{"glob": "<path glob>", "rel": <float, optional>, "abs": <float, optional>,
+"old": <JSON value, optional>, "new": <JSON value, optional>, "absent": "old" | "new" (optional),
 "reason": "<text, required>", "todo": <bool, optional>}, ...]}; top-level keys starting with `_` are comments; a
 duplicate key anywhere is refused, and so is a glob that is blank or starts with `*` (a bare `*` would allow
 everything: a glob must name at least its first path segment literally). In a
@@ -23,6 +24,11 @@ is allowed when at least one applicable entry matches it and EVERY applicable en
 - an entry with no `rel`/`abs` holds for any change (added, removed, any type);
 - an entry with a bound holds only for a numeric change (both sides numbers) with |new - old| <= abs, or
   |new - old| / |old| <= rel (either one, when both are given; rel with old == 0 holds only when new == old).
+A value pin is checked first, on any entry: `old` / `new` require that side present and equal to the value (numbers by
+value, anything else by type and value, so `[]` is not `{}` and `null` is a real pin); `absent: "old"` requires the
+path to be added, `absent: "new"` removed (`absent` naming a side that also carries a value is refused). So
+`{"old": "x", "absent": "new"}` allows only the removal of exactly "x", not its replacement. Pins are positional like
+every list index: a pinned `[3]` holds only where the env's report has that value at that index (fail closed).
 So an unbounded `dilution.*` never relaxes a bounded entry on one of its paths. An entry with `"todo": true` is a
 placeholder the controller fills from the first diff run: it is inert (allows nothing) and is listed as a warning.
 Applicable entries that matched no differing path are listed as warnings (exit unchanged).
@@ -40,7 +46,8 @@ import re
 import sys
 from pathlib import Path
 
-ENTRY_KEYS = {"glob", "rel", "abs", "reason", "todo"}
+ENTRY_KEYS = {"glob", "rel", "abs", "reason", "todo", "old", "new", "absent"}
+SIDES = ("old", "new")
 STAR = "*"
 
 
@@ -120,6 +127,11 @@ def load_allowlist(path):
                     raise Bad(f"{where}: `{k}` must be a finite number >= 0")
             if "todo" in e and not isinstance(e["todo"], bool):
                 raise Bad(f"{where}: `todo` must be true or false")
+            if "absent" in e:
+                if e["absent"] not in SIDES:
+                    raise Bad(f"{where}: `absent` must be \"old\" or \"new\"")
+                if e["absent"] in e:
+                    raise Bad(f"{where}: `absent` is {e['absent']!r} and `{e['absent']}` pins a value there too")
         out[asset] = entries
     return out
 
@@ -187,10 +199,29 @@ def same(a, b):
     return type(a) is type(b) and a == b
 
 
+def pin_fails(e, old, new, kind):
+    """Why a value pin (`old` / `new` / `absent`) of entry e fails on this differing path, or None when it holds."""
+    present = {"old": kind != "added", "new": kind != "removed"}
+    value = {"old": old, "new": new}
+    for side in SIDES:
+        if e.get("absent") == side and present[side]:
+            return f"pinned absent in {side}, but {side} is {json.dumps(value[side])}"
+        if side in e:
+            if not present[side]:
+                return f"pinned {side} {json.dumps(e[side])}, but {side} is absent"
+            if not same(e[side], value[side]):
+                return f"pinned {side} {json.dumps(e[side])}, but {side} is {json.dumps(value[side])}"
+    return None
+
+
 def entry_holds(e, old, new, kind):
     """(holds, detail) for one matching entry on one differing path."""
+    why = pin_fails(e, old, new, kind)
+    if why:
+        return False, why
+    pinned = any(k in e for k in ("old", "new", "absent"))
     if "rel" not in e and "abs" not in e:
-        return True, "no bound"
+        return True, "value pinned" if pinned else "no bound"
     if kind != "changed" or not (is_num(old) and is_num(new)):
         return False, "bounded entry, but not a numeric change"
     gap = abs(new - old)

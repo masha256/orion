@@ -36,7 +36,8 @@ flatdiff exits 2. Real reports use identifier keys and string ids, so their path
 ```
 
 - Keys: an asset id, or `*` (applies to every asset). Entry keys: `glob` (required), `reason` (required, non-empty),
-  `rel` / `abs` (optional, finite, >= 0), `todo` (optional bool). Any other key, a malformed value, a duplicate key
+  `rel` / `abs` (optional, finite, >= 0), `old` / `new` (optional, any JSON value), `absent` (optional, `"old"` or
+  `"new"`), `todo` (optional bool). Any other key, a malformed value, a duplicate key
   (an asset listed twice, say: JSON would keep only the last) or a glob that is blank or starts with `*` (a bare `*`
   would allow everything; name the first path segment literally) exits 2.
 - Glob: only `*` is special and matches any run of characters including `.` and `[...]`; brackets are literal; the
@@ -47,6 +48,15 @@ flatdiff exits 2. Real reports use identifier keys and string ids, so their path
   for a numeric change with `|new - old| <= abs` or `|new - old| / |old| <= rel` (either, when both are given; with
   old = 0, rel holds only when nothing changed). So a broad unbounded glob never loosens a bounded entry on the same
   path, and a bounded path that turns null fails.
+- Value pins (any entry, checked before a bound): `old` / `new` require that side to be present and equal to the
+  value (numbers by value, `2` == `2.0`; anything else by type and value, so `[]` is not `{}`; `"old": null` pins the
+  value null). `"absent": "old"` requires the path to be `added`, `"absent": "new"` `removed`; `absent` naming a side
+  that also carries a value exits 2. So `{"glob": "incomeStatement.flags[0]", "old": "third_party: x", "absent":
+  "new"}` allows only the removal of exactly that flag: a replacement value at `[0]` fails.
+- Positional paths: an index (`flags[3]`, `provenance.sources[2]`) is where the entry sits in the prod-copy run's
+  report. Another env may hold it at another index (the golden fixture has VVV's flag at `[2]`, prod at `[3]`): there
+  flatdiff fails closed (the pinned value doesn't match, or the path has no entry). Re-derive the index from that env's
+  pre-deploy report (`before/<a>.json`), keep the pinned value, and re-run; never drop the pin.
 - `"todo": true` marks a placeholder: inert (allows nothing), listed as `WARN todo`. The controller replaces each one
   with the exact paths the first diff run shows (each with its reason) and removes the flag.
 - An applicable entry that matched no differing path is listed as `WARN unmatched` (no effect on the exit code).
@@ -55,18 +65,27 @@ flatdiff exits 2. Real reports use identifier keys and string ids, so their path
 not_measured); LIT the unlocks line's `tokensPerYear` at rel 0.0007 (the +0.066%: Lighter's 500M vs DefiLlama's
 499.67M). LIT has no unbounded dilution glob (fix round 1): `dilution.releases[id=unlocks].id`,
 `dilution.emissionsPerYear` and `dilution.supply.burnedPerYear` (buyback burns: holder flow) are exact (abs 0),
-`dilution.supply.addedPerYear` is rel 0.0007 and `dilution.supply.netPct` abs 0.0001, so a release line added or
+`dilution.supply.addedPerYear` is rel 0.0007 and `dilution.supply.netPct` abs 0.00013 (final review I-2), so a release line added or
 removed has no entry and fails. Ruling R21: the change flows into every dilution-derived field, so
 LIT also bounds at rel 0.0007 `yields.dilution`, `perToken.dilution`, `perToken.perTokenFdv.dilution`,
 `dilution.pct`, `dilution.tokensPerYear`, the unlocks line's `yield` (`dilution.releases[id=unlocks]`) and both fields
-of `yields.dilutionLines[id=unlocks]` (all under `incomeStatement.`), and `dilution.supply.netPerYear` at abs 100000
-tokens (added minus burned, so its relative change can exceed 0.07%). The four net-of-dilution fields
+of `yields.dilutionLines[id=unlocks]` (all under `incomeStatement.`), and `dilution.supply.netPerYear` at abs 120000
+tokens (added minus burned, so its relative change can exceed 0.07%). The two abs bounds are date-bound: the delta is
+~9,210 tokens per monthly tranche in the (now, now + 365 d] window, 10 tranches on 2026-11-12, 11 from 2026-11-29, 12
+from 2026-12-29 (netPerYear 92,100 / 101,310 / 110,520; netPct 9.38e-5 / 1.03e-4 / 1.13e-4). abs 120000 / 0.00013
+cover the 10-12 tranche range and are valid for a release run through 2027-01-28; re-derive them after that. The four net-of-dilution fields
 (`holderFlow.netOfDilution`, `perToken.holderFlow.netOfDilution`, `perToken.perTokenFdv.holderFlow.netOfDilution`,
 `yields.netShareholder`) each get their own rel 0.0008: net = holder flow - dilution, so the +0.066% moves the net by
 ~0.073% (the prod-copy run: rel 0.000729). PUMP has the R21 paths at rel 1e-12. VVV the business line's `crossCheck`
 fields. Provenance / flags (controller addendum, from the prod-copy run; exact paths, no globs): LIT
 `incomeStatement.flags`, `flags[0]`, `provenance.thirdParty`, `provenance.thirdParty[0]`; VVV `flags[3]`,
-`provenance.sources[2]`, `provenance.thirdParty`, `provenance.thirdParty[0]`, `provenance.thirdParty[1]`. Every other
+`provenance.sources[2]`, `provenance.thirdParty`, `provenance.thirdParty[0]`, `provenance.thirdParty[1]`. Each is
+value-pinned to the run's value (final review Minor 1): LIT `flags[0]` old `"third_party: holders.buyback.cross_checks"`
+and `provenance.thirdParty[0]` old `"holders.buyback.cross_checks"`, each absent in new; LIT `flags` and
+`provenance.thirdParty` absent in old, new `[]`; VVV `flags[3]` old `"third_party: revenue.business.cross_check,
+holders.burn.cross_checks"`, `provenance.sources[2]` old `"third_party:api.llama.fi"`, `provenance.thirdParty[0]` old
+`"revenue.business.cross_check"`, `[1]` old `"holders.burn.cross_checks"`, each absent in new; VVV
+`provenance.thirdParty` absent in old, new `[]`. Every other
 asset showed no provenance / flags / checks diff and has no entry there. No `todo` placeholder remains. AERO has no entry (its report
 must be `cmp`-identical); revenue, cost of revenue, holder flow and grades get none beyond the R21 dilution-derived
 fields.
@@ -78,4 +97,6 @@ python3 tools/phase3-proof/flatdiff.py before/<a>.json after/<a>.json --allow to
   --asset <a> --json > flatdiff/<a>.json    # exit code = result; 2 means an input was missing/empty/not a report
 ```
 
-Run it per asset over both windows (D and D-91), and `cmp` AERO's two files as well.
+Run it per asset over both windows (D and D-91), and `cmp` AERO's two files as well. On the release itself
+(docs/ops/deploy.md, Phase 3 R1 release) it runs right after the switch, before any refresh: a refresh writes level
+observations inside report day D's asOf (the end of D + 1) and moves price, market cap and every yield.

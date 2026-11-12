@@ -9,11 +9,12 @@ Spec `docs/superpowers/specs/2026-11-09-orion-phase3-third-party-removal-design.
 
 Mike's go on the plan covers these (plan "Plan decisions").
 - **P1 Backfills run as a daemon job, not a long SSH session.** `job run-now backfill <a> --metrics ... --backfill-days
-  N`; the single worker runs it at priority 70 (after refresh, nightly, push, levels, watch), one attempt, no retry;
-  it defers to 2 h after the env's next nightly slot when that slot is under 4 h away. A synchronous verb would die
-  with the SSH connection and race deploys.
-- **P2 `data purge` is a remote verb that dry-runs by default.** `--yes` deletes after writing the rows to
-  `$ORION_HOME/purged/<asset>-<metric>-<UTCstamp>.json`. Refuses the rows of a metric's current source type, a metric
+  N`; the single worker runs it at priority 70 (after refresh, nightly, push, levels, watch), one attempt, no retry.
+  It defers to 2 h after the env's next nightly slot when that slot is under 4 h away, while a nightly began under 2 h
+  ago (until that slot + 2 h; R9), and while that nightly's refresh / nightly_report jobs are unfinished. A synchronous
+  verb would die with the SSH connection and race deploys.
+- **P2 `data purge` is a remote verb that dry-runs by default.** `--yes` deletes after writing the rows to one file
+  per call, `$ORION_HOME/purged/<asset>-<first metric>[+N]-<UTCstamp>.json`. Refuses the rows of a metric's current source type, a metric
   with an open anomaly, and a kept row that references a deleted row. Prod purges only on Mike's go.
 - **P3 R0b and R1 ship as one release** (0007 is expand-only; R1's value moves are P4's two).
 - **P4 Unlock citations.** LIT: Lighter's own post (team 26%, investors 24% = 500M; 1-year lock, 3-year vest; monthly
@@ -41,7 +42,8 @@ Controller rulings from the SDD ledger, one line each with its cost if wrong.
   release block. Cost: none.
 - R5: Task 4 Step 1 (PUMP citation research) done by the controller; the implementer got the url/quote. Cost: none.
 - R6: Task 7 split: an implementer writes `flatdiff.py`, its tests and the allowlist skeleton; the controller runs
-  Steps 3-8 (prod copy, fetches, comparisons, purge and backfill rehearsal). Cost: none.
+  Steps 3-8 (prod copy, fetches, comparisons, purge rehearsal; the local backfill rehearsal was skipped, R25). Cost:
+  none.
 - R7: Task 8 Step 1 (profile soak parity file, soak cron prompt, outside the repo) is the controller's; the implementer
   writes Steps 2-3 (docs). Cost: none.
 - R8: Task 1's edits to four pin tests (migration count / kind lists 0007 forces) accepted; Task 3 drops the `backfill`
@@ -51,7 +53,10 @@ Controller rulings from the SDD ledger, one line each with its cost if wrong.
 - R10: a queued backfill on a rollback to orion-2026.11.11.1 fails "no handler" with no retry; deploy.md says
   drain/finish backfills before a rollback. Cost: one failed job row.
 - R11: backfill run time stays unbounded in code (a hard timeout would discard a partly written backfill); sizing is
-  documented in deploy.md and the duration is in the Slack line. Cost: an oversized backfill delays one nightly.
+  documented in deploy.md and the duration is in the Slack line. Cost: an oversized backfill delays one nightly; and
+  since the daemon has one worker, a running backfill also holds the hourly `levels` job (watch fire/clear posts, the
+  levels snapshot) and on prod the dead-man ping, so a backfill over an hour or two can trip the prod dead-man
+  (deploy.md says so).
 - R12: Task 1's fix round 1 waited for Task 2's implementer (one implementer in the worktree at a time) and landed as
   its own commit. Cost: none.
 - R13: `purgeMetrics` taking `OrionDb` (src/db -> src/app/lock import) accepted: the lock must wrap the delete
@@ -71,14 +76,35 @@ Controller rulings from the SDD ledger, one line each with its cost if wrong.
   DefiLlama series); fixtures byte-unchanged. Cost: none.
 - R20: prod_copy.py passes `--breaking` to the old release's migrate (the target is always a fresh `p2proof_*` scratch
   schema), separate tools commit with a unit test. Cost: none (scratch only).
-- R21: LIT's +0.066% unlock change flows into the dilution-derived fields (yields.dilution, yields.netShareholder,
-  holderFlow.netOfDilution, perToken.dilution, perToken.holderFlow.netOfDilution, perTokenFdv.*, the unlocks line's
-  yield / dilution.pct / dilution.tokensPerYear): rel 0.0007 (PUMP: same paths, rel 1e-12); supply.netPerYear abs
-  100000 tokens; a todo placeholder for incomeStatement.checks[...]. Cost: a bound too loose by < 0.07% on LIT
-  dilution-derived fields.
-- R22: the `perTokenFdv.*` glob stays unbounded-by-path at rel 0.0007; the controller reads every flatdiff path and
-  treats any perTokenFdv revenue / grossProfit / holderFlow.total move as a stop (FDV doesn't move in R1). Cost: none
-  (manual check).
+- R21: LIT/PUMP dilution-derived bounds (rel 0.0007, supply.netPerYear abs 100000, a checks todo placeholder):
+  superseded by R24 / ee295f6; the final fix wave widened LIT's two abs bounds to 120000 / 0.00013 (final review I-2).
+- R22: the `perTokenFdv.*` glob with a manual stop: superseded by R24 / ee295f6 for LIT (exact entries); PUMP keeps
+  `perTokenFdv.*` at rel 1e-12. The release block's manual read of perTokenFdv paths stays (redundant, harmless).
+- R23: no `db status` ssh verb: the release block checks the switch report's migrations applied `[7]` and
+  `~/deploys.log` `migrations=7`. Cost: none.
+- R24: LIT's four net-of-dilution fields bounded at rel 0.0008 (real move 0.000729), the real provenance / flags paths
+  listed exactly, every other todo placeholder deleted (ee295f6). Cost: none.
+- R25: the local daemon backfill rehearsal (Task 7 Step 7) skipped: a scratch daemon would enqueue the schedule's newest
+  slots (network refreshes, disclosure_watch -> a possible paid analyst run, publish). The handler is covered by Task
+  1's tests; its first real run is stage's smoke backfill in the release block (deploy.md step 4: `ssh orion-stage job
+  run-now backfill hype --metrics flow_usd.af_buys_direct --backfill-days 3`). Cost: a backfill bug found on staging
+  instead of the copy.
+- R26: the soak's parity file needs no change (it compares holder gross/net, holder-flow growth, revenue.annualized and
+  the day, none of which R1 moves; the UNI/VVV/YCRV default day is unchanged, see Proof); only the soak cron's "known
+  queue" line is updated on deploy day. Cost: none.
+- R27: the release block purges only the four orphan pairs (CAKE fees + llama_revenue, LIT fees + llama_revenue, UNI
+  swap_fees, VVV revenue_proxy; no report reads them); the LIT/PUMP third_party `unlocks_next_year` purge is a separate
+  step gated on Mike's pick (see Open decisions). Cost if wrong: 60 third_party rows kept a while longer.
+
+## Open decisions (Mike)
+
+- **LIT/PUMP third-party unlock rows (final review I-3, R27):** purging LIT's and PUMP's third_party
+  `unlocks_next_year` rows (31 / 29 rows on the prod copy, 2026-10-16 .. deploy day) nulls dilution, and with it
+  `yields.netShareholder`, `holderFlow.netOfDilution` and the per-token dilution, in every `report yield lit|pump --day
+  <earlier day>` whose asOf (end of day + 1) is before the deploy-day refresh: about four weeks of history. The nightly
+  and the snapshot after the deploy day are unaffected. Levels can't be backfilled, so the loss is permanent. Pick one:
+  **(a)** purge now (spec D6; deploy.md step 8), accepting null past-day dilution for ~4 weeks, or **(b)** keep the
+  third_party rows until R8 (nothing reads them for a day from the deploy day on).
 
 ## Deferred minors
 
@@ -130,14 +156,46 @@ Task 6 (asset configs, goldens, register):
 - **R2:** the price-history rebuild ships as a second op on this job kind (`backfill` with `op: prices`), not as a
   new verb or job kind.
 - **Dead API cursor (Task 2 M-6):** a third_party purge of a still-configured metric (R1: LIT and PUMP
-  `unlocks_next_year`) leaves that metric's old API-flow cursor (`defillama:...>metric`) behind. Nothing reads it while
+  `unlocks_next_year`, only if Mike picks (a)) leaves that metric's old API-flow cursor (`defillama:...>metric`) behind. Nothing reads it while
   the metric's source is no longer DefiLlama. Open: drop it (suggested: in R8 with the `defillama` source type).
 - **Purge export files, per env:** each `data purge ... --yes` writes the rows it deletes, before deleting, to one
   file `~/home/purged/<asset>-<first metric>[+N]-<UTCstamp>.json` (`$ORION_HOME/purged/`, src/db/purge.ts) in that
   env user's home on venus: `/home/orion-stage/home/purged/` (stage), `/home/orion-prod/home/purged/` (prod). R1's
-  release block writes six per env (one per purge call: cake, lit x2, uni, vvv, pump). With the nightly `pg_dump` they
-  are the only copy of the purged rows; nothing prunes them. Their retention is open (suggested: decide with R8).
+  release block writes four per env (one per orphan purge call: cake, lit, uni, vvv), plus two (lit, pump unlocks) if
+  Mike picks (a). With the nightly `pg_dump` they
+  are the only copy of the purged rows; nothing prunes them, and no verb reads them (Raymond sees only the path and
+  sha256 the JSON output prints). Their retention is open (suggested: Mike copies them off venus after the purge;
+  decide retention or a `purged list` verb with R8).
+- **Open anomalies keyed to removed sources** (final review Minor 6): `cross_check_mismatch` / `source_failure_streak`
+  anomalies deduped on coins.llama.fi, CoinGecko total_supply or the DefiLlama emissions stay open; only a manual
+  resolve closes them (src/db/anomalies.ts). Suggested: a `data anomalies` sweep after the deploy, resolving each with
+  "source removed in R1".
 
 ## Proof
 
-Proof results: see controller commit
+Task 7, run by the controller on prod copy `p2proof_20261112t223129z` (120,316 rows / 21 tables, sums equal), D =
+2026-11-11, old = orion-2026.11.11.1, new = 811d33f dist (+0007 applied); outputs in the controller's workspace
+(`phase3-proof/r1/out/`), the copy dropped afterwards.
+- Carry check: disclosed rows with an adapter locator = 0.
+- AERO `cmp`-identical. crv, cvxcrv, hype, link, sdcrv, sky, ycrv: 0 differing paths.
+- CAKE (9 paths) / UNI (6): only `incomeStatement.volume.*` (annualized -> null, notMeasured reason).
+- PUMP: 16 dilution-derived paths at rel <= 1.3e-14 (float: 82500000000.00008 -> 82500000000).
+- LIT: unlocks 138,796,789.02 -> 138,888,888.89 (+0.0664%); dilution-derived fields +0.066%; net-of-dilution fields
+  +0.0729%; flags / provenance drop "holders.buyback.cross_checks". No revenue / holder flow / yield / price path moved;
+  perTokenFdv revenue / grossProfit / holderFlow.total unchanged (the R22 check).
+- VVV: the business line's crossCheck removed; `flags[3]`, `provenance.sources[2]` (`third_party:api.llama.fi`) and
+  the thirdParty entries removed. Nothing else.
+- Default report day old == new for all 13. The proof log was cut short after `sky` (by a `| head`); the controller's
+  re-run gave uni 2026-11-11 / 2026-11-11, vvv 2026-11-11 / 2026-11-11, ycrv 2026-11-11 / 2026-11-11 (final review
+  I-4), so removing UNI's `flow_usd.swap_fees` and VVV's `flow_usd.revenue_proxy` from the default-day metrics moved no
+  day.
+- New-home fetch: LIT unlocks 138888888.8888889, disclosure / disclosed, cited x.com; PUMP 82500000000, disclosure /
+  disclosed, cited Blockworks.
+- Purge rehearsal: dry-run counts = prod (cake 398 / 398, lit 191 / 191, uni 191, vvv 345, lit unlocks third_party 31,
+  pump 29); `--yes` x6 exit 0; 6 export files; all 13 reports byte-identical before vs after the purge.
+- Final flatdiff with the committed allowlist (ee295f6, and again after the final fix wave's value pins and bounds):
+  all 12 exit 0 (cake 9/9, lit 20/20, pump 16/16, uni 6/6, vvv 8/8, the others 0 diffs); AERO `cmp`-identical.
+- Deviations (recorded only): "before" came from the old release on the copy, not `ssh orion-prod report yield`
+  (equivalent: both sides read the same data). Only window D was compared; the D-91 window was not run (it would have
+  shown I-3's past-day dilution loss, now a gated decision). The PUMP Blockworks quote could not be checked verbatim
+  offline.
