@@ -467,7 +467,7 @@ block on stage, and after the soak, the same block on prod (`<env>` = `stage`, t
 crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv`.
 
 **Do not let a scheduled nightly slot (stage 02:45 UTC, prod 00:45 UTC) fall between step 0 and step 3**: the nightly
-writes new observations inside the step-0 reports' asOf (a report for day `d` reads levels as of the end of `d + 1`),
+refreshes write new level and flow observations inside the step-0 reports' asOf (a report for day `d` reads levels as of the end of `d + 1`),
 and step 3 then STOPs on every asset. Start step 0 with enough time to reach step 3 before the next slot. For the same
 reason the report check (step 3) comes before any refresh: `job run-now refresh` writes price, supply and staking
 levels "now", inside that asOf, and moves price, market cap and every yield.
@@ -528,7 +528,9 @@ levels "now", inside that asOf, and moves price, market cap and every yield.
    Check the Slack lines: `ORION BACKFILL stage HYPE started: ...` and the done line (duration, rows per metric). It
    defers while stage's 02:45 UTC nightly is under 4 h away (and until 2 h after a nightly that began under 2 h ago):
    `jobs` shows it queued; let it wait, or run this step after the window. A `failed` job or an ALERT line: stop, bring
-   the job row and `logs 50` to the thread (no prod deploy). Not on prod.
+   the job row and `logs 50` to the thread (no prod deploy). Not on prod. Its re-read can move HYPE's report: if it
+   finishes after `mid/` is saved (step 5), save `mid/` again (step 5's loop) before step 9, or step 9 STOPs on HYPE
+   for a correct change.
 5. **Refresh LIT and PUMP before any purge, check the new unlock rows, save `mid/`** (ruling R14: the refresh rewrites
    `latest_levels` for `unlocks_next_year` from the new `schedule` source, so a later purge of the third-party rows
    leaves no stale third-party level):
@@ -541,8 +543,9 @@ levels "now", inside that asOf, and moves price, market cap and every yield.
    ```
    A refresh that ends `failed`: stop, do not purge; bring the job row and `logs 50` to the thread. The newest
    `unlocks_next_year` row must be, for LIT, 138,888,888.89 tokens (10 monthly tranches of 500M / 36 in the next 365
-   days; 152,777,777.78 = 11 tranches from 2026-11-29, 166,666,666.67 = 12 from 2026-12-29), source type disclosure,
-   method disclosed, citing Lighter's x.com post; for PUMP 82,500,000,000 tokens, citing the Blockworks article. Any
+   days; 152,777,777.78 = 11 tranches from 2026-11-29, 166,666,666.67 = 12 from 2026-12-29) with `citationUrl` =
+   Lighter's x.com post; for PUMP 82,500,000,000 tokens with `citationUrl` = the Blockworks filing (`data show` prints
+   `source` and `citationUrl`, not the rung or method; the rung is `disclosure` by the adapter's registry entry). Any
    other value or citation: stop. Then save the post-refresh reports on the step-0 days, the comparison base for the
    purges:
    ```
@@ -583,7 +586,8 @@ levels "now", inside that asOf, and moves price, market cap and every yield.
    reports, a re-run of an old nightly slot, any later history consumer). The nightly and the snapshot (yesterday's
    day) are unaffected after the deploy day. Levels cannot be
    backfilled, so the loss is permanent. Mike picks one:
-   - **(a) purge now** (spec D6): run the dry runs, paste the counts, then on his go the `--yes` pair:
+   - **(a) purge now** (spec D6): if a nightly slot or the smoke backfill has run since `mid/` was saved, save `mid/`
+     again first (step 5's loop); run the dry runs, paste the counts, then on his go the `--yes` pair:
      ```
      ssh orion-<env> data purge lit  --metrics unlocks_next_year --source-type third_party
      ssh orion-<env> data purge pump --metrics unlocks_next_year --source-type third_party
@@ -591,10 +595,12 @@ levels "now", inside that asOf, and moves price, market cap and every yield.
      ssh orion-<env> data purge pump --metrics unlocks_next_year --source-type third_party --yes
      ```
      Each deleted count must equal its dry run's; two more export files per env.
-   - **(b) keep the third-party rows until R8**: skip this step. Nothing reads them for a day from the deploy day on
-     (step 5's refresh already moved `latest_levels` to the schedule source).
+   - **(b) keep the third-party rows until R8** (Mike's pick, 2026-11-12): skip this step. A report for the day before
+     the deploy day or later reads the schedule row step 5's refresh wrote (reports read observations, newest at or
+     before the end of `d + 1`); only older days still read the kept third-party rows.
 9. **After the purge(s): compare against `mid/`** (read-only; the prod-copy rehearsal showed the purges byte-neutral for
-   the step-0 day, whose asOf includes step 5's schedule row):
+   the step-0 day when that day is the day before the deploy, so its asOf includes step 5's schedule row; for an
+   older step-0 day the orphan purges are still neutral, nothing reads them):
    ```
    for a in aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv; do
      d=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["day"])' ~/r1-<env>/before/$a.json)

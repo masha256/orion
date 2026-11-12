@@ -105,6 +105,8 @@ Controller rulings from the SDD ledger, one line each with its cost if wrong.
   and the snapshot after the deploy day are unaffected. Levels can't be backfilled, so the loss is permanent. Pick one:
   **(a)** purge now (spec D6; deploy.md step 8), accepting null past-day dilution for ~4 weeks, or **(b)** keep the
   third_party rows until R8 (nothing reads them for a day from the deploy day on).
+  **DECIDED (Mike, 2026-11-12, #orion-dev): (b) keep until R8** ("Recommendations approved"); deploy.md step 8 is
+  skipped on both envs; R8 purges them with the source types.
 
 ## Deferred minors
 
@@ -149,7 +151,7 @@ Task 6 (asset configs, goldens, register):
 - misplaced doc comment in parity.ts; one mis-indented test line; the x.com register row is keyed by host; comment
   rewrites dropped some calibration facts; a replay comment overclaims; coverage gap in r1-third-party.test.ts.
 
-Final re-review of c0e4750 (deploy.md release block wording; fix before release day, all fail-closed):
+Final re-review of c0e4750 (deploy.md release block wording): FIXED before release (N1-N4, release commit):
 - N1 step 5 asks to confirm "source type disclosure, method disclosed", but `data show` prints `source` (`manual`) and
   `citationUrl`, not those fields: check `citationUrl` (x.com / blockworks) and the value instead.
 - N2 step 4 lets a deferred smoke backfill wait; if it runs after `mid/` is saved, HYPE's step-9 `cmp` can STOP on a
