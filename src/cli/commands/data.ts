@@ -1,16 +1,19 @@
+import { join } from 'node:path';
 import type { Command } from 'commander';
 import { listAssetIds, loadAsset } from '../../config/load.js';
 import { decideAnomaly, listAnomalies, type Anomaly } from '../../db/anomalies.js';
 import { confirmObservation, getObservationsByIds, insertObservation, listActiveObservations, rejectObservation } from '../../db/observations.js';
 import { compareUsd, type UsdComparison } from '../../db/prices.js';
+import { purgeMetrics, type PurgeResult } from '../../db/purge.js';
 import { describeSources } from '../../ingest/describe.js';
 import { backfillTokens, type BackfillTokensResult } from '../../ingest/tokenBackfill.js';
 import { lockHolder, withRunLock } from '../../app/lock.js';
 import { hasSources } from '../../ingest/plan.js';
 import { fetchAsset, type FetchResult } from '../../ingest/run.js';
 import { disclosedProvenance } from '../../provenance/locator.js';
+import type { SourceType } from '../../report/sourceTypes.js';
 import { OrionError } from '../../types.js';
-import { fetchSummary, ingestDepsFor, output, parseNumber, withDb, type CliContext } from '../util.js';
+import { fetchSummary, guarded, ingestDepsFor, output, parseNumber, withDb, type CliContext } from '../util.js';
 
 interface FetchOpts {
   metric: string[];
@@ -54,6 +57,21 @@ function backfillTokenLines(r: BackfillTokensResult): string[] {
     ...r.refused.map((x) => `  REFUSED ${x.day}: ${x.reason}`),
     ...r.skipped.map((x) => `  skipped ${x.day} ${x.metricKey}: ${x.reason}`),
     ...r.notes.map((n) => `  note: ${n}`),
+  ];
+}
+
+function purgeLines(r: PurgeResult, sourceType: string | undefined, exportDir: string): string[] {
+  return [
+    `${r.asset.toUpperCase()} purge${r.applied ? '' : ' (dry run)'}, ${sourceType === undefined ? 'all source types' : `source type ${sourceType}`}:`,
+    ...r.perMetric.map((m) =>
+      `  ${m.metric} (${m.configured ? 'configured' : 'not configured'}): ${m.observations} observation(s), ${m.superseded} superseded, ` +
+        `${m.firstDay === null ? 'no rows' : `${m.firstDay} to ${m.lastDay}`}, value sum ${m.valueSum}; ` +
+        `latest_levels ${m.latestLevels}, watch_state ${m.watchState}, fetch_cursors ${m.fetchCursors}`),
+    !r.applied
+      ? `dry run: nothing deleted; --yes deletes and exports to ${exportDir}`
+      : r.exportFile === null
+        ? 'nothing to delete'
+        : `deleted; exported to ${r.exportFile} sha256 ${r.exportSha256}`,
   ];
 }
 
@@ -192,6 +210,27 @@ export function registerData(program: Command, ctx: CliContext): void {
       // A refused day is the Step 5 stop rule: scripted runs fail closed on it.
       if (result.refused.length > 0) ctx.setExitCode?.(1);
     });
+
+  data
+    .command('purge <asset>')
+    .description(
+      'delete the stored history of a metric no longer configured, or of a configured metric only the rows of a retired source type (--source-type); ' +
+        'a dry run unless --yes, which first writes every row it deletes to $ORION_HOME/purged. Refused for the current source\'s type, an open anomaly, or a kept row pointing at a deleted one',
+    )
+    .option('--metric <key>', 'metric to purge (repeatable)', collect, [])
+    .option('--source-type <type>', 'purge only rows of this source type (required for a configured metric; never its current one)')
+    .option('--yes', 'delete, after writing the export')
+    .option('--json', 'JSON output')
+    .action(async (assetId: string, opts: { metric: string[]; sourceType?: string; yes?: boolean; json?: boolean }) =>
+      await guarded(ctx, opts.json, async () => {
+        const loaded = loadAsset(ctx.configRoot, assetId);
+        const exportDir = join(ctx.home, 'purged');
+        const result = await withDb(ctx, async (db) =>
+          await purgeMetrics(db, loaded, { metrics: opts.metric, sourceType: opts.sourceType as SourceType | undefined, apply: opts.yes === true, exportDir, now: ctx.now() }),
+        );
+        output(ctx, opts.json, result, () => purgeLines(result, opts.sourceType, exportDir));
+      }),
+    );
 
   data
     .command('compare-usd <asset>')
