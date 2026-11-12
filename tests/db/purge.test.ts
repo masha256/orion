@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -7,7 +7,8 @@ import { parseAssetYaml, type LoadedAsset } from '../../src/config/load.js';
 import { raiseAnomaly } from '../../src/db/anomalies.js';
 import type { Db } from '../../src/db/connection.js';
 import { insertObservation } from '../../src/db/observations.js';
-import { purgeMetrics } from '../../src/db/purge.js';
+import { exportFileName, purgeMetrics } from '../../src/db/purge.js';
+import { startAgentRun } from '../../src/db/agentRuns.js';
 import type { Provenance } from '../../src/provenance/types.js';
 import type { SourceType } from '../../src/report/sourceTypes.js';
 import { useTestDb } from '../helpers/db.js';
@@ -257,6 +258,101 @@ describe('purgeMetrics', () => {
     writeFileSync(blocker, 'x');
     expect(await errCode(purgeMetrics(db(), loaded(), { metrics: ['flow_usd.llama_fees'], apply: true, exportDir: join(blocker, 'purged'), now: NOW }))).toBe('purge_export_failed');
     expect(await counts(db())).toEqual(before);
+  });
+
+  it('apply fsyncs the export directory, and its parent when the purge created it; a failed directory fsync is purge_export_failed, nothing deleted', async () => {
+    await seedOrphan(db());
+    const home = scratch();
+    const exportDir = join(home, 'purged');
+    const synced: string[] = [];
+    const r = await purgeMetrics(db(), loaded(), { metrics: ['flow_usd.llama_fees'], apply: true, exportDir, now: NOW, syncDir: (d) => synced.push(d) });
+    expect(r.applied).toBe(true);
+    // First purge: purged/ was just created, so $ORION_HOME's entry for it is synced too.
+    expect(synced).toEqual([exportDir, home]);
+    // Later purges: the directory exists, only it is synced (the new file's entry).
+    await seed(db(), 'flow_usd.llama_fees', 'third_party', '2026-10-03T00:00:00Z', 30);
+    synced.length = 0;
+    await purgeMetrics(db(), loaded(), { metrics: ['flow_usd.llama_fees'], apply: true, exportDir, now: new Date('2026-11-12T13:00:00.000Z'), syncDir: (d) => synced.push(d) });
+    expect(synced).toEqual([exportDir]);
+    // A directory fsync that fails refuses before any delete.
+    await seed(db(), 'flow_usd.llama_fees', 'third_party', '2026-10-04T00:00:00Z', 40);
+    const before = await counts(db());
+    const failing = (): void => {
+      throw new Error('EIO: i/o error, fsync');
+    };
+    expect(await errCode(purgeMetrics(db(), loaded(), { metrics: ['flow_usd.llama_fees'], apply: true, exportDir, now: new Date('2026-11-12T14:00:00.000Z'), syncDir: failing })))
+      .toBe('purge_export_failed');
+    expect(await counts(db())).toEqual(before);
+  });
+
+  it("refuses a configured metric whose current source has no known source type (live === null): purge_live_source", async () => {
+    const { config, hash } = parseAssetYaml(PURGE_ASSET_YAML);
+    const scripted: LoadedAsset = { config: { ...config, metrics: { ...config.metrics, legacy_level: { ...config.metrics.total_supply!, fetcher: 'scripted' } } }, hash };
+    await seed(db(), 'legacy_level', 'third_party', '2026-10-01T00:00:00Z', 5);
+    const before = await counts(db());
+    const exportDir = join(scratch(), 'purged');
+    for (const apply of [false, true]) {
+      expect(await errCode(purgeMetrics(db(), scripted, { metrics: ['legacy_level'], sourceType: 'third_party', apply, exportDir, now: NOW }))).toBe('purge_live_source');
+    }
+    expect(await counts(db())).toEqual(before);
+    expect(() => readdirSync(exportDir)).toThrow();
+  });
+
+  it('config refusals come before the run lock: same code as the dry run while another holder has the lock, and no orphaned run is abandoned', async () => {
+    await seed(db(), 'unlocks_next_year', 'constant', '2026-10-01T00:00:00Z', 1000);
+    const runId = await startAgentRun(db(), {
+      assetId: 'purg', persona: 'analyst', runType: 'weekly', trigger: 'manual', triggerDetail: {}, dryRun: false, configHash: 'abc', model: 'm', startedAt: '2026-11-12T11:00:00.000Z',
+    });
+    const exportDir = join(scratch(), 'purged');
+    const outcome = async (): Promise<string> => (await db().one<{ outcome: string }>('SELECT outcome FROM agent_runs WHERE id = $1', [runId]))!.outcome;
+    // No other holder: a refused --yes must not take the lock (which would abandon the orphaned run).
+    expect(await errCode(purgeMetrics(db(), loaded(), { metrics: ['unlocks_next_year'], apply: true, exportDir, now: NOW }))).toBe('purge_configured_metric');
+    expect(await errCode(purgeMetrics(db(), loaded(), { metrics: ['unlocks_next_year'], sourceType: 'constant', apply: true, exportDir, now: NOW }))).toBe('purge_live_source');
+    expect(await errCode(purgeMetrics(db(), loaded(), { metrics: ['flow_usd.llama_fees', 'unlocks_next_year'], sourceType: 'constant', apply: true, exportDir, now: NOW }))).toBe('purge_live_source');
+    expect(await outcome()).toBe('running');
+    // Another holder (a refresh) has the lock: still the config code, not run_in_progress.
+    const held = await db().tryAssetRunLock('purg', 'tick pid 999');
+    expect(held).not.toBeNull();
+    try {
+      for (const apply of [false, true]) {
+        expect(await errCode(purgeMetrics(db(), loaded(), { metrics: ['unlocks_next_year'], apply, exportDir, now: NOW }))).toBe('purge_configured_metric');
+        expect(await errCode(purgeMetrics(db(), loaded(), { metrics: ['unlocks_next_year'], sourceType: 'constant', apply, exportDir, now: NOW }))).toBe('purge_live_source');
+      }
+    } finally {
+      await held!.release();
+    }
+    expect(() => readdirSync(exportDir)).toThrow();
+  });
+
+  it('run_in_progress: another holder has the asset run lock, so --yes deletes nothing and writes no export', async () => {
+    await seedOrphan(db());
+    const before = await counts(db());
+    const exportDir = join(scratch(), 'purged');
+    const held = await db().tryAssetRunLock('purg', 'tick pid 999');
+    expect(held).not.toBeNull();
+    try {
+      expect(await errCode(purgeMetrics(db(), loaded(), { metrics: ['flow_usd.llama_fees'], apply: true, exportDir, now: NOW }))).toBe('run_in_progress');
+      // The dry run takes no lock: it still counts.
+      expect((await purgeMetrics(db(), loaded(), { metrics: ['flow_usd.llama_fees'], apply: false, exportDir, now: NOW })).perMetric[0]!.observations).toBe(3);
+    } finally {
+      await held!.release();
+    }
+    expect(await counts(db())).toEqual(before);
+    expect(() => readdirSync(exportDir)).toThrow();
+  });
+
+  it('export file name: the first metric plus +N for the rest, so a long --metric list stays a short name', async () => {
+    expect(exportFileName('purg', ['flow_usd.llama_fees'], NOW)).toBe('purg-flow_usd.llama_fees-20261112T120000Z.json');
+    expect(exportFileName('purg', ['flow_usd.llama_fees', 'unlocks_next_year'], NOW)).toBe('purg-flow_usd.llama_fees+1-20261112T120000Z.json');
+    const many = Array.from({ length: 40 }, (_, i) => `flow_usd.retired_series_number_${i}`);
+    expect(exportFileName('purg', many, NOW)).toBe('purg-flow_usd.retired_series_number_0+39-20261112T120000Z.json');
+    // Applied with that list: the export is written (no ENAMETOOLONG) and the JSON names every metric.
+    for (const m of many.slice(0, 3)) await seed(db(), m, 'third_party', '2026-10-01T00:00:00Z', 1);
+    const exportDir = join(scratch(), 'purged');
+    mkdirSync(exportDir);
+    const r = await purgeMetrics(db(), loaded(), { metrics: many, apply: true, exportDir, now: NOW });
+    expect(r.exportFile).toBe(join(exportDir, 'purg-flow_usd.retired_series_number_0+39-20261112T120000Z.json'));
+    expect(JSON.parse(readFileSync(r.exportFile!, 'utf8')).metrics).toEqual(many);
   });
 
   it('refuses an empty metric list and an unknown source type', async () => {

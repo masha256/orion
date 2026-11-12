@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { chmodSync, closeSync, fsyncSync, mkdirSync, openSync, writeSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { lockHolder, withRunLock } from '../app/lock.js';
 import type { LoadedAsset } from '../config/load.js';
 import { sourceTypeOf, type SourceType } from '../report/sourceTypes.js';
@@ -64,6 +64,8 @@ export interface PurgeOptions {
   /** `$ORION_HOME/purged` from the CLI. Created mode 700; the export file is mode 600. */
   exportDir: string;
   now: Date;
+  /** Test seam: fsyncs one directory (its entries). Defaults to open + fsync + close. */
+  syncDir?: (dir: string) => void;
 }
 
 interface MetricPlan {
@@ -80,6 +82,9 @@ export async function purgeMetrics(db: OrionDb, loaded: LoadedAsset, opts: Purge
   if (opts.sourceType !== undefined && !SOURCE_TYPES.includes(opts.sourceType)) {
     throw new OrionError('invalid_source_type', `--source-type must be one of ${SOURCE_TYPES.join(', ')}; got ${String(opts.sourceType)}`);
   }
+  // The config-only refusals first, before any lock: a refused --yes gives the dry run's code even while a refresh holds
+  // the lock, and writes nothing (taking the lock would abandon orphaned agent runs). Re-checked inside the transaction.
+  checkConfigured(loaded, metrics, opts.sourceType);
   if (!opts.apply) {
     const plans = await planPurge(db, loaded, metrics, opts.sourceType);
     return { asset, perMetric: plans.map((p) => p.count), exportFile: null, exportSha256: null, applied: false };
@@ -98,7 +103,7 @@ export async function purgeMetrics(db: OrionDb, loaded: LoadedAsset, opts: Purge
         // because nothing was written yet.
         ({ file: exportFile, sha256: exportSha256 } = writeExport(opts.exportDir, asset, metrics, opts.now, {
           asset, metrics, sourceType: opts.sourceType ?? null, createdAt: opts.now.toISOString(), perMetric: plans.map((p) => p.count), ...rows,
-        }));
+        }, opts.syncDir ?? fsyncDir));
       }
       // The self-referencing FK: a deleted row may be superseded by another deleted row (or by a kept one). Clear the
       // pointers inside the set first, so the delete never trips it; a kept row pointing into the set was refused above.
@@ -122,8 +127,8 @@ const NAMES_METRIC = "right(scan_key, length($2) + 1) = '>' || $2";
 
 const n = (v: unknown): number => Number(v ?? 0);
 
-/** Every refusal and every count, reading only. Throws on the first refused metric, so one refusal refuses the request. */
-async function planPurge(db: Db, loaded: LoadedAsset, metrics: string[], sourceType: SourceType | undefined): Promise<MetricPlan[]> {
+/** The refusals that read only the asset config (no DB): a configured metric without a source type, or on its live one. */
+function checkConfigured(loaded: LoadedAsset, metrics: string[], sourceType: SourceType | undefined): void {
   const { config } = loaded;
   const asset = config.id;
   for (const metric of metrics) {
@@ -145,6 +150,13 @@ async function planPurge(db: Db, loaded: LoadedAsset, metrics: string[], sourceT
       );
     }
   }
+}
+
+/** Every refusal and every count, reading only. Throws on the first refused metric, so one refusal refuses the request. */
+async function planPurge(db: Db, loaded: LoadedAsset, metrics: string[], sourceType: SourceType | undefined): Promise<MetricPlan[]> {
+  const { config } = loaded;
+  const asset = config.id;
+  checkConfigured(loaded, metrics, sourceType);
   for (const metric of metrics) {
     const open = await db.all<{ id: number }>("SELECT id FROM anomalies WHERE asset_id = $1 AND metric_key = $2 AND status = 'open' ORDER BY id", [asset, metric]);
     if (open.length > 0) {
@@ -212,17 +224,36 @@ async function exportRows(db: Db, asset: string, ids: number[], gone: string[]) 
   };
 }
 
-/** `<asset>-<metric>[+<metric>...]-<UTCstamp>.json` (plan P2), e.g. `pump-flow_usd.fees-20261112T031500Z.json`. */
+/**
+ * `<asset>-<first metric>[+N]-<UTCstamp>.json`, e.g. `pump-flow_usd.fees-20261112T031500Z.json` or, for three metrics,
+ * `pump-flow_usd.fees+2-...`: a long --metric list never exceeds the 255-byte name limit; the JSON lists every metric.
+ */
 export function exportFileName(asset: string, metrics: string[], now: Date): string {
   const stamp = now.toISOString().replace(/\.\d{3}Z$/, 'Z').replace(/[-:]/g, '');
-  return `${asset}-${metrics.join('+')}-${stamp}.json`.replace(/[^A-Za-z0-9._+-]/g, '_');
+  const rest = metrics.length > 1 ? `+${metrics.length - 1}` : '';
+  return `${asset}-${metrics[0]}${rest}-${stamp}.json`.replace(/[^A-Za-z0-9._+-]/g, '_');
 }
 
-function writeExport(dir: string, asset: string, metrics: string[], now: Date, doc: unknown): { file: string; sha256: string } {
+function fsyncDir(dir: string): void {
+  const fd = openSync(dir, 'r');
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Writes the export and makes it durable before any delete: the file is fsynced, then its directory (so the new name
+ * survives a crash after the DB commit), and, when this call created the directory, each parent up to the existing one
+ * (`$ORION_HOME` on the first purge). Any failure is `purge_export_failed`, thrown before the first delete.
+ */
+function writeExport(dir: string, asset: string, metrics: string[], now: Date, doc: unknown, syncDir: (dir: string) => void): { file: string; sha256: string } {
   const file = join(dir, exportFileName(asset, metrics, now));
   const bytes = Buffer.from(`${JSON.stringify(doc, null, 2)}\n`, 'utf8');
   try {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    // The first directory it created, or undefined when `dir` already existed.
+    const created = mkdirSync(dir, { recursive: true, mode: 0o700 });
     chmodSync(dir, 0o700);
     // 'wx': never overwrite an earlier export.
     const fd = openSync(file, 'wx', 0o600);
@@ -233,6 +264,12 @@ function writeExport(dir: string, asset: string, metrics: string[], now: Date, d
       closeSync(fd);
     }
     chmodSync(file, 0o600);
+    const toSync = [dir];
+    if (created !== undefined) {
+      for (let p = dir; p !== created && p !== dirname(p); p = dirname(p)) toSync.push(dirname(p));
+      toSync.push(dirname(created));
+    }
+    for (const d of toSync) syncDir(d);
   } catch (err) {
     throw new OrionError('purge_export_failed', `could not write the export ${file}: ${(err as Error).message}; nothing was deleted`);
   }

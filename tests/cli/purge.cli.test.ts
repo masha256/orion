@@ -82,7 +82,7 @@ describe('orion data purge', () => {
     await seed('unlocks_next_year', 'constant', '2026-10-02T00:00:00Z', 1000);
     const r = await orion(h, 'data', 'purge', 'purg', '--metric', 'flow_usd.llama_fees', '--metric', 'unlocks_next_year', '--source-type', 'third_party', '--yes');
     expect(r.exit).toEqual([]);
-    const file = join(h, 'purged', 'purg-flow_usd.llama_fees+unlocks_next_year-20261112T120000Z.json');
+    const file = join(h, 'purged', 'purg-flow_usd.llama_fees+1-20261112T120000Z.json');
     const sha = createHash('sha256').update(readFileSync(file)).digest('hex');
     expect(r.out.split('\n')).toEqual([
       'PURG purge, source type third_party:',
@@ -101,11 +101,14 @@ describe('orion data purge', () => {
       expect(r.exit, a.join(' ')).toEqual([1]);
       return JSON.parse(r.out).error.code as string;
     };
-    expect(await code('purg', '--metric', 'unlocks_next_year', '--yes')).toBe('purge_configured_metric');
-    expect(await code('purg', '--metric', 'unlocks_next_year', '--source-type', 'constant', '--yes')).toBe('purge_live_source');
-    expect(await code('purg', '--metric', 'unlocks_next_year', '--source-type', 'defillama', '--yes')).toBe('invalid_source_type');
-    expect(await code('purg', '--yes')).toBe('purge_no_metric');
-    expect(await code('ghost', '--metric', 'x')).toBe('asset_not_found');
+    // Each refusal is the same code with and without --yes (the dry run shows what --yes would hit).
+    for (const yes of [['--yes'], []]) {
+      expect(await code('purg', '--metric', 'unlocks_next_year', ...yes)).toBe('purge_configured_metric');
+      expect(await code('purg', '--metric', 'unlocks_next_year', '--source-type', 'constant', ...yes)).toBe('purge_live_source');
+      expect(await code('purg', '--metric', 'unlocks_next_year', '--source-type', 'defillama', ...yes)).toBe('invalid_source_type');
+      expect(await code('purg', ...yes)).toBe('purge_no_metric');
+      expect(await code('ghost', '--metric', 'x', ...yes)).toBe('asset_not_found');
+    }
     expect(await obsCount()).toBe(1);
     expect(() => readdirSync(join(h, 'purged'))).toThrow();
   });
