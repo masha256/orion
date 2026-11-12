@@ -526,31 +526,31 @@ For Mike at G2:
   have no floor (none breached on dust).
 - [DECIDED, pre-G2 2] R17: the 18 provenance rows are mapped by rule 2a/2b; the runbook's dry run expects an empty
   unmapped list.
-- Review M6: the `levels` snapshot body gained `sourceType`/`locator` per level (P2 approved the `full` body only):
+- [OPEN -> Phase 5] Review M6: the `levels` snapshot body gained `sourceType`/`locator` per level (P2 approved the `full` body only):
   confirm, or drop the two keys from `levelsBody` until Phase 5.
-- G2 rehearsal (controller): Σfees + Σinc vs Σgross on yCRV after the 183-day backfill, current and prior windows
+- [DONE 2026-11-07, G2 signed off] G2 rehearsal (controller): Σfees + Σinc vs Σgross on yCRV after the 183-day backfill, current and prior windows
   (M1); one N-1 write (old release's `data fetch` on a cheap asset, `db status`) on the 0005 proof copy, and a real
   `pg_dump -Fc` + `planRestore` + `pg_restore -L` of the filtered TOC into a scratch schema (M7).
 - [DECIDED, pre-G2 3] `data set` requires `--citation` for every metric (spec §3): kept.
 
 Rollout (before Phase 2 reaches staging):
-- `orion-stage-soak.py` reads the v1 report keys; `orion-remote report yield` passes no `--legacy` (runbook step 1).
+- [DONE 2026-11-08] `orion-stage-soak.py` reads the v1 report keys; `orion-remote report yield` passes no `--legacy` (runbook step 1). It now compares stage vs prod v2 over ssh.
 
 Can wait (final review triage), by phase:
 
 | Origin | Item | Phase |
 |---|---|---|
-| T0 M4 | proof `out`/homes not confined to `$TMPDIR` | Task 11 proof (harness hardening) |
-| T0 M6 | proof `ok` read by grep | Task 11 proof |
-| T0 M7 | proof refusal paths untested | Task 11 proof |
-| T0 | coverage check doesn't require the 13 named assets (the count >= 13 rule already fails short runs) | Task 11 |
+| T0 M4 | proof `out`/homes not confined to `$TMPDIR` | DONE Task 11 (R11.2) |
+| T0 M6 | proof `ok` read by grep | DONE Task 11 (`compare.py --json`) |
+| T0 M7 | proof refusal paths untested | DONE Task 11 |
+| T0 | coverage check doesn't require the 13 named assets (the count >= 13 rule already fails short runs) | DONE Task 11 |
 | T1 | `paid_metric` guard untested for share_metric/run_rate readers | Phase 3 (unreachable by a flow today) |
-| T4 M2 | Slack yields/multiples lines mix v1 and v2 sources | Task 11 (removing v1 resolves it) |
-| T4 M3 | fragile CLI text assertion `tests/cli/cli.test.ts:1089` | Task 11 (rewrites the text output) |
+| T4 M2 | Slack yields/multiples lines mix v1 and v2 sources | DONE Task 11 (v1 removed) |
+| T4 M3 | fragile CLI text assertion `tests/cli/cli.test.ts:1089` | DONE Task 11 |
 | T3/4 M-a | `ratioOf` drops disclosed growth on estimate/of lines | Phase 3 (unreachable) |
 | T3/4 M-b | `sourceLabelOf` not given asset metrics | Phase 3 (latent label) |
 | T3/4 M-c | listing bar uses third_party inheritance | report-only; consistent with M4 |
-| T3/4 M-d | 'missing day' flag fires on a null cost level | Task 11 |
+| T3/4 M-d | 'missing day' flag fires on a null cost level | DONE Task 11 |
 | T5 M2 | price cross-check record matched by sourceId + label, not contract | Phase 3 (when llama price checks are replaced) |
 | T5 M3 | UNI/LINK/CAKE price checks duplicate the existing cross-check | Phase 3 |
 | T5 | circular rule doesn't follow mixed derived-of-adapter chains | Phase 3, before the first such check is wired |
@@ -641,3 +641,33 @@ Built in two commits (ruling R11.1).
   old v1-only release) and `tools/import-sqlite/reports.ts` (the retired SQLite cutover proof; its `--legacy` probe is
   optional and finds none).
 
+## Phase 2 closed (2026-11-12)
+
+Shipped in four releases, each stage first, one scheduled staging nightly as the soak, then prod on Mike's go:
+
+| release | commit | content | stage | prod |
+|---|---|---|---|---|
+| `orion-2026.11.08.1` | b354680 | migrations 0003-0005: income statement v2, checks, provenance, tokens x prices (Tasks 1-9) | 2026-11-08 | 2026-11-09 |
+| `orion-2026.11.09.1` | 0f4b2fe | AERO post-merger, on chain only (not Phase 2 scope; shipped between) | 2026-11-09 | 2026-11-10 |
+| `orion-2026.11.10.1` | 0ecc69e | R0 CAKE pending-burn fix (Phase 3 R0; prerequisite for the tail) | 2026-11-10 | 2026-11-11 |
+| `orion-2026.11.11.1` | 1de531d | Tasks 10 + 11 combined (Mike, ruling R5): 0006 `-- breaking` + v1 retired | 2026-11-11 16:25Z | 2026-11-12 03:04Z |
+
+Tail release proof: read-only prod copy p2proof_20261110t142242z (119,111 rows, sums equal prod), 1de531d vs
+`orion-2026.11.10.1`: origin check 27,533/27,533, 0006 refused without `--breaking` and applied with it, v2 for 13
+assets (fixed D = 2026-11-08 plus the default day) 7,042 fields 0 diffs; build suite 138 files / 1677 tests.
+Prod before the switch: 0 null-provenance rows of 27,716. Soak: staging nightly 2026-11-12 02:45Z, no failed sources,
+stage-vs-prod parity equal on 9/13 with only the known differences on the rest (CRV `vote_incentives` spot-priced at
+fetch time; HYPE/PUMP newest closed day; AERO DefiLlama revision drift). Prod after: schema 6, `observations.source`
+gone, 13/13 `report yield` v2, first levels + snapshot_push on the release done. **No rollback past 0006**: going
+back means restoring the predeploy dump in `~/shared/predeploy/` on each env (Mike).
+
+Carried out of Phase 2 (nothing here blocks a Phase 2 consumer):
+- Phase 3: every "Phase 3" row in the "Can wait" table above (incl. pre-G2 4 remote verbs for backfills, T8 M-6
+  `listFlowUsd` bound, T8 I-1 hourly re-pricing of `beyond` rows = Mike's decision); Phase 3 proofs compare v2 only
+  (no `--legacy`).
+- Phase 5: review M6 (`levels` body `sourceType`/`locator` keys: confirm or drop before the export), the register's
+  TERMS entries and fallback-host rows (T9).
+- Reviewer minors from the tail ledger, all addressed: Task 10 re-review's untested schedule-branch origin guard
+  (R11.3, `tests/ingest/originGuard.test.ts`); a derivation over DefiLlama also writes `input_origin: 'api'` (by
+  design, R10.7). R11.9: the agent pack's `revenue_streams` follow declared settlement; the alternative (every metric
+  line) stays an option, not built.

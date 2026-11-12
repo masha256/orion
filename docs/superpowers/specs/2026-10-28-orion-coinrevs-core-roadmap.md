@@ -62,7 +62,7 @@ Comparison with other platforms (DefiLlama, Token Terminal, Artemis) is a separa
    Move to Postgres with the post-Phase-1 schema; the valuation and analyst
    tables are not carried over (the last SQLite file is archived). `better-sqlite3` is synchronous, so the DB layer and
    its callers become async; tests move to a test Postgres. A read-only role for the site.
-- **Phase 2: data strategy + income statement v2.** Written strategy (source ladder, provenance on every observation:
+- **Phase 2: data strategy + income statement v2.** [SHIPPED: prod `orion-2026.11.11.1` = 1de531d, 2026-11-12; record in `docs/superpowers/notes/2026-11-04-orion-phase2-followups.md`, "Phase 2 closed".] Written strategy (source ladder, provenance on every observation:
    source type, contract / endpoint, block range or tx refs; method label measured / derived / disclosed; internal
    reconciliation checks), income statement v2 (rules 3-4, decisions 5-7), mechanism templates (fee-switch burn, perp
    buyback, ve distribution, liquid-locker wrapper) so 80-100 protocols are onboardable. Token amounts and prices stored
