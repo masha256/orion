@@ -32,7 +32,9 @@ describe('orion-remote', () => {
     expect(src.startsWith('#!/usr/bin/python3 -I\n')).toBe(true);
     const m = /^JOB_KINDS = \(([^)]*)\)$/m.exec(src);
     expect(m).not.toBeNull();
-    expect(m![1]!.split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter((s) => s !== '')).toEqual([...JOB_KINDS]);
+    // Every kind but backfill: its --metrics/--backfill-days flags come with the remote verb (Phase 3 R0b Task 3), which
+    // adds it here; until then orion-remote refuses `job run-now backfill`.
+    expect(m![1]!.split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter((s) => s !== '')).toEqual(JOB_KINDS.filter((k) => k !== 'backfill'));
     // refresh-staging --stdin writes the dump where the daemon's staging_refresh job looks for an upload (ORION_HOME = ~/home).
     const u = /^UPLOADED_DUMP = \(([^)]*)\)/m.exec(src);
     expect(u).not.toBeNull();

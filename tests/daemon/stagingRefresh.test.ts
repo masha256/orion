@@ -203,7 +203,7 @@ describe('stagingRefresh', () => {
 
   it('stagingRefresh: schema mismatch is refused before any restore command', async () => {
     await seedStaging(db());
-    for (const [ids, text] of [[[1], 'prod 1, staging 6'], [[1, 2, 3, 4, 5, 6, 7], 'prod 7, staging 6']] as const) {
+    for (const [ids, text] of [[[1], 'prod 1, staging 7'], [[1, 2, 3, 4, 5, 6, 7, 8], 'prod 8, staging 7']] as const) {
       const f = fakeRunner({ schema: db().schema, ids: [...ids] });
       const w = world();
       const out = await makeStagingRefreshHandler({ run: f.run })(job, w.ctx);

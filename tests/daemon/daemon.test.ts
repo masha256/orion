@@ -9,7 +9,7 @@ import { activeAssetIds, Daemon, defaultHandlers, RESTART_RETRY_MS, type DaemonD
 import { daemonLog, LOG_ROTATE_BYTES } from '../../src/daemon/log.js';
 import { systemdNotifier } from '../../src/daemon/systemd.js';
 import { clearDrain, latestHeartbeat, requestDrain } from '../../src/db/heartbeat.js';
-import { claimNextJob, enqueueJob, listJobs, reapExpired, type JobKind } from '../../src/db/jobs.js';
+import { claimNextJob, enqueueJob, finishJob, listJobs, reapExpired, type JobKind } from '../../src/db/jobs.js';
 import { insertRegistryRow, setRegistryState, type AssetState } from '../../src/db/registry.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
 import { FakeClock } from '../helpers/clock.js';
@@ -516,6 +516,81 @@ describe('daemon worker', () => {
     expect(await w.daemon.workerTick()).toBe(true);
     expect(await job(2)).toMatchObject({ status: 'done' });
     expect((await latestHeartbeat(db()))?.state).toBe('running');
+    w.daemon.requestStop();
+    await w.daemon.run();
+  });
+});
+
+describe('daemon backfill jobs', () => {
+  const PARAMS = { op: 'fetch' as const, metrics: ['flow_usd.fees'], backfillDays: 120 };
+
+  it('daemon: a backfill queued before the nightly refresh at the same slot is claimed after it (priority 70 vs 10)', async () => {
+    const slot = '2026-11-03T00:45:00.000Z';
+    // The backfill was requested earlier (older run_after, lower id): priority still puts the nightly first.
+    await enqueueJob(db(), { kind: 'backfill', assetId: 'mini', slot, runAfter: '2026-11-03T00:30:00.000Z', requestedBy: 'run-now:mike', params: PARAMS });
+    await enqueueJob(db(), { kind: 'refresh', assetId: 'mini', slot });
+    const first = await claimNextJob(db(), 'w1', new Date('2026-11-03T00:46:00.000Z'), null);
+    expect(first).toMatchObject({ id: 2, kind: 'refresh' });
+    const second = await claimNextJob(db(), 'w1', new Date('2026-11-03T00:46:00.000Z'), null);
+    expect(second).toMatchObject({ id: 1, kind: 'backfill', priority: 70, maxAttempts: 1, params: PARAMS });
+    for (const id of [1, 2]) await finishJob(db(), id, 'w1', { status: 'done', result: null }, new Date('2026-11-03T00:47:00.000Z'));
+
+    // Through the worker: every nightly kind runs before the backfill.
+    const clock = new FakeClock('2026-11-04T00:46:00.000Z');
+    const order: string[] = [];
+    const rec = (k: string): JobHandler => async () => (order.push(k), { status: 'done', result: null });
+    const w = daemon({ clock, handlers: { refresh: rec('refresh'), nightly_report: rec('nightly_report'), levels: rec('levels'), backfill: rec('backfill') } });
+    const next = '2026-11-04T00:45:00.000Z';
+    await enqueueJob(db(), { kind: 'backfill', assetId: 'mini', slot: next, runAfter: '2026-11-04T00:00:00.000Z', params: PARAMS });
+    await enqueueJob(db(), { kind: 'refresh', assetId: 'mini', slot: next });
+    await enqueueJob(db(), { kind: 'refresh', assetId: 'other', slot: next });
+    await enqueueJob(db(), { kind: 'nightly_report', assetId: null, slot: next });
+    await enqueueJob(db(), { kind: 'levels', assetId: null, slot: '2026-11-04T00:15:00.000Z' });
+    while (await w.daemon.workerTick()) { /* drain the queue */ }
+    expect(order).toEqual(['refresh', 'refresh', 'nightly_report', 'levels', 'backfill']);
+  });
+
+  it('daemon: a backfill whose lease expires (a deploy switch killed its daemon) is failed, never re-queued (max_attempts 1)', async () => {
+    const slot = '2026-11-03T02:00:00.000Z';
+    await enqueueJob(db(), { kind: 'backfill', assetId: 'mini', slot, params: PARAMS });
+    const claimed = await claimNextJob(db(), 'old-release', new Date(slot), 'orion-2026.11.11.1');
+    expect(claimed).toMatchObject({ attempts: 1, maxAttempts: 1 });
+    const reaped = await reapExpired(db(), new Date(Date.parse(slot) + 181_000), 'new-release');
+    expect(reaped.requeued).toEqual([]);
+    expect(reaped.failed.map((j) => [j.id, j.kind, j.status, j.lastError])).toEqual([[1, 'backfill', 'failed', 'lease_expired']]);
+    expect(await claimNextJob(db(), 'new-release', new Date(Date.parse(slot) + 200_000), null)).toBeNull();
+
+    // A running backfill left by a dead daemon is failed (and said so) when the next daemon starts, not run again.
+    await enqueueJob(db(), { kind: 'backfill', assetId: 'mini', slot: '2026-11-03T03:00:00.000Z', params: PARAMS });
+    await claimNextJob(db(), 'dead-daemon', new Date('2026-11-03T03:00:00.000Z'), null);
+    let ran = 0;
+    const w = daemon({ clock: new FakeClock('2026-11-03T03:01:00.000Z'), handlers: { backfill: async () => (ran++, { status: 'done', result: null }) } });
+    await w.daemon.start();
+    expect(await job(2)).toMatchObject({ status: 'failed', attempts: 1, last_error: 'lease_expired' });
+    expect(w.posts).toEqual(['ORION RESTARTED dev after unclean exit, job 2 failed (lease_expired)']);
+    expect(await w.daemon.workerTick()).toBe(false);
+    expect(ran).toBe(0);
+    w.daemon.requestStop();
+    await w.daemon.run();
+  });
+
+  it('daemon: a drain while a backfill runs waits for it, then claims nothing', async () => {
+    const clock = new FakeClock('2026-11-03T02:00:00.000Z');
+    const g = gate({ status: 'done', result: { fetchLines: [], written: { 'flow_usd.fees': 120 } } });
+    const w = daemon({ clock, handlers: { backfill: g.handler, levels: done } });
+    await w.daemon.start();
+    await enqueueJob(db(), { kind: 'backfill', assetId: 'mini', slot: '2026-11-03T01:59:00.000Z', params: PARAMS });
+    const tick = w.daemon.workerTick();
+    await g.started;
+    await enqueueJob(db(), { kind: 'levels', assetId: null, slot: '2026-11-03T02:00:00.000Z' });
+    expect(await requestDrain(db(), clock.now())).toBe('d1');
+    clock.advance(60_000);
+    await vi.waitFor(async () => expect((await latestHeartbeat(db()))?.state).toBe('draining'));
+    g.open();
+    expect(await tick).toBe(true);
+    expect(await job(1)).toMatchObject({ status: 'done', attempts: 1 });
+    expect(await w.daemon.workerTick()).toBe(false);
+    expect(await job(2)).toMatchObject({ status: 'queued' });
     w.daemon.requestStop();
     await w.daemon.run();
   });

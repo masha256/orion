@@ -1,3 +1,4 @@
+import type { Json } from '../provenance/types.js';
 import { OrionError } from '../types.js';
 import type { Db } from './connection.js';
 
@@ -7,19 +8,29 @@ import type { Db } from './connection.js';
  * taken away (reaped and re-claimed) is refused with `job_lease_lost`, so one run of a job never overwrites another's.
  */
 
-export const JOB_KINDS = ['refresh', 'nightly_report', 'levels', 'snapshot_push', 'disclosure_watch', 'staging_refresh', 'retention'] as const;
+export const JOB_KINDS = ['refresh', 'nightly_report', 'levels', 'snapshot_push', 'disclosure_watch', 'staging_refresh', 'retention', 'backfill'] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'skipped';
 
-/** Lower runs first. */
+/** Lower runs first. A `backfill` (an operator's multi-hour re-scan) runs after every scheduled kind (plan P1). */
 export const JOB_PRIORITY: Record<JobKind, number> = {
-  staging_refresh: 5, refresh: 10, nightly_report: 20, snapshot_push: 30, levels: 40, disclosure_watch: 50, retention: 60,
+  staging_refresh: 5, refresh: 10, nightly_report: 20, snapshot_push: 30, levels: 40, disclosure_watch: 50, retention: 60, backfill: 70,
 };
 
-/** A `refresh` gets one retry; everything else none (the next slot is the retry). */
+/**
+ * A `refresh` gets one retry; everything else none (the next slot is the retry). A `backfill` is never re-run on its
+ * own: a lease lost mid-run (a deploy switch) fails it rather than re-queueing it under the new release.
+ */
 export const MAX_ATTEMPTS: Record<JobKind, number> = {
-  refresh: 2, nightly_report: 1, levels: 1, snapshot_push: 1, disclosure_watch: 1, staging_refresh: 1, retention: 1,
+  refresh: 2, nightly_report: 1, levels: 1, snapshot_push: 1, disclosure_watch: 1, staging_refresh: 1, retention: 1, backfill: 1,
 };
+
+/** A `backfill` job's request (`jobs.params_json`, 0007): re-scan these flow metrics this many days back. */
+export interface BackfillParams {
+  op: 'fetch';
+  metrics: string[];
+  backfillDays: number;
+}
 
 /** How long a claim holds a job without a renewal. */
 export const LEASE_MS = 180_000;
@@ -42,6 +53,8 @@ export interface Job {
   releaseTag: string | null;
   requestedBy: string;
   lastError: string | null;
+  /** `params_json` as stored; null for every scheduled kind. A handler validates it before use. */
+  params: Json | null;
 }
 
 export interface NewJob {
@@ -53,6 +66,8 @@ export interface NewJob {
   /** Default: 'scheduler'. */
   requestedBy?: string;
   releaseTag?: string | null;
+  /** Default: none. Only a `backfill` carries params. */
+  params?: BackfillParams | null;
 }
 
 interface Row {
@@ -73,6 +88,8 @@ interface Row {
   release_tag: string | null;
   requested_by: string;
   last_error: string | null;
+  /** jsonb: node-postgres parses it. */
+  params_json: Json | null;
 }
 
 function fromRow(r: Row): Job {
@@ -81,6 +98,7 @@ function fromRow(r: Row): Job {
     attempts: r.attempts, maxAttempts: r.max_attempts, leaseOwner: r.lease_owner, leaseExpiresAt: r.lease_expires_at,
     startedAt: r.started_at, endedAt: r.ended_at, result: r.result_json === null ? null : (JSON.parse(r.result_json) as unknown),
     releaseTag: r.release_tag, requestedBy: r.requested_by, lastError: r.last_error,
+    params: r.params_json ?? null,
   };
 }
 
@@ -89,10 +107,13 @@ const leaseUntil = (now: Date): string => new Date(now.getTime() + LEASE_MS).toI
 /** Inserts the job once per (kind, asset, slot); null when that job already exists, whatever its status. */
 export async function enqueueJob(db: Db, j: NewJob): Promise<Job | null> {
   const res = await db.run<Row>(
-    `INSERT INTO jobs (kind, asset_id, slot, run_after, priority, status, attempts, max_attempts, release_tag, requested_by)
-     VALUES ($1, $2, $3, $4, $5, 'queued', 0, $6, $7, $8)
+    `INSERT INTO jobs (kind, asset_id, slot, run_after, priority, status, attempts, max_attempts, release_tag, requested_by, params_json)
+     VALUES ($1, $2, $3, $4, $5, 'queued', 0, $6, $7, $8, $9)
      ON CONFLICT ON CONSTRAINT jobs_slot_key DO NOTHING RETURNING *`,
-    [j.kind, j.assetId, j.slot, j.runAfter ?? j.slot, JOB_PRIORITY[j.kind], MAX_ATTEMPTS[j.kind], j.releaseTag ?? null, j.requestedBy ?? 'scheduler'],
+    [
+      j.kind, j.assetId, j.slot, j.runAfter ?? j.slot, JOB_PRIORITY[j.kind], MAX_ATTEMPTS[j.kind], j.releaseTag ?? null, j.requestedBy ?? 'scheduler',
+      j.params == null ? null : JSON.stringify(j.params),
+    ],
   );
   return res.rows[0] ? fromRow(res.rows[0]) : null;
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { openDb } from '../../src/db/connection.js';
 import {
   JOB_KINDS, JOB_PRIORITY, LEASE_MS, MAX_ATTEMPTS, abandonRunning, claimNextJob, deferJob, deleteJobsBefore, enqueueJob, finishJob,
-  listJobs, reapExpired, renewLease, retryJob,
+  getJob, listJobs, reapExpired, renewLease, retryJob,
 } from '../../src/db/jobs.js';
 import { testDatabaseConfig, useTestDb } from '../helpers/db.js';
 
@@ -14,8 +14,8 @@ const plus = (iso: string, ms: number): Date => new Date(new Date(iso).getTime()
 
 describe('jobs store', () => {
   it('jobs: the constants are the plan\'s', () => {
-    expect(JOB_KINDS).toEqual(['refresh', 'nightly_report', 'levels', 'snapshot_push', 'disclosure_watch', 'staging_refresh', 'retention']);
-    expect(JOB_PRIORITY).toEqual({ staging_refresh: 5, refresh: 10, nightly_report: 20, snapshot_push: 30, levels: 40, disclosure_watch: 50, retention: 60 });
+    expect(JOB_KINDS).toEqual(['refresh', 'nightly_report', 'levels', 'snapshot_push', 'disclosure_watch', 'staging_refresh', 'retention', 'backfill']);
+    expect(JOB_PRIORITY).toEqual({ staging_refresh: 5, refresh: 10, nightly_report: 20, snapshot_push: 30, levels: 40, disclosure_watch: 50, retention: 60, backfill: 70 });
     expect(MAX_ATTEMPTS.refresh).toBe(2);
     for (const k of JOB_KINDS.filter((k) => k !== 'refresh')) expect(MAX_ATTEMPTS[k]).toBe(1);
     expect(LEASE_MS).toBe(180_000);
@@ -25,10 +25,21 @@ describe('jobs store', () => {
     const j = await enqueueJob(db(), { kind: 'refresh', assetId: 'aero', slot: SLOT });
     expect(j).toEqual({
       id: 1, kind: 'refresh', assetId: 'aero', slot: SLOT, runAfter: SLOT, priority: 10, status: 'queued', attempts: 0, maxAttempts: 2,
-      leaseOwner: null, leaseExpiresAt: null, startedAt: null, endedAt: null, result: null, releaseTag: null, requestedBy: 'scheduler', lastError: null,
+      leaseOwner: null, leaseExpiresAt: null, startedAt: null, endedAt: null, result: null, releaseTag: null, requestedBy: 'scheduler', lastError: null, params: null,
     });
     const manual = await enqueueJob(db(), { kind: 'snapshot_push', assetId: null, slot: SLOT, runAfter: '2026-11-03T01:00:00.000Z', requestedBy: 'mike', releaseTag: 'orion-2026.11.03.1' });
     expect(manual).toMatchObject({ runAfter: '2026-11-03T01:00:00.000Z', requestedBy: 'mike', releaseTag: 'orion-2026.11.03.1', priority: 30, maxAttempts: 1 });
+  });
+
+  it('jobs: a backfill job carries its params (params_json) through enqueue, claim, get and list; other kinds have none', async () => {
+    const params = { op: 'fetch' as const, metrics: ['flow_usd.fees', 'flow_tokens.fees'], backfillDays: 120 };
+    const j = await enqueueJob(db(), { kind: 'backfill', assetId: 'crv', slot: SLOT, requestedBy: 'run-now:mike', params });
+    expect(j).toMatchObject({ kind: 'backfill', assetId: 'crv', priority: 70, maxAttempts: 1, params });
+    expect((await getJob(db(), j!.id))!.params).toEqual(params);
+    expect((await listJobs(db(), { kind: 'backfill' })).map((x) => x.params)).toEqual([params]);
+    expect((await claimNextJob(db(), 'w1', at(SLOT), null))!.params).toEqual(params);
+    expect((await enqueueJob(db(), { kind: 'levels', assetId: null, slot: SLOT }))!.params).toBeNull();
+    expect((await db().one<{ t: string }>('SELECT jsonb_typeof(params_json) AS t FROM jobs WHERE id = $1', [j!.id]))!.t).toBe('object');
   });
 
   it('jobs: the same (kind, null, slot) enqueued twice gives one row', async () => {

@@ -43,19 +43,20 @@ describe('migrate', () => {
   it('migrate: the shipped migrations apply to an empty schema (0006 only with breaking); a second run applies nothing; status is current', async () => {
     const db = await emptySchema();
     const before = await migrationStatus(db);
-    expect(before).toMatchObject({ schema: db.schema, dbAt: 0, codeRequires: 6, applied: [], changed: [], state: 'behind' });
+    expect(before).toMatchObject({ schema: db.schema, dbAt: 0, codeRequires: 7, applied: [], changed: [], state: 'behind' });
     expect(before.pending).toEqual([
       { id: 1, name: 'baseline', breaking: false }, { id: 2, name: 'daemon', breaking: false }, { id: 3, name: 'checks', breaking: false },
       { id: 4, name: 'provenance', breaking: false }, { id: 5, name: 'tokens_prices', breaking: false }, { id: 6, name: 'provenance_not_null', breaking: true },
+      { id: 7, name: 'job_params', breaking: false },
     ]);
 
     await expect(applyMigrations(db, {})).rejects.toMatchObject({ code: 'migration_breaking', message: expect.stringContaining('6') });
     expect((await migrationStatus(db)).dbAt).toBe(0);
-    expect(await applyMigrations(db, { breaking: true })).toEqual({ applied: [1, 2, 3, 4, 5, 6] });
+    expect(await applyMigrations(db, { breaking: true })).toEqual({ applied: [1, 2, 3, 4, 5, 6, 7] });
     expect(await applyMigrations(db, {})).toEqual({ applied: [] });
     const after = await migrationStatus(db);
-    const [baseline, daemon, checks, provenance, tokensPrices, notNull] = loadMigrations();
-    expect(after).toMatchObject({ dbAt: 6, codeRequires: 6, pending: [], changed: [], state: 'current' });
+    const [baseline, daemon, checks, provenance, tokensPrices, notNull, jobParams] = loadMigrations();
+    expect(after).toMatchObject({ dbAt: 7, codeRequires: 7, pending: [], changed: [], state: 'current' });
     expect(after.applied).toEqual([
       { id: 1, name: 'baseline', sha256: baseline!.sha256, appliedAt: expect.stringMatching(/Z$/) },
       { id: 2, name: 'daemon', sha256: daemon!.sha256, appliedAt: expect.stringMatching(/Z$/) },
@@ -63,6 +64,7 @@ describe('migrate', () => {
       { id: 4, name: 'provenance', sha256: provenance!.sha256, appliedAt: expect.stringMatching(/Z$/) },
       { id: 5, name: 'tokens_prices', sha256: tokensPrices!.sha256, appliedAt: expect.stringMatching(/Z$/) },
       { id: 6, name: 'provenance_not_null', sha256: notNull!.sha256, appliedAt: expect.stringMatching(/Z$/) },
+      { id: 7, name: 'job_params', sha256: jobParams!.sha256, appliedAt: expect.stringMatching(/Z$/) },
     ]);
     expect((await db.one<{ n: number }>('SELECT count(*) AS n FROM observations'))?.n).toBe(0);
   });
@@ -71,7 +73,7 @@ describe('migrate', () => {
     const db = await emptySchema();
     await db.run(`DROP SCHEMA ${db.schema}`);
     expect((await migrationStatus(db)).state).toBe('behind');
-    expect(await applyMigrations(db, { breaking: true })).toEqual({ applied: [1, 2, 3, 4, 5, 6] });
+    expect(await applyMigrations(db, { breaking: true })).toEqual({ applied: [1, 2, 3, 4, 5, 6, 7] });
     expect((await migrationStatus(db)).state).toBe('current');
   });
 
@@ -253,7 +255,7 @@ describe('migrate', () => {
     await db.run('DELETE FROM observations WHERE value = 5');
     // latest_levels: every column the writers set.
     await db.run(`INSERT INTO latest_levels (asset_id, metric_key, value, observed_at, source, source_type, locator) VALUES ('crv', 'price_usd', 1, now(), 'api', 'market_data', '{}')`);
-    expect(await applyMigrations(db, { breaking: true })).toEqual({ applied: [6] });
+    expect(await applyMigrations(db, { migrations: all.slice(0, 6), breaking: true })).toEqual({ applied: [6] });
     const cols = async (table: string) =>
       await db.all<{ c: string; n: string }>(
         'SELECT column_name AS c, is_nullable AS n FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position',

@@ -226,9 +226,9 @@ describe('import', () => {
   it('import: a carried weekly run without transcript still shows', async () => {
     await run(fixture());
     // The import writes a 0005 schema; this build reads it after the release-2 provenance backfill (stood in for here)
-    // and 0006 (Task 10).
+    // and 0006 (Task 10), then 0007 (jobs.params_json).
     await pg.run("UPDATE observations SET method = 'measured', source_type = 'contract_state', locator = '{}', code_version = 'pre-v2', config_hash = 'pre-v2'");
-    expect(await applyMigrations(pg, { breaking: true })).toEqual({ applied: [6] });
+    expect(await applyMigrations(pg, { breaking: true })).toEqual({ applied: [6, 7] });
     const home = mkdtempSync(join(tmpdir(), 'orion-import-home-'));
     dirs.push(home);
     const lines: string[] = [];

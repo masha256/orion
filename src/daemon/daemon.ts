@@ -15,6 +15,7 @@ import type { Notifier } from '../notify/slack.js';
 import { loadAssetYamls, reconcileFromDisk } from '../registry/reconcile.js';
 import { checkPublishTarget, PUBLISH_OFF } from '../push/publisher.js';
 import { OrionError } from '../types.js';
+import { backfillHandler } from './jobs/backfill.js';
 import { disclosureWatchHandler } from './jobs/disclosureWatch.js';
 import { levelsHandler } from './jobs/levels.js';
 import { nightlyReportHandler } from './jobs/nightlyReport.js';
@@ -131,6 +132,7 @@ export function defaultHandlers(): Partial<Record<JobKind, JobHandler>> {
     disclosure_watch: disclosureWatchHandler,
     staging_refresh: stagingRefreshHandler,
     retention: retentionHandler,
+    backfill: backfillHandler,
   };
 }
 
