@@ -3,9 +3,10 @@ import { fetchSummary } from '../../cli/util.js';
 import { loadAsset } from '../../config/load.js';
 import type { AssetConfig } from '../../config/schema.js';
 import { dbDayBlocks } from '../../db/dayBlocks.js';
-import type { BackfillParams } from '../../db/jobs.js';
+import { listJobs, type BackfillParams } from '../../db/jobs.js';
 import { realFetchDeps } from '../../ingest/deps.js';
 import { fetchAsset, type FetchDeps, type FetchResult } from '../../ingest/run.js';
+import { sourceId } from '../../ingest/sourceId.js';
 import { slackClean } from '../../notify/format.js';
 import { OrionError } from '../../types.js';
 import type { JobContext, JobHandler, JobOutcome } from '../daemon.js';
@@ -16,6 +17,11 @@ import { REFRESH_LOCKED_RETRY_MS } from './refresh.js';
 export const BACKFILL_CLEARANCE_MS = 4 * 3_600_000;
 /** ...nor before this long after a nightly slot began: it then waits until that slot + this. */
 export const BACKFILL_DEFER_AFTER_MS = 2 * 3_600_000;
+/**
+ * ...and, past that, while a `refresh` or the `nightly_report` of the newest nightly slot is still queued or running
+ * (a retry 10/30 min later, a report waiting up to slot + 3 h): it then looks again this much later.
+ */
+export const BACKFILL_NIGHTLY_RECHECK_MS = 15 * 60_000;
 /** The most days one backfill re-scans. */
 export const BACKFILL_MAX_DAYS = 400;
 
@@ -72,18 +78,29 @@ export function parseBackfillParams(raw: unknown, asset: AssetConfig): BackfillP
 /**
  * Null when a backfill may start at `now`; otherwise the epoch ms it should wait until. The window from
  * BACKFILL_CLEARANCE_MS before each of the env's nightly slots to BACKFILL_DEFER_AFTER_MS after it is closed, so a
- * multi-hour re-scan on the daemon's one worker never holds up the nightly's refreshes. An env without a nightly entry
- * has no closed window.
+ * multi-hour re-scan on the daemon's one worker never holds up the nightly's refreshes. Past that window it also waits,
+ * BACKFILL_NIGHTLY_RECHECK_MS at a time, while any `refresh` or `nightly_report` job of the newest nightly slot is
+ * unfinished (queued, a queued retry included, or running): the clock alone can't know the nightly is done. An env
+ * without a nightly entry has no closed window.
  */
-export function backfillWaitUntil(ctx: JobContext, now: Date): number | null {
+export async function backfillWaitUntil(ctx: JobContext, now: Date): Promise<number | null> {
   const nightly = loadSchedule(ctx.paths.configRoot, ctx.env).find((e) => e.key === 'nightly');
   if (!nightly) return null;
   const t = now.getTime();
-  const last = newestSlot(nightly.cadence, now).getTime();
-  if (t < last + BACKFILL_DEFER_AFTER_MS) return last + BACKFILL_DEFER_AFTER_MS;
+  const last = newestSlot(nightly.cadence, now);
+  if (t < last.getTime() + BACKFILL_DEFER_AFTER_MS) return last.getTime() + BACKFILL_DEFER_AFTER_MS;
   const next = nextSlot(nightly.cadence, now).getTime();
   if (next - t < BACKFILL_CLEARANCE_MS) return next + BACKFILL_DEFER_AFTER_MS;
+  const ofSlot = await listJobs(ctx.db, { slot: last.toISOString(), limit: 100_000 });
+  const unfinished = ofSlot.some((j) => (j.kind === 'refresh' || j.kind === 'nightly_report') && (j.status === 'queued' || j.status === 'running'));
+  if (unfinished) return t + BACKFILL_NIGHTLY_RECHECK_MS;
   return null;
+}
+
+/** `65 min` -> `1 h 05 min`; whole minutes, rounded. */
+export function fmtDuration(ms: number): string {
+  const m = Math.max(0, Math.round(ms / 60_000));
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
 }
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -95,11 +112,19 @@ function codeOf(err: unknown): { code: string; message: string } {
   return { code: err instanceof Error ? err.constructor.name : 'error', message: message(err).split('\n')[0]! };
 }
 
-/** A fetch whose every source failed: the first failed source's error, first line. */
-function fetchFailure(r: FetchResult): { code: string; message: string } | null {
-  if (r.outcome !== 'failed') return null;
-  const s = r.sources.find((x) => x.status === 'failed');
-  return { code: 'fetch_failed', message: s ? `${s.sourceId}: ${(s.error ?? 'failed').split('\n')[0]}` : 'nothing was fetched' };
+/**
+ * A fetch that did not do what was asked: every source failed (`fetch_failed`), or a failed source is the primary of a
+ * requested metric (`fetch_partial`); the first such source's error, first line. Null when it did, which includes a
+ * partial fetch whose only failed sources are cross-checks (the rows were written; the done line names them).
+ */
+function fetchFailure(r: FetchResult, primaries: Set<string>): { code: string; message: string } | null {
+  const line = (s: FetchResult['sources'][number]) => `${s.sourceId}: ${(s.error ?? 'failed').split('\n')[0]}`;
+  if (r.outcome === 'failed') {
+    const s = r.sources.find((x) => x.status === 'failed');
+    return { code: 'fetch_failed', message: s ? line(s) : 'nothing was fetched' };
+  }
+  const s = r.sources.find((x) => x.status === 'failed' && primaries.has(x.sourceId));
+  return s ? { code: 'fetch_partial', message: line(s) } : null;
 }
 
 /**
@@ -108,7 +133,10 @@ function fetchFailure(r: FetchResult): { code: string; message: string } | null 
  * for hours. Never retried (max attempts 1): a failure posts one ALERT line naming the asset, the metrics and the
  * error, and the operator decides. Deferred, without using its attempt, while the env's nightly is near or running
  * (`backfillWaitUntil`) and, for REFRESH_LOCKED_RETRY_MS, while another run holds the asset's lock. The asset needs no
- * registry state: a backfill is an operator action. Done posts the rows written per metric.
+ * registry state: a backfill is an operator action. A start line is posted once the lock is held (a backfill must be
+ * sized to finish inside the 4 h clearance; nothing bounds it in code); done posts the rows written per metric and the
+ * run's duration, and a failure after the start says how long it ran. A requested metric whose primary source failed
+ * fails the job; a failed cross-check alone leaves it done, named in the line.
  */
 export function makeBackfillHandler(o: BackfillHandlerOptions = {}): JobHandler {
   const fetch = o.fetch ?? fetchAsset;
@@ -120,30 +148,37 @@ export function makeBackfillHandler(o: BackfillHandlerOptions = {}): JobHandler 
     let symbol = assetId.toUpperCase();
     let params: BackfillParams | null = null;
     let failure: { code: string; message: string };
+    const run: { startedMs: number | null } = { startedMs: null };
     try {
       const loaded = loadAsset(ctx.paths.configRoot, assetId);
       symbol = loaded.config.symbol;
       params = parseBackfillParams(job.params, loaded.config);
       const now = ctx.clock.now();
-      const until = backfillWaitUntil(ctx, now);
+      const until = await backfillWaitUntil(ctx, now);
       if (until !== null) return { status: 'deferred', untilMs: until };
       const base = o.fetchDeps ? o.fetchDeps(ctx) : realFetchDeps(ctx.envVars, () => ctx.clock.now());
       const deps: FetchDeps = { ...base, dayBlocks: (chainId) => dbDayBlocks(ctx.db, chainId) };
       const { metrics, backfillDays } = params;
       ctx.log(`backfill ${assetId} ${metrics.join(', ')} ${backfillDays} days`);
-      const fetched = await withRunLock(ctx.db, assetId, lockHolder('daemon backfill'), now, async () =>
-        await fetch(ctx.db, loaded, now, deps, { metrics, backfillDays, onProgress: (line) => ctx.log(line) }),
-      );
+      const fetched = await withRunLock(ctx.db, assetId, lockHolder('daemon backfill'), now, async () => {
+        run.startedMs = ctx.clock.now().getTime();
+        const start = `ORION BACKFILL ${ctx.env} ${symbol} started: ${metrics.join(', ')}, ${backfillDays} days`;
+        const sent = await ctx.notify.post(slackClean(start, 1000));
+        if (!sent.ok) ctx.log(`backfill start line not delivered: ${sent.error ?? 'unknown error'}`);
+        return await fetch(ctx.db, loaded, now, deps, { metrics, backfillDays, onProgress: (line) => ctx.log(line) });
+      });
       if (ctx.signal.aborted) return aborted;
       result.fetchLines = fetchSummary(fetched);
       for (const m of metrics) result.written[m] = fetched.written.filter((w) => w.metricKey === m).length;
-      const failed = fetchFailure(fetched);
+      const primaries = new Set(metrics.map((m) => sourceId(loaded.config.metrics[m]!.source!)));
+      const failed = fetchFailure(fetched, primaries);
       if (!failed) {
         const partial = fetched.outcome === 'partial'
           ? `; partial: ${fetched.sources.filter((s) => s.status === 'failed').map((s) => s.sourceId).join(', ')} failed`
           : '';
         const rows = metrics.map((m) => `${m} ${result.written[m]} rows`).join(', ');
-        const text = `ORION BACKFILL ${ctx.env} ${symbol} done (${backfillDays} days): ${rows}${partial}`;
+        const took = fmtDuration(ctx.clock.now().getTime() - run.startedMs!);
+        const text = `ORION BACKFILL ${ctx.env} ${symbol} done in ${took} (${backfillDays} days): ${rows}${partial}`;
         const posted = await ctx.notify.post(slackClean(text, 1000));
         if (!posted.ok) ctx.log(`backfill line not delivered: ${posted.error ?? 'unknown error'}`);
         return { status: 'done', result };
@@ -159,7 +194,8 @@ export function makeBackfillHandler(o: BackfillHandlerOptions = {}): JobHandler 
     }
     if (ctx.signal.aborted) return aborted;
     const what = params ? ` ${slackClean(params.metrics.join(', '), 400)}` : '';
-    const text = `ORION ALERT ${ctx.env} backfill ${symbol}${what} failed: ${slackClean(failure.code, 60)}: ${slackClean(failure.message)}`;
+    const after = run.startedMs !== null ? ` after ${fmtDuration(ctx.clock.now().getTime() - run.startedMs)}` : '';
+    const text = `ORION ALERT ${ctx.env} backfill ${symbol}${what} failed${after}: ${slackClean(failure.code, 60)}: ${slackClean(failure.message)}`;
     const posted = await ctx.notify.post(text);
     if (!posted.ok) ctx.log(`alert not delivered: ${posted.error ?? 'unknown error'}`);
     return { status: 'failed', result, error: `${failure.code}: ${failure.message}` };
