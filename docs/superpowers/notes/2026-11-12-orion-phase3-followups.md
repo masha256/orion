@@ -149,6 +149,16 @@ Task 6 (asset configs, goldens, register):
 - misplaced doc comment in parity.ts; one mis-indented test line; the x.com register row is keyed by host; comment
   rewrites dropped some calibration facts; a replay comment overclaims; coverage gap in r1-third-party.test.ts.
 
+Final re-review of c0e4750 (deploy.md release block wording; fix before release day, all fail-closed):
+- N1 step 5 asks to confirm "source type disclosure, method disclosed", but `data show` prints `source` (`manual`) and
+  `citationUrl`, not those fields: check `citationUrl` (x.com / blockworks) and the value instead.
+- N2 step 4 lets a deferred smoke backfill wait; if it runs after `mid/` is saved, HYPE's step-9 `cmp` can STOP on a
+  correct change: wait for the smoke backfill to finish (or skip it) before saving `mid/`.
+- N3 the nightly warning overstates the mechanism, and the "re-save `mid/`" instruction sits only before step 7, not
+  before a later step 8(a).
+- N4 step 9's rationale holds only when the saved report day is the day before the deploy; step 8(b) cites
+  `latest_levels` as the reason, but reports read observations.
+
 ## Carried to later releases
 
 - **R3:** P5's two replacements: LIT's buyback `two_path` check (fills vs the treasury's LIT balance) and VVV's
