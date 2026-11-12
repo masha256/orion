@@ -10,6 +10,10 @@
 - 2026-11-12: R0 CAKE shipped (`orion-2026.11.10.1` on prod 2026-11-11). Phase 2 closed: prod `orion-2026.11.11.1` =
   1de531d (0006 provenance NOT NULL, `observations.source` dropped, v1/`--legacy` retired). Branch rebased onto main
   763868e; Phase 3 code builds on it (no `observations.source`, no `holder_flows`/`reporting` keys, v2-only proofs).
+- 2026-11-12 (Mike: "Go"): one plan per release, each written just before its build. First plan:
+  `docs/superpowers/plans/2026-11-12-orion-phase3-r1-third-party-removal.md` = R0b (remote verbs: `backfill` job kind
+  with 0007 expand-only, `data purge`, `data compare-usd`) + R1, one release; plan decisions P1-P5 in it (P4: PUMP has
+  no issuer vesting schedule, Blockworks filing cited; LIT unlocks +0.066% from Lighter's own 26%/24%).
 Drafted 2026-11-09 (#orion-dev "go on 2"). Branch `feat/phase3-third-party` from main 0f4b2fe (release
 orion-2026.11.09.1, AERO post-merger). Nothing here is built yet; the next step is the plan. Umbrella: `2026-10-28-orion-coinrevs-core-roadmap.md` (Phase 3; decision 1 history
 deletion; decision 4 order: 3 and 5 in parallel). Phase 2 inputs: `2026-10-28-orion-data-strategy-income-v2-design.md`
