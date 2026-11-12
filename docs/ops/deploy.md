@@ -454,7 +454,94 @@ ssh orion-<env> data purge <asset> --metrics <k1,k2,...> [--source-type <rung>] 
   one holds the worker). A `backfill` still `queued` when the older release takes over fails "no handler" there, with
   no retry: re-queue it with `job run-now backfill ...` after rolling forward again.
 
-<!-- release block: Task 8 -->
+**Per-env release block** (after step 1 above; no `--breaking`; R1 itself queues no `backfill`). The order is: **stage,
+one scheduled nightly soak (section 3), then prod on Mike's go.** As in the Phase 2 release, `staging_refresh` (Sunday
+10:30 UTC, stage only) refuses a prod dump while the two envs differ (stage at 0007, prod at 0006: `schema mismatch
+...`) and alerts; nothing is restored. Before deploying stage, check that no Sunday 10:30 UTC falls between the planned
+stage switch and the planned prod switch (stage switch, then stage's next 02:45 UTC nightly, then the soak check and
+Mike's go). If one does, deploy stage after that Sunday's refresh. Run the block on stage, and after the soak, the same
+block on prod (`<env>` = `stage`, then `prod`; `ssh orion-<env>` = `$ST` / `$PR`). The 12 assets whose config changes in
+R1 (every asset but AERO, whose report must stay byte-identical): `cake crv cvxcrv hype link lit pump sdcrv sky uni vvv
+ycrv`.
+
+0. **Before the switch: save the pre-deploy reports** (read-only, on the release still current), the 12 and AERO,
+   on the machine running the deploy:
+   ```
+   mkdir -p ~/r1-<env>/before ~/r1-<env>/after
+   for a in aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv; do
+     ssh orion-<env> report yield $a > ~/r1-<env>/before/$a.json || { echo "STOP: $a exit $?"; break; }
+   done
+   ```
+   Each file's top-level `day` is that asset's report day (read it with
+   `python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["day"])' ~/r1-<env>/before/<a>.json`); step 6
+   reports the same day, since CAKE's, UNI's and VVV's default day may move with this release (they no longer wait on the
+   removed DefiLlama series).
+1. **Deploy:**
+   ```
+   scripts/release/deploy.sh <env> <tag>        # switch runs db migrate: applied [7]; no --breaking (0007 is expand-only)
+   ```
+   Paste the report verbatim into the thread; its migrations line must list 7 (and only 7).
+2. **Check the switch:**
+   ```
+   ssh orion-<env> status                       # current <tag>; heartbeat fresh, on <tag>
+   ssh orion-<env> logs 30                      # daemon started on <tag>; heartbeat lines on <tag>; no error
+   ```
+   `~/deploys.log` (in the deploy report and in `status`) shows `switch <from> -> <tag> migrations=7 breaking=0`. The
+   deploy keys have no `db status` verb; the switch report's migrations applied `[7]` is the schema check (as the env
+   user, `o db status` must name current = 7, pending none).
+3. **Refresh LIT and PUMP before any purge** (ruling R14: the refresh rewrites `latest_levels` for
+   `unlocks_next_year` from the new `schedule` source, so the purge of the third-party rows leaves no stale third-party
+   level):
+   ```
+   ssh orion-<env> job run-now refresh lit
+   ssh orion-<env> job run-now refresh pump
+   ssh orion-<env> jobs --since <iso of the switch>        # repeat until both refresh jobs are `done`
+   ```
+   A refresh that ends `failed`: stop, do not purge; bring the job row and `logs 50` to the thread.
+4. **Purge dry runs** (nothing is deleted without `--yes`), one per pair, and paste each output's counts into the
+   thread. The first four are orphans (metric no longer configured: no `--source-type`); the last two drop the
+   `third_party` rows of the still-configured `unlocks_next_year` (its current source is the new schedule):
+   ```
+   ssh orion-<env> data purge cake --metrics flow_usd.fees,flow_usd.llama_revenue
+   ssh orion-<env> data purge lit  --metrics flow_usd.fees,flow_usd.llama_revenue
+   ssh orion-<env> data purge uni  --metrics flow_usd.swap_fees
+   ssh orion-<env> data purge vvv  --metrics flow_usd.revenue_proxy
+   ssh orion-<env> data purge lit  --metrics unlocks_next_year --source-type third_party
+   ssh orion-<env> data purge pump --metrics unlocks_next_year --source-type third_party
+   ```
+   A refusal (a configured metric without `--source-type`, the metric's current source type, an open anomaly, a kept
+   row referencing a purged one) writes nothing: stop and bring it to Mike. On prod, compare the counts with stage's and
+   with the Task 7 prod-copy rehearsal.
+5. **On Mike's go (per env, given in the thread after he has seen the dry-run counts): the same six with `--yes`:**
+   ```
+   ssh orion-<env> data purge cake --metrics flow_usd.fees,flow_usd.llama_revenue --yes
+   ssh orion-<env> data purge lit  --metrics flow_usd.fees,flow_usd.llama_revenue --yes
+   ssh orion-<env> data purge uni  --metrics flow_usd.swap_fees --yes
+   ssh orion-<env> data purge vvv  --metrics flow_usd.revenue_proxy --yes
+   ssh orion-<env> data purge lit  --metrics unlocks_next_year --source-type third_party --yes
+   ssh orion-<env> data purge pump --metrics unlocks_next_year --source-type third_party --yes
+   ```
+   Each deleted count must equal its dry run's. Before deleting, each call writes its rows to one file,
+   `~/home/purged/<asset>-<first metric>[+N]-<UTCstamp>.json` on that env (`$ORION_HOME/purged/`; six files per env,
+   e.g. `cake-flow_usd.fees+1-<stamp>.json`); with the nightly `pg_dump` they are the only copy of the purged rows, so
+   keep them (the Phase 3 followups note lists them).
+6. **Report check against the pre-deploy reports** (read-only), on each asset's step-0 day:
+   ```
+   for a in cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv; do
+     d=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["day"])' ~/r1-<env>/before/$a.json)
+     ssh orion-<env> report yield $a --day $d > ~/r1-<env>/after/$a.json
+     python3 tools/phase3-proof/flatdiff.py ~/r1-<env>/before/$a.json ~/r1-<env>/after/$a.json \
+       --allow tools/phase3-proof/r1-allowlist.json --asset $a || echo "STOP: $a flatdiff exit $?"
+   done
+   ```
+   Every asset must exit 0 (every differing path allowed). Exit 1 (an unallowed path) or 2 (bad input): stop, paste the
+   output and bring it to Mike (on stage: no prod deploy). Read every printed diff path anyway:
+   any `perTokenFdv` revenue / grossProfit / holderFlow.total move is a stop (ruling R22: FDV does not move in R1).
+   AERO is not in the 12: its report on its step-0 day must be byte-identical (`ssh orion-<env> report yield aero --day
+   <its day> > ~/r1-<env>/after/aero.json; cmp ~/r1-<env>/before/aero.json ~/r1-<env>/after/aero.json`).
+
+Stage: steps 0-6, then the soak (one scheduled 02:45 UTC nightly on the new tag, section 3). Prod: on Mike's go after
+the soak passes, steps 0-6 with `<env>` = `prod`, step 5 again only on Mike's go for prod.
 
 ## The ssh verbs (any release)
 
