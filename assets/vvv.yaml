@@ -50,7 +50,6 @@ metrics:
     source: { type: erc20_supply, token: token, subtract_balances: [ burn_sink ] }
     cross_checks:
       - { tolerance_pct: 0.1, source: { type: http_json, url: "https://outerface.venice.ai/api/app/vvv/vvv_stats", path: totalSupplyCryptoBaseUnit, decimals: 18 } }
-      - { tolerance_pct: 2, source: { type: coingecko, id: venice-token, field: total_supply } }
 
   circulating_supply:
     type: level
@@ -100,7 +99,8 @@ metrics:
       - { tolerance_pct: 1, source: { type: http_json, url: "https://outerface.venice.ai/api/app/vvv/vvv_staking_yield", path: totalEmissionsCryptoBaseUnit, decimals: 18, scale: 365 } }
 
   # On-chain transfers to the zero address from the allowlisted senders, one row per completed UTC
-  # day, each transfer valued at the CoinGecko hourly price at its own block time.
+  # day, each transfer valued at the CoinGecko hourly price at its own block time. No external check since Phase 3 R1
+  # removed DefiLlama's holders revenue (the usage_index watch comes in R3).
   flow_usd.burn:
     type: flow
     unit: usd
@@ -108,8 +108,6 @@ metrics:
     staleness_days: 4
     critical: true
     source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [ aerodrome_pool, buyback_safe ], unit: usd, price_coingecko_id: venice-token }
-    cross_checks:
-      - { tolerance_pct: 5, source: { type: defillama, slug: venice, data_type: dailyHoldersRevenue, compare: monthly_sum } }
 
   # Informational: same scan, in tokens. Matches Venice's burn history to four decimals per completed month.
   flow_tokens.burn:
@@ -171,21 +169,11 @@ metrics:
     staleness_days: 90
     source: { type: contract_read, contract: staking, function: veniceEmissionsPercentageWhenLocked, decimals: 18, scale: -1, offset: 1 }
 
-  # Report-only (monitor_only, never a driver). Venice's revenue is its disclosures (revenue_run_rate_usd); DefiLlama's
-  # daily series (the on-chain burns) is a cross-check only (Mike, 2026-10-12).
-  flow_usd.revenue_proxy:
-    type: flow
-    unit: usd
-    cadence: daily
-    staleness_days: 4
-    monitor_only: true
-    source: { type: defillama, slug: venice, data_type: dailyRevenue, backfill_days: 365 }
-
 # Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
 # the holders and below_line lines):
 # Report-only holder yield and growth (orion report yield). Burns: no haircut.
-# Revenue (Mike, 2026-10-12) = Venice's disclosed business revenue (the latest annual run rate). DefiLlama's
-# dailyRevenue (the on-chain burns, about 10x smaller) is a cross-check only. Growth is between the two latest
+# Revenue (Mike, 2026-10-12) = Venice's disclosed business revenue (the latest annual run rate); no cross-check since
+# Phase 3 R1 removed DefiLlama's dailyRevenue. Growth is between the two latest
 # disclosures, flagged when they are < 90 days apart or the latest is > 90 days old. Holder flow stays = the burns.
 # Income statement (Mike, 2026-10-11): paid to holders = the burns; protocol income = revenue less the burns.
 #
@@ -196,7 +184,7 @@ income_statement:
   scope: complete
   window_days: 91
   revenue:
-    - { id: business, label: "disclosed business revenue (annual run rate)", disclosed: revenue_run_rate_usd, cross_check: flow_usd.revenue_proxy }
+    - { id: business, label: "disclosed business revenue (annual run rate)", disclosed: revenue_run_rate_usd }
   cost_of_revenue:
     - { id: compute, to: other, not_measured: "compute costs: not disclosed by Venice" }
   holders:

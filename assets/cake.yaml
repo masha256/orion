@@ -34,7 +34,8 @@ external_ids:
   defillama: pancakeswap
 
 # Every metric is fetched: no manual metric, so a bootstrap run finds nothing to research and writes only its journal.
-# DefiLlama only for the gross fees and revenue, which have no on-chain source (the fees are paid in thousands of pool tokens).
+# No DefiLlama read (Phase 3 R1 removed its gross fees and revenue): the gross swap fees have no on-chain read yet (the
+# fees are paid in thousands of pool tokens), so volume is not measured.
 metrics:
   price_usd:
     type: level
@@ -117,26 +118,10 @@ metrics:
     monitor_only: true
     source: { type: transfer_flow, token: token, to: treasury, from_allowlist: [ converter_a, converter_b, converter_c, product_a, product_b, product_c, product_d ], ignore_below_tokens: 1, unit: usd, price_coingecko_id: pancakeswap-token }
 
-  # Display only, no on-chain source: DefiLlama's gross fees (LPs included) and its revenue (protocol + burn).
-  flow_usd.fees:
-    type: flow
-    unit: usd
-    cadence: daily
-    staleness_days: 5
-    monitor_only: true
-    source: { type: defillama, slug: pancakeswap, data_type: dailyFees, backfill_days: 100 }
-  flow_usd.llama_revenue:
-    type: flow
-    unit: usd
-    cadence: daily
-    staleness_days: 5
-    monitor_only: true
-    source: { type: defillama, slug: pancakeswap, data_type: dailyRevenue, backfill_days: 100 }
-
 # Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
 # the holders and below_line lines):
 # Report-only holder yield and growth. A burn: no haircut. Revenue = the burn plus the treasury share (the converters'
-# whole output); DefiLlama's revenue is the cross-check.
+# whole output).
 #
 # Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2): the report's only block since Task 11 retired
 # holder_flows and reporting. Revenue = what users pay; each section says where it goes.
@@ -153,7 +138,7 @@ income_statement:
     - { id: burn, of: burn_rev, bucket: burn, haircut: 0, recipient_base: all, capture_rule: programmatic, note: "fee-funded CAKE burned (weekly)" }
   protocol:
     - { id: treasury, of: treasury_rev }
-  volume: [ flow_usd.fees ]
+  volume: { not_measured: "gross swap fees: DefiLlama removed (Phase 3 R1); on-chain v2/v3 gross not read yet (Phase 3b)" }
   burned_tokens: [ flow_tokens.burn ]
   # Reconciliation checks (spec §5, Phase 2 Task 5): CoinGecko's price vs the Chainlink CAKE/USD feed on BNB Chain, the
   # reading the price cross-check already stores in each fetch run's detail.

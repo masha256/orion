@@ -169,8 +169,9 @@ describe('adapter params validation', () => {
   const ROOT = fileURLToPath(new URL('../..', import.meta.url));
   const litYaml = readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8');
   const withTranches = (tranches: unknown) => {
-    const obj = parseYaml(litYaml) as { metrics: Record<string, { source: { params: Record<string, unknown> } }> };
-    obj.metrics.unlocks_next_year.source.params.tranches = tranches;
+    // Phase 3 R1: LIT's unlocks are schedule.unlocks_next_year; the team schedule's tranches are the ones varied.
+    const obj = parseYaml(litYaml) as { metrics: Record<string, { source: { params: { schedules: Record<string, unknown>[] } } }> };
+    obj.metrics.unlocks_next_year.source.params.schedules[0]!.tranches = tranches;
     return obj;
   };
   // A stand-in adapter whose validateParams refuses everything but { ok: true }, used as a cross-check.
@@ -179,16 +180,16 @@ describe('adapter params validation', () => {
   it('parseAssetObject surfaces the refusal with the metric path; assets/lit.yaml still loads and keeps its hash', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(litYaml).hash).toBe('a3e049f1d277b4d5ba23af6995fbf4527776ce8c5493433d4c671faf83ce1004');
-    expect(parseAssetObject(parseYaml(litYaml)).hash).toBe('a3e049f1d277b4d5ba23af6995fbf4527776ce8c5493433d4c671faf83ce1004');
+    expect(parseAssetYaml(litYaml).hash).toBe('0de769beeae95c555b2db4e89ca3d7b68f705719ead7de62dd53b768cccb0cc9');
+    expect(parseAssetObject(parseYaml(litYaml)).hash).toBe('0de769beeae95c555b2db4e89ca3d7b68f705719ead7de62dd53b768cccb0cc9');
     // Another valid schedule loads (and is a different config from the file's 36 monthly tranches).
     const good = parseAssetObject(withTranches({ first: '2027-01-29', every_months: 3, count: 12 }));
-    expect(good.config.metrics.unlocks_next_year.source).toMatchObject({ params: { tranches: { first: '2027-01-29', every_months: 3, count: 12 } } });
-    expect(good.hash).not.toBe('a3e049f1d277b4d5ba23af6995fbf4527776ce8c5493433d4c671faf83ce1004');
+    expect(good.config.metrics.unlocks_next_year.source).toMatchObject({ params: { schedules: [{ tranches: { first: '2027-01-29', every_months: 3, count: 12 } }, { label: 'investors' }] } });
+    expect(good.hash).not.toBe('0de769beeae95c555b2db4e89ca3d7b68f705719ead7de62dd53b768cccb0cc9');
     // A malformed one is refused with the metric path, through the object path (filing) and the YAML path (approve).
     const bad = withTranches({ first: '2027-01-29', every_months: 13, count: 36 });
-    expect(() => parseAssetObject(bad)).toThrow(expect.objectContaining({ code: 'invalid_asset_config', message: expect.stringContaining('metrics.unlocks_next_year.source.params: tranches.every_months') }));
-    expect(() => parseAssetYaml(stringifyYaml(bad))).toThrow(/metrics\.unlocks_next_year\.source\.params: tranches\.every_months/);
+    expect(() => parseAssetObject(bad)).toThrow(expect.objectContaining({ code: 'invalid_asset_config', message: expect.stringContaining('metrics.unlocks_next_year.source.params: schedules[0].tranches.every_months') }));
+    expect(() => parseAssetYaml(stringifyYaml(bad))).toThrow(/metrics\.unlocks_next_year\.source\.params: schedules\[0\]\.tranches\.every_months/);
   });
 
   it('checks cross-check adapter sources too, and leaves adapters without validateParams alone', () => {
@@ -249,8 +250,8 @@ describe('metric watch', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added (Phase 2 Task 2); no watch/share key involved.
     // Re-pinned 2026-11-09 (aero only): the Aero contracts (spec 2026-11-09-orion-aero-supply-design.md); no watch/share key involved.
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(asset('vvv')).toBe('fa05d39217ee2160f6e746350494a818b51c316368e6d3b364dc1c105b328838');
-    expect(asset('hype')).toBe('f7dcfeecf846ff6161e18797728bc37ae2d30d52157446bd92e21b1b8b245b3f');
+    expect(asset('vvv')).toBe('45ad0a3a44763cf55abccdcf6d1e2facaf49c430f222953bb00556120e9adaa2');
+    expect(asset('hype')).toBe('492438a0835419c95fa6c9a6fbe9a77c7f1c3df6cc870cea70d1325db457d98a');
     expect(asset('aero')).toBe('3c413feb4fbdba98b9ab17c4802ea46cc4306e9e700fb8d1384fa984dde4d19b');
   });
 });

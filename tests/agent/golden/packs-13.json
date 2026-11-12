@@ -1675,7 +1675,7 @@
     "status": "confirmed"
    },
    {
-    "id": 503,
+    "id": 303,
     "metric": "price_usd",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -1683,7 +1683,7 @@
     "status": "confirmed"
    },
    {
-    "id": 504,
+    "id": 304,
     "metric": "staked_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -1691,7 +1691,7 @@
     "status": "confirmed"
    },
    {
-    "id": 505,
+    "id": 305,
     "metric": "staker_emission_share",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -1699,7 +1699,7 @@
     "status": "confirmed"
    },
    {
-    "id": 506,
+    "id": 306,
     "metric": "total_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -7379,7 +7379,7 @@
     "status": "confirmed"
    },
    {
-    "id": 903,
+    "id": 703,
     "metric": "price_usd",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -7387,7 +7387,7 @@
     "status": "confirmed"
    },
    {
-    "id": 904,
+    "id": 704,
     "metric": "reserve_lit",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -7395,7 +7395,7 @@
     "status": "confirmed"
    },
    {
-    "id": 905,
+    "id": 705,
     "metric": "rh_fee_account_usd",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -7403,7 +7403,7 @@
     "status": "confirmed"
    },
    {
-    "id": 906,
+    "id": 706,
     "metric": "rh_revenue_share_app",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -7411,7 +7411,7 @@
     "status": "confirmed"
    },
    {
-    "id": 907,
+    "id": 707,
     "metric": "routed_to_prime_rate",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -7419,7 +7419,7 @@
     "status": "confirmed"
    },
    {
-    "id": 908,
+    "id": 708,
     "metric": "staked_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -7427,7 +7427,7 @@
     "status": "confirmed"
    },
    {
-    "id": 909,
+    "id": 709,
     "metric": "staked_tokens_reported",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -7435,7 +7435,7 @@
     "status": "confirmed"
    },
    {
-    "id": 910,
+    "id": 710,
     "metric": "staker_emission_share",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -7443,7 +7443,7 @@
     "status": "confirmed"
    },
    {
-    "id": 911,
+    "id": 711,
     "metric": "staking_apr",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -7451,7 +7451,7 @@
     "status": "confirmed"
    },
    {
-    "id": 912,
+    "id": 712,
     "metric": "total_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -7459,7 +7459,7 @@
     "status": "confirmed"
    },
    {
-    "id": 913,
+    "id": 713,
     "metric": "unlocks_next_year",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -7520,8 +7520,8 @@
    },
    {
     "metric": "unlocks_next_year",
-    "adapter": "lit.unlocks_next_year",
-    "params_doc": "allocations: string[] (DefiLlama allocation labels, required); url?: string (default https://defillama-datasets.llama.fi/emissions/lighter): the DefiLlama emissions dataset; tranches?: { first: YYYY-MM-DD, every_months: 1..12, count: 1..120 }: the issuer's own tranche schedule; each allocation's remaining amount from the schedule start is split evenly over the tranches"
+    "adapter": "schedule.unlocks_next_year",
+    "params_doc": "citation: { url: http(s) URL, quote: the verbatim text, at most 500 chars } (required: written onto every row); schedules: [{ label: string, tokens: > 0, and exactly one of tranches: { first: YYYY-MM-DD, every_months: 1..12, count: 1..120 } (tokens / count on first + k x every_months, day clamped to the month's end) or linear: { start: YYYY-MM-DD, years: > 0 and <= 50 } (tokens / years per 365 days from start) }] (required): the value is the tokens due in (now, now + 365 days], summed"
    }
   ]
  },
@@ -8379,8 +8379,8 @@
   "adapter_params": [
    {
     "metric": "unlocks_next_year",
-    "adapter": "lit.unlocks_next_year",
-    "params_doc": "allocations: string[] (DefiLlama allocation labels, required); url?: string (default https://defillama-datasets.llama.fi/emissions/lighter): the DefiLlama emissions dataset; tranches?: { first: YYYY-MM-DD, every_months: 1..12, count: 1..120 }: the issuer's own tranche schedule; each allocation's remaining amount from the schedule start is split evenly over the tranches"
+    "adapter": "schedule.unlocks_next_year",
+    "params_doc": "citation: { url: http(s) URL, quote: the verbatim text, at most 500 chars } (required: written onto every row); schedules: [{ label: string, tokens: > 0, and exactly one of tranches: { first: YYYY-MM-DD, every_months: 1..12, count: 1..120 } (tokens / count on first + k x every_months, day clamped to the month's end) or linear: { start: YYYY-MM-DD, years: > 0 and <= 50 } (tokens / years per 365 days from start) }] (required): the value is the tokens due in (now, now + 365 days], summed"
    }
   ]
  },
@@ -13039,7 +13039,7 @@
     "status": "confirmed"
    },
    {
-    "id": 303,
+    "id": 203,
     "metric": "labs_vest_approved",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -13047,7 +13047,7 @@
     "status": "confirmed"
    },
    {
-    "id": 304,
+    "id": 204,
     "metric": "labs_vest_rate",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -13055,7 +13055,7 @@
     "status": "confirmed"
    },
    {
-    "id": 305,
+    "id": 205,
     "metric": "price_usd",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -13063,7 +13063,7 @@
     "status": "confirmed"
    },
    {
-    "id": 306,
+    "id": 206,
     "metric": "staked_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -13071,7 +13071,7 @@
     "status": "confirmed"
    },
    {
-    "id": 307,
+    "id": 207,
     "metric": "staker_emission_share",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -13079,7 +13079,7 @@
     "status": "confirmed"
    },
    {
-    "id": 308,
+    "id": 208,
     "metric": "total_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -13087,7 +13087,7 @@
     "status": "confirmed"
    },
    {
-    "id": 309,
+    "id": 209,
     "metric": "treasury_uni",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -13920,7 +13920,7 @@
     "status": "confirmed"
    },
    {
-    "id": 407,
+    "id": 307,
     "metric": "locked_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -13928,7 +13928,7 @@
     "status": "confirmed"
    },
    {
-    "id": 408,
+    "id": 308,
     "metric": "price_usd",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -13936,7 +13936,7 @@
     "status": "confirmed"
    },
    {
-    "id": 409,
+    "id": 309,
     "metric": "revenue_run_rate_usd",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -13944,7 +13944,7 @@
     "status": "confirmed"
    },
    {
-    "id": 410,
+    "id": 310,
     "metric": "staked_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -13952,7 +13952,7 @@
     "status": "confirmed"
    },
    {
-    "id": 411,
+    "id": 311,
     "metric": "staker_emission_share",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -13960,7 +13960,7 @@
     "status": "confirmed"
    },
    {
-    "id": 412,
+    "id": 312,
     "metric": "total_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -13968,7 +13968,7 @@
     "status": "confirmed"
    },
    {
-    "id": 413,
+    "id": 313,
     "metric": "usage_index",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",

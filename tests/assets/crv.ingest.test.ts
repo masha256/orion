@@ -18,6 +18,7 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-10-08T10:30:00.000Z'); // a Thursday
 const BLOCK_SEC = 12;
 const GENESIS_TS = NOW.getTime() / 1000 - 110 * 86_400 + 1;
+// DefiLlama's coins price: no longer read (Phase 3 R1); the fetch test asserts no call to it.
 const LLAMA = 'https://coins.llama.fi/prices/current/ethereum:0xD533a949740bb3306d119CC777fa900bA034cd52';
 const BRIBES = 'https://llama.box/curvedex/api/bribes/stats.json';
 const E18 = 10n ** 18n;
@@ -49,7 +50,6 @@ function world() {
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'curve-dao-token', symbol: 'crv', current_price: 0.3933, market_cap: 619e6, circulating_supply: 1_574_000_000, total_supply: 2_424_321_556 }],
     'https://api.coingecko.com/api/v3/coins/crvusd/market_chart': crvusdChart,
-    [LLAMA]: { coins: { 'ethereum:0xD533a949740bb3306d119CC777fa900bA034cd52': { decimals: 18, symbol: 'CRV', price: 0.3897, timestamp: 1791440000, confidence: 0.99 } } },
     [BRIBES]: bribes,
   });
   const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENESIS_TS) / BLOCK_SEC));
@@ -94,7 +94,7 @@ describe('assets/crv.yaml', () => {
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('02417b36678c4d60d189ee7a86b748a5fed020c66528bcb19d199d83dbd0a80b');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/crv.yaml`, 'utf8')).hash).toBe('7b4e1b57f1a56cb68842d1f9ed209727418a8fdff57f7d756d9eb453ada5a78c');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -117,8 +117,7 @@ describe('assets/crv.yaml', () => {
   it('plans the source map of the spec: one transfer scan, a constant, an adapter, the bribes feed', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
-      ['coingecko', ['primary:price_usd', 'cross_check:total_supply', 'primary:circulating_supply']],
-      [`http_json:${LLAMA}`, ['cross_check:price_usd']],
+      ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
       [
         'chain_levels',
         [
@@ -137,7 +136,7 @@ describe('assets/crv.yaml', () => {
     expect(plan.needsRpc).toBe(true);
   });
 
-  it('fetches every metric from canned sources with both cross-checks in tolerance', async () => {
+  it('fetches every metric from canned sources with the bribes cross-check in tolerance', async () => {
     const w = world();
     const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
@@ -168,7 +167,8 @@ describe('assets/crv.yaml', () => {
     expect(await rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
 
     const checked = r.sources.flatMap((s) => s.crossChecks);
-    expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true], ['vote_incentive_run_rate_usd', true]]);
+    expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['vote_incentive_run_rate_usd', true]]);
+    expect(w.http.calls.filter((c) => c.url === LLAMA).map((c) => c.url)).toEqual([]); // Phase 3 R1
     expect(w.rpc.stats.logRanges).toHaveLength(300); // three scans (fees, protocol revenue, treasury), 100 days each: the scanner commits a day at a time; a mainnet day (7,200 blocks) fits one call
     expect(w.rpc.stats.logRanges.every(([a, b]) => b - a + 1n <= 10_000n)).toBe(true);
   });

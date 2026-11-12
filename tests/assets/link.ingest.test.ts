@@ -113,7 +113,7 @@ describe('assets/link.yaml', () => {
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/link.yaml`, 'utf8')).hash).toBe('6bc2033876e803860ab6aa949e6ab20a1db8f24d695e12a454ec7f7a77d0f8b1');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/link.yaml`, 'utf8')).hash).toBe('3d098a292b83acc30e57105b4f868145dc8c801db4be63c49dd7ce0ddc42b8ba');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -134,7 +134,7 @@ describe('assets/link.yaml', () => {
   it('plans the Reserve scan, the two release scans and the chain levels with the Chainlink cross-check', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
-      ['coingecko', ['primary:price_usd', 'cross_check:total_supply', 'primary:circulating_supply']],
+      ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
       ['chain_levels', ['cross_check:price_usd', 'primary:total_supply', 'primary:reserve_link']],
       ['constant', ['primary:staked_supply', 'primary:staker_emission_share', 'primary:emission_rate_annual']],
     ]);
@@ -152,7 +152,7 @@ describe('assets/link.yaml', () => {
     await fetchAsset(w.db, { config, hash: 'backfill' }, NOW, w.deps, { backfillDays: 370, metrics: ['flow_tokens.released_hub', 'flow_tokens.released_rewards', 'released_rate'] });
     const r = await fetchAsset(w.db, loadAsset(ROOT, 'link'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error])).toEqual([]);
-    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]);
+    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]); // CoinGecko's total check is gone (Phase 3 R1)
 
     const rows = async (metric: string) => await listActiveObservations(w.db, 'link', metric);
     const value = async (metric: string) => (await rows(metric)).at(-1)!.value;

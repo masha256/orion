@@ -17,6 +17,7 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-10-09T07:30:00.000Z'); // a Friday
 const BLOCK_SEC = 12;
 const GENESIS_TS = NOW.getTime() / 1000 - 110 * 86_400 + 1;
+// DefiLlama's coins price: no longer read (Phase 3 R1); the fetch test asserts no call to it.
 const LLAMA = 'https://coins.llama.fi/prices/current/ethereum:0xFCc5c47bE19d06BF83eB04298b026F81069ff65b';
 const E18 = 10n ** 18n;
 
@@ -47,7 +48,6 @@ function world(extraLogs: { iso: string; from: string; tokens: bigint }[] = []) 
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'yearn-crv', symbol: 'ycrv', current_price: 0.18345, market_cap: 13.2e6, circulating_supply: 71_960_697, total_supply: 71_960_697 }],
     'https://api.coingecko.com/api/v3/coins/crvusd/market_chart': crvusdChart,
     'https://api.coingecko.com/api/v3/coins/yearn-crv/market_chart': crvusdChart, // the st-yCRV fee scan (no fee logs here)
-    [LLAMA]: { coins: { 'ethereum:0xFCc5c47bE19d06BF83eB04298b026F81069ff65b': { decimals: 18, symbol: 'yCRV', price: 0.1806, timestamp: 1791521457, confidence: 0.99 } } },
   });
   const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENESIS_TS) / BLOCK_SEC));
   const rpc = fakeRpc({
@@ -87,7 +87,7 @@ describe('assets/ycrv.yaml', () => {
     // Re-pinned 2026-11-05: the splitter's gross by sender (yearn_gross_fees, yearn_gross_incentives) and the vote
     // incentives below the line by apportion (Phase 2 Task 7b, Mike G1).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('d594acfc729f0b3b8c4022ec44ecd0f11133e5df07582049a6c09685d4e87f37');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('cca3f10e921d66c7b703a202ffc401c802bb2882b34d34deb196a27984d1517d');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -135,7 +135,6 @@ describe('assets/ycrv.yaml', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
       ['coingecko', ['primary:price_usd']], // no total_supply check: CoinGecko's yCRV supply is a 2022 snapshot (Mike, 2026-10-12)
-      [`http_json:${LLAMA}`, ['cross_check:price_usd']],
       ['chain_levels', ['primary:total_supply', 'primary:circulating_supply', 'primary:staked_supply']], // circulating = the on-chain total
       ['constant', ['primary:staker_emission_share', 'primary:emission_rate_annual']],
     ]);
@@ -185,7 +184,8 @@ describe('assets/ycrv.yaml', () => {
       const sum = gf.get(o.observedAt)! + gi.get(o.observedAt)!;
       expect(Math.abs(sum - o.value), o.observedAt).toBeLessThanOrEqual(1e-12 * Math.max(Math.abs(o.value), Number.MIN_VALUE));
     }
-    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
+    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([]); // the DefiLlama price check is gone (Phase 3 R1)
+    expect(w.http.calls.filter((c) => c.url === LLAMA).map((c) => c.url)).toEqual([]); // Phase 3 R1
   });
 
   // Ruling R20: the rollout backfill of the two by-sender flows shares yearn_gross's scan, and must not rewrite it.

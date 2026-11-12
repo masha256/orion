@@ -44,17 +44,14 @@ external_ids:
   defillama: stakedao
 
 metrics:
-  # CoinGecko's sdCRV quote is thinner than cvxCRV's: it ran +2 to +6 percent over DefiLlama (which tracks the
-  # sdCRV/CRV Curve pool) on 2026-10-03..09, +16 percent on 10-08; median -0.3 percent over 90 days. 5 percent lets the
-  # usual spread through and still flags a day like 10-08.
+  # CoinGecko's sdCRV quote is thinner than cvxCRV's (it ran +2 to +16 percent over the sdCRV/CRV Curve pool in
+  # 2026-10). No price cross-check since Phase 3 R1 removed DefiLlama's coins price.
   price_usd:
     type: level
     unit: usd
     staleness_days: 3
     critical: true
     source: { type: coingecko, id: stake-dao-crv, field: price }
-    cross_checks:
-      - { tolerance_pct: 5, source: { type: http_json, url: "https://coins.llama.fi/prices/current/ethereum:0xD1b5651E55D4CeeD36251c61c50C889B36F6abB5", path: "coins.ethereum:0xD1b5651E55D4CeeD36251c61c50C889B36F6abB5.price" } }
 
   total_supply:
     type: level

@@ -73,7 +73,6 @@ function world() {
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'sky', symbol: 'sky', current_price: PRICE, market_cap: 1.64e9, circulating_supply: 23_428_082_223, total_supply: SUPPLY }],
     'https://api.coingecko.com/api/v3/coins/sky/market_chart': chart(PRICE),
     'https://api.coingecko.com/api/v3/coins/usds/market_chart': chart(1),
-    'https://coins.llama.fi/prices/current/ethereum:0x56072C95FAA701256059aa122697B133aDEd9279': { coins: { 'ethereum:0x56072C95FAA701256059aa122697B133aDEd9279': { price: 0.0704 } } },
   });
   const base = fakeRpc({
     genesisTs: GENESIS_TS,
@@ -96,7 +95,7 @@ function world() {
     },
   };
   const deps: FetchDeps = { http, rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW };
-  return { db: testDb(), deps };
+  return { db: testDb(), deps, http };
 }
 
 const STAKERS_USD = 91 * 50_000;
@@ -120,7 +119,7 @@ describe('assets/sky.yaml', () => {
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/sky.yaml`, 'utf8')).hash).toBe('cef8a54bcbc5186f9a742ec6b8a99be2f19308f51f01630bdf33647df7b9cd74');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/sky.yaml`, 'utf8')).hash).toBe('ccfb251b4e859a8ca6dacd9faae6ae6d6fdbfec63b85235bfdcc34000c754c72');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -137,11 +136,10 @@ describe('assets/sky.yaml', () => {
     });
   });
 
-  it('plans the two holder-flow scans, the treasury scans, the chain levels and the DefiLlama price cross-check', () => {
+  it('plans the two holder-flow scans, the treasury scans and the chain levels (no price cross-check)', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
-      ['coingecko', ['primary:price_usd', 'cross_check:total_supply', 'primary:circulating_supply']],
-      ['http_json:https://coins.llama.fi/prices/current/ethereum:0x56072C95FAA701256059aa122697B133aDEd9279', ['cross_check:price_usd']],
+      ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
       ['chain_levels', ['primary:total_supply', 'primary:staked_supply', 'primary:splitter_burn_share']],
       ['constant', ['primary:staker_emission_share', 'primary:emission_rate_annual']],
     ]);
@@ -160,7 +158,8 @@ describe('assets/sky.yaml', () => {
     await fetchAsset(w.db, { config, hash: 'backfill' }, NOW, w.deps, { backfillDays: 362, metrics: ['flow_tokens.rewards_staker', 'flow_tokens.rewards_usds', 'flow_tokens.buyback', 'treasury_net_payout'] });
     const r = await fetchAsset(w.db, loadAsset(ROOT, 'sky'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error])).toEqual([]);
-    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]);
+    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([]); // both checks gone (Phase 3 R1)
+    expect(w.http.calls.filter((c) => new URL(c.url).host === 'coins.llama.fi').map((c) => c.url)).toEqual([]); // Phase 3 R1
 
     const rows = async (metric: string) => await listActiveObservations(w.db, 'sky', metric);
     const value = async (metric: string) => (await rows(metric)).at(-1)!.value;

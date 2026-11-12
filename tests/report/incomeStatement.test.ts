@@ -299,10 +299,9 @@ describe('source types and provenance', () => {
     expect(tp('hype')).toEqual(['revenue.trading', 'holders.af_buyback']);
     expect(tp('pump')).toEqual(['revenue.protocol']);
     expect(tp('aero')).toEqual(['revenue.fees', 'holders.voter_fees']);
-    expect(tp('vvv')).toEqual(['revenue.business.cross_check', 'holders.burn.cross_checks']);
     expect(tp('crv')).toEqual(['below_line.vote_incentives', 'below_line.vote_incentives.cross_checks']);
-    expect(tp('lit')).toEqual(['holders.buyback.cross_checks']);
-    for (const id of ['cake', 'cvxcrv', 'link', 'sdcrv', 'sky', 'uni', 'ycrv']) expect(tp(id), id).toEqual([]);
+    // Phase 3 R1: LIT's buyback and VVV's burn/revenue DefiLlama cross-checks are gone.
+    for (const id of ['cake', 'cvxcrv', 'link', 'lit', 'sdcrv', 'sky', 'uni', 'vvv', 'ycrv']) expect(tp(id), id).toEqual([]);
   });
 
   it('provenance.sources names each statement series by rung, never a full URL', () => {
@@ -356,11 +355,13 @@ describe('the default report day (Task 11, ruling R11.1 B)', () => {
     vvv: ['flow_usd.burn', 'flow_usd.revenue_proxy'],
     ycrv: ['flow_usd.fees', 'flow_usd.yearn_gross', 'flow_usd.yearn_revenue', 'flow_usd.yearn_styc_fee'],
   };
+  /** Phase 3 R1 deleted these display/cross-check series, so the gate no longer waits on them. */
+  const R1_REMOVED: Record<string, string[]> = { cake: ['flow_usd.fees'], uni: ['flow_usd.swap_fees'], vvv: ['flow_usd.revenue_proxy'] };
   const periodic = (id: string) => new Set(repoAsset(id).income_statement!.revenue.filter((l) => l.settlement === 'periodic').map((l) => l.metric!));
   const dayFlows = (id: string) => [...new Set(defaultDayFlowMetrics(repoAsset(id)))].filter((m) => !periodic(id).has(m)).sort();
 
   it.each(ALL_ASSETS.filter((id) => id !== 'ycrv'))('%s: gates on exactly the flows it gated on before (the day cannot move)', (id) => {
-    expect(dayFlows(id)).toEqual(V1_DAY_FLOWS[id]);
+    expect(dayFlows(id)).toEqual(V1_DAY_FLOWS[id]!.filter((m) => !(R1_REMOVED[id] ?? []).includes(m)));
   });
 
   it("ycrv: v1's st-yCRV fee leaves (no line reads it), the two by-sender flows of yearn_gross's own scan join", () => {
@@ -381,7 +382,7 @@ describe('fix round 1: disclosed growth and cross-check (I1)', () => {
 ${BURN}  remainder: protocol
 `;
 
-  it("VVV: the disclosed line carries v1's disclosed growth, flags and cross-check; revenue.growth is it", () => {
+  it("VVV: the disclosed line carries v1's disclosed growth and flags (no cross-check since Phase 3 R1); revenue.growth is it", () => {
     const input = syntheticInput(repoAsset('vvv'));
     const v2 = incomeStatementV2(input);
     const g = disclosedGrowthOf(input.levels.disclosed, input.day);
@@ -390,8 +391,8 @@ ${BURN}  remainder: protocol
     const line = v2.revenue.lines.find((l) => l.id === 'business')!;
     expect(line.growth).toEqual(g.growth);
     expect(line.disclosedGrowth).toEqual(g.disclosedGrowth);
-    const proxy = windowSum(input.daily, ['flow_usd.revenue_proxy'], input.day, 91)!;
-    expect(line.crossCheck).toEqual({ metric: 'flow_usd.revenue_proxy', annualized: (proxy * 365) / 91, sourceType: 'third_party' });
+    // Phase 3 R1 removed flow_usd.revenue_proxy (DefiLlama's dailyRevenue); the cross_check form is tested on DISCLOSED below.
+    expect(line.crossCheck).toBeUndefined();
   });
 
   it('one disclosure: growth null with the v1 flag, also in the statement flags', () => {
@@ -599,14 +600,16 @@ describe('fix round 1: provenance blind spots (M4)', () => {
       const input = syntheticInput(repoAsset(id));
       return incomeStatementV2(input).provenance.thirdParty;
     };
-    expect(tp('lit')).toEqual(['holders.buyback.cross_checks']);
-    expect(tp('vvv')).toEqual(['revenue.business.cross_check', 'holders.burn.cross_checks']);
+    // LIT's and VVV's were removed in Phase 3 R1; CRV's (llama.box, R7) stays.
+    expect(tp('lit')).toEqual([]);
+    expect(tp('vvv')).toEqual([]);
     expect(tp('crv')).toEqual(['below_line.vote_incentives', 'below_line.vote_incentives.cross_checks']);
   });
 });
 
 describe('fix round 1: shape (M1 volume, M6)', () => {
-  it.each(['cake', 'cvxcrv', 'uni'])('%s: volume is v1 volume (annualized, growth, metrics)', (id) => {
+  // CAKE and UNI: volume not_measured since Phase 3 R1 (DefiLlama's gross fees removed); cvxCRV keeps the list form.
+  it.each(['cvxcrv'])('%s: volume is v1 volume (annualized, growth, metrics)', (id) => {
     const input = syntheticInput(repoAsset(id));
     const v2 = incomeStatementV2(input);
     const metrics = input.asset.income_statement!.volume as string[];
@@ -614,9 +617,14 @@ describe('fix round 1: shape (M1 volume, M6)', () => {
     expect(v2.volume).toEqual({ metrics, annualized: (sum * 365) / 91, growth: growthOf(input.daily, metrics, input.day, 91) });
   });
 
-  it.each(['cake', 'cvxcrv', 'uni'])('%s: the list form output carries no notMeasured key (byte-identical)', (id) => {
+  it.each(['cvxcrv'])('%s: the list form output carries no notMeasured key (byte-identical)', (id) => {
     const v2 = incomeStatementV2(syntheticInput(repoAsset(id)));
     expect(Object.keys(v2.volume!)).toEqual(['metrics', 'annualized', 'growth']);
+  });
+
+  it.each(['cake', 'uni'])('%s: volume is not_measured with its reason, no figure (Phase 3 R1)', (id) => {
+    const v2 = incomeStatementV2(syntheticInput(repoAsset(id)));
+    expect(v2.volume).toMatchObject({ metrics: [], annualized: null, notMeasured: expect.stringContaining('DefiLlama removed (Phase 3 R1)') });
   });
 
   it('volume { not_measured } reads no metric and reports no figure, never 0 (Phase 3 Task 5)', () => {

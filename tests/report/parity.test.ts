@@ -86,16 +86,19 @@ describe('parity map (ruling R7)', () => {
       if (v1.revenue?.basis === 'streams' || v1.revenue?.basis === 'disclosed') {
         for (const r of asset.income_statement!.revenue) expect(v2Paths, `${id} ${r.id} growth`).toContain(`incomeStatement.revenue.lines[id=${r.id}].growth.annualized`);
       }
-      if (v1.volume) {
+      // Phase 3 R1: CAKE's and UNI's volume is not_measured (DefiLlama's gross fees removed), so v2 has no figure to pair.
+      if (v1.volume && Array.isArray(asset.income_statement!.volume)) {
         expect(v1Of.get('incomeStatement.volume.annualized'), id).toBe('volume.annualized');
         expect(v1Of.get('incomeStatement.volume.growth.annualized'), id).toBe('volume.growth.annualized');
       }
     }
     expect(PARITY_PATHS.hype.map((p) => p[1])).toContain('incomeStatement.revenue.growthExNew.annualized');
     const vvv = new Map(PARITY_PATHS.vvv.map((p) => [p[1], p[2]]));
-    expect(vvv.get('incomeStatement.revenue.lines[id=business].crossCheck.annualized')).toBe('revenue.crossCheck.annualized');
+    // Phase 3 R1 removed VVV's revenue cross-check (DefiLlama's dailyRevenue): no pair for it.
+    expect(vvv.has('incomeStatement.revenue.lines[id=business].crossCheck.annualized')).toBe(false);
     expect(vvv.get('incomeStatement.revenue.lines[id=business].growth.annualized')).toBe('revenue.streams[id=business].growth.annualized');
-    for (const a of ['cake', 'cvxcrv', 'uni']) expect(PARITY_PATHS[a].map((p) => p[1]), a).toContain('incomeStatement.volume.annualized');
+    expect(PARITY_PATHS.cvxcrv.map((p) => p[1])).toContain('incomeStatement.volume.annualized');
+    for (const a of ['cake', 'uni']) expect(PARITY_PATHS[a].map((p) => p[1]), a).not.toContain('incomeStatement.volume.annualized');
   });
 
   it('VVV revenue growth is a number on both sides (I1: the null = null pair is gone)', () => {

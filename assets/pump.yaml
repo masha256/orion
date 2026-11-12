@@ -19,8 +19,8 @@ external_ids:
   defillama: pump
 
 # Every metric is fetched: no manual metric, so a bootstrap run finds nothing to research and writes only its journal.
-# DefiLlama only for the year of burn history before the first on-chain supply reading (Solana has no past-supply read),
-# the unlock schedule (no vesting contract read) and the revenue display line (fees accrue to the company).
+# DefiLlama only for the year of burn history before the first on-chain supply reading (Solana has no past-supply read)
+# and the revenue line (fees accrue to the company). The unlock schedule is cited, not read (Phase 3 R1).
 metrics:
   price_usd:
     type: level
@@ -33,15 +33,13 @@ metrics:
       - { tolerance_pct: 2, source: { type: http_json, url: "https://lite-api.jup.ag/price/v3?ids=pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn", path: pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn.usdPrice } }
 
   # The mint's supply: 827.64B on 2026-10-16 (1T at launch; 172.4B burned). Team and investor tokens stay inside
-  # (total_supply, the FDV basis on every Orion asset). CoinGecko's total tracks the burns (827.67B), so 2 percent.
+  # (total_supply, the FDV basis on every Orion asset). No cross-check: CoinGecko's total was removed in Phase 3 R1.
   total_supply:
     type: level
     unit: tokens
     staleness_days: 7
     critical: true
     source: { type: adapter, name: solana.token_supply, params: { mint: token } }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: coingecko, id: pump-fun, field: total_supply } }
 
   # CoinGecko's own definition (462.8B on 2026-10-16); the report's market cap.
   circulating_supply:
@@ -96,9 +94,26 @@ metrics:
   burn_wallet_a_pump: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: adapter, name: solana.owner_balance, params: { mint: token, owner: burn_wallet_a } } }
   burn_wallet_b_pump: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: adapter, name: solana.owner_balance, params: { mint: token, owner: burn_wallet_b } } }
 
-  # Report-only: team and existing-investor tokens unlocking over the next 365 days (82.5B on 2026-10-16: ~6.9B a month
-  # to mid-2029). DefiLlama's emissions dataset, the asset-specific series with no on-chain source.
-  unlocks_next_year: { type: level, unit: tokens_per_year, staleness_days: 14, monitor_only: true, source: { type: adapter, name: lit.unlocks_next_year, params: { url: "https://defillama-datasets.llama.fi/emissions/pump", allocations: [ Team, Existing Investors ] } } }
+  # Report-only: team and existing-investor tokens unlocking over the next 365 days (82.5B a year: ~6.9B a month to
+  # 2029-07), computed offline from a cited schedule (no vesting contract read; Phase 3 R1). pump.fun publishes no vesting
+  # schedule (its docs, terms, fees and token pages searched 2026-11-12), so the citation is the Blockworks Token
+  # Transparency filing, compiled by Blockworks, not the issuer: 247.5B still locked after the 2026-07-12 cliff (150B team,
+  # 97.5B investors), vesting linearly over 3 years from 2026-07-12.
+  unlocks_next_year:
+    type: level
+    unit: tokens_per_year
+    staleness_days: 14
+    monitor_only: true
+    source:
+      type: adapter
+      name: schedule.unlocks_next_year
+      params:
+        citation:
+          url: "https://blockworks.com/token-transparency/filing/pump"
+          quote: "The team allocation of 20 percent and the existing investor allocation of 13 percent, together 330,000,000,000 PUMP, were locked for 12 months from 12 July 2025 and then vest linearly over three years to July 2029. The first cliff released 82,500,000,000 PUMP on 12 July 2026, worth approximately $125 million at the time, split as 50,000,000,000 PUMP to the team and 32,500,000,000 PUMP to existing investors, and leaving 247,500,000,000 PUMP locked."
+        schedules:
+          - { label: team, tokens: 150000000000, linear: { start: 2026-07-12, years: 3 } }
+          - { label: investors, tokens: 97500000000, linear: { start: 2026-07-12, years: 3 } }
 
   # Display only: DefiLlama's revenue (the company's take, all pump products); the burn's share of it is the capture.
   flow_usd.llama_revenue:
@@ -132,4 +147,4 @@ income_statement:
   remainder: protocol
   burned_tokens: [ flow_tokens.buyback ]
   dilution:
-    - { id: unlocks, metric: unlocks_next_year, note: "team and existing-investor vesting to mid-2029 (DefiLlama emissions)" }
+    - { id: unlocks, metric: unlocks_next_year, note: "team and existing-investor vesting to 2029-07 (Blockworks filing, compiled by Blockworks, not the issuer)" }

@@ -39,12 +39,6 @@ function cakeChart(url: string): { prices: [number, number][] } {
   return { prices };
 }
 
-function llamaChart(perDay: number): { totalDataChart: [number, number][] } {
-  const points: [number, number][] = [];
-  for (let i = 100; i >= 1; i--) points.push([Date.parse(`${addDays('2026-10-11', 1 - i)}T00:00:00Z`) / 1000, perDay]);
-  return { totalDataChart: points };
-}
-
 /**
  * The weekly Monday burn as live: on each Monday, the converters send 550k CAKE to the burner (and 200k to the treasury),
  * the chef returns ~60M minted CAKE to the burner and the dev share is minted straight to it, neither of which may count. Plus the 2026-09-09 address-poisoning dust.
@@ -70,8 +64,6 @@ function world() {
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'pancakeswap-token', symbol: 'cake', current_price: PRICE, market_cap: 7.3e8, circulating_supply: 317_949_435, total_supply: 329_536_890 }],
     'https://api.coingecko.com/api/v3/coins/pancakeswap-token/market_chart': cakeChart,
-    'https://api.llama.fi/summary/fees/pancakeswap?dataType=dailyFees': llamaChart(560_000),
-    'https://api.llama.fi/summary/fees/pancakeswap?dataType=dailyRevenue': llamaChart(183_000),
   });
   const base = fakeRpc({
     genesisTs: GENESIS_TS,
@@ -102,7 +94,7 @@ function world() {
     },
   };
   const deps: FetchDeps = { http, rpcFactory: () => rpc, env: { ORION_BNB_RPC_URL: 'http://bnb.test' }, sleep: async () => undefined, now: () => NOW };
-  return { db: testDb(), deps };
+  return { db: testDb(), deps, http };
 }
 
 describe('assets/cake.yaml', () => {
@@ -111,8 +103,9 @@ describe('assets/cake.yaml', () => {
     expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.burn']);
     expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
-    // DefiLlama only for the display series with no on-chain source (fees paid in thousands of pool tokens).
-    expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.fees', 'flow_usd.llama_revenue']);
+    // No DefiLlama (Phase 3 R1): its gross fees and revenue display series are gone; volume is not_measured.
+    expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual([]);
+    expect(config.income_statement!.volume).toEqual({ not_measured: 'gross swap fees: DefiLlama removed (Phase 3 R1); on-chain v2/v3 gross not read yet (Phase 3b)' });
     for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // A deliberate edit of assets/cake.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
@@ -120,7 +113,7 @@ describe('assets/cake.yaml', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned 2026-11-10 (fix/cake-pending-burn 0ecc69e): total_supply nets the burner and MasterChef v2; CoinGecko total cross-check dropped.
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/cake.yaml`, 'utf8')).hash).toBe('2f7d698f7f077e3769758dde049776f921dfd6381519892240fca3af98dd7a99');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/cake.yaml`, 'utf8')).hash).toBe('5434fc561d3f70d20eb8e31be5cf41b03e691bf14a4fa1d14b845d072c4d5837');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -164,6 +157,7 @@ describe('assets/cake.yaml', () => {
     expect(await value('total_supply')).toBe(335_120_997);
     expect(await value('emission_rate_annual') / 1e6).toBeCloseTo(7.9396, 3);
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
+    expect(w.http.calls.filter((c) => /llama\.fi/.test(new URL(c.url).host)).map((c) => c.url)).toEqual([]); // Phase 3 R1
 
     // 14 Mondays of 550k CAKE: 13 inside the 91 days to 2026-10-11 (07-13..10-05).
     const burns = (await rows('flow_tokens.burn')).filter((o) => o.value > 0);
@@ -182,7 +176,7 @@ describe('assets/cake.yaml', () => {
     expect(rep.dilution.supply!.netPerYear).toBeLessThan(0);
     expect(rep.revenue.annualized).toBeCloseTo((13 * 750_000 * PRICE * 365) / 91, 0);
     expect(rep.ratios.payoutRatio).toBeCloseTo(550 / 750, 6);
-    expect(rep.volume!.annualized).toBeCloseTo(560_000 * 365, 0);
+    expect(rep.volume).toMatchObject({ annualized: null, notMeasured: expect.stringContaining('DefiLlama removed') });
   });
 
   it('is covered by the DEX analyst, who knows to read the burn at the converters', () => {

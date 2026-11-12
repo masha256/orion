@@ -18,6 +18,10 @@ import { ALL_ASSETS } from '../helpers/syntheticReport.js';
  * asset's whole pack is identical (fix round 1, I1: `revenue_streams` too, present on exactly the six assets cc59fa7
  * listed it for). `asset_config_yaml` is left out: it is the YAML text, which lost the retired blocks.
  * UPDATE_GOLDEN=1 rewrites the file (only ever at the base commit); a missing file fails.
+ *
+ * Phase 3 R1 rewrote the packs of cake, lit, pump, uni and vvv. What moved: LIT's and PUMP's adapter_params entry for
+ * unlocks_next_year (lit.unlocks_next_year -> schedule.unlocks_next_year), and the seeded level rows' ids on cake, lit,
+ * uni and vvv (fewer flow metrics are seeded before them: the removed DefiLlama series). No value or metric moved.
  */
 const GOLDEN = fileURLToPath(new URL('./golden/packs-13.json', import.meta.url));
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));

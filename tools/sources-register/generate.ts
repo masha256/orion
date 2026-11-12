@@ -120,24 +120,15 @@ export const TERMS: Record<string, Terms> = {
     checked: '2026-11-05',
     note: 'removed per asset in Phase 3; labelled third_party in provenance until then',
   },
-  'coins.llama.fi': {
-    label: 'DefiLlama coins API', kind: 'third_party', operator: 'DefiLlama',
-    commercial: 'no',
-    terms: 'as api.llama.fi (roadmap rule 1)',
-    checked: '2026-11-05',
-    note: 'price_usd cross-checks; replaced by price checks against Chainlink or a deep pool (spec §5)',
-  },
-  'defillama-datasets.llama.fi': {
-    label: 'DefiLlama emissions datasets', kind: 'third_party', operator: 'DefiLlama',
-    commercial: 'no',
-    terms: 'as api.llama.fi (roadmap rule 1)',
-    checked: '2026-11-05',
-    note: 'unlock allocation sizes (lit.unlocks_next_year)',
-  },
   'llama.box': {
     label: 'Llama Airforce API', kind: 'third_party', operator: 'Llama Airforce (community)',
     commercial: 'unknown',
     note: 'no stated licence (spec §11 D4): internal only, labelled third_party, until replaced by on-chain incentive-market scans (Phase 3)',
+  },
+  'blockworks.com': {
+    label: 'Blockworks Token Transparency filing', kind: 'third_party', operator: 'Blockworks',
+    commercial: 'unknown',
+    note: 'PUMP unlock schedule (schedule.unlocks_next_year citation): compiled by Blockworks, not the issuer (pump.fun publishes no vesting schedule); cited by hand, not read by code',
   },
   'lite-api.jup.ag': {
     label: 'Jupiter price API', kind: 'third_party', operator: 'Jupiter',
@@ -148,6 +139,11 @@ export const TERMS: Record<string, Terms> = {
     label: 'Hyperliquid info API', kind: 'first_party_api', operator: 'Hyperliquid',
     commercial: 'unknown',
     note: 'URL from the asset\'s external_ids.hyperliquid_info',
+  },
+  'x.com': {
+    label: 'Lighter on X (its own post)', kind: 'first_party_api', operator: 'Lighter',
+    commercial: 'unknown',
+    note: 'LIT unlock schedule (schedule.unlocks_next_year citation): Lighter\'s own post, first party; cited by hand, not read by code',
   },
   'mainnet.zklighter.elliot.ai': {
     label: 'Lighter API (Core)', kind: 'first_party_api', operator: 'Lighter',

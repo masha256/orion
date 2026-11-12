@@ -18,7 +18,7 @@ external_ids:
   defillama: uniswap
 
 # Every metric is fetched: no manual metric, so a bootstrap run finds nothing to research and writes only its journal.
-# DefiLlama only for gross swap fees, the one series with no on-chain source (Mike, 2026-10-11).
+# No DefiLlama read: its gross swap fees were removed in Phase 3 R1, and volume is not measured until the on-chain reads.
 metrics:
   price_usd:
     type: level
@@ -37,8 +37,6 @@ metrics:
     staleness_days: 7
     critical: true
     source: { type: erc20_supply, token: token, subtract_balances: [ dead ] }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: coingecko, id: uniswap, field: total_supply } }
 
   # CoinGecko's own definition; display only, the report's market cap basis (FDV uses total_supply).
   circulating_supply:
@@ -96,16 +94,6 @@ metrics:
   labs_vest_approved: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: token, function: allowance, args: [ timelock, vesting ], decimals: 18 } }
   treasury_uni: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: token, function: balanceOf, args: [ timelock ], decimals: 18 } }
 
-  # Gross swap fees, LPs and protocol, every Uniswap version and chain: display only, the protocol's gross
-  # (income_statement volume).
-  flow_usd.swap_fees:
-    type: flow
-    unit: usd
-    cadence: daily
-    staleness_days: 5
-    monitor_only: true
-    source: { type: defillama, slug: uniswap, data_type: dailyFees, backfill_days: 100 }
-
 # Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
 # the holders and below_line lines):
 # Report-only holder yield and growth (orion report yield). A burn: no haircut. The Labs vest is the report's dilution
@@ -127,7 +115,7 @@ income_statement:
     - { id: lps, to: lps, not_measured: "swap fees to LPs: v2 gross not derived, v3/v4 pools not scanned yet (Phase 3)" }
   holders:
     - { id: burn, of: protocol_fees, bucket: burn, haircut: 0, recipient_base: all, capture_rule: programmatic, note: "every protocol fee burns UNI" }
-  volume: [ flow_usd.swap_fees ]
+  volume: { not_measured: "gross swap fees: DefiLlama removed (Phase 3 R1); v2 x6 derived and v3/v4 scans not built (Phase 3b)" }
   burned_tokens: [ flow_tokens.burn ]
   dilution:
     - { id: labs_vest, metric: labs_vest_rate, cap_metric: labs_vest_approved, note: "Timelock to Uniswap Labs via UNIVesting" }

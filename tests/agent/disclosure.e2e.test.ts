@@ -33,7 +33,7 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = '2026-10-23T12:00:00.000Z';
 const TRANSCRIPT = join(ROOT, 'tests/fixtures/disclosure/lit-q3-2026-call-transcript.txt');
 const RUN_FIXTURE = join(ROOT, 'tests/fixtures/disclosure/lit-q3-run.json');
-const LIT_HASH = 'a3e049f1d277b4d5ba23af6995fbf4527776ce8c5493433d4c671faf83ce1004';
+const LIT_HASH = '0de769beeae95c555b2db4e89ca3d7b68f705719ead7de62dd53b768cccb0cc9';
 const SOURCE_URL = 'https://x.com/Lighter_xyz/status/2113065839352336774';
 
 // Q3 2026 as the live DB has it (spec section 2): the treasury's buys and DefiLlama's revenue, summed over 92 days.
@@ -191,13 +191,20 @@ function script(docId: number): (Step | ((r: ModelRequest) => Step))[] {
  * assets/lit.yaml as it stood when the Q3 2026 run was filed (2026-10-23): proposal #3's tranches were approved later
  * (Mike, 2026-10-24), so the replay and its approval run on the file without them, the config the run actually saw.
  */
-const TRANCHES_TEXT = ', tranches: { first: 2027-01-29, every_months: 1, count: 36 }';
-const NOTE_NOW = 'team and investor vesting, 36 monthly tranches from 2027-01-29 (Lighter terms; sizes from DefiLlama emissions)';
+// Phase 3 R1 moved the file's unlocks to schedule.unlocks_next_year (a cited schedule) and removed the DefiLlama display
+// series: the replay puts back the pre-approval lit.unlocks_next_year line and the two series (the run reads
+// flow_usd.llama_revenue), as the file stood when the run was filed.
+const UNLOCKS_BLOCK_NOW = /^  unlocks_next_year:\n    type: level\n[\s\S]*?name: schedule\.unlocks_next_year\n[\s\S]*?- \{ label: investors, [^\n]*\n/m;
+const UNLOCKS_LINE_THEN =
+  '  unlocks_next_year: { type: level, unit: tokens_per_year, staleness_days: 14, monitor_only: true, source: { type: adapter, name: lit.unlocks_next_year, params: { allocations: [ Team, Investors ] } } }\n' +
+  '  flow_usd.fees: { type: flow, unit: usd, cadence: daily, staleness_days: 5, monitor_only: true, source: { type: defillama, slug: lighter, data_type: dailyFees, backfill_days: 150 } }\n' +
+  '  flow_usd.llama_revenue: { type: flow, unit: usd, cadence: daily, staleness_days: 5, monitor_only: true, source: { type: defillama, slug: lighter, data_type: dailyRevenue, backfill_days: 150 } }\n';
+const NOTE_NOW = "team and investor vesting, 36 monthly tranches from 2027-01-29 (Lighter terms; sizes from Lighter's post, 26% team, 24% investors)";
 const NOTE_THEN = 'team and investor vesting from 2026-12-29 (DefiLlama emissions)';
 function preApprovalLitYaml(): string {
   const text = readFileSync(join(ROOT, 'assets/lit.yaml'), 'utf8');
-  if (!text.includes(TRANCHES_TEXT) || !text.includes(NOTE_NOW)) throw new Error('assets/lit.yaml no longer carries the approved tranches text');
-  return text.replace(TRANCHES_TEXT, '').replace(NOTE_NOW, NOTE_THEN);
+  if (!UNLOCKS_BLOCK_NOW.test(text) || !text.includes(NOTE_NOW)) throw new Error('assets/lit.yaml no longer carries the cited unlock schedule text');
+  return text.replace(UNLOCKS_BLOCK_NOW, UNLOCKS_LINE_THEN).replace(NOTE_NOW, NOTE_THEN);
 }
 
 function normalized(r: RunAgentResult): unknown {

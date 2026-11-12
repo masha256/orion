@@ -48,7 +48,6 @@ function world() {
     [`${VENICE}/vvv_staking_yield`]: fixture('venice_vvv_staking_yield.json'),
     [`${VENICE}/vvv_burn_history`]: fixture('venice_vvv_burn_history.json'),
     [`${VENICE}/diem_stats`]: fixture('venice_diem_stats.json'),
-    'https://api.llama.fi/summary/fees/venice': fixture('llama_venice.json'),
   });
   const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENESIS_TS) / 2));
   const rpc = fakeRpc({
@@ -87,7 +86,7 @@ describe('assets/vvv.yaml', () => {
     // review_triggers, peer_set) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/vvv.yaml`, 'utf8')).hash).toBe('fa05d39217ee2160f6e746350494a818b51c316368e6d3b364dc1c105b328838');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/vvv.yaml`, 'utf8')).hash).toBe('45ad0a3a44763cf55abccdcf6d1e2facaf49c430f222953bb00556120e9adaa2');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -131,7 +130,7 @@ describe('assets/vvv.yaml ingestion', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => b.sourceId).sort()).toEqual([
       'adapter:vvv.burn_history_tokens', 'adapter:vvv.diem_target_supply', 'adapter:vvv.staker_emission_share', 'adapter:vvv.staker_share_from_api',
-      'chain_levels', 'coingecko', 'defillama:venice:dailyHoldersRevenue', 'defillama:venice:dailyRevenue',
+      'chain_levels', 'coingecko', // no DefiLlama (Phase 3 R1): the burn cross-check and revenue_proxy are gone
       `http_json:${VENICE}/diem_stats`, `http_json:${VENICE}/vvv_staking_yield`, `http_json:${VENICE}/vvv_stats`,
     ]);
     expect(plan.flowGroups).toHaveLength(1);
@@ -169,8 +168,9 @@ describe('assets/vvv.yaml ingestion', () => {
     const checked = r.sources.flatMap((s) => s.crossChecks).map((c) => c.metricKey).sort();
     expect(checked).toEqual([
       'circulating_supply', 'diem_supply', 'diem_target_supply', 'emission_rate_annual', 'locked_supply', 'price_usd',
-      'staked_supply', 'staker_emission_share', 'total_supply', 'total_supply',
+      'staked_supply', 'staker_emission_share', 'total_supply', // Venice's own; CoinGecko's total check is gone (Phase 3 R1)
     ]);
+    expect(w.http.calls.filter((c) => /llama\.fi/.test(new URL(c.url).host)).map((c) => c.url)).toEqual([]); // Phase 3 R1
     expect(w.rpc.stats.multicall).toBeLessThanOrEqual(4); // levels, two adapters, token decimals: never one call per read
   });
 });

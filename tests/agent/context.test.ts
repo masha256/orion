@@ -10,7 +10,7 @@ import { decideAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
 import { insertDocument, type StoredDocument } from '../../src/db/documents.js';
 import { insertJournalEntry } from '../../src/db/journal.js';
 import { decideProposal, insertProposal } from '../../src/db/proposals.js';
-import { registerAdapter } from '../../src/ingest/adapters/registry.js';
+import { getAdapter, registerAdapter } from '../../src/ingest/adapters/registry.js';
 import { AGENT_ASSET_YAML, agentWorld, PERSONA_MD, type AgentWorld } from '../helpers/agentWorld.js';
 import { AS_OF } from '../helpers/obs.js';
 import { useTestDb } from '../helpers/db.js';
@@ -213,10 +213,11 @@ describe('the disclosure pack', () => {
   it('the LIT disclosure pack lists adapter_params for unlocks_next_year with the paramsDoc text', async () => {
     const lit = loadAsset(fileURLToPath(new URL('../..', import.meta.url)), 'lit');
     const p = await packFor(lit, { document: await storeDoc(), assetYaml: 'lit' });
+    // Phase 3 R1: LIT's unlocks are the cited schedule (schedule.unlocks_next_year), documented by its own paramsDoc.
     expect(p.adapter_params).toContainEqual({
-      metric: 'unlocks_next_year', adapter: 'lit.unlocks_next_year',
-      params_doc: "allocations: string[] (DefiLlama allocation labels, required); url?: string (default https://defillama-datasets.llama.fi/emissions/lighter): the DefiLlama emissions dataset; tranches?: { first: YYYY-MM-DD, every_months: 1..12, count: 1..120 }: the issuer's own tranche schedule; each allocation's remaining amount from the schedule start is split evenly over the tranches",
+      metric: 'unlocks_next_year', adapter: 'schedule.unlocks_next_year', params_doc: getAdapter('schedule.unlocks_next_year').paramsDoc,
     });
+    expect(getAdapter('schedule.unlocks_next_year').paramsDoc).toMatch(/^citation: \{ url: http\(s\) URL, quote: /);
     // Since 2026-10-23 the Lighter-API adapters (revenue, the Robinhood watch, staked LIT) document their params too.
     expect(p.adapter_params.map((a: { metric: string; adapter: string }) => [a.metric, a.adapter])).toEqual([
       ['flow_usd.fees_core', 'lit.exchange_fees_daily'],
@@ -225,7 +226,7 @@ describe('the disclosure pack', () => {
       ['rh_revenue_share_app', 'lit.app_fee_share'],
       ['staked_tokens_reported', 'lit.staking_pool'],
       ['staking_apr', 'lit.staking_pool'],
-      ['unlocks_next_year', 'lit.unlocks_next_year'],
+      ['unlocks_next_year', 'schedule.unlocks_next_year'],
     ]);
   });
 

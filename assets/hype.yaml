@@ -29,8 +29,6 @@ metrics:
     staleness_days: 3
     critical: true
     source: { type: coingecko, id: hyperliquid, field: price }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: http_json, url: "https://coins.llama.fi/prices/current/hyperliquid:0x0d01dc56dcaaca66ad901c959b4011ec", path: "coins.hyperliquid:0x0d01dc56dcaaca66ad901c959b4011ec.price" } }
 
   # Total supply (the HYPE/USDC pair in the spot meta) less the HYPE held at the fund and the two dead addresses (their
   # clearinghouse balances), about 951.3M. The docs call the fund's HYPE burned; the chain still holds it, so it is subtracted
@@ -41,8 +39,6 @@ metrics:
     staleness_days: 7
     critical: true
     source: { type: adapter, name: hype.total_supply, params: { subtract: [assistance_fund, zero, dead] } }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: coingecko, id: hyperliquid, field: total_supply } }
 
   # CoinGecko's own definition (222M against the API's 299M); display only, the report's market cap basis; no consistent
   # cross-check.

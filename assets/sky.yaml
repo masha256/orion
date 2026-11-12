@@ -30,8 +30,9 @@ external_ids:
   coingecko: sky
   defillama: sky
 
-# Every metric is read on chain except the price and the circulating supply (CoinGecko): no DefiLlama (Mike, 2026-10-11).
-# DefiLlama's holders revenue (both halves) is reference only: 44.2M USD a year on 91 days vs 44.6M measured here.
+# Every metric is read on chain except the price and the circulating supply (CoinGecko): no DefiLlama (Mike, 2026-10-11;
+# its price cross-check removed in Phase 3 R1). No price cross-check: the flapper's Chronicle oracle is whitelisted and
+# reverts when read through Multicall3.
 metrics:
   price_usd:
     type: level
@@ -39,10 +40,6 @@ metrics:
     staleness_days: 3
     critical: true
     source: { type: coingecko, id: sky, field: price }
-    cross_checks:
-      # DefiLlama's coins price (a cross-check only, as for CRV and AERO): the flapper's Chronicle oracle is whitelisted and
-      # reverts when read through Multicall3.
-      - { tolerance_pct: 2, source: { type: http_json, url: "https://coins.llama.fi/prices/current/ethereum:0x56072C95FAA701256059aa122697B133aDEd9279", path: "coins.ethereum:0x56072C95FAA701256059aa122697B133aDEd9279.price" } }
 
   # 23.45B: every MKR-equivalent, including about 2.07B SKY in the converter for unconverted MKR (fully convertible).
   # Small burns (about 7M in the month to 2026-10-16) show up here.
@@ -52,8 +49,6 @@ metrics:
     staleness_days: 7
     critical: true
     source: { type: erc20_supply, token: token }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: coingecko, id: sky, field: total_supply } }
 
   circulating_supply:
     type: level

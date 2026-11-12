@@ -29,10 +29,10 @@ variable that holds its URL (never the URL: RPC URLs carry keys), each adapter's
 | Lighter explorer API: `explorer.elliot.ai` | `first_party_api` | Lighter |  | unknown |  | lit: adapter lit.staking_pool | staking pool reward logs (lit.staking_pool) |
 | Lighter API (Core): `mainnet.zklighter.elliot.ai` | `first_party_api` | Lighter |  | unknown |  | lit: adapter lit.exchange_fees_daily, adapter lit.staking_pool, adapter lit.treasury_buys_daily, http_json (cross-check) |  |
 | Venice app API: `outerface.venice.ai` | `first_party_api` | Venice |  | unknown |  | vvv: adapter vvv.burn_history_tokens (cross-check), adapter vvv.staker_share_from_api (cross-check), http_json (cross-check) | VVV supply, staking and burn-history cross-checks |
-| CoinGecko API: `api.coingecko.com` | `market_data` | CoinGecko |  | yes: paid Basic plan: commercial licence, attribution required, no redistribution of raw data, stored data deleted if the plan lapses (roadmap rule 5); blocks the export until the paid Basic plan is bought (roadmap rule 5: before launch) | 2026-11-05 | cake: coingecko, transfer_flow pricing; crv: coingecko, coingecko (cross-check), transfer_flow pricing; cvxcrv: coingecko, coingecko (cross-check), transfer_flow pricing; hype: coingecko, coingecko (cross-check); link: coingecko, coingecko (cross-check), transfer_flow pricing; lit: coingecko, coingecko (cross-check); pump: adapter solana.supply_burn_daily, coingecko, coingecko (cross-check); sdcrv: coingecko, transfer_flow pricing; sky: coingecko, coingecko (cross-check), transfer_flow pricing; uni: coingecko, coingecko (cross-check), transfer_flow pricing; vvv: coingecko, coingecko (cross-check), transfer_flow pricing; ycrv: coingecko, transfer_flow pricing | price, price history and circulating supply only (spec §2 rung market_data); a paid key moves to pro-api.coingecko.com (COINGECKO_PLAN=pro) |
-| DefiLlama API: `api.llama.fi` | `third_party` | DefiLlama |  | no: below Enterprise, use is restricted to internal / non-commercial (roadmap rule 1) | 2026-11-05 | aero: defillama; cake: defillama; hype: defillama; lit: defillama, defillama (cross-check); pump: adapter solana.supply_burn_daily, defillama; uni: defillama; vvv: defillama, defillama (cross-check) | removed per asset in Phase 3; labelled third_party in provenance until then |
-| DefiLlama coins API: `coins.llama.fi` | `third_party` | DefiLlama |  | no: as api.llama.fi (roadmap rule 1) | 2026-11-05 | crv: http_json (cross-check); cvxcrv: http_json (cross-check); hype: http_json (cross-check); sdcrv: http_json (cross-check); sky: http_json (cross-check); ycrv: http_json (cross-check) | price_usd cross-checks; replaced by price checks against Chainlink or a deep pool (spec §5) |
-| DefiLlama emissions datasets: `defillama-datasets.llama.fi` | `third_party` | DefiLlama |  | no: as api.llama.fi (roadmap rule 1) | 2026-11-05 | lit: adapter lit.unlocks_next_year; pump: adapter lit.unlocks_next_year | unlock allocation sizes (lit.unlocks_next_year) |
+| Lighter on X (its own post): `x.com` | `first_party_api` | Lighter |  | unknown |  | lit: adapter schedule.unlocks_next_year | LIT unlock schedule (schedule.unlocks_next_year citation): Lighter's own post, first party; cited by hand, not read by code |
+| CoinGecko API: `api.coingecko.com` | `market_data` | CoinGecko |  | yes: paid Basic plan: commercial licence, attribution required, no redistribution of raw data, stored data deleted if the plan lapses (roadmap rule 5); blocks the export until the paid Basic plan is bought (roadmap rule 5: before launch) | 2026-11-05 | cake: coingecko, transfer_flow pricing; crv: coingecko, transfer_flow pricing; cvxcrv: coingecko, transfer_flow pricing; hype: coingecko; link: coingecko, transfer_flow pricing; lit: coingecko; pump: adapter solana.supply_burn_daily, coingecko; sdcrv: coingecko, transfer_flow pricing; sky: coingecko, transfer_flow pricing; uni: coingecko, transfer_flow pricing; vvv: coingecko, transfer_flow pricing; ycrv: coingecko, transfer_flow pricing | price, price history and circulating supply only (spec §2 rung market_data); a paid key moves to pro-api.coingecko.com (COINGECKO_PLAN=pro) |
+| DefiLlama API: `api.llama.fi` | `third_party` | DefiLlama |  | no: below Enterprise, use is restricted to internal / non-commercial (roadmap rule 1) | 2026-11-05 | aero: defillama; hype: defillama; pump: adapter solana.supply_burn_daily, defillama | removed per asset in Phase 3; labelled third_party in provenance until then |
+| Blockworks Token Transparency filing: `blockworks.com` | `third_party` | Blockworks |  | unknown |  | pump: adapter schedule.unlocks_next_year | PUMP unlock schedule (schedule.unlocks_next_year citation): compiled by Blockworks, not the issuer (pump.fun publishes no vesting schedule); cited by hand, not read by code |
 | Jupiter price API: `lite-api.jup.ag` | `third_party` | Jupiter |  | unknown |  | pump: http_json (cross-check) | PUMP price cross-check only (priced from Solana pools) |
 | Llama Airforce API: `llama.box` | `third_party` | Llama Airforce (community) |  | unknown |  | crv: http_json, http_json (cross-check) | no stated licence (spec §11 D4): internal only, labelled third_party, until replaced by on-chain incentive-market scans (Phase 3) |
 
@@ -44,15 +44,15 @@ stop reading it (Phase 3 removes DefiLlama).
 | Asset | Commercial use `unknown` | Commercial use `no` | `yes`, on a condition |
 |---|---|---|---|
 | aero | Base RPC | `api.llama.fi` |  |
-| cake | BNB Chain RPC | `api.llama.fi` | `api.coingecko.com` |
-| crv | Ethereum RPC, `llama.box` | `coins.llama.fi` | `api.coingecko.com` |
-| cvxcrv | Ethereum RPC | `coins.llama.fi` | `api.coingecko.com` |
-| hype | `api.hyperliquid.xyz` | `api.llama.fi`, `coins.llama.fi` | `api.coingecko.com` |
+| cake | BNB Chain RPC |  | `api.coingecko.com` |
+| crv | Ethereum RPC, `llama.box` |  | `api.coingecko.com` |
+| cvxcrv | Ethereum RPC |  | `api.coingecko.com` |
+| hype | `api.hyperliquid.xyz` | `api.llama.fi` | `api.coingecko.com` |
 | link | Ethereum RPC |  | `api.coingecko.com` |
-| lit | Ethereum RPC, `api.rh.lighter.xyz`, `app.lighter.xyz`, `explorer.elliot.ai`, `mainnet.zklighter.elliot.ai` | `api.llama.fi`, `defillama-datasets.llama.fi` | `api.coingecko.com` |
-| pump | Solana RPC, `lite-api.jup.ag` | `api.llama.fi`, `defillama-datasets.llama.fi` | `api.coingecko.com` |
-| sdcrv | Ethereum RPC | `coins.llama.fi` | `api.coingecko.com` |
-| sky | Ethereum RPC | `coins.llama.fi` | `api.coingecko.com` |
-| uni | Ethereum RPC | `api.llama.fi` | `api.coingecko.com` |
-| vvv | Base RPC, `outerface.venice.ai` | `api.llama.fi` | `api.coingecko.com` |
-| ycrv | Ethereum RPC | `coins.llama.fi` | `api.coingecko.com` |
+| lit | Ethereum RPC, `api.rh.lighter.xyz`, `app.lighter.xyz`, `explorer.elliot.ai`, `mainnet.zklighter.elliot.ai`, `x.com` |  | `api.coingecko.com` |
+| pump | Solana RPC, `blockworks.com`, `lite-api.jup.ag` | `api.llama.fi` | `api.coingecko.com` |
+| sdcrv | Ethereum RPC |  | `api.coingecko.com` |
+| sky | Ethereum RPC |  | `api.coingecko.com` |
+| uni | Ethereum RPC |  | `api.coingecko.com` |
+| vvv | Base RPC, `outerface.venice.ai` |  | `api.coingecko.com` |
+| ycrv | Ethereum RPC |  | `api.coingecko.com` |

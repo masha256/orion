@@ -15,6 +15,11 @@ import { ALL_ASSETS, repoAsset, syntheticInput } from '../helpers/syntheticRepor
  * byte-identical to the JSON written at cc59fa7, before `holder_flows`/`reporting` and the v1 report were retired.
  * The inputs are hashed too, so a changed fixture cannot pass by moving both sides. UPDATE_GOLDEN=1 rewrites the file
  * (only ever at the base commit).
+ *
+ * Phase 3 R1 rewrote the report entries of cake, lit, uni and vvv (inputs unchanged; the other 9 assets byte-identical).
+ * The only paths that moved: CAKE/UNI incomeStatement.volume (not_measured: DefiLlama's gross fees removed), VVV's
+ * business-line crossCheck (DefiLlama's dailyRevenue removed), and the provenance.thirdParty / provenance.sources / flags
+ * entries that named the removed LIT buyback and VVV burn/revenue cross-checks. No revenue, holder, yield or dilution path.
  */
 const GOLDEN = fileURLToPath(new URL('./golden/v2-report-13.json', import.meta.url));
 

@@ -25,8 +25,8 @@ external_ids:
 # Every metric is fetched: no manual metric, so a bootstrap run finds nothing to research and writes only its journal.
 # Lighter's own API for the buybacks and a price check (Mike, 2026-10-16), and for the fees, revenue, the Robinhood
 # instance's fee account and the staking pool (Mike, 2026-10-23; fees accrue inside the L2, no on-chain source).
-# DefiLlama only for display series (its fees and revenue, the category share) and the unlock schedule (no vesting
-# contract on chain).
+# No DefiLlama read (Phase 3 R1 removed its display series and its buyback cross-check); the unlock schedule is Lighter's
+# own post, cited (no vesting contract on chain).
 metrics:
   price_usd:
     type: level
@@ -38,16 +38,14 @@ metrics:
       - { tolerance_pct: 2, source: { type: http_json, url: "https://mainnet.zklighter.elliot.ai/api/v1/orderBookDetails?market_id=2049", path: spot_order_book_details.0.last_trade_price } }
 
   # 1B less dead: 981.91M on 2026-10-16. The team, investor and ecosystem allocations stay inside (total_supply, the FDV
-  # basis on every Orion asset): they are already minted and can be sold. CoinGecko's total (1B) has not netted the burns,
-  # so the cross-check is 2.5 percent (1.8 percent apart on 2026-10-16; it widens by each quarter's burn).
+  # basis on every Orion asset): they are already minted and can be sold. No cross-check: CoinGecko's total (1B, the burns
+  # not netted) was removed in Phase 3 R1.
   total_supply:
     type: level
     unit: tokens
     staleness_days: 7
     critical: true
     source: { type: erc20_supply, token: token, subtract_balances: [ dead ] }
-    cross_checks:
-      - { tolerance_pct: 2.5, source: { type: coingecko, id: lighter, field: total_supply } }
 
   # CoinGecko's own definition (250M on 2026-10-16: the airdrop); display only, the report's market cap basis.
   circulating_supply:
@@ -79,8 +77,9 @@ metrics:
     source: { type: constant, value: 0, note: "1B minted at launch; unlocks move tokens already in total supply" }
 
   # The holder flow: USDC the treasury account spends on LIT each completed UTC day, read from Lighter's trades (account 0
-  # the bid on market 2049). Matches DefiLlama's holders revenue to the dollar for June to September 2026. The API keeps
-  # about 150 days of trades, so history starts 2026-05-24 (Mike, 2026-10-16: no DefiLlama stitch before it).
+  # the bid on market 2049). Matched DefiLlama's holders revenue to the dollar for June to September 2026 (that cross-check
+  # was removed in Phase 3 R1; no external check until R3). The API keeps about 150 days of trades, so history starts
+  # 2026-05-24 (Mike, 2026-10-16: no DefiLlama stitch before it).
   flow_usd.buyback:
     type: flow
     unit: usd
@@ -88,8 +87,6 @@ metrics:
     staleness_days: 4
     critical: true
     source: { type: adapter, name: lit.treasury_buys_daily, params: { account: 0, market: 2049, unit: usd, days: 7 } }
-    cross_checks:
-      - { tolerance_pct: 5, source: { type: defillama, slug: lighter, data_type: dailyHoldersRevenue, compare: monthly_sum } }
 
   # The same buys in LIT: the tokens the quarterly burn removes.
   flow_tokens.buyback:
@@ -123,11 +120,25 @@ metrics:
     source: { type: transfer_flow, token: token, to: prime_passthrough, from_allowlist: [ buyback_wallet ], unit: tokens }
   routed_to_prime_rate: { type: level, unit: tokens_per_year, staleness_days: 120, monitor_only: true, source: { type: derived, name: flow_annualized, params: { metric: flow_tokens.routed_to_prime, days: 91 } } }
 
-  # Report-only: team and investor tokens unlocking over the next 365 days. Allocation sizes from DefiLlama's emissions
-  # dataset (no vesting contract on chain); timing from Lighter's own terms (Q3 2026 call, doc #1 at 12:27-12:33: no cliff,
-  # 36 monthly tranches, the first on 2027-01-29), applied by proposal #3 (Mike, 2026-10-24). DefiLlama models a weekly
-  # linear release from 2026-12-29 instead, which overstated the next-365-day figure (136.0M vs 124.9M on 2026-10-24).
-  unlocks_next_year: { type: level, unit: tokens_per_year, staleness_days: 14, monitor_only: true, source: { type: adapter, name: lit.unlocks_next_year, params: { allocations: [ Team, Investors ], tranches: { first: 2027-01-29, every_months: 1, count: 36 } } } }
+  # Report-only: team and investor tokens unlocking over the next 365 days, computed offline from a cited schedule (no
+  # vesting contract on chain; Phase 3 R1). Sizes from Lighter's own post (first party): 26 percent team and 24 percent
+  # investors of the 1B, 260M and 240M. Timing from Lighter's own terms (Q3 2026 call, doc #1 at 12:27-12:33: 36 monthly
+  # tranches, the first on 2027-01-29), applied by proposal #3 (Mike, 2026-10-24).
+  unlocks_next_year:
+    type: level
+    unit: tokens_per_year
+    staleness_days: 14
+    monitor_only: true
+    source:
+      type: adapter
+      name: schedule.unlocks_next_year
+      params:
+        citation:
+          url: "https://x.com/Lighter_xyz/status/2005862687331303804"
+          quote: "The team and investors all have a 1-year unlock and 3-year linear vesting after. The breakdown is 26% team, 24% investor."
+        schedules:
+          - { label: team, tokens: 260000000, tranches: { first: 2027-01-29, every_months: 1, count: 36 } }
+          - { label: investors, tokens: 240000000, tranches: { first: 2027-01-29, every_months: 1, count: 36 } }
   reserve_lit: { type: level, unit: tokens, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: token, function: balanceOf, args: [ ecosystem_reserve ], decimals: 18 } }
 
   # Revenue from Lighter's own exchangeMetrics (Mike, 2026-10-23, pick 2a): the four revenue kinds per completed UTC
@@ -199,23 +210,6 @@ metrics:
     source: { type: adapter, name: lit.staking_pool, params: { field: apr } }
     watch: { outside: [ 0.057, 0.063 ] }
 
-  # Display only, no report line since 2026-10-23 (revenue and volume read Lighter's API): DefiLlama's gross fees and its
-  # revenue (Lighter perps, spot and Robinhood perps; it counts the Robinhood instance at 100 percent).
-  flow_usd.fees:
-    type: flow
-    unit: usd
-    cadence: daily
-    staleness_days: 5
-    monitor_only: true
-    source: { type: defillama, slug: lighter, data_type: dailyFees, backfill_days: 150 }
-  flow_usd.llama_revenue:
-    type: flow
-    unit: usd
-    cadence: daily
-    staleness_days: 5
-    monitor_only: true
-    source: { type: defillama, slug: lighter, data_type: dailyRevenue, backfill_days: 150 }
-
 # Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
 # the holders and below_line lines):
 # discretionary (Mike, 2026-10-16): the burn policy dates from June 2026, the team executes each burn, and the burned
@@ -244,7 +238,7 @@ income_statement:
   volume: [ flow_usd.fees_core, flow_usd.fees_rh ]
   burned_tokens: [ flow_tokens.buyback ]
   dilution:
-    - { id: unlocks, metric: unlocks_next_year, note: "team and investor vesting, 36 monthly tranches from 2027-01-29 (Lighter terms; sizes from DefiLlama emissions)" }
+    - { id: unlocks, metric: unlocks_next_year, note: "team and investor vesting, 36 monthly tranches from 2027-01-29 (Lighter terms; sizes from Lighter's post, 26% team, 24% investors)" }
   # Reconciliation checks (spec §5, Phase 2 Task 5). Automatic: robinhood_partner_share (rh_revenue_share_app read from
   # Lighter's app bundle vs the 0.5 the cost line assumes). Listed: a Lighter API restatement of a Core fee day (the
   # adapter re-reads its last 3 days and supersedes a changed row; this compares each day's first row with the one in force).

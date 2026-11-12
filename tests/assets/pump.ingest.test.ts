@@ -44,12 +44,6 @@ function world(supplyNow: number) {
     'https://lite-api.jup.ag/price/v3': { [MINT]: { usdPrice: PRICE * 1.001 } },
     'https://api.llama.fi/summary/fees/pump?dataType=dailyHoldersRevenue': llama(HISTORY_USD),
     'https://api.llama.fi/summary/fees/pump?dataType=dailyRevenue': llama(HISTORY_USD * 2),
-    'https://defillama-datasets.llama.fi/emissions/pump': {
-      documentedData: { data: [
-        { label: 'Team', data: [{ timestamp: NOW.getTime() / 1000 - 30 * 86_400, unlocked: 62.5e9 }, { timestamp: NOW.getTime() / 1000 + 365 * 86_400 - 60, unlocked: 112.5e9 }] },
-        { label: 'Existing Investors', data: [{ timestamp: NOW.getTime() / 1000 - 30 * 86_400, unlocked: 40.6e9 }, { timestamp: NOW.getTime() / 1000 + 365 * 86_400 - 60, unlocked: 73.1e9 }] },
-      ] },
-    },
     [SOL]: (_u: string, body?: unknown) => {
       const b = body as { method: string; params: unknown[] };
       if (b.method === 'getTokenSupply') return { jsonrpc: '2.0', id: 1, result: { context: { slot: 1 }, value: { amount: BigInt(Math.round(supplyNow * 1e6)).toString(), decimals: 6 } } };
@@ -76,8 +70,13 @@ describe('assets/pump.yaml', () => {
     expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.buyback']);
     expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
-    // DefiLlama only for the pre-reading history, the unlocks and the revenue display line (Mike, 2026-10-16).
+    // DefiLlama only for the pre-reading history and the revenue line (Mike, 2026-10-16); the unlocks are a cited schedule
+    // (Phase 3 R1: the Blockworks filing, compiled by Blockworks, not the issuer).
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.llama_revenue']);
+    expect(config.metrics.unlocks_next_year.source).toMatchObject({
+      type: 'adapter', name: 'schedule.unlocks_next_year',
+      params: { citation: { url: 'https://blockworks.com/token-transparency/filing/pump' }, schedules: [{ label: 'team', tokens: 150e9 }, { label: 'investors', tokens: 97.5e9 }] },
+    });
     expect(config.metrics['flow_usd.llama_revenue'].monitor_only).toBe(true);
     expect(config.income_statement!.dilution).toEqual([expect.objectContaining({ id: 'unlocks', metric: 'unlocks_next_year' })]);
     for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
@@ -86,7 +85,7 @@ describe('assets/pump.yaml', () => {
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/pump.yaml`, 'utf8')).hash).toBe('3a2f142bfc7a25afd959263a479a22b8f188d8827a47ce52dd8ed2a3bd98bd06');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/pump.yaml`, 'utf8')).hash).toBe('4a9e1eba3c80615f6abd04c572c36c76602c803caa5e937333ecf9a23a728126');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -109,7 +108,7 @@ describe('assets/pump.yaml', () => {
     expect(plan.needsRpc).toBe(false);
     expect(plan.flowGroups).toEqual([]);
     expect(plan.batches.map((b) => b.sourceId)).toEqual(expect.arrayContaining([
-      'coingecko', 'adapter:solana.token_supply', 'adapter:solana.supply_burn_daily', 'adapter:solana.owner_balance', 'adapter:lit.unlocks_next_year', 'defillama:pump:dailyRevenue',
+      'coingecko', 'adapter:solana.token_supply', 'adapter:solana.supply_burn_daily', 'adapter:solana.owner_balance', 'adapter:schedule.unlocks_next_year', 'defillama:pump:dailyRevenue',
     ]));
     expect(plan.derived).toEqual([]);
   });
@@ -138,7 +137,8 @@ describe('assets/pump.yaml', () => {
     const r = await fetchAsset(w.db, loadAsset(ROOT, 'pump'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error])).toEqual([]);
     expect(r.anomalies).toEqual([]);
-    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual(expect.arrayContaining([['total_supply', true], ['price_usd', true]]));
+    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]); // CoinGecko's total check is gone (Phase 3 R1)
+    expect(w.http.calls.filter((c) => new URL(c.url).host === 'defillama-datasets.llama.fi').map((c) => c.url)).toEqual([]); // Phase 3 R1
     const rows = async (m: string) => await listActiveObservations(w.db, 'pump', m);
     // The last 7 completed days are on-chain: 1B PUMP a day at 0.005 = 5M USD, superseding DefiLlama's 4M.
     const last7 = (await rows('flow_usd.buyback')).filter((o) => o.periodDays === 1).slice(-7);

@@ -75,7 +75,11 @@ const flowPair = (v2: string, v1: string): PathPair[] =>
     `holder flow line ${v2}${k === 'gross' ? '' : ` ${k}`}`, `${IS}.holderFlow.lines[id=${v2}].${k}`, `flows[id=${v1}].${k}`,
   ]);
 const protocolIncome = (v2: string, v1: string): PathPair => [`protocol line ${v2}`, `${IS}.protocol.lines[id=${v2}].annualized`, `income.lines[id=${v1}].annualized`];
-/** The volume figures (reporting.volume and income_statement.volume list the same series). */
+/**
+ * The volume figures (reporting.volume and income_statement.volume list the same series). CAKE and UNI have none since
+ * Phase 3 R1 (volume not_measured: DefiLlama's gross fees removed), and VVV's revenue cross-check (DefiLlama's
+ * dailyRevenue) went with it.
+ */
 const VOLUME: PathPair[] = [
   ['volume', `${IS}.volume.annualized`, 'volume.annualized'],
   ['volume growth', `${IS}.volume.growth.annualized`, 'volume.growth.annualized'],
@@ -91,7 +95,7 @@ export const PARITY_PATHS: Record<string, PathPair[]> = {
   aero: [...commonPairs('cash'), revIncome('fees', 'voter_fees'), holderIncome('voter_fees', 'voter_fees'), ...flowPair('voter_fees', 'fees')],
   cake: [
     ...commonPairs('burn'), revIncome('burn_rev', 'burn'), revIncome('treasury_rev', 'treasury'), holderIncome('burn', 'burn'), protocolIncome('treasury', 'treasury'),
-    ...flowPair('burn', 'burn'), ...VOLUME,
+    ...flowPair('burn', 'burn'),
   ],
   crv: [
     ...commonPairs('cash'), revIncome('fees', 'vecrv_fees'), revIncome('treasury_rev', 'treasury'), holderIncome('vecrv_fees', 'vecrv_fees'), protocolIncome('treasury', 'treasury'),
@@ -121,12 +125,11 @@ export const PARITY_PATHS: Record<string, PathPair[]> = {
     ...without(commonPairs('cash'), 'protocol', 'protocol growth'), ...revStream('surplus_usds'), ...revStream('surplus_buyback'), holderIncome('stakers', 'stakers'),
     holderIncome('buyback', 'buyback'), ...flowPair('stakers', 'stakers'), ...flowPair('buyback', 'buyback'),
   ],
-  uni: [...commonPairs('burn'), ...revStream('protocol_fees'), holderIncome('burn', 'burn'), ...flowPair('burn', 'burn'), ...VOLUME],
+  uni: [...commonPairs('burn'), ...revStream('protocol_fees'), holderIncome('burn', 'burn'), ...flowPair('burn', 'burn')],
   // VVV's revenue is a disclosed level: v1's income statement has no growth for it (null), while the published
   // `revenue.growth` is the growth between the two latest disclosures, which v2 carries. Pair against the published one.
   vvv: [
     ...without(commonPairs('burn'), 'revenue growth'), ...revStream('business'), holderIncome('burn', 'burn'), ...flowPair('burn', 'burn'),
-    ['revenue cross-check', `${IS}.revenue.lines[id=business].crossCheck.annualized`, 'revenue.crossCheck.annualized'],
   ],
 };
 

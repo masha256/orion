@@ -17,6 +17,7 @@ const testDb = useTestDb();
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-09-24T12:00:00.000Z');
 const INFO = 'https://api.hyperliquid.xyz/info';
+// DefiLlama's coins price: no longer read (Phase 3 R1); the fetch test asserts no call to it.
 const LLAMA_PRICE = 'https://coins.llama.fi/prices/current/hyperliquid:0x0d01dc56dcaaca66ad901c959b4011ec';
 const recorded = (name: string): unknown => JSON.parse(readFileSync(`${ROOT}/tests/fixtures/hype/${name}.json`, 'utf8')) as unknown;
 
@@ -50,7 +51,6 @@ function world(now: Date = NOW) {
   for (const name of ['assistance_fund', 'zero', 'dead']) fixtures[`spotClearinghouseState:${config.contracts[name]}`] = recorded(`spotClearinghouseState-${config.contracts[name]}`);
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'hyperliquid', symbol: 'hype', current_price: 92.36, market_cap: 20545976252, circulating_supply: 222445714.07414138, total_supply: 955307079.4341414 }],
-    [LLAMA_PRICE]: { coins: { 'hyperliquid:0x0d01dc56dcaaca66ad901c959b4011ec': { decimals: 8, symbol: 'HYPE', price: 92.35934496087437, timestamp: 1790215180, confidence: 0.99 } } },
     'https://api.llama.fi/summary/fees/hyperliquid': chart(),
     // The info API answers by request type (and, for a clearinghouse state, by address); recorded 2026-09-24 and 2026-10-02.
     [INFO]: (_url: string, body?: unknown) => {
@@ -94,7 +94,7 @@ describe('assets/hype.yaml', () => {
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('f7dcfeecf846ff6161e18797728bc37ae2d30d52157446bd92e21b1b8b245b3f');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/hype.yaml`, 'utf8')).hash).toBe('492438a0835419c95fa6c9a6fbe9a77c7f1c3df6cc870cea70d1325db457d98a');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -115,8 +115,7 @@ describe('assets/hype.yaml', () => {
   it('plans the source map of the spec: no chain, three adapters, one API-series flow, no derived level', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
-      ['coingecko', ['primary:price_usd', 'cross_check:total_supply', 'primary:circulating_supply']],
-      [`http_json:${LLAMA_PRICE}`, ['cross_check:price_usd']],
+      ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
       ['adapter:hype.total_supply', ['primary:total_supply']],
       ['adapter:hype.staked_supply', ['primary:staked_supply']],
       ['adapter:hype.emission_rate_annual', ['primary:emission_rate_annual']],
@@ -151,7 +150,8 @@ describe('assets/hype.yaml', () => {
     // No derived run rate any more (it fed only the valuation).
     expect(await listActiveObservations(w.db, 'hype', 'revenue_run_rate_usd')).toEqual([]);
     const checked = r.sources.flatMap((s) => s.crossChecks);
-    expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]); // total: CoinGecko's, 2 percent
+    expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([]); // CoinGecko's total and DefiLlama's price checks are gone (Phase 3 R1)
+    expect(w.http.calls.filter((c) => c.url === LLAMA_PRICE).map((c) => c.url)).toEqual([]); // Phase 3 R1
     // Five posts: the spot meta, one clearinghouse state per subtracted address, and the validators once (the stake and emission
     // adapters share the cached reply); plus the report-only fills, one per day of the 14.
     const posts = w.http.calls.filter((c) => c.url === INFO).map((c) => (c.body as { type: string }).type);

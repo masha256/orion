@@ -45,12 +45,6 @@ function trades(): Record<string, unknown>[] {
   return out;
 }
 
-function llamaChart(perDay: number): { totalDataChart: [number, number][] } {
-  const points: [number, number][] = [];
-  for (let i = 150; i >= 1; i--) points.push([Date.parse(`${addDays('2026-10-15', 1 - i)}T00:00:00Z`) / 1000, perDay]);
-  return { totalDataChart: points };
-}
-
 const CORE = 'https://mainnet.zklighter.elliot.ai/api/v1';
 const RH = 'https://api.rh.lighter.xyz/api/v1';
 const POOL = 281_474_976_624_800;
@@ -78,20 +72,12 @@ const APP_CHUNK = 'const mt=new Set([`maker_fee`,`taker_fee`,`transfer_fee`,`wit
 
 function world() {
   const all = trades();
-  const t0 = Date.parse('2026-12-29T00:00:00Z') / 1000;
-  const linear = (perWeek: number) => Array.from({ length: 1200 }, (_, i) => ({ timestamp: t0 + (i - 80) * 86_400, unlocked: Math.max(0, ((i - 80) * perWeek) / 7) }));
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'lighter', symbol: 'lit', current_price: PRICE, market_cap: 7.6e8, circulating_supply: 250_000_000, total_supply: 1_000_000_000 }],
     'https://mainnet.zklighter.elliot.ai/api/v1/orderBookDetails?market_id=2049': { code: 200, order_book_details: [], spot_order_book_details: [{ market_id: 2049, last_trade_price: 3.05 }] },
     'https://mainnet.zklighter.elliot.ai/api/v1/trades': (url: string) => {
       const from = Number(new URL(url).searchParams.get('cursor') ?? '0');
       return { code: 200, trades: all.slice(from, from + 100), next_cursor: from + 100 < all.length ? String(from + 100) : undefined };
-    },
-    'https://api.llama.fi/summary/fees/lighter?dataType=dailyHoldersRevenue': llamaChart(25_000 * PRICE),
-    'https://api.llama.fi/summary/fees/lighter?dataType=dailyFees': llamaChart(150_000),
-    'https://api.llama.fi/summary/fees/lighter?dataType=dailyRevenue': llamaChart(120_000),
-    'https://defillama-datasets.llama.fi/emissions/lighter': {
-      documentedData: { data: [{ label: 'Team', data: linear(1_661_000) }, { label: 'Investors', data: linear(1_533_000) }] },
     },
     // Lighter's own fees: Core from 2025-01-17, the Robinhood instance from 2026-06-26.
     [`${CORE}/exchangeMetrics`]: (url: string) => exchangeMetrics('2025-01-17', () => CORE_FEES[kindOf(url)]),
@@ -159,9 +145,15 @@ describe('assets/lit.yaml', () => {
     expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.buyback']);
     expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
-    // Lighter's own data for the holder flow (Mike, 2026-10-16); DefiLlama only for display series and the unlock schedule.
+    // Lighter's own data for the holder flow (Mike, 2026-10-16); no DefiLlama (Phase 3 R1): the display series and the
+    // buyback cross-check are gone, and the unlocks are Lighter's own cited schedule.
     expect(config.metrics['flow_usd.buyback'].source).toMatchObject({ type: 'adapter', name: 'lit.treasury_buys_daily' });
-    expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.fees', 'flow_usd.llama_revenue']);
+    expect(config.metrics['flow_usd.buyback'].cross_checks).toBeUndefined();
+    expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual([]);
+    expect(config.metrics.unlocks_next_year.source).toMatchObject({
+      type: 'adapter', name: 'schedule.unlocks_next_year',
+      params: { citation: { url: 'https://x.com/Lighter_xyz/status/2005862687331303804' }, schedules: [{ label: 'team', tokens: 260e6 }, { label: 'investors', tokens: 240e6 }] },
+    });
     // Revenue from Lighter's API (Mike, 2026-10-23): Core in full, the Robinhood instance gross with Robinhood's 50
     // percent a cost of revenue (v2: gross user-paid fees).
     expect(config.income_statement!.revenue).toEqual([
@@ -196,7 +188,7 @@ describe('assets/lit.yaml', () => {
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('a3e049f1d277b4d5ba23af6995fbf4527776ce8c5493433d4c671faf83ce1004');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8')).hash).toBe('0de769beeae95c555b2db4e89ca3d7b68f705719ead7de62dd53b768cccb0cc9');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -236,13 +228,11 @@ describe('assets/lit.yaml', () => {
     expect(await value('price_usd')).toBe(PRICE);
     expect(await value('total_supply')).toBe(981_909_280);
     expect(await value('reserve_lit')).toBe(231_809_000);
-    // Lighter's tranche schedule (proposal #3): the canned allocations release (1199 - 80) days x 3,194,000/7 after the
-    // schedule start (2026-12-29), split into 36 monthly tranches from 2027-01-29; 9 of them (Jan 29 .. Sep 29) fall in
-    // the next 365 days from 2026-10-16.
-    expect(await value('unlocks_next_year') / 1e6).toBeCloseTo((((1199 - 80) * 3_194_000) / 7 / 36) * 9 / 1e6, 1);
-    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual(
-      expect.arrayContaining([['total_supply', true], ['price_usd', true]]),
-    );
+    // Lighter's cited schedule (Phase 3 R1): 260M team + 240M investors in 36 monthly tranches from 2027-01-29 (proposal
+    // #3); 9 of them (Jan 29 .. Sep 29) fall in the next 365 days from 2026-10-16. Computed offline, no read.
+    expect(await value('unlocks_next_year')).toBeCloseTo((500e6 / 36) * 9, 0);
+    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
+    expect(w.http.calls.filter((c) => /llama\.fi/.test(new URL(c.url).host)).map((c) => c.url)).toEqual([]); // Phase 3 R1
 
     // The routine (first) fetch writes the backfill window the API returned: the 100 days of trades less the oldest, partial one.
     const buys = await rows('flow_tokens.buyback');

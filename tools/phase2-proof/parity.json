@@ -321,16 +321,6 @@
       "holder flow line burn growth.annualized",
       "incomeStatement.holderFlow.lines[id=burn].growth.annualized",
       "flows[id=burn].growth.annualized"
-    ],
-    [
-      "volume",
-      "incomeStatement.volume.annualized",
-      "volume.annualized"
-    ],
-    [
-      "volume growth",
-      "incomeStatement.volume.growth.annualized",
-      "volume.growth.annualized"
     ]
   ],
   "crv": [
@@ -1650,16 +1640,6 @@
       "holder flow line burn growth.annualized",
       "incomeStatement.holderFlow.lines[id=burn].growth.annualized",
       "flows[id=burn].growth.annualized"
-    ],
-    [
-      "volume",
-      "incomeStatement.volume.annualized",
-      "volume.annualized"
-    ],
-    [
-      "volume growth",
-      "incomeStatement.volume.growth.annualized",
-      "volume.growth.annualized"
     ]
   ],
   "vvv": [
@@ -1817,11 +1797,6 @@
       "holder flow line burn growth.annualized",
       "incomeStatement.holderFlow.lines[id=burn].growth.annualized",
       "flows[id=burn].growth.annualized"
-    ],
-    [
-      "revenue cross-check",
-      "incomeStatement.revenue.lines[id=business].crossCheck.annualized",
-      "revenue.crossCheck.annualized"
     ]
   ]
 }

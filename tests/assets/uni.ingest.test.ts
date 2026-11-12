@@ -38,13 +38,6 @@ function uniChart(url: string): { prices: [number, number][] } {
   return { prices };
 }
 
-/** 100 days of gross swap fees to 2026-10-10, 4.6M USD a day (DefiLlama's real 91-day sum was 426M on 2026-10-11). */
-function feesChart(): { totalDataChart: [number, number][] } {
-  const points: [number, number][] = [];
-  for (let i = 100; i >= 1; i--) points.push([Date.parse(`${addDays('2026-10-10', 1 - i)}T00:00:00Z`) / 1000, 4_600_000]);
-  return { totalDataChart: points };
-}
-
 /**
  * Burns for each of the 100 days to 2026-10-10: 48,000 UNI a day from the bridge, 16,000 from a searcher (75/25 as live),
  * plus the Timelock's one 100M burn on one day, which must be left out. 64,000 UNI a day = 23.36M a year, the live rate.
@@ -65,7 +58,6 @@ function world() {
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'uniswap', symbol: 'uni', current_price: PRICE, market_cap: 4.7e9, circulating_supply: 624_978_422, total_supply: 887_216_418 }],
     'https://api.coingecko.com/api/v3/coins/uniswap/market_chart': uniChart,
-    'https://api.llama.fi/summary/fees/uniswap': feesChart(),
   });
   const rpc = fakeRpc({
     genesisTs: GENESIS_TS,
@@ -95,15 +87,16 @@ describe('assets/uni.yaml', () => {
     expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     // Every metric has a source, and none is manual: a bootstrap run has nothing to research and the grade can be A.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
-    // DefiLlama only for the gross swap fees (Mike, 2026-10-11): the one series with no on-chain source.
-    expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama' || d.cross_checks?.some((c) => c.source.type === 'defillama')).map(([k]) => k)).toEqual(['flow_usd.swap_fees']);
+    // No DefiLlama (Phase 3 R1): the gross swap fees series is gone; volume is not_measured.
+    expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama' || d.cross_checks?.some((c) => c.source.type === 'defillama')).map(([k]) => k)).toEqual([]);
+    expect(config.income_statement!.volume).toEqual({ not_measured: 'gross swap fees: DefiLlama removed (Phase 3 R1); v2 x6 derived and v3/v4 scans not built (Phase 3b)' });
     for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check; then the revenue label (protocol fees, v2 + selected v3). A deliberate edit of assets/uni.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('e63169375421ff156ebf8735ea21897828794118ac68ecff22f3f9f3b131c792');
+    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/uni.yaml`, 'utf8')).hash).toBe('2c0f3c2c69fce619ce90e86898e4a50cc0477a55a0dad96f5a363a5acc45aed9');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -121,13 +114,12 @@ describe('assets/uni.yaml', () => {
     });
   });
 
-  it('plans one any-sender scan of burns, the chain levels with the Chainlink cross-check, the constants and the fees feed', () => {
+  it('plans one any-sender scan of burns, the chain levels with the Chainlink cross-check and the constants (no fees feed)', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
-      ['coingecko', ['primary:price_usd', 'cross_check:total_supply', 'primary:circulating_supply']],
+      ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
       ['chain_levels', ['cross_check:price_usd', 'primary:total_supply', 'primary:labs_vest_rate', 'primary:labs_vest_approved', 'primary:treasury_uni']],
       ['constant', ['primary:staked_supply', 'primary:staker_emission_share', 'primary:emission_rate_annual']],
-      ['defillama:uniswap:dailyFees', ['primary:flow_usd.swap_fees']],
     ]);
     expect(plan.flowGroups).toHaveLength(1);
     expect(plan.flowGroups[0]).toMatchObject({ sourceId: 'transfer_flow:token>dead[*]', anySender: true, allowlist: [], ignore: [C.timelock.toLowerCase()] });
@@ -154,7 +146,8 @@ describe('assets/uni.yaml', () => {
     expect(await value('labs_vest_rate')).toBe(20_000_000);
     expect(await value('labs_vest_approved')).toBe(20_000_000);
     expect(await value('treasury_uni')).toBe(262_247_996);
-    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['total_supply', true], ['price_usd', true]]);
+    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
+    expect(w.http.calls.filter((c) => /llama\.fi/.test(new URL(c.url).host)).map((c) => c.url)).toEqual([]); // Phase 3 R1
 
     // 100 days, 64,000 UNI each (the Timelock's 100M left out), at 7.5 USD.
     const burns = await rows('flow_tokens.burn');
@@ -164,7 +157,7 @@ describe('assets/uni.yaml', () => {
     expect(await rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
   });
 
-  it('reports the burn against the Labs vest as dilution, and the gross swap fees as volume', async () => {
+  it('reports the burn against the Labs vest as dilution, and volume as not measured', async () => {
     const w = world();
     await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
     const report = await loadHolderYieldReport(w.db, config);
@@ -176,7 +169,7 @@ describe('assets/uni.yaml', () => {
     expect(rep.yields.dilution).toBeCloseTo(20_000_000 / 887_216_419, 6);
     expect(rep.yields.dilutionLines).toEqual([{ id: 'labs_vest', tokensPerYear: 20_000_000, yield: expect.closeTo(20_000_000 / 887_216_419, 6) }]);
     expect(rep.yields.netShareholder).toBeCloseTo((64_000 * 365 - 20_000_000) / 887_216_419, 6);
-    expect(rep.volume!.annualized).toBeCloseTo(4_600_000 * 365, 0);
+    expect(rep.volume).toMatchObject({ annualized: null, notMeasured: expect.stringContaining('DefiLlama removed') });
     // In tokens: 64,000 a day burned (23.36M a year) against 20M vested: supply shrinks 3.36M a year.
     expect(rep.dilution.supply).toMatchObject({ burnedPerYear: expect.closeTo(23_360_000, 0), addedPerYear: 20_000_000, netPerYear: expect.closeTo(-3_360_000, 0) });
     expect(rep.dilution.supply!.netPct).toBeCloseTo(-3_360_000 / 887_216_419, 6);

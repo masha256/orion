@@ -49,8 +49,6 @@ metrics:
     staleness_days: 3
     critical: true
     source: { type: coingecko, id: yearn-crv, field: price }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: http_json, url: "https://coins.llama.fi/prices/current/ethereum:0xFCc5c47bE19d06BF83eB04298b026F81069ff65b", path: "coins.ethereum:0xFCc5c47bE19d06BF83eB04298b026F81069ff65b.price" } }
 
   total_supply:
     type: level

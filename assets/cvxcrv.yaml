@@ -48,8 +48,6 @@ metrics:
     staleness_days: 3
     critical: true
     source: { type: coingecko, id: convex-crv, field: price }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: http_json, url: "https://coins.llama.fi/prices/current/ethereum:0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7", path: "coins.ethereum:0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7.price" } }
 
   total_supply:
     type: level
@@ -57,8 +55,6 @@ metrics:
     staleness_days: 7
     critical: true
     source: { type: erc20_supply, token: token }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: coingecko, id: convex-crv, field: total_supply } }
 
   # CoinGecko has no circulating supply for this wrapper (Mike, 2026-10-12): every token is in circulation, so it is
   # the on-chain total. Display basis for market cap only.

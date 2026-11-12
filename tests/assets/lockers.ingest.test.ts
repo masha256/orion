@@ -62,7 +62,6 @@ interface Case {
   hash: string;
   coingecko: string;
   price: number;
-  llamaPrice: number;
   supply: bigint;
   staked: bigint;
   stakedContract: string;
@@ -76,10 +75,9 @@ const sd = loadAsset(ROOT, 'sdcrv').config.contracts;
 const CASES: Case[] = [
   {
     id: 'cvxcrv',
-    hash: 'e9ecdb0d739a2be07973e015419c328ee67d6325a597e33e71a65ea411ded7a8',
+    hash: '372064fcfca833e0adbb9aa562cdb955aa37092ee0de29cae510a7ed8d4a4db9',
     coingecko: 'convex-crv',
     price: 0.1392,
-    llamaPrice: 0.1391,
     supply: 423_825_801n,
     staked: 342_184_638n,
     stakedContract: cvx.wrapper,
@@ -92,10 +90,9 @@ const CASES: Case[] = [
   },
   {
     id: 'sdcrv',
-    hash: '0583401d6b4d5a409522a3c29958b3b7bf4baf99a22b72fe57255697c0199b32',
+    hash: '0ba07bec8636ce7983e3b616d0074bd7697e44b0265317bb632880f1215f43d8',
     coingecko: 'stake-dao-crv',
     price: 0.1884,
-    llamaPrice: 0.1832,
     supply: 119_049_969n,
     staked: 106_861_447n,
     stakedContract: sd.gauge,
@@ -136,10 +133,9 @@ const V2: Record<Case['id'], unknown> = {
 };
 
 function world(c: Case) {
-  const llama = `https://coins.llama.fi/prices/current/ethereum:${loadAsset(ROOT, c.id).config.contracts.token}`;
+  // No coins.llama.fi route: the DefiLlama price cross-check is gone (Phase 3 R1); 'fetches every stream' asserts no call.
   const routes: Record<string, unknown> = {
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: c.coingecko, current_price: c.price, circulating_supply: Number(c.supply), total_supply: Number(c.supply) }],
-    [llama]: { coins: { [`ethereum:${loadAsset(ROOT, c.id).config.contracts.token}`]: { decimals: 18, price: c.llamaPrice, timestamp: 1791521457, confidence: 0.99 } } },
   };
   const calls: Record<string, bigint> = {
     [callKey(loadAsset(ROOT, c.id).config.contracts.token, 'totalSupply')]: c.supply * E18,
@@ -155,8 +151,9 @@ function world(c: Case) {
   }
   const base = fakeRpc({ genesisTs: GENESIS_TS, blockTimeSec: BLOCK_SEC, maxLogRange: 10_000n, latest: LATEST, calls });
   const rpc = multiLogRpc(base, logs);
-  const deps: FetchDeps = { http: fakeHttp(routes as Parameters<typeof fakeHttp>[0]), rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW };
-  return { db: testDb(), deps };
+  const http = fakeHttp(routes as Parameters<typeof fakeHttp>[0]);
+  const deps: FetchDeps = { http, rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW };
+  return { db: testDb(), deps, http };
 }
 
 for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
@@ -177,11 +174,10 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     expect(parseAssetYaml(readFileSync(`${ROOT}/assets/${c.id}.yaml`, 'utf8')).hash).toBe(c.hash);
     // Supply definitions (Mike, 2026-10-12): CoinGecko has no circulating supply for the wrappers, so it is the on-chain total;
-    // CoinGecko's total_supply checks cvxCRV only (sdCRV's figure there is a stale 2022 snapshot).
+    // No total_supply or price cross-check on either (Phase 3 R1 removed CoinGecko's total and DefiLlama's price).
     expect(config.metrics.circulating_supply?.source).toEqual(config.metrics.total_supply.source);
-    expect(config.metrics.total_supply.cross_checks?.map((x) => x.source)).toEqual(
-      c.id === 'cvxcrv' ? [{ type: 'coingecko', id: 'convex-crv', field: 'total_supply' }] : undefined,
-    );
+    expect(config.metrics.total_supply.cross_checks).toBeUndefined();
+    expect(config.metrics.price_usd.cross_checks).toBeUndefined();
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -210,6 +206,7 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     expect(r.anomalies).toEqual([]);
     const rows = async (metric: string) => await listActiveObservations(w.db, c.id, metric);
     expect((await rows('price_usd')).at(-1)!.value).toBe(c.price);
+      expect(w.http.calls.filter((x) => new URL(x.url).host === 'coins.llama.fi').map((x) => x.url)).toEqual([]); // Phase 3 R1
     expect((await rows('total_supply')).at(-1)!.value).toBe(Number(c.supply));
     expect((await rows('staked_supply')).at(-1)!.value).toBe(Number(c.staked));
 
