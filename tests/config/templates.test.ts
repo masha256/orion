@@ -3,6 +3,8 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 import { parseAssetObject } from '../../src/config/load.js';
+import { coingeckoPriceIssues } from '../../src/config/sources.js';
+import { loadPrices } from '../../src/prices/config.js';
 
 /**
  * Onboarding templates T1-T10 (spec 2026-10-28 §9): each doc's `yaml skeleton` block, with the doc's own
@@ -14,6 +16,10 @@ const docs = readdirSync(dir).filter((f) => /^T\d+-.*\.md$/.test(f)).sort((a, b)
 /** The generic source types not built yet (Mike's P3: built with Phase 3); a skeleton may name them only in a comment. */
 const PHASE3_TYPES = ['state_delta', 'event_sum', 'balance_delta', 'pool_scan', 'api_series'];
 const PLACEHOLDER = /\{\{([a-z0-9_]+)\}\}/g;
+/** The committed prices.yaml (Phase 3 R2): a real root refuses a CoinGecko price and an unpriced price ref. */
+const prices = loadPrices(resolve(import.meta.dirname, '..', '..'));
+/** The templates whose example values are dummies (docs/templates/README.md). */
+const DUMMY_EXAMPLES = ['T7', 'T10'];
 
 function block(text: string, info: string, doc: string): string {
   const found = [...text.matchAll(new RegExp('^```' + info + '\\n([\\s\\S]*?)^```$', 'gm'))];
@@ -41,6 +47,37 @@ describe('onboarding templates (docs/templates)', () => {
         const filled = skeleton.replace(PLACEHOLDER, (_m, k: string) => String(values[k]));
         const loaded = parseAssetObject(parseYaml(filled));
         expect(loaded.config.income_statement).toBeDefined();
+      });
+
+      it('prices the token through price.token (prices.yaml), never a CoinGecko price (Phase 3 R2)', () => {
+        const filled = skeleton.replace(PLACEHOLDER, (_m, k: string) => String(values[k]));
+        const { config } = parseAssetObject(parseYaml(filled));
+        // The loader refuses a CoinGecko price only in a root with prices.yaml (Ruling R25); a template is checked here.
+        expect(coingeckoPriceIssues(config)).toEqual([]);
+        const price = config.metrics.price_usd?.source as { type?: string; name?: string; params?: { ref?: unknown } } | undefined;
+        expect(price?.type).toBe('adapter');
+        expect(price?.name).toBe('price.token');
+        expect(price?.params?.ref).toMatch(/^(eip155:\d+\/0x[0-9a-f]{40}|solana:mainnet\/[1-9A-HJ-NP-Za-km-z]{32,44}|hyperliquid:spot\/@\d+)$/);
+      });
+
+      it('loads in the repo root with prices.yaml (a dummy example: refused only for its unpriced ref)', () => {
+        const filled = skeleton.replace(PLACEHOLDER, (_m, k: string) => String(values[k]));
+        const ref = String(values.price_ref);
+        if (prices.has(ref)) {
+          expect(parseAssetObject(parseYaml(filled), prices).config.income_statement).toBeDefined();
+        } else {
+          // T7 and T10 have no live asset: their dummy token has no prices.yaml entry, the one thing a real root refuses.
+          expect(DUMMY_EXAMPLES).toContain(doc.split('-')[0]);
+          let message = '';
+          try {
+            parseAssetObject(parseYaml(filled), prices);
+          } catch (err) {
+            message = (err as Error).message;
+          }
+          const lines = message.split('\n').filter((l) => l !== '');
+          expect(lines.length).toBeGreaterThan(0);
+          for (const l of lines) expect(l).toContain(`ref ${ref} is not in prices.yaml`);
+        }
       });
 
       it('uses the Phase 3 source types only in commented "# needs <type> (Phase 3)" lines', () => {

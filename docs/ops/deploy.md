@@ -45,8 +45,9 @@ never on argv or printed).
   `orion-remote`, the user unit, `known_hosts` with GitHub's host keys, the `orion-refresh` group and directory, `git`
   (the publisher pushes with it; the self-check prints `git --version`), and (with `--with-watcher`) the watcher venv.
 - Each `~/shared/.env` is filled (Mike): `ORION_DATABASE_URL=postgresql://orion_<env>@/orion_<env>?host=/var/run/postgresql`
-  (the role must be named), the RPC URLs, `COINGECKO_API_KEY` (and `COINGECKO_PLAN=pro` on prod once it has the Basic
-  key), `SLACK_WEBHOOK_URL` (different per env), `ORION_PUBLISH` (`git:git@github.com:masha256/orion-data[-staging].git#main`
+  (the role must be named), the RPC URLs (from Phase 3 R2 all four: `ORION_ETH_RPC_URL`, `ORION_BNB_RPC_URL`,
+  `ORION_BASE_RPC_URL`, `ORION_SOL_RPC_URL`; "Phase 3 R2 release"), `COINGECKO_API_KEY` (and `COINGECKO_PLAN=pro` on
+  prod once it has the Basic key; from R2 it serves `circulating_supply` and supply cross-checks only, until R3), `SLACK_WEBHOOK_URL` (different per env), `ORION_PUBLISH` (`git:git@github.com:masha256/orion-data[-staging].git#main`
   or `off`; the daemon refuses to start without it), `ORION_DEADMAN_NIGHTLY_URL`, prod also `ORION_DEADMAN_URL` and
   `ANTHROPIC_API_KEY`. Staging never gets an Anthropic key (and Orion refuses every agent run on stage regardless:
   `agent_refused_stage`). No `ORION_HOME` line.
@@ -289,7 +290,8 @@ type o                                         # prints the function; `o db stat
    rows and the scan cursor are left as they are. 183 days so v2 revenue growth (91 days vs the prior 91) is measured
    from the first report (review M2). Without it the legacy report and the default day are unaffected (the default day
    is v1's, review M4), but yCRV's v2 revenue and apportioned lines stay null with `apportion mix n/a` until the window
-   fills. Days more than 90 back are priced from CoinGecko daily points (correction 13).
+   fills. Days more than 90 back are priced from CoinGecko daily points (correction 13; from Phase 3 R2 every scanned
+   hour is priced from `prices.yaml` chain/first-party prices and these values are re-priced: "Phase 3 R2 release").
 5. **Token amounts** (Task 7, R18): one asset at a time, outside 05:00-06:30 PT and clear of the env's nightly slot.
    `exit 1` means a day was refused (its re-scanned tokens differ from a stored `flow_tokens.*` twin): stop there and
    report it, do not run the next asset.
@@ -300,13 +302,15 @@ type o                                         # prints the function; `o db stat
    ```
    AERO and PUMP have no transfer scan or first-party dollar series to fill (`not_a_transfer_flow`). It never changes
    `value` or adds a row; a re-run resumes (rows that already have tokens are counted, not rewritten). Timing on the
-   rehearsal: Base ~11 s a day for VVV's 3 members; one market_chart range per CoinGecko id per run.
+   rehearsal: Base ~11 s a day for VVV's 3 members; one market_chart range per CoinGecko id per run (that release's
+   price path; since Phase 3 R2 `backfill-tokens` reads no price and the CoinGecko hourly series is gone).
 6. **G2 comparison** (read-only), per asset, after step 5:
    ```
    for a in aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv; do o data compare-usd $a --days 91 --json > ~/home/compare-usd-$a.json; done
    ```
-   The stored USD (`value`) vs the hourly token buckets x hourly prices (`flow_usd_v`), per metric; it feeds Mike's G2
-   per-metric comparison.
+   The stored USD (`value`) vs the hourly token buckets x hourly prices (`flow_usd_v` at that release; since Phase 3 R2
+   `compare-usd` reads the chain-only `flow_usd_chain_v`, and its output has `dailyMean` and no `beyond`/`beyondHourly`),
+   per metric; it feeds Mike's G2 per-metric comparison.
 
 **Rollback** (section 5) to the previous release is allowed: the schema stays at 0005 and that release runs on it
 (expand-only; its writers insert named columns, so the new columns stay null). What it leaves behind, and what to run
@@ -443,6 +447,8 @@ ssh orion-<env> job run-now backfill-prices --from <YYYY-MM-DD> [--to <YYYY-MM-D
     # Refs: at most 40, each [A-Za-z0-9:/._@-]{1,120}
     $ST job run-now backfill-prices --from 2025-10-13
 ssh orion-<env> data compare-usd <asset> [--days <1..400>]      # read-only (default 91 days)
+    # (R2 release on) stored value vs the chain-only flow_usd_chain_v per USD flow metric: days priced, gap, dailyMean
+    # (days on the daily mean), usdNative, and the rows that keep value: unpriced (legacy_unpriced), noTokens, noHourly
     $ST data compare-usd vvv --days 91
 ssh orion-<env> data purge <asset> --metrics <k1,k2,...> [--source-type <rung>] [--yes]
     # a dry run without --yes; --yes first writes every metric's rows to ONE file per call,
@@ -641,6 +647,220 @@ levels "now", inside that asOf, and moves price, market cap and every yield.
 Stage: steps 0-9 (step 4 is stage-only), then the soak (one scheduled 02:45 UTC nightly on the new tag, section 3).
 Prod: on Mike's go after the soak passes, steps 0-9 with `<env>` = `prod` and without step 4; steps 7 and 8 again only
 on Mike's go for prod.
+
+## Phase 3 R2 release
+
+The release that carries Phase 3 R2, the price swap (`feat/phase3-third-party`; plan
+`docs/superpowers/plans/2026-11-13-orion-phase3-r2-price-swap.md`, its "Amendments made during execution" section, and
+the followups note `docs/superpowers/notes/2026-11-13-orion-phase3-r2-followups.md`): `prices.yaml` (one method and one
+check per token ref), the chain price writer (the nightly flow scans, the hourly `levels` job and the new prices backfill
+call it), the `price.token` / `price.token_check` adapters every `price_usd` source now uses, and migration 0008
+(expand-only, no `--breaking`: the `hour_blocks` table, `prices.check_gap_pct` / `check` / `detail`, and the chain-only
+view `flow_usd_chain_v`; `flow_usd_v` is not altered). No code path reads a CoinGecko price after the switch
+(`/coins/markets` stays for `circulating_supply` and supply cross-checks until R3). The one-time steps below then
+rebuild the hourly price history from chain, re-price the stored flows, rebuild the CoinGecko price levels and delete
+every CoinGecko price row (the verbs are in the R1 verb reference above, marked "R2 release on"). `ST`/`PR` = the
+stage/prod ssh commands above.
+
+**Prerequisites (once, before the staging deploy):**
+
+1. **Task 10 is signed.** The proof on a prod copy (plan Task 10) is done and Mike has signed its per-asset table; the
+   release tag carries `tools/phase3-proof/r2-allowlist.json` (the table's bounds) and the measured backfill call count
+   and wall time. No tag before the sign-off.
+2. **Mike re-runs `orion-host.sh`** from a fixed snapshot of `scripts/provision/` at the release sha, exactly as in the
+   R1 release step 1 above (the snapshot commands, the same flags, paste back the SELF-CHECK): R2's orion-remote adds
+   `job run-now backfill-prices`, `data reprice`, `data rebuild-price-levels` and `data purge-prices`. Check:
+   `$ST job run-now backfill-prices` exits 64 with `orion-remote: job run-now backfill-prices needs --from` (the R1
+   orion-remote says `bad job kind`), and nothing is queued. On the older release the four verbs fail with Orion's own
+   unknown command / option error (nothing written).
+3. **Each env's `~/shared/.env` has all four RPC URLs** (Mike): `ORION_ETH_RPC_URL` (the Ethereum refs AND the
+   Ethereum USDC/USD feed that every off-chain ref, HYPE, LIT and PUMP, is multiplied by: without it those refs get no
+   price either, ruling R5), `ORION_BNB_RPC_URL` (CAKE), `ORION_BASE_RPC_URL` (VVV, DIEM, AERO) and `ORION_SOL_RPC_URL`
+   (PUMP and its Meteora check; our own Solana RPC, never a pump.fun host, ruling R8). A missing URL fails that chain's
+   writer, so the prices backfill fails with `price_chain_stopped` and one ALERT line.
+4. **A normal deploy, staging first.** 0008 is expand-only: no `--breaking`, no pre-deploy dump, rollback allowed (below).
+   Stage, one scheduled nightly soak (section 3 and the soak note below), then prod on Mike's go. As in R1,
+   `staging_refresh` (Sunday 10:30 UTC) refuses a prod dump while the envs differ (stage at 0008, prod at 0007: `schema
+   mismatch ...`), which also keeps prod's CoinGecko-priced rows off the re-priced stage; check that no Sunday 10:30 UTC
+   falls between the planned stage switch and the planned prod switch, or deploy stage after that Sunday's refresh.
+
+**Timing.** Deploy outside the env's nightly window, the slot -4 h to +2 h (stage nightly 02:45 UTC: deploy 04:45-22:45
+UTC; prod 00:45 UTC: deploy 02:45-20:45 UTC), and queue the prices backfill right after the switch (step 3). The job
+defers itself while the nightly is under 4 h away or began under 2 h ago (as a `backfill` job does), so it needs no
+babysitting; a nightly that runs before it finishes prices only its own scan day inline, which the backfill then skips.
+The gate (step 10) compares `after/` with `before/`, so a scheduled nightly between step 0 and step 10 adds that
+nightly's writes to the diff (new level and flow observations inside the reports' asOf, as in R1): start the block
+right after a nightly's +2 h, so the backfill (Task 10's measured wall time) and steps 4-10 fit before the next window.
+If a nightly does fall between them, run step 10 anyway, paste every unallowed path and bring it to Mike; never call
+the step passed on a guess. For the same reason no `job run-now refresh` before step 10 (it writes price, supply and
+staking levels "now", inside that asOf).
+
+**Per-env release block** (`<env>` = `stage`, then `prod`; `ssh orion-<env>` = `$ST` / `$PR`). Every `--yes` on stage
+runs under the release go; **every `--yes` on prod runs only on Mike's go**, given in the thread after he has seen that
+step's dry runs. The 13 assets: `aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv`. Two report days per
+asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth window).
+
+0. **Before the switch: save the pre-deploy reports** (read-only, on the release still current), on the machine running
+   the deploy:
+   ```
+   A="aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv"
+   mkdir -p ~/r2-<env>/before ~/r2-<env>/mid ~/r2-<env>/after ~/r2-<env>/dry ~/r2-<env>/yes
+   day() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["day"])' ~/r2-<env>/before/$1.json; }
+   d91() { python3 -c 'import datetime,sys; print(datetime.date.fromisoformat(sys.argv[1]) - datetime.timedelta(days=91))' "$(day $1)"; }
+   for a in $A; do
+     ssh orion-<env> report yield $a > ~/r2-<env>/before/$a.json || { echo "STOP: $a exit $?"; break; }
+     ssh orion-<env> report yield $a --day $(d91 $a) > ~/r2-<env>/before/$a-91.json || { echo "STOP: $a-91 exit $?"; break; }
+   done
+   ```
+   Every later report save uses the same two days (`--day $(day $a)` and `--day $(d91 $a)`): a default day may move with
+   the release. `A`, `day` and `d91` are shell definitions: run every later step in the same shell (or define them
+   again; `day` reads the saved `before/` file, so it gives the same day).
+1. **Deploy:**
+   ```
+   scripts/release/deploy.sh <env> <tag>        # switch runs db migrate: applied [8]; no --breaking (0008 is expand-only)
+   ```
+   Paste the report verbatim into the thread; its migrations line must list 8 (and only 8).
+2. **Check the switch:**
+   ```
+   ssh orion-<env> status                       # current <tag>; heartbeat fresh, on <tag>
+   ssh orion-<env> logs 30                      # daemon started on <tag>; heartbeat lines on <tag>; no error
+   ```
+   `~/deploys.log` shows `switch <from> -> <tag> migrations=8 breaking=0` (as the env user, `o db status` names current
+   = 8, pending none). The first hourly `levels` run on the tag writes the last 48 h of chain prices for every
+   `prices.yaml` ref and the `price_usd` levels from `price.token`; an `ORION ALERT <env> levels prices: ...` line: stop,
+   bring `logs 50` to the thread.
+3. **Queue the prices backfill, right after the switch:**
+   ```
+   ssh orion-<env> job run-now backfill-prices --from 2025-10-13
+   ssh orion-<env> jobs --since <iso of the switch>       # repeat until the backfill job is `done`
+   ```
+   No `--to`: today (UTC), frozen and stored at enqueue (at most 550 days, checked at enqueue only, ruling R27); every
+   `prices.yaml` ref, each from its own `valid_from` (ruling R2: the EVM refs 2025-10-13, AERO 2026-09-23, HYPE and LIT
+   2026-10-01, PUMP 2026-10-12). It runs under the `job:prices` lock in 10-min runs, each deferring to now at priority 70
+   so the hourly `levels` job runs between them (ruling R28); a lost lease re-queues it (op prices has 3 attempts) and it
+   resumes from `prices`, never rewriting a committed chain-day. The done line, `ORION BACKFILL <env> prices done in
+   <time> (2025-10-13..<to>, <n> runs): <SYM> <rows> rows, ...; oldest hour <iso>; missing <reason n, ...>; calls
+   <chain n, ...>; breaches <n>`, and the job row's `result` (`jobs`) carry the rows per ref, the calls per chain and the
+   missing hours by reason: paste them into the thread and compare with Task 10's prod-copy run (rows per ref, calls
+   within its measured count; a missing reason or a count it did not have: stop). `ORION WATCH <env> price ...` lines
+   (at most a capped number per run, then one count line) are check breaches stored on the rows (`check_gap_pct`),
+   never anomalies: list them for Mike with Task 10's. A `failed` job or an `ORION ALERT <env> backfill prices ...`
+   line: stop, bring the job row and `logs 50` to the thread (a chain the writer stopped names itself:
+   `price_chain_stopped: <chain> stopped at <iso>: <error>`; usually a missing or failing RPC URL).
+4. **Save `mid/`** (after the backfill is `done`, before any reprice), the comparison base a stop is bisected against:
+   ```
+   for a in $A; do
+     ssh orion-<env> report yield $a --day $(day $a) > ~/r2-<env>/mid/$a.json || echo "STOP: $a exit $?"
+     ssh orion-<env> report yield $a --day $(d91 $a) > ~/r2-<env>/mid/$a-91.json || echo "STOP: $a-91 exit $?"
+   done
+   ```
+5. **Chain coverage of the stored flows** (read-only; `compare-usd` reads `flow_usd_chain_v`):
+   ```
+   for a in $A; do ssh orion-<env> data compare-usd $a --days 400 > ~/r2-<env>/dry/compare-usd-$a.json; done
+   for a in $A; do python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); bad=[m["metric"] for m in r if m["unpriced"]>0]; print(sys.argv[2], "STOP: unpriced in "+",".join(bad) if bad else "ok")' ~/r2-<env>/dry/compare-usd-$a.json $a; done
+   ```
+   Every metric must have `unpriced` (`legacy_unpriced`: a row with hourly token amounts and an hour without a chain
+   price) 0; otherwise stop (the backfill left a gap: re-queue it for that ref with `--refs`, or bring it to Mike). The
+   gap columns (`gapPct`, `p50DayGapPct`, `p90DayGapPct`) are the chain-vs-CoinGecko move per metric; paste them beside
+   Task 10's table.
+6. **Re-price the stored flows: dry runs, then `--yes` per asset.** Dry runs first, all 13 (exit 3 = a row was
+   refused):
+   ```
+   for a in $A; do
+     ssh orion-<env> data reprice $a > ~/r2-<env>/dry/reprice-$a.json; rc=$?
+     [ $rc -eq 0 ] || echo "STOP: $a reprice dry run exit $rc"
+   done
+   ```
+   Check, and paste the per-metric counts (`repriced`, `unchanged`, `refused`, `skipped` by reason, `oldSum` ->
+   `newSum`, `remapped`, `derived`) into the thread:
+   - **No row refused.** Exit 3 (any `refused` entry: an hour with an amount and no chain price, fewer than 24 hours on a
+     daily mean, no twin amount) is a stop for Mike, on stage too: the refused rows keep their CoinGecko value.
+   - **Remaps:** the only `coingecko:*` refs anywhere are `coingecko:crvusd` and `coingecko:yearn-crv` (the
+     `remapped` entries, to the crvUSD and yCRV address refs); any other `coingecko:*` ref: stop.
+   - **PUMP:** about 21 rows repriced and about 369 skipped as `defillama_history` (ruling R29; the DefiLlama-era days
+     wait for R6). Skipped reasons elsewhere are by design (`usd_native`, `third_party`, `disclosed`, `periodic`),
+     never a silent keep: compare the counts with Task 10's.
+
+   Then per asset (prod: only on Mike's go), stopping at the first non-zero exit:
+   ```
+   for a in $A; do
+     ssh orion-<env> data reprice $a --yes > ~/r2-<env>/yes/reprice-$a.json || { echo "STOP: $a exit $?"; break; }
+   done
+   ```
+   Each `--yes` writes every row it touches to `~/home/repriced/<asset>-<UTCstamp>.json` on that env first (with the
+   nightly `pg_dump`, the only copy of the old values: keep them), then rewrites `value` in place, one transaction per
+   day under the asset lock, and recomputes the derived rates over the repriced days (ruling R30). Its counts must equal
+   the dry run's. A dry run afterwards shows 0 `repriced` (all `unchanged`): a second `--yes` writes nothing, and a
+   rerun after an interrupted `--yes` finishes the derived rates too.
+7. **Rebuild the CoinGecko price levels: dry runs, then `--yes`:**
+   ```
+   for a in $A; do ssh orion-<env> data rebuild-price-levels $a > ~/r2-<env>/dry/rebuild-$a.json; done
+   for a in $A; do ssh orion-<env> data rebuild-price-levels $a --yes > ~/r2-<env>/yes/rebuild-$a.json || { echo "STOP: $a exit $?"; break; }; done
+   ```
+   Per `market_data` `price_usd` / `diem_price_usd` row, a new row at the same `observed_at` from the newest chain or
+   first-party price at or before `observed_at - 1 h`. A row with no such price within 6 h is refused (ruling R31) and
+   listed: any refused row is a stop for Mike before step 8 (the purge would leave that day without a price level).
+   The `--yes` counts (`rebuilt`) must equal the dry run's; it deletes nothing.
+8. **Purge the CoinGecko prices and price levels: dry runs, then `--yes`:**
+   ```
+   ssh orion-<env> data purge-prices --source coingecko                 # dry run: rows per coingecko ref, tokens rows
+   ssh orion-<env> data purge-prices --source coingecko --yes
+   for a in $A; do
+     m=price_usd; [ $a = vvv ] && m=price_usd,diem_price_usd
+     ssh orion-<env> data purge $a --metrics $m --source-type market_data > ~/r2-<env>/dry/purge-$a.json
+   done
+   # after pasting the dry-run counts (prod: on Mike's go):
+   for a in $A; do
+     m=price_usd; [ $a = vvv ] && m=price_usd,diem_price_usd
+     ssh orion-<env> data purge $a --metrics $m --source-type market_data --yes > ~/r2-<env>/yes/purge-$a.json || { echo "STOP: $a exit $?"; break; }
+   done
+   ```
+   `purge-prices` is refused while any active observation still has a `coingecko:*` token ref (step 6 remaps them); its
+   dry run must list no `kept tokens row` (a kept `coingecko:*` row: stop). It shares the `job:prices` run lock with the
+   prices backfill, so it is refused while a backfill run holds it (step 3 must be `done`). Its `--yes` writes `~/home/purged/prices-coingecko-<UTCstamp>.json`, each market_data
+   purge `~/home/purged/<asset>-price_usd[+1]-<UTCstamp>.json`: keep them all. Each deleted count must equal its dry
+   run's. A refusal (an open anomaly, a kept row referencing a purged one): stop and bring it to Mike. An asset with
+   no CoinGecko price row reports nothing to purge.
+9. **Save `after/`:**
+   ```
+   for a in $A; do
+     ssh orion-<env> report yield $a --day $(day $a) > ~/r2-<env>/after/$a.json || echo "STOP: $a exit $?"
+     ssh orion-<env> report yield $a --day $(d91 $a) > ~/r2-<env>/after/$a-91.json || echo "STOP: $a-91 exit $?"
+   done
+   ```
+10. **The gate: `after/` against `before/`, within Task 10's signed table:**
+    ```
+    for a in $A; do for f in $a $a-91; do
+      python3 tools/phase3-proof/flatdiff.py ~/r2-<env>/before/$f.json ~/r2-<env>/after/$f.json \
+        --allow tools/phase3-proof/r2-allowlist.json --asset $a || echo "STOP: $f flatdiff exit $?"
+    done; done
+    ```
+    Every report must exit 0: USD figures move only within the signed bounds (the chain-vs-CoinGecko gap and the hour
+    bucket method gap), the price-basis / provenance text moves as listed, and token amounts, supply, grades and every
+    non-USD field are unchanged. Exit 1 (an unallowed path) or 2 (bad input): stop, paste the output, bring both files
+    (and `mid/`, to tell the switch and backfill from steps 6-8) to Mike; on stage: no prod deploy.
+
+Stage: steps 0-10 under the release go, then the soak (one scheduled 02:45 UTC nightly on the tag, section 3).
+Prod: on Mike's go after the soak passes, steps 0-10 with `<env>` = `prod`, each `--yes` (steps 6, 7, 8) only on
+Mike's go for prod.
+
+**Soak note.** Through the stage soak stage's USD figures differ from prod's by the re-pricing (prod is still on
+CoinGecko until its own block): stage-vs-prod report parity is not the check. The soak verdict is the section 3 gate
+(no source failed on stage that is not failed in prod's last nightly) plus stage's figures compared against the Task 10
+signed table (not against prod), no failed source, and no `ORION WATCH stage price ...` breach without a stated
+cause. The controller updates Raymond's soak cron prompt (outside
+the repo) for this before the stage deploy; nothing in the repo changes for it.
+
+**Rollback across this release** (section 5): allowed, and short-lived by design. 0008 is expand-only, so
+`orion-2026.11.12.1` runs on schema 8. It reads `flow_usd_v`, which after step 8 has no CoinGecko `prices` rows, so its
+reports fall back to `value` for every hourly row, and `value` is already chain-priced by step 6: the figures stay
+chain-priced until that release's own nightly scans and hourly `levels` write CoinGecko prices and `price_usd` rows
+again. So a rollback is fixed forward within days (a new R2 tag, then steps 3-10 again for the days it wrote). Before
+`rollback`: `ssh orion-<env> jobs` and wait until the prices backfill is `done` (a running one holds the worker; the
+drain waits for the current run's budget, at most 10 min plus one chain-day). A prices backfill still `queued` or
+deferred when the older release takes over fails silently there (it has no handler for op `prices`): after rolling
+forward, queue it again with `job run-now backfill-prices --from 2025-10-13` (it skips every stored hour). The older
+release's orion-remote verbs are unchanged; the four R2 verbs fail with Orion's own unknown command error on it.
 
 ## The ssh verbs (any release)
 

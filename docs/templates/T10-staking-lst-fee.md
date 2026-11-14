@@ -23,8 +23,9 @@ users' deposits earn; stakers' share and node operators are the cost of revenue.
   are minted from.
 - The fee read (total fee, treasury share, operator share), as fractions.
 - The oracle that reports rewards (for the Phase 3 `state_delta`).
-- The protocol token and any buyback route (a `holders` line if one exists). CoinGecko ids (protocol token, the LST
-  or the base asset).
+- The protocol token and any buyback route (a `holders` line if one exists). `prices.yaml` entries (Phase 3 R2) for
+  the protocol token and the LST or base asset the fee is priced in. CoinGecko ids (circulating supply only, until R3,
+  never a price).
 
 ## Checks
 
@@ -68,7 +69,9 @@ metrics:
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: {{coingecko_id}}, field: price }
+    # The token's entry in prices.yaml (repo root) names its method and its check; add the entry there first (a ref
+    # with no entry is refused at load). No CoinGecko price is read (Phase 3 R2).
+    source: { type: adapter, name: price.token, params: { ref: "{{price_ref}}" } }
 
   total_supply:
     type: level
@@ -153,6 +156,7 @@ fee_config_address: "0x0000000000000000000000000000000000000a05"
 chain_id: 1
 rpc_url_env: ORION_ETH_RPC_URL
 coingecko_id: dummy-staking-token
+price_ref: "eip155:1/0x0000000000000000000000000000000000000a01"   # dummy
 staked_note: "no fee share to stakers of the protocol token"
 emission_note: "no minting"
 treasury_fee_function: treasuryFee

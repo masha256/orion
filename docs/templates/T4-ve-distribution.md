@@ -24,14 +24,14 @@ is **below the line** (users did not pay it).
 - The fee route end to end: the contract that sends fees in (hooker / burner), the allocator or splitter, the fee
   distributor, the treasury.
 - The emission rate read (per-second rate × seconds a year), or an adapter if epochs cut it on a schedule.
-- The incentive markets that pay voters, for the Phase 3 scan. CoinGecko id (and the fee token's).
+- The incentive markets that pay voters, for the Phase 3 scan. The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary (a Chainlink feed, else the deepest pool's TWAP) and a check on another venue, and one for the fee token. CoinGecko id (CoinGecko for circulating supply only (until R3), never a price).
 
 ## Checks
 
 - `sum`: the allocator's inflow vs fees + treasury (a missed recipient, a new split).
 - `coverage`: the gauge / incentive-market list vs a protocol total — needs `pool_scan` (Phase 3).
-- `price`: a Chainlink feed where one exists (CRV has none on this branch; its `coins.llama.fi` cross-check is dropped
-  in Phase 3).
+- `price`: the prices.yaml check, read hourly by the price writer (CRV: the TriCRV EMA vs the CRV/USD feed); a breach
+  is an `ORION WATCH` line, never an anomaly, so CRV has no fetch-time price cross-check (Phase 3 R2, ruling R22).
 
 ## Traps
 
@@ -69,7 +69,9 @@ metrics:
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: {{coingecko_id}}, field: price }
+    # The token's entry in prices.yaml (repo root) names its method and its check; add the entry there first (a ref
+    # with no entry is refused at load). No CoinGecko price is read (Phase 3 R2).
+    source: { type: adapter, name: price.token, params: { ref: "{{price_ref}}" } }
 
   total_supply:
     type: level
@@ -172,6 +174,7 @@ treasury_address: "0x6508ef65b0bd57eabd0f1d52685a70433b2d290b"
 chain_id: 1
 rpc_url_env: ORION_ETH_RPC_URL
 coingecko_id: curve-dao-token
+price_ref: "eip155:1/0xd533a949740bb3306d119cc777fa900ba034cd52"
 emission_function: rate
 lp_not_measured: "swap fees to LPs and lender interest: not read yet (Phase 3)"
 ```

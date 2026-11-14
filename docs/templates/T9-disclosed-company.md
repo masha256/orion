@@ -24,7 +24,7 @@ burns) carries a `watch`, so a large move in on-chain usage with no new disclosu
   them on one scan).
 - The staking contract (staked supply, the emission rate read).
 - The company's disclosure channels (calls, posts, reports) for each run-rate update; record citation and quote.
-- CoinGecko id; the company's own app API, if any, as a cross-check only (and its register row).
+- The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary (a Chainlink feed, else the deepest pool's TWAP) and a check on another venue. CoinGecko id (CoinGecko for circulating supply only (until R3), never a price); the company's own app API, if any, as a cross-check only (and its register row).
 
 ## Checks
 
@@ -65,7 +65,9 @@ metrics:
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: {{coingecko_id}}, field: price }
+    # The token's entry in prices.yaml (repo root) names its method and its check; add the entry there first (a ref
+    # with no entry is refused at load). No CoinGecko price is read (Phase 3 R2).
+    source: { type: adapter, name: price.token, params: { ref: "{{price_ref}}" } }
 
   # The company's disclosed annual run rate: entered by hand with a citation and quote (no source).
   revenue_run_rate_usd: { type: level, unit: usd, cadence: event, staleness_days: {{disclosure_staleness_days}}, critical: true }
@@ -99,7 +101,7 @@ metrics:
     critical: true
     source: { type: contract_read, contract: staking, function: {{emission_function}}, decimals: 18, scale: 31536000 }
 
-  # The holder flow: every burn from the listed burners, at each day's price.
+  # The holder flow: every burn from the listed burners, at each hour's chain price (prices.yaml).
   flow_usd.burn:
     type: flow
     unit: usd
@@ -165,6 +167,7 @@ buyback_burner_address: "0x35FB3b67C57849bF57eB24B061EeF0b5e560DC57"
 chain_id: 8453
 rpc_url_env: ORION_BASE_RPC_URL
 coingecko_id: venice-token
+price_ref: "eip155:8453/0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf"
 disclosure_staleness_days: 90
 emission_function: emissionRatePerSecond
 usage_watch_pct: 25

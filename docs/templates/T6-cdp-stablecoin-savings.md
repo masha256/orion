@@ -23,13 +23,14 @@ revenue (spec §11 D2).
   treasury that receives bought tokens.
 - Treasury top-ups that are not buybacks (ignore them). For Phase 3: the Vat (or controllers), every ilk, the savings
   vault.
-- CoinGecko ids (token, stablecoin).
+- `prices.yaml` entries for the token and the stablecoin (Phase 3 R2). CoinGecko ids (CoinGecko for circulating supply only (until R3), never a price).
 
 ## Checks
 
 - `parameter`: the splitter's buyback share read daily vs the share the config assumes.
 - `state_delta` gross fees vs the surplus transfers — needs `state_delta` (Phase 3).
-- `price`: a Chainlink or oracle feed where one is readable through Multicall3 (SKY's Chronicle pip reverts).
+- `price`: the prices.yaml check, read hourly by the price writer (SKY: the Uniswap v2 SKY/USDS TWAP vs the SKY/USD
+  feed; SKY's Chronicle pip reverts through Multicall3); a breach is an `ORION WATCH` line, never an anomaly.
 
 ## Traps
 
@@ -68,7 +69,9 @@ metrics:
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: {{coingecko_id}}, field: price }
+    # The token's entry in prices.yaml (repo root) names its method and its check; add the entry there first (a ref
+    # with no entry is refused at load). No CoinGecko price is read (Phase 3 R2).
+    source: { type: adapter, name: price.token, params: { ref: "{{price_ref}}" } }
 
   total_supply:
     type: level
@@ -160,6 +163,7 @@ stakers_farm_address: "0x38E4254bD82ED5Ee97CD1C4278FAae748d998865"
 chain_id: 1
 rpc_url_env: ORION_ETH_RPC_URL
 coingecko_id: sky
+price_ref: "eip155:1/0x56072c95faa701256059aa122697b133aded9279"
 emission_note: "not minted; treasury tokens paid beyond the buys are dilution"
 splitter_burn_share: 0.55
 ```

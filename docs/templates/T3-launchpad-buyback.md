@@ -18,12 +18,12 @@ of its own take buying its token, which is burned (supply drop) or held.
 
 - The mint (Solana) or token (EVM), and whether the mint authority is revoked (then every supply fall is a burn).
 - The wallets that buy and burn, and every fee-recipient account (bonding curve, AMM protocol fee, creator vaults).
-- A price off the chain's pools (an aggregator price API or a pool read) for the price check. CoinGecko id.
+- A price off the chain's pools (an aggregator price API or a pool read) for the price check. The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary (a Chainlink feed, else the deepest pool's TWAP) and a check on another venue. CoinGecko id (CoinGecko for circulating supply only (until R3), never a price).
 - The unlock schedule of already-minted team/investor tokens (a cited schedule: `dilution`).
 
 ## Checks
 
-- `price`: CoinGecko vs a pool-derived price (an `http_json` level here).
+- `price`: the price level (`price.token`, the prices.yaml primary) vs a pool-derived price (an `http_json` level here).
 - `supply` (Δ supply vs burn instructions) is **refused as circular** on Solana: `solana.supply_burn_daily` is computed
   from `solana.token_supply`'s readings. A real `supply` or `balance` check needs the burn wallets' flows — needs
   `balance_delta` (Phase 3).
@@ -59,7 +59,9 @@ metrics:
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: {{coingecko_id}}, field: price }
+    # The token's entry in prices.yaml (repo root) names its method and its check; add the entry there first (a ref
+    # with no entry is refused at load). No CoinGecko price is read (Phase 3 R2).
+    source: { type: adapter, name: price.token, params: { ref: "{{price_ref}}" } }
 
   # A pool-derived price for the price check (an aggregator's API priced from on-chain pools).
   price_dex_usd:
@@ -147,6 +149,7 @@ name: Pump.fun (T3 example)
 mint_address: "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn"
 burn_wallet_address: "99mRw3EzdJZWEUjgp1nrU4WeHsukUBjbh7gYE7pm4F3c"
 coingecko_id: pump-fun
+price_ref: "solana:mainnet/pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn"
 dex_price_url: "https://lite-api.jup.ag/price/v3?ids=pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn"
 dex_price_path: pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn.usdPrice
 burn_wallet_watch_pct: 50

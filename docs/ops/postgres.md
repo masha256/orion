@@ -106,6 +106,12 @@ provenance columns NOT NULL and drops `observations.source` (the origin is deriv
 `db backfill-provenance` is gone with it. Its own release, stage then prod, no rollback past it: `docs/ops/deploy.md`,
 "Phase 2 tail: release with 0006 (breaking)".
 
+`0008_chain_prices` (Phase 3 R2) is expand-only: the `hour_blocks` table (the first block at or after each hour, per
+chain; a chain fact, so `staging_refresh` restores it from prod), `prices.check_gap_pct` / `check` / `detail`, and the
+chain-only view `flow_usd_chain_v` (the report and `data compare-usd` read it; `flow_usd_v` is unchanged, for a rollback
+to `orion-2026.11.12.1`). Its one-time steps (prices backfill, re-price, level rebuild, CoinGecko purges) and the
+rollback note: `docs/ops/deploy.md`, "Phase 3 R2 release".
+
 ## Importing a SQLite `.backup` and proving the copy (`tools/import-sqlite`)
 
 The tool is dev-only. It runs with `npx tsx` from the worktree and is not built into `dist/`. It reads a **copy** of

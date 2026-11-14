@@ -7,6 +7,10 @@
   in R7); D8 order R0 -> R8 as written; D9 yes; D10 yes; D11 yes (CAKE fix ships alone; Mike: "cake to stage ok").
 - R0 CAKE: tag `orion-2026.11.10.1` = `fix/cake-pending-burn` 0ecc69e on main 0f4b2fe. It is staged after AERO's
   orion-2026.11.09.1 reaches prod, so AERO's soak gate is not invalidated. Prod needs its own soak and Mike's go.
+- 2026-11-14: R2 built on feat/phase3-third-party (plan Tasks 1-9; commits 4498513..3aca04e plus the Task 9 docs
+  commit); not tagged: Task 10 (the prod-copy proof and Mike's sign-off table) comes first. Rulings that changed the
+  plan: its "Amendments made during execution" section; release block `docs/ops/deploy.md` "Phase 3 R2 release";
+  followups note docs/superpowers/notes/2026-11-13-orion-phase3-r2-followups.md
 - 2026-11-13: R0b+R1 shipped (`orion-2026.11.12.1` = main 8f50ac6, stage 11-12, prod 11-13; orphan DefiLlama series
   purged on both). R2 scoping (`workspace/orion/phase3-r2-scoping/`) and Mike's "All recommendations" (#orion-dev):
   every token has a chain or first-party price (all seven Ethereum tokens have Chainlink feeds; SKY's is new, so "SKY

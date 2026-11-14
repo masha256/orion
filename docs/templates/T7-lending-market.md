@@ -24,12 +24,13 @@ A direct read of `accruedToTreasury` × the liquidity index per day needs `state
   config), and the collector.
 - The protocol token, its buyback route (who sends the bought tokens, where they go).
 - Flash-loan fee recipients (a separate revenue line if they accrue apart).
-- A Chainlink feed for the token. CoinGecko ids (token, each underlying).
+- The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary (a Chainlink feed, else the deepest pool's TWAP) and a check on another venue; every underlying the reserve scan prices needs an entry too (a usd `transfer_flow` token without one is
+  refused at load). CoinGecko ids (CoinGecko for circulating supply only (until R3), never a price).
 
 ## Checks
 
 - `parameter` (automatic, from the revenue line's `share_metric`): the market's reserve factor vs the assumed one.
-- `price`: CoinGecko vs the Chainlink feed.
+- `price`: the price level (`price.token`, the prices.yaml primary) vs its check (`price.token_check`).
 - `balance` on the collector is **not** usable with a `contract_read` balance: interest-bearing balances grow without
   transfers. A `state_delta` of the scaled balance is needed (Phase 3).
 
@@ -59,7 +60,6 @@ contracts:
   reserve_config: "{{reserve_config_address}}"         # states each market's reserve factor
   buyback_source: "{{buyback_source_address}}"         # sends the bought tokens
   buyback_sink: "{{buyback_sink_address}}"             # where bought tokens are kept
-  chainlink_price: "{{chainlink_feed_address}}"
 
 ingest: { chain_id: {{chain_id}}, rpc_url_env: {{rpc_url_env}}, backfill_days: 100 }
 
@@ -72,9 +72,11 @@ metrics:
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: {{coingecko_id}}, field: price }
+    # The token's entry in prices.yaml (repo root) names its method and its check; add the entry there first (a ref
+    # with no entry is refused at load). No CoinGecko price is read (Phase 3 R2).
+    source: { type: adapter, name: price.token, params: { ref: "{{price_ref}}" } }
     cross_checks:
-      - { tolerance_pct: 2, source: { type: contract_read, contract: chainlink_price, function: latestAnswer, decimals: 8 } }
+      - { tolerance_pct: 2, source: { type: adapter, name: price.token_check, params: { ref: "{{price_ref}}" } } }
 
   total_supply:
     type: level
@@ -144,7 +146,7 @@ income_statement:
     - { id: buyback, metric: flow_usd.buyback, bucket: hold, haircut: {{hold_haircut}}, recipient_base: all, capture_rule: {{capture_rule}} }
   remainder: protocol
   checks:
-    - { id: price_chainlink, type: price, level: price_usd, against: chainlink_price, tolerance_pct: 2 }
+    - { id: price_chainlink, type: price, level: price_usd, against: price.token_check, tolerance_pct: 2 }
     # needs state_delta (Phase 3): { id: accrual_two_path, type: two_path, a: flow_usd.accrual, b: flow_usd.accrued_to_treasury, window_days: 30, tolerance_pct: 2 }
 ```
 
@@ -164,10 +166,10 @@ underlying_address: "0x00000000000000000000000000000000000007a4"
 reserve_config_address: "0x00000000000000000000000000000000000007a5"
 buyback_source_address: "0x00000000000000000000000000000000000007a6"
 buyback_sink_address: "0x00000000000000000000000000000000000007a7"
-chainlink_feed_address: "0x00000000000000000000000000000000000007a8"
 chain_id: 1
 rpc_url_env: ORION_ETH_RPC_URL
 coingecko_id: dummy-lending-token
+price_ref: "eip155:1/0x00000000000000000000000000000000000007a1"   # dummy
 staked_note: "safety-module staking pays emissions, not a fee share"
 emission_note: "no minting; incentive emissions from the treasury are dilution"
 reserve_factor_function: getReserveFactor

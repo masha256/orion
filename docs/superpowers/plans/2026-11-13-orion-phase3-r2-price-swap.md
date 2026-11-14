@@ -300,10 +300,13 @@ holds: no flow reads them), because M7's level rebuild needs a price at each pas
 
 **Interfaces:**
 - Produces: params `{ op: 'prices'; from: 'YYYY-MM-DD'; to?: 'YYYY-MM-DD'; refs?: string[] }`, job `assetId` null,
-  run lock name `prices`; each run calls `writeChainPrices` with `budgetMs` 20 min, then returns `{ status: 'deferred', untilMs: now }`
+  run lock name `job:prices` (amended, R28 / Task 7 finding 5: was `prices`); each run calls `writeChainPrices` with
+  `budgetMs` 10 min (amended, R28: was 20 min), then returns `{ status: 'deferred', untilMs: now }`
   until no hour is missing, then `done` with the WriteResult summary (rows per ref, oldest hour, missing by reason, calls
   per chain, breaches). `backfillWaitUntil` applies unchanged. CLI `job run-now backfill-prices --from D [--to D] [--refs a,b]`;
-  remote the same verb, `--refs` a comma list validated against `^[a-z0-9:/._-]{1,120}$`.
+  remote the same verb, `--refs` a comma list validated against `^[A-Za-z0-9:/._@-]{1,120}$` (amended, R25: was
+  `^[a-z0-9:/._-]{1,120}$`, which refuses PUMP's base58 ref). `to` is frozen at enqueue, span at most 550 days
+  (amended, R27); op `prices` has `max_attempts` 3 (R25).
 
 - [ ] **Step 1: Failing tests**: Review Focus 4: a job whose lease is lost mid-day re-queues and the second run skips
   every committed chain-day (no multicall for them); the job defers while the nightly window is closed; a deferred job
@@ -361,8 +364,10 @@ The block, per env (stage first; prod only after the soak and Mike's go; every `
 - [ ] **Step 1: Write** the block, the verb table lines, the rollback note (0008 is expand-only; a rollback to
   `orion-2026.11.12.1` reads `flow_usd_v`, whose CoinGecko rows are gone after step 6, so its reports read `value`,
   which step 4 re-priced: numbers stay chain-priced; the old code then re-adds CoinGecko rows nightly, so a rollback
-  needs a forward fix within days) and the followups note.
-- [ ] **Step 2: Commit** `docs: Phase 3 R2 release block and followups`.
+  needs a forward fix within days; amended: a queued or deferred prices backfill fails silently on the old release, so
+  wait for it to finish first) and the followups note.
+- [ ] **Step 2: Commit** `docs: Phase 3 R2 release block, plan amendments, followups; templates price via price.token`
+  (amended: the commit also carries the plan amendments, the spec Status and the templates' `price.token` sources).
 
 ### Task 10: Proof on a prod copy and the sign-off table (controller)
 
@@ -379,6 +384,74 @@ The block, per env (stage first; prod only after the soak and Mike's go; every `
 - [ ] **Step 4:** Bring the table, the call count, the refused rows (if any) and the breaches to Mike. His sign-off
   writes the allowlist bounds; no tag before it.
 - [ ] **Step 5:** `cleanup.py` the copy; commit the allowlist and README.
+
+## Amendments made during execution
+
+Controller rulings (SDD ledger `.superpowers/sdd/2026-11-13-orion-phase3-r2-price-swap/progress.md` and its findings
+files) that change this plan's text. The task text above is kept as planned except where marked "amended"; where the
+two differ, this section wins. Every ruling with its cost if wrong: the followups note
+`docs/superpowers/notes/2026-11-13-orion-phase3-r2-followups.md`. Process-only rulings (R1 baseline, R13/R20/R23 review
+cadence) change no plan text and are listed there only.
+
+- **R2 `valid_from`** (amends "The price table", HYPE/LIT "candle reach", and Task 1 Step 2): the first hour Orion
+  needs, not the method's birth. Every EVM ref 2025-10-13; AERO 2026-09-23; HYPE and LIT 2026-10-01; PUMP 2026-10-12.
+- **R3, R4, R15, R16 interfaces** (amend Tasks 2-4 "Interfaces"): `HourPrice`, `PriceDeps`, `SolanaPriceTransport` and
+  `WriteResult` live in `src/prices/types.ts`; the writer dispatches through `PRICE_CHAIN_METHODS` (per chain); a method
+  returns `{prices, missing, feedUsd?, checks?, calls?}`, not a bare `Map`; `PriceDeps.prices` and
+  `WriteResult.errors` exist; Task 4's `slotAt` returns `number | null`, `blockSignature(slot)`, `usdAt(feed, hourMs)`.
+- **R5 USD feed for off-chain refs** (amends P2, Task 3): the writer prices `eip155:1` first each hour and hands its
+  feed values on; HYPE, LIT and PUMP name the Ethereum USDC/USD feed (`usd_feed`); a failed chain-1 hour leaves them
+  `quote_missing`. So every env needs `ORION_ETH_RPC_URL` even for off-chain refs.
+- **R6 tie-break** (amends P3, Task 5): `flow_usd_chain_v` and `rebuild-price-levels` order equal `ts` by
+  `fetched_at DESC`.
+- **R7 / R18 Task 6 split** (amends Task 6): 6a = code (flow.ts, tokenBackfill price part deleted, solana daily mean,
+  levels, daemon `sharedHttpCache` removed, `coingeckoHourly.ts` deleted, `price_coingecko_id` retired) plus the YAML
+  edits that retirement forces and their hash re-pins; 6b = the `price.token` / `price.token_check` adapters, every
+  `price_usd` / `diem_price_usd` source and `type: price` check repointed, `entriesFor` from refs (R11), goldens. Each
+  commit green.
+- **R8** (Task 4): PUMP read only from `ORION_SOL_RPC_URL`, pinned by a test.
+- **R9, R10** (amend Task 1): `pack.sh` ships `prices.yaml`; every stored or compared asset hash is the combined hash.
+- **R11** (Task 1 -> 6): `entriesFor` reads refs from `price.token` / `price.token_check` params and `transfer_flow`
+  tokens; no symbol match. Task 6 finding E: it also includes the asset's own `token` contract's entry (AERO).
+- **R12** (amends Task 1's `PriceMethod`): chain `lighter` (LIT's primary), `curve_oracle` `quote_ref | usd_feed`,
+  a `v3_spot` kind, `curve_get_dy` `dx`, candle `usd_feed`, `bound` without tolerance.
+- **R14** (Task 3): `staging_refresh` restores `hour_blocks` from prod.
+- **R17** (Task 5 Step 1): goldens that seeded `coingecko` prices are re-seeded with a chain source at identical values.
+- **R19** (Task 6): a dry-run fetch writes no `prices` rows.
+- **R21** (amends Task 6 "12 assets + AERO's ref"): AERO keeps its own `price_usd` adapters; its `prices.yaml` entry
+  serves the history and the level rebuild only.
+- **R22 cross-checks only where they existed** (amends Task 6 Interfaces "used as each asset's `price_usd` source and
+  cross-check"): a `price.token_check` level cross-check only on CAKE, LINK, LIT, PUMP, UNI and VVV `price_usd`; CRV,
+  cvxCRV, HYPE, sdCRV, SKY, yCRV and VVV `diem_price_usd` have none (a cross-check mismatch opens an anomaly; P5); their
+  check runs hourly in the writer. LIT zero liquidity = no reading.
+- **Task 6 findings A-D** (amend Task 6 Step 1): a refresh posts the breaches its scan's price write finds; a levels
+  price-write failure posts `ORION ALERT <env> levels prices`; PUMP's burn day ensures its 24 hours through the writer;
+  levels writes every missing hour in the last 48 h (not only hours after the newest stored row).
+- **R24** (adds to Task 7): a `coingecko` source with `field: price` is refused at load, filing and approve;
+  config-proposal filing parses with the run's `prices`.
+- **R25** (amends Task 7): that refusal lives in the loader (`parseAssetObject`, when `prices.yaml` is present), not
+  zod; refs `^[A-Za-z0-9:/._@-]{1,120}$`; op `prices` `max_attempts` 3; a stopped chain fails the job with one ALERT;
+  progress in `jobs.result_json`.
+- **R26 / R29 reprice scope** (amend P4 and Task 8 "per active flow row whose new view basis is `hourly` or
+  `daily_mean`"): only rows CoinGecko-priced at write are repriced: `transfer_flow` log-scan rows and PUMP
+  `flow_usd.buyback` rows from `solana.supply_burn_daily` (daily mean, amount from the `flow_tokens.buyback` twin when
+  missing). `usd_native`, DefiLlama (R4-R6), periodic / disclosed and manual rows are `skipped` with a reason, never
+  `refused`. PUMP's DefiLlama-era rows (no amount, day before the first stored `solana.token_supply` reading) are
+  `skipped` as `defillama_history` (expected ~21 repriced / ~369 skipped). The `coingecko:*` remap covers every row of
+  the asset; derived rows get marker basis `derived`; a row changed after the export is a `reprice_conflict`.
+- **R27 / R28 the prices backfill** (amend Task 7 Interfaces, fixed inline above): `to` frozen at enqueue (default
+  today UTC), the span checked only at enqueue, cap `PRICES_BACKFILL_MAX_DAYS` = 550 (op `fetch` keeps 400); 10-min
+  runs; lock `job:prices`, shared with `purge-prices`; a deferring run with a chain error still posts one ALERT; saved
+  progress is merged, never overwritten with null.
+- **R30** (amends Task 8 "recomputes the stored derived rows whose inputs moved"): every stored derived row in the
+  asset's range whose inputs include a repriced-or-marked flow day is recomputed, written only when it differs (an
+  interrupted `--yes` is finished by a rerun). Task 8 finding 5: `data reprice` exits 3 when any row is refused.
+- **R31** (amends Task 8 `rebuildPriceLevels` "refused (listed) where none exists"): also refused where the newest
+  price is more than 6 h older than `observed_at - 1 h` (the view's staleness rule).
+- **Task 9** (amends Task 9): the release block is in `docs/ops/deploy.md` "Phase 3 R2 release" with prerequisites
+  (the `orion-host.sh` re-run for the new orion-remote verbs, four RPC URLs, the Task 10 sign-off), `before/` `mid/`
+  `after/` report sets on two days per asset, and the corrected rollback note; the onboarding templates T1-T10 price
+  through `price.token` (the loader now refuses their CoinGecko price), pinned by `tests/config/templates.test.ts`.
 
 ## Self-review notes
 - Spec §3.1 methods: Task 1 table + Tasks 2/4; checks never from the same pool (CAKE/LINK/UNI moved to pools, M10).

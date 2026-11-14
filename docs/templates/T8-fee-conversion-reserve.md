@@ -19,13 +19,14 @@ reserve that holds them (buy-and-hold). Fees paid off chain are revenue only by 
   sends (`ignore_below_tokens`).
 - The service contracts that collect fees before conversion (for the Phase 3 cost lines).
 - Wallets that release non-circulating supply (for `dilution`).
-- A Chainlink feed for the token. CoinGecko id.
+- The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary (a Chainlink feed, else the deepest pool's TWAP) and a check on another venue (LINK: the LINK/USD feed, checked against the Uniswap v3 LINK/WETH TWAP). CoinGecko id
+  (CoinGecko for circulating supply only (until R3), never a price).
 
 ## Checks
 
 - `balance`: the reserve's day change in tokens vs the scanned inflows (no outflow is expected; a fall is a
   withdrawal); `tolerance_abs` covers dust under the scan's floor.
-- `price`: CoinGecko vs the Chainlink feed.
+- `price`: the price level (`price.token`, the prices.yaml primary) vs its check (`price.token_check`).
 
 ## Traps
 
@@ -45,7 +46,6 @@ contracts:
   token: "{{token_address}}"
   reserve: "{{reserve_address}}"                 # holds the converted fees
   fee_converter: "{{fee_converter_address}}"     # converts fees to the token: the reserve's only paying sender
-  chainlink_price: "{{chainlink_feed_address}}"
   release_wallet: "{{release_wallet_address}}"   # releases non-circulating supply (dilution)
 
 ingest: { chain_id: {{chain_id}}, rpc_url_env: {{rpc_url_env}}, backfill_days: 100 }
@@ -59,9 +59,11 @@ metrics:
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: {{coingecko_id}}, field: price }
+    # The token's entry in prices.yaml (repo root) names its method and its check; add the entry there first (a ref
+    # with no entry is refused at load). No CoinGecko price is read (Phase 3 R2).
+    source: { type: adapter, name: price.token, params: { ref: "{{price_ref}}" } }
     cross_checks:
-      - { tolerance_pct: 2, source: { type: contract_read, contract: chainlink_price, function: latestAnswer, decimals: 8 } }
+      - { tolerance_pct: 2, source: { type: adapter, name: price.token_check, params: { ref: "{{price_ref}}" } } }
 
   total_supply:
     type: level
@@ -91,7 +93,7 @@ metrics:
     critical: true
     source: { type: constant, value: 0, note: "{{emission_note}}" }
 
-  # The holder flow: converted fees into the reserve, at each day's price.
+  # The holder flow: converted fees into the reserve, at each hour's chain price (prices.yaml).
   flow_usd.reserve:
     type: flow
     unit: usd
@@ -131,7 +133,7 @@ income_statement:
   dilution:
     - { id: releases, metric: released_rate, note: "releases from non-circulating wallets (trailing 365 days)" }
   checks:
-    - { id: price_chainlink, type: price, level: price_usd, against: chainlink_price, tolerance_pct: 2 }
+    - { id: price_chainlink, type: price, level: price_usd, against: price.token_check, tolerance_pct: 2 }
     - { id: reserve_balance, type: balance, level: reserve_tokens, inflows: [ flow_tokens.reserve ], outflows: [], tolerance_pct: 1, tolerance_abs: {{dust_floor_tokens}} }
 ```
 
@@ -147,11 +149,11 @@ chain: ethereum
 token_address: "0x514910771AF9Ca656af840dff83E8264EcF986CA"
 reserve_address: "0x9A709B7B69EA42D5eeb1ceBC48674C69E1569eC6"
 fee_converter_address: "0x5680681ED3767B96914CE741a308155C7fB9171d"
-chainlink_feed_address: "0x2c1d072e956AFFC0D435Cb7AC38EF18d24d9127c"
 release_wallet_address: "0x9b1c1752b6b6eaf62a8c491a8681b32c1f7ecde9"
 chain_id: 1
 rpc_url_env: ORION_ETH_RPC_URL
 coingecko_id: chainlink
+price_ref: "eip155:1/0x514910771af9ca656af840dff83e8264ecf986ca"
 staked_note: "staking rewards come from the protocol's allocation, not fees"
 emission_note: "1B minted at launch; releases move tokens already in total supply"
 dust_floor_tokens: 10

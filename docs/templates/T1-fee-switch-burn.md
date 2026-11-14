@@ -26,14 +26,14 @@ Timelock's one-off treasury burn).
   `from_allowlist`.
 - The contract and function that states the protocol's share of swap fees, as a fraction (a `contract_read`; use
   `decimals`/`scale` to turn bps into a fraction).
-- A Chainlink `<SYM>/USD` feed on the token's chain (else a deep pool for the price check).
-- CoinGecko id.
+- The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary (a Chainlink feed, else the deepest pool's TWAP) and a check on another venue (UNI: the UNI/USD feed, checked against the Uniswap v3 UNI/WETH TWAP).
+- CoinGecko id (CoinGecko for circulating supply only (until R3), never a price).
 
 ## Checks
 
 - `supply`: the day's fall in `total_supply` vs `flow_tokens.burn` (catches burns outside the scanned sink).
 - `parameter` (automatic, from the revenue line's `share_metric`): the share read daily vs the share the line assumes.
-- `price`: CoinGecko vs the Chainlink feed the price cross-check reads.
+- `price`: the price level (`price.token`, the prices.yaml primary) vs its check (`price.token_check`).
 - `coverage`: the listed pools' protocol fees vs the burn — needs `pool_scan` (Phase 3).
 
 ## Traps
@@ -58,7 +58,6 @@ contracts:
   burn_sink: "{{burn_sink_address}}"             # where every fee burn ends
   treasury_burner: "{{treasury_burner_address}}" # a known non-fee burner (one-off treasury burns): ignored
   fee_config: "{{fee_config_address}}"           # states the protocol's share of swap fees
-  chainlink_price: "{{chainlink_feed_address}}"  # Chainlink <SYM>/USD, 8 decimals
 
 ingest: { chain_id: {{chain_id}}, rpc_url_env: {{rpc_url_env}}, backfill_days: 100 }
 
@@ -71,9 +70,11 @@ metrics:
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: {{coingecko_id}}, field: price }
+    # The token's entry in prices.yaml (repo root) names its method and its check; add the entry there first (a ref
+    # with no entry is refused at load). No CoinGecko price is read (Phase 3 R2).
+    source: { type: adapter, name: price.token, params: { ref: "{{price_ref}}" } }
     cross_checks:
-      - { tolerance_pct: 2, source: { type: contract_read, contract: chainlink_price, function: latestAnswer, decimals: 8 } }
+      - { tolerance_pct: 2, source: { type: adapter, name: price.token_check, params: { ref: "{{price_ref}}" } } }
 
   # On-chain supply less the burn sink (the FDV basis).
   total_supply:
@@ -104,7 +105,7 @@ metrics:
     critical: true
     source: { type: constant, value: 0, note: "{{emission_note}}" }
 
-  # The holder flow: every token transfer into the sink, at each day's price.
+  # The holder flow: every token transfer into the sink, at each hour's chain price (prices.yaml).
   flow_usd.burn:
     type: flow
     unit: usd
@@ -147,7 +148,7 @@ income_statement:
     - { id: burn, of: swap_fees, share: {{protocol_share}}, bucket: burn, haircut: 0, recipient_base: all, capture_rule: {{capture_rule}}, note: "protocol fees bought and burned" }
   burned_tokens: [ flow_tokens.burn ]
   checks:
-    - { id: price_chainlink, type: price, level: price_usd, against: chainlink_price, tolerance_pct: 2 }
+    - { id: price_chainlink, type: price, level: price_usd, against: price.token_check, tolerance_pct: 2 }
     - { id: burn_supply, type: supply, level: total_supply, burns: [ flow_tokens.burn ], tolerance_pct: 1, tolerance_abs: {{supply_tolerance_tokens}} }
     # needs pool_scan (Phase 3): { id: pool_coverage, type: coverage, listed: [ flow_usd.listed_protocol_fees ], total: flow_usd.burn, tolerance_pct: 5 }
 ```
@@ -166,10 +167,10 @@ token_address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
 burn_sink_address: "0x000000000000000000000000000000000000dEaD"
 treasury_burner_address: "0x1a9C8182C09F50C8318d769245beA52c32BE35BC"
 fee_config_address: "0x00000000000000000000000000000000000000f1"   # dummy
-chainlink_feed_address: "0x553303d460EE0afB37EdFf9bE42922D8FF63220e"
 chain_id: 1
 rpc_url_env: ORION_ETH_RPC_URL
 coingecko_id: uniswap
+price_ref: "eip155:1/0x1f9840a85d5af5bf1d1762f925bdaddc4201f984"
 emission_note: "minter never used"
 fee_share_function: protocolFeeShare   # dummy
 fee_share_decimals: 18

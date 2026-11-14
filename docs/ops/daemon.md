@@ -65,8 +65,9 @@ jobs by priority under a 3 min lease renewed every 60 s; a job whose lease is lo
 | `refresh` | 10 | 2 (retry after 30 min) | one asset's nightly tick: fetch, cross-checks, anomalies, watch state. Skipped for an asset not active |
 | `nightly_report` | 20 | 1 | waits (deferred 5 min at a time, up to 3 h) for the slot's refreshes, posts the nightly report, pings `ORION_DEADMAN_NIGHTLY_URL`, stores the `full` snapshot and queues a `snapshot_push` |
 | `snapshot_push` | 30 | 1 | publishes the newest pending snapshots (git driver: commit + push to the env's repo); a failure re-queues itself (1, 5, 15 min, then hourly) |
-| `levels` | 40 | 1 | reads the level metrics of every active asset into `latest_levels`, posts watch fire/clear lines, stores the `levels` snapshot, pings `ORION_DEADMAN_URL` |
+| `levels` | 40 | 1 | writes the chain prices of every `prices.yaml` ref for each hour still missing in the last 48 h (Phase 3 R2), reads the level metrics of every active asset into `latest_levels`, posts watch fire/clear lines and price-check breaches, stores the `levels` snapshot, pings `ORION_DEADMAN_URL` |
 | `disclosure_watch` | 50 | 1 | the disclosure watcher's daily `scan` (`docs/ops/disclosure-watcher.md`) |
+| `backfill` | 70 | 1; op `prices` 3 | queued by `job run-now backfill` / `backfill-prices` only (`docs/ops/deploy.md`, R1 verb reference); defers around the env's nightly (-4 h/+2 h). Op `prices` (Phase 3 R2) works 10 min per run under the `job:prices` lock, then defers to now, until every hour of its frozen range is stored |
 | `retention` | 60 | 1 | deletes finished jobs older than 90 days, levels/watch rows of retired assets or metrics, and outbox rows older than 30 days (keeps the newest 7 `full` and the newest `levels`) |
 
 A `failed` job is retried only when it has attempts left and the handler asked for a retry; a handler that throws is
@@ -157,6 +158,9 @@ own lines (`job <id> refresh lit: ...`). A job's full result is in `jobs` (`resu
 | `ORION ALERT <env> nightly <day>: report not built: ...` / `the full snapshot was not stored: ...` | nightly_report | look at `logs`; no dead-man ping follows, so the check goes red too |
 | `ORION ALERT <env> refresh <SYM> failed twice: <code>: <message>` | refresh | both attempts failed; `data sources <a>` |
 | `ORION WATCH <SYM>: <metric> <rule> <value> (was <prev>)` / `ORION WATCH <SYM> cleared: <metric> <rule>` | levels, refresh | a watch rule started / stopped firing |
+| `ORION WATCH <env> price <SYM> <ts>: <gap>% vs <check>` | levels, refresh, backfill | a token's price check (`prices.yaml`) was over its tolerance for its `consecutive` hours at that hour; stored on the `prices` row (`check_gap_pct`), never an anomaly: read it against the check's venue, and bring a breach without a cause to Mike |
+| `ORION ALERT <env> levels prices: <reason>` | levels | the hourly price write failed (an RPC down or missing); the level reads still ran |
+| `ORION BACKFILL <env> prices done in ...` / `ORION ALERT <env> backfill prices ...` | backfill | the prices backfill finished (rows per ref, missing by reason, calls per chain, breaches) / a chain stopped it (`price_chain_stopped`) |
 | `ORION ALERT <env> snapshot publish failing since <iso>: <error>` | snapshot_push | pushes failing for 3 h (or at once for a moved remote or a wrong repo) |
 | `ORION RESTARTED <env> after unclean exit, job <id> ...` | start-up | the previous process died mid-job |
 | `ORION ALERT <env>: daemon not started: <reason>` | start-up | fix the reason (often the `.env`: Mike); systemd retries every 30 s |

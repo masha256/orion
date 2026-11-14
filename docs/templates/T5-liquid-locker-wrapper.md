@@ -29,7 +29,8 @@ flow is read by an **apportion set** (Task 7b): one line per source, `apportion:
   stakers, the treasury.
 - Every sender into the splitter (one scan with `count_from` per sender, so all members share one cursor and pricing
   pass).
-- CoinGecko ids: the wrapper and the reward's underlying.
+- `prices.yaml` entries for the wrapper and the reward's underlying (Phase 3 R2; yCRV: its Curve pool EMA x CRV's
+  price, checked against a second pool). CoinGecko ids (CoinGecko for circulating supply only (until R3), never a price).
 
 ## Checks
 
@@ -80,7 +81,9 @@ metrics:
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: {{coingecko_id}}, field: price }
+    # The token's entry in prices.yaml (repo root) names its method and its check; add the entry there first (a ref
+    # with no entry is refused at load). No CoinGecko price is read (Phase 3 R2).
+    source: { type: adapter, name: price.token, params: { ref: "{{price_ref}}" } }
 
   total_supply:
     type: level
@@ -193,6 +196,7 @@ treasury_address: "0x044f9c86a0da637a235e83564215dc271bc0defc"
 chain_id: 1
 rpc_url_env: ORION_ETH_RPC_URL
 coingecko_id: yearn-crv
+price_ref: "eip155:1/0xfcc5c47be19d06bf83eb04298b026f81069ff65b"
 ```
 
 ## Scoping checklist
