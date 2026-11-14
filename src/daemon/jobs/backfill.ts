@@ -3,11 +3,16 @@ import { fetchSummary } from '../../cli/util.js';
 import { loadAsset } from '../../config/load.js';
 import type { AssetConfig } from '../../config/schema.js';
 import { dbDayBlocks } from '../../db/dayBlocks.js';
-import { listJobs, type BackfillParams } from '../../db/jobs.js';
+import { listJobs, saveJobProgress, type BackfillFetchParams, type BackfillPricesParams, type Job } from '../../db/jobs.js';
+import { MS_PER_HOUR } from '../../db/prices.js';
 import { realFetchDeps } from '../../ingest/deps.js';
 import { fetchAsset, type FetchDeps, type FetchResult } from '../../ingest/run.js';
 import { sourceId } from '../../ingest/sourceId.js';
+import { formatPriceBreach } from '../../levels/levels.js';
 import { slackClean } from '../../notify/format.js';
+import { loadPrices, methodSource, type PriceEntry } from '../../prices/config.js';
+import type { PriceDeps, WriteResult } from '../../prices/types.js';
+import { makePriceDeps, writeChainPrices } from '../../prices/writer.js';
 import { OrionError } from '../../types.js';
 import type { JobContext, JobHandler, JobOutcome } from '../daemon.js';
 import { loadSchedule, newestSlot, nextSlot } from '../schedule.js';
@@ -22,8 +27,14 @@ export const BACKFILL_DEFER_AFTER_MS = 2 * 3_600_000;
  * (a retry 10/30 min later, a report waiting up to slot + 3 h): it then looks again this much later.
  */
 export const BACKFILL_NIGHTLY_RECHECK_MS = 15 * 60_000;
-/** The most days one backfill re-scans. */
+/** The most days one backfill re-scans (op fetch: backfillDays; op prices: from..to, both days counted). */
 export const BACKFILL_MAX_DAYS = 400;
+/** One run of a prices backfill stops after the first chain-day that ends past this much work; the job then defers to now. */
+export const PRICES_BACKFILL_BUDGET_MS = 20 * 60_000;
+/** The most ORION WATCH breach lines one prices backfill run posts; one summary line counts the rest. */
+export const PRICES_BACKFILL_WATCH_MAX = 20;
+/** The run lock (src/app/lock.ts) a prices backfill holds instead of an asset's. */
+export const PRICES_LOCK = 'prices';
 
 export interface BackfillJobResult {
   /** The fetch's summary lines (what `orion data fetch` prints); empty when nothing was fetched. */
@@ -37,6 +48,12 @@ export interface BackfillHandlerOptions {
   fetchDeps?: (ctx: JobContext) => FetchDeps;
   /** The fetch (a test seam). Default: `fetchAsset`. */
   fetch?: typeof fetchAsset;
+  /** Op prices: the price transports. Default: makePriceDeps over the real transports, on the job's re-read env. */
+  priceDeps?: (ctx: JobContext, prices: ReadonlyMap<string, PriceEntry>) => PriceDeps;
+  /** Op prices: the writer (a test seam). Default: `writeChainPrices`. */
+  writer?: typeof writeChainPrices;
+  /** Op prices: one run's budget. Default: PRICES_BACKFILL_BUDGET_MS. */
+  pricesBudgetMs?: number;
 }
 
 function invalid(message: string): never {
@@ -49,7 +66,7 @@ function invalid(message: string): never {
  * `backfillDays` a whole number in 1..BACKFILL_MAX_DAYS. Throws `invalid_backfill_params`. The CLI runs the same check
  * before queueing, so a bad request never reaches the queue; the handler runs it again on the release that runs it.
  */
-export function parseBackfillParams(raw: unknown, asset: AssetConfig): BackfillParams {
+export function parseBackfillParams(raw: unknown, asset: AssetConfig): BackfillFetchParams {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) invalid('a backfill job needs params { op, metrics, backfillDays }');
   const p = raw as Record<string, unknown>;
   const extra = Object.keys(p).filter((k) => !['op', 'metrics', 'backfillDays'].includes(k));
@@ -73,6 +90,51 @@ export function parseBackfillParams(raw: unknown, asset: AssetConfig): BackfillP
     invalid(`backfillDays must be a whole number from 1 to ${BACKFILL_MAX_DAYS}, got ${JSON.stringify(days ?? null)}`);
   }
   return { op: 'fetch', metrics: [...keys], backfillDays: days };
+}
+
+const DAY_MS = 24 * MS_PER_HOUR;
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** A `YYYY-MM-DD` calendar day as its 00:00Z epoch ms; anything else (2026-02-30 included) is refused. */
+function dayOf(v: unknown, what: string): number {
+  const ms = typeof v === 'string' && DAY_RE.test(v) ? Date.parse(`${v}T00:00:00Z`) : NaN;
+  if (Number.isNaN(ms) || new Date(ms).toISOString().slice(0, 10) !== v) invalid(`${what} must be a YYYY-MM-DD day, got ${JSON.stringify(v ?? null)}`);
+  return ms;
+}
+
+/**
+ * A prices backfill request (Phase 3 R2 Task 7): `{ op: 'prices', from, to?, refs? }` and nothing else; `from` and `to`
+ * calendar days with from <= to <= today (UTC, at `now`; `to` absent: today), at most BACKFILL_MAX_DAYS days counting
+ * both; `refs` (absent: every ref of prices.yaml) a non-empty list of prices.yaml refs, none twice. Throws
+ * `invalid_backfill_params`. The CLI runs it before queueing, so an unknown ref is refused at enqueue; the handler runs it
+ * again with the prices.yaml of the release that runs it.
+ */
+export function parsePricesBackfillParams(raw: unknown, prices: ReadonlyMap<string, PriceEntry>, now: Date): BackfillPricesParams {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) invalid('a prices backfill needs params { op, from, to?, refs? }');
+  const p = raw as Record<string, unknown>;
+  const extra = Object.keys(p).filter((k) => !['op', 'from', 'to', 'refs'].includes(k));
+  if (extra.length > 0) invalid(`unknown param ${extra.map((k) => `"${k}"`).join(', ')}`);
+  if (p.op !== 'prices') invalid(`op must be "prices", got ${JSON.stringify(p.op ?? null)}`);
+  const from = dayOf(p.from, 'from');
+  const today = Math.floor(now.getTime() / DAY_MS) * DAY_MS;
+  const todayDay = new Date(today).toISOString().slice(0, 10);
+  const to = p.to === undefined ? today : dayOf(p.to, 'to');
+  if (p.to !== undefined && to > today) invalid(`to ${p.to as string} is after today (${todayDay})`);
+  if (from > to) invalid(p.to === undefined ? `from ${p.from as string} is after today (${todayDay})` : `from ${p.from as string} is after to ${p.to as string}`);
+  const days = (to - from) / DAY_MS + 1;
+  if (days > BACKFILL_MAX_DAYS) {
+    invalid(`${p.from as string}..${new Date(to).toISOString().slice(0, 10)} is ${days} days; a prices backfill covers at most ${BACKFILL_MAX_DAYS}`);
+  }
+  const out: BackfillPricesParams = { op: 'prices', from: p.from as string, ...(p.to !== undefined ? { to: p.to as string } : {}) };
+  if (p.refs === undefined) return out;
+  const refs = p.refs;
+  if (!Array.isArray(refs) || refs.length === 0 || !refs.every((r) => typeof r === 'string' && r !== '')) invalid('refs must be a non-empty list of prices.yaml refs');
+  const list = refs as string[];
+  const twice = list.find((r, i) => list.indexOf(r) !== i);
+  if (twice !== undefined) invalid(`ref "${twice}" is listed twice`);
+  const unknown = list.find((r) => !prices.has(r));
+  if (unknown !== undefined) invalid(`ref ${unknown} is not in prices.yaml`);
+  return { ...out, refs: [...list] };
 }
 
 /**
@@ -127,6 +189,179 @@ function fetchFailure(r: FetchResult, primaries: Set<string>): { code: string; m
   return s ? { code: 'fetch_partial', message: line(s) } : null;
 }
 
+// ---- op: prices (Phase 3 R2 Task 7) ---------------------------------------------------------------------------------
+
+/** A job's params naming op `prices` (validated by parsePricesBackfillParams before use). */
+function isPricesRequest(raw: unknown): boolean {
+  return raw !== null && typeof raw === 'object' && !Array.isArray(raw) && (raw as { op?: unknown }).op === 'prices';
+}
+
+/**
+ * A prices backfill's progress over its runs, kept on the job row (saveJobProgress) while it defers: the runs that used
+ * their budget, their work time, RPC requests per chain, rows written per ref and breaches. A run whose lease was lost
+ * adds nothing (its counts went with it; the rows it committed are counted by the done line's `prices` query).
+ */
+export interface PricesBackfillProgress {
+  op: 'prices';
+  runs: number;
+  workMs: number;
+  calls: Record<string, number>;
+  written: Record<string, number>;
+  breaches: number;
+}
+
+/** What a done prices backfill stores and posts. `rows`: the stored rows per ref, under its primary's source, in range. */
+export interface PricesBackfillResult extends PricesBackfillProgress {
+  from: string;
+  to: string | null;
+  refs: string[];
+  rows: Record<string, number>;
+  /** The oldest hour of the oldest day every chain of the last run finished (WriteResult.reachedMs); null: none. */
+  reachedIso: string | null;
+  /** The last run's hours without a row, by reason (it re-reads every hour still missing in the range). */
+  missing: Record<string, number>;
+}
+
+const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+const counts = (v: unknown): Record<string, number> =>
+  v !== null && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).filter((e): e is [string, number] => isCount(e[1]))) : {};
+
+/** The progress stored on the job (none yet: zeros). */
+function progressOf(result: unknown): PricesBackfillProgress {
+  const r = result !== null && typeof result === 'object' && !Array.isArray(result) ? (result as Record<string, unknown>) : {};
+  if (r.op !== 'prices') return { op: 'prices', runs: 0, workMs: 0, calls: {}, written: {}, breaches: 0 };
+  return {
+    op: 'prices', runs: isCount(r.runs) ? r.runs : 0, workMs: isCount(r.workMs) ? r.workMs : 0, calls: counts(r.calls), written: counts(r.written),
+    breaches: isCount(r.breaches) ? r.breaches : 0,
+  };
+}
+
+const addCounts = (a: Record<string, number>, b: Record<string, number>): Record<string, number> => {
+  const out = { ...a };
+  for (const [k, n] of Object.entries(b)) out[k] = (out[k] ?? 0) + n;
+  return out;
+};
+const byKey = (o: Record<string, number>): [string, number][] => Object.entries(o).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+
+/** The real price transports, as a fetch's writer builds them (src/ingest/run.ts priceWriterOf), on the job's env. */
+function realPriceDeps(ctx: JobContext, prices: ReadonlyMap<string, PriceEntry>): PriceDeps {
+  const f = realFetchDeps(ctx.envVars, () => ctx.clock.now());
+  return makePriceDeps(f.env, { rpcFactory: f.rpcFactory, prices, http: f.http, now: ctx.clock.now() });
+}
+
+/**
+ * The run's breaches as `ORION WATCH <env> price <symbol> <ts>: <gap>% vs <check>` (as levels and refresh post them),
+ * at most PRICES_BACKFILL_WATCH_MAX, then one line counting the rest, so a 400-day rebuild cannot flood Slack.
+ */
+function breachLines(env: string, breaches: WriteResult['breaches'], prices: ReadonlyMap<string, PriceEntry>): string[] {
+  const lines = breaches.slice(0, PRICES_BACKFILL_WATCH_MAX).map((b) => formatPriceBreach(env, prices.get(b.ref)?.symbol ?? b.ref, b));
+  const rest = breaches.length - lines.length;
+  if (rest > 0) lines.push(`ORION WATCH ${env} price backfill: ${rest} more breaches not posted (${breaches.length} this run); the prices rows carry check_gap_pct`);
+  return lines;
+}
+
+/** Stored rows per ref in [fromHourMs, toHourMs), under each ref's primary source (the rows the writer skips). */
+async function storedRows(ctx: JobContext, prices: ReadonlyMap<string, PriceEntry>, refs: string[], fromHourMs: number, toHourMs: number): Promise<Record<string, number>> {
+  const got = await ctx.db.all<{ token_ref: string; source: string; n: number }>(
+    'SELECT token_ref, source, count(*)::int AS n FROM prices WHERE token_ref = ANY($1::text[]) AND ts >= $2 AND ts < $3 GROUP BY 1, 2',
+    [refs, new Date(fromHourMs).toISOString(), new Date(toHourMs).toISOString()],
+  );
+  const rows: Record<string, number> = {};
+  for (const ref of refs) {
+    const source = methodSource(prices.get(ref)!.primary);
+    rows[ref] = got.find((r) => r.token_ref === ref && r.source === source)?.n ?? 0;
+  }
+  return rows;
+}
+
+/**
+ * A `backfill` of op `prices` (Phase 3 R2 Task 7, Review Focus 4): the chain prices of `refs` (default: every prices.yaml
+ * ref; each from its own valid_from, the writer's rule) over [from 00:00Z, min(to + 1 day, the last completed hour)),
+ * through writeChainPrices under the `prices` run lock, PRICES_BACKFILL_BUDGET_MS a run. The writer commits a chain-day
+ * at a time and skips every hour already stored, so the job resumes from `prices` itself: stopped by its budget it
+ * defers to now (re-queued at its priority, 70, so the hourly levels job runs between budgets; its progress stays on the
+ * row), and a run whose lease was lost (the job is re-queued while attempts remain, PRICES_BACKFILL_MAX_ATTEMPTS) posts
+ * nothing and the next run never re-reads a committed chain-day. backfillWaitUntil applies to every run, as to op fetch.
+ * Each run posts its check breaches (breachLines); done posts one line: stored rows per ref, the oldest hour reached,
+ * the hours still missing by reason, RPC requests per chain, breaches and the work time over its runs. A chain the
+ * writer stopped (a transport failure) fails the job with one ALERT line; queued again, it resumes.
+ */
+async function runPricesBackfill(job: Job, ctx: JobContext, o: BackfillHandlerOptions): Promise<JobOutcome> {
+  let startedMs: number | null = null;
+  let failure: { code: string; message: string };
+  let result: PricesBackfillResult | PricesBackfillProgress | null = null;
+  try {
+    const prices = loadPrices(ctx.paths.configRoot);
+    const now = ctx.clock.now();
+    const params = parsePricesBackfillParams(job.params, prices, now);
+    const until = await backfillWaitUntil(ctx, now);
+    if (until !== null) return { status: 'deferred', untilMs: until };
+    const refs = params.refs ?? [...prices.keys()].sort();
+    const fromHourMs = Date.parse(`${params.from}T00:00:00Z`);
+    const lastHour = Math.floor(now.getTime() / MS_PER_HOUR) * MS_PER_HOUR;
+    const toHourMs = Math.max(fromHourMs, params.to === undefined ? lastHour : Math.min(Date.parse(`${params.to}T00:00:00Z`) + DAY_MS, lastHour));
+    const deps = o.priceDeps ? o.priceDeps(ctx, prices) : realPriceDeps(ctx, prices);
+    const writer = o.writer ?? writeChainPrices;
+    const before = progressOf(job.result);
+    ctx.log(`backfill prices ${params.from}..${params.to ?? 'now'} ${params.refs ? refs.join(', ') : 'every ref'}`);
+    const w = await withRunLock(ctx.db, PRICES_LOCK, lockHolder('daemon backfill prices'), now, async () => {
+      startedMs = ctx.clock.now().getTime();
+      return await writer(ctx.db, deps, refs, fromHourMs, toHourMs, {
+        signal: ctx.signal, budgetMs: o.pricesBudgetMs ?? PRICES_BACKFILL_BUDGET_MS, clock: () => ctx.clock.now().getTime(),
+      });
+    });
+    if (ctx.signal.aborted || w.stoppedBySignal) return aborted;
+    const progress: PricesBackfillProgress = {
+      op: 'prices', runs: before.runs + 1, workMs: before.workMs + (ctx.clock.now().getTime() - startedMs!), calls: addCounts(before.calls, w.calls),
+      written: addCounts(before.written, w.written), breaches: before.breaches + w.breaches.length,
+    };
+    result = progress;
+    for (const text of breachLines(ctx.env, w.breaches, prices)) {
+      if (ctx.signal.aborted) return aborted;
+      const sent = await ctx.notify.post(text);
+      if (!sent.ok) ctx.log(`breach line not delivered: ${sent.error ?? 'unknown error'}`);
+    }
+    if (w.stoppedByBudget) {
+      if (!(await saveJobProgress(ctx.db, job.id, job.leaseOwner ?? '', progress))) ctx.log('backfill prices: progress not saved (the lease is gone)');
+      const n = Object.values(w.written).reduce((a, b) => a + b, 0);
+      ctx.log(`backfill prices: budget used after ${n} rows, reached ${w.reachedMs === null ? 'no whole day' : new Date(w.reachedMs).toISOString()}; deferred`);
+      return { status: 'deferred', untilMs: ctx.clock.now().getTime() };
+    }
+    if (w.errors.length > 0) {
+      const e = w.errors[0]!;
+      failure = { code: 'price_chain_stopped', message: `${e.chain} stopped at ${new Date(e.hourMs).toISOString()}: ${e.error.split('\n')[0]}` };
+    } else {
+      const missing: Record<string, number> = {};
+      for (const m of w.missing) missing[m.reason] = (missing[m.reason] ?? 0) + 1;
+      const done: PricesBackfillResult = {
+        ...progress, from: params.from, to: params.to ?? null, refs, rows: await storedRows(ctx, prices, refs, fromHourMs, toHourMs),
+        reachedIso: w.reachedMs === null ? null : new Date(w.reachedMs).toISOString(), missing,
+      };
+      const sym = (ref: string) => prices.get(ref)?.symbol ?? ref;
+      const list = (o: Record<string, number>) => (Object.keys(o).length === 0 ? 'none' : byKey(o).map(([k, n]) => `${k} ${n}`).join(', '));
+      const text = `ORION BACKFILL ${ctx.env} prices done in ${fmtDuration(done.workMs)} (${params.from}..${params.to ?? 'now'}, ${done.runs} run${done.runs === 1 ? '' : 's'}): `
+        + `${refs.map((r) => `${sym(r)} ${done.rows[r]} rows`).join(', ')}; oldest hour ${done.reachedIso ?? 'none'}; missing ${list(missing)}; `
+        + `calls ${list(done.calls)}; breaches ${done.breaches}`;
+      const posted = await ctx.notify.post(slackClean(text, 2000));
+      if (!posted.ok) ctx.log(`backfill line not delivered: ${posted.error ?? 'unknown error'}`);
+      return { status: 'done', result: done };
+    }
+  } catch (err) {
+    if (ctx.signal.aborted) return aborted;
+    if (err instanceof OrionError && err.code === 'run_in_progress') {
+      ctx.log(`${err.message}; deferred`);
+      return { status: 'deferred', untilMs: ctx.clock.now().getTime() + REFRESH_LOCKED_RETRY_MS };
+    }
+    failure = codeOf(err);
+  }
+  if (ctx.signal.aborted) return aborted;
+  const after = startedMs !== null ? ` after ${fmtDuration(ctx.clock.now().getTime() - startedMs)}` : '';
+  const text = `ORION ALERT ${ctx.env} backfill prices failed${after}: ${slackClean(failure.code, 60)}: ${slackClean(failure.message)}`;
+  const posted = await ctx.notify.post(text);
+  if (!posted.ok) ctx.log(`alert not delivered: ${posted.error ?? 'unknown error'}`);
+  return { status: 'failed', result, error: `${failure.code}: ${failure.message}` };
+}
+
 /**
  * The `backfill` job (plan P1): `orion data fetch <asset> --metric ... --backfill-days N` run by the daemon, under the
  * asset's run lock, so a remote operator queues it (`orion job run-now backfill`) instead of holding an SSH session
@@ -136,17 +371,19 @@ function fetchFailure(r: FetchResult, primaries: Set<string>): { code: string; m
  * registry state: a backfill is an operator action. A start line is posted once the lock is held (a backfill must be
  * sized to finish inside the 4 h clearance; nothing bounds it in code); done posts the rows written per metric and the
  * run's duration, and a failure after the start says how long it ran. A requested metric whose primary source failed
- * fails the job; a failed cross-check alone leaves it done, named in the line.
+ * fails the job; a failed cross-check alone leaves it done, named in the line. A job with no asset whose params name op
+ * `prices` (`orion job run-now backfill-prices`) is the resumable chain price backfill instead (runPricesBackfill).
  */
 export function makeBackfillHandler(o: BackfillHandlerOptions = {}): JobHandler {
   const fetch = o.fetch ?? fetchAsset;
   return async (job, ctx) => {
     if (ctx.signal.aborted) return aborted;
     const assetId = job.assetId;
+    if (assetId === null && isPricesRequest(job.params)) return await runPricesBackfill(job, ctx, o);
     if (assetId === null) return { status: 'failed', result: null, error: 'a backfill job needs an asset' };
     const result: BackfillJobResult = { fetchLines: [], written: {} };
     let symbol = assetId.toUpperCase();
-    let params: BackfillParams | null = null;
+    let params: BackfillFetchParams | null = null;
     let failure: { code: string; message: string };
     const run: { startedMs: number | null } = { startedMs: null };
     try {

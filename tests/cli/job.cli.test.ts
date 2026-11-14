@@ -1,9 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import { buildProgram } from '../../src/cli/program.js';
-import { listJobs } from '../../src/db/jobs.js';
+import { listJobs, PRICES_BACKFILL_MAX_ATTEMPTS } from '../../src/db/jobs.js';
+import { loadPrices } from '../../src/prices/config.js';
 import { testCliContext, useTestDb } from '../helpers/db.js';
 import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 
@@ -81,5 +83,59 @@ describe('orion job run-now backfill', () => {
     // Unchanged without them.
     const r = await orion(h, 'job', 'run-now', 'levels', '--by', 'mike', '--json');
     expect(JSON.parse(r.out)).toMatchObject({ kind: 'levels', params: null });
+  });
+});
+
+describe('orion job run-now backfill-prices (Phase 3 R2 Task 7)', () => {
+  const ROOT = fileURLToPath(new URL('../..', import.meta.url));
+  const REFS = [...loadPrices(ROOT).keys()];
+  /** A home with the repo's prices.yaml and no asset: a prices backfill is not per asset. */
+  function pricesHome(): string {
+    const h = mkdtempSync(join(tmpdir(), 'orion-job-cli-prices-'));
+    dirs.push(h);
+    mkdirSync(join(h, 'assets'));
+    copyFileSync(join(ROOT, 'prices.yaml'), join(h, 'prices.yaml'));
+    return h;
+  }
+
+  it('cli: job run-now backfill-prices queues one backfill job, asset null, op prices, at slot = now', async () => {
+    const h = pricesHome();
+    const r = await orion(h, 'job', 'run-now', 'backfill-prices', '--from', '2025-10-13', '--by', 'mike', '--json');
+    expect(r.exit).toEqual([]);
+    expect(JSON.parse(r.out)).toMatchObject({
+      kind: 'backfill', assetId: null, slot: NOW, priority: 70, maxAttempts: PRICES_BACKFILL_MAX_ATTEMPTS, status: 'queued', requestedBy: 'run-now:mike',
+      params: { op: 'prices', from: '2025-10-13' },
+    });
+    await db().run('DELETE FROM jobs');
+    const t = await orion(h, 'job', 'run-now', 'backfill-prices', '--from', '2026-11-01', '--to', '2026-11-02', '--refs', `${REFS[0]},hyperliquid:spot/@107`, '--by', 'mike');
+    expect(t.exit).toEqual([]);
+    expect(t.out).toBe(`queued job ${(await listJobs(db(), {}))[0]!.id} backfill slot ${NOW}: prices 2026-11-01..2026-11-02, refs ${REFS[0]}, hyperliquid:spot/@107`);
+    expect((await listJobs(db(), { kind: 'backfill' })).map((j) => j.params)).toEqual([
+      { op: 'prices', from: '2026-11-01', to: '2026-11-02', refs: [REFS[0], 'hyperliquid:spot/@107'] },
+    ]);
+    await db().run('DELETE FROM jobs');
+    expect((await orion(h, 'job', 'run-now', 'backfill-prices', '--from', '2026-11-03', '--by', 'mike')).out)
+      .toBe(`queued job ${(await listJobs(db(), {}))[0]!.id} backfill slot ${NOW}: prices 2026-11-03..today, every ref`);
+  });
+
+  it('cli: job run-now backfill-prices refuses an unknown ref, a bad range and stray options before the queue', async () => {
+    const h = pricesHome();
+    const run = (...a: string[]) => errorCode(h, 'job', 'run-now', 'backfill-prices', ...a, '--by', 'mike');
+    expect(await run('--from', '2026-11-01', '--refs', `${REFS[0]},eip155:1/0x0000000000000000000000000000000000000001`)).toBe('invalid_backfill_params');
+    expect(await run('--to', '2026-11-01')).toBe('invalid_option'); // --from is required
+    expect(await run('--from', '2026-11-04')).toBe('invalid_backfill_params'); // after today (2026-11-03)
+    expect(await run('--from', '2026-11-01', '--to', '2026-11-04')).toBe('invalid_backfill_params');
+    expect(await run('--from', '2026-11-02', '--to', '2026-11-01')).toBe('invalid_backfill_params');
+    expect(await run('--from', '2025-09-29')).toBe('invalid_backfill_params'); // 401 days to 2026-11-03
+    expect(await run('--from', '2026-11-01', '--refs', '')).toBe('invalid_backfill_params');
+    expect(await run('--from', 'yesterday')).toBe('invalid_backfill_params');
+    expect(await run('mini', '--from', '2026-11-01')).toBe('asset_not_allowed');
+    expect(await run('--from', '2026-11-01', '--metric', 'flow_usd.fees')).toBe('invalid_option');
+    expect(await run('--from', '2026-11-01', '--backfill-days', '3')).toBe('invalid_option');
+    expect(await run('--from', '2026-11-01', '--slot', NOW)).toBe('invalid_option');
+    // --from/--to/--refs go with backfill-prices only.
+    expect(await errorCode(h, 'job', 'run-now', 'levels', '--from', '2026-11-01', '--by', 'mike')).toBe('invalid_option');
+    expect(await errorCode(home(), 'job', 'run-now', 'backfill', 'mini', '--metric', 'flow_usd.fees', '--backfill-days', '3', '--refs', REFS[0]!, '--by', 'mike')).toBe('invalid_option');
+    expect(await listJobs(db(), {})).toEqual([]);
   });
 });

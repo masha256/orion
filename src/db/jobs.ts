@@ -18,19 +18,38 @@ export const JOB_PRIORITY: Record<JobKind, number> = {
 };
 
 /**
- * A `refresh` gets one retry; everything else none (the next slot is the retry). A `backfill` is never re-run on its
- * own: a lease lost mid-run (a deploy switch) fails it rather than re-queueing it under the new release.
+ * A `refresh` gets one retry; everything else none (the next slot is the retry). A `backfill` of op `fetch` is never
+ * re-run on its own: a lease lost mid-run (a deploy switch) fails it rather than re-queueing it under the new release.
  */
 export const MAX_ATTEMPTS: Record<JobKind, number> = {
   refresh: 2, nightly_report: 1, levels: 1, snapshot_push: 1, disclosure_watch: 1, staging_refresh: 1, retention: 1, backfill: 1,
 };
+/**
+ * A `backfill` of op `prices` (Phase 3 R2 Review Focus 4) is re-queued when its lease is lost (a deploy switch, a
+ * restart) while attempts remain: it resumes from `prices` itself, so a re-run never rewrites a committed chain-day. Its
+ * budget deferrals use no attempt (deferJob), so this many is two interruptions.
+ */
+export const PRICES_BACKFILL_MAX_ATTEMPTS = 3;
 
-/** A `backfill` job's request (`jobs.params_json`, 0007): re-scan these flow metrics this many days back. */
-export interface BackfillParams {
+/** A `backfill` job's request (`jobs.params_json`, 0007): re-scan these flow metrics of the job's asset this many days back. */
+export interface BackfillFetchParams {
   op: 'fetch';
   metrics: string[];
   backfillDays: number;
 }
+
+/**
+ * A `backfill` job (asset null) that writes the chain prices of `refs` (default: every prices.yaml ref) for the UTC days
+ * `from`..`to` (default: up to the last completed hour), resumably (Phase 3 R2 Task 7).
+ */
+export interface BackfillPricesParams {
+  op: 'prices';
+  from: string;
+  to?: string;
+  refs?: string[];
+}
+
+export type BackfillParams = BackfillFetchParams | BackfillPricesParams;
 
 /** How long a claim holds a job without a renewal. */
 export const LEASE_MS = 180_000;
@@ -111,7 +130,7 @@ export async function enqueueJob(db: Db, j: NewJob): Promise<Job | null> {
      VALUES ($1, $2, $3, $4, $5, 'queued', 0, $6, $7, $8, $9)
      ON CONFLICT ON CONSTRAINT jobs_slot_key DO NOTHING RETURNING *`,
     [
-      j.kind, j.assetId, j.slot, j.runAfter ?? j.slot, JOB_PRIORITY[j.kind], MAX_ATTEMPTS[j.kind], j.releaseTag ?? null, j.requestedBy ?? 'scheduler',
+      j.kind, j.assetId, j.slot, j.runAfter ?? j.slot, JOB_PRIORITY[j.kind], j.params?.op === 'prices' ? PRICES_BACKFILL_MAX_ATTEMPTS : MAX_ATTEMPTS[j.kind], j.releaseTag ?? null, j.requestedBy ?? 'scheduler',
       j.params == null ? null : JSON.stringify(j.params),
     ],
   );
@@ -175,6 +194,18 @@ export async function retryJob(db: Db, id: number, owner: string, runAfter: Date
   );
   if (!row) throw leaseLost(id, owner);
   throw new OrionError('retry_exhausted', `job ${id} has used ${row.attempts} of ${row.max_attempts} attempts; it cannot be retried`);
+}
+
+/**
+ * Stores `result` on a running job this owner holds, before it is deferred (a resumable job's progress over its runs:
+ * claimNextJob and deferJob leave result_json alone, and the next run reads it as job.result). False when the lease is gone.
+ */
+export async function saveJobProgress(db: Db, id: number, owner: string, result: unknown): Promise<boolean> {
+  const res = await db.run(
+    "UPDATE jobs SET result_json = $3 WHERE id = $1 AND lease_owner = $2 AND status = 'running'",
+    [id, owner, JSON.stringify(result)],
+  );
+  return res.rowCount > 0;
 }
 
 /** Back to queued, due at `runAfter`, without using up an attempt (the job could not start yet). */

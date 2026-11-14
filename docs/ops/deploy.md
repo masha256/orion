@@ -434,6 +434,12 @@ Verb reference (output is JSON; every list is comma-separated with no spaces, at
 ssh orion-<env> job run-now backfill <asset> --metrics <k1,k2,...> --backfill-days <1..400>
     # queues a backfill job (Orion: --metric once per item); the daemon runs it at priority 70, one attempt, no retry
     $ST job run-now backfill vvv --metrics flow_tokens.burn,flow_usd.burn --backfill-days 3
+ssh orion-<env> job run-now backfill-prices --from <YYYY-MM-DD> [--to <YYYY-MM-DD>] [--refs <r1,r2,...>]
+    # (R2 release on) queues a prices backfill (asset null, `prices` run lock): chain prices of the refs (default every
+    # prices.yaml ref) for from..to (default: to the last completed hour); from <= to <= today, at most 400 days; an
+    # unknown ref is refused at enqueue. Each run works 20 min, then defers to now at priority 70 (levels runs between);
+    # a lost lease re-queues it (3 attempts) and it resumes from `prices`. Refs: at most 40, each [A-Za-z0-9:/._@-]{1,120}
+    $ST job run-now backfill-prices --from 2025-10-13
 ssh orion-<env> data compare-usd <asset> [--days <1..400>]      # read-only (default 91 days)
     $ST data compare-usd vvv --days 91
 ssh orion-<env> data purge <asset> --metrics <k1,k2,...> [--source-type <rung>] [--yes]

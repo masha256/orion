@@ -964,6 +964,45 @@ class Phase3VerbTests(RemoteCase):
         # the existing kinds are unchanged
         self.assertEqual(self.last('job run-now refresh aero'), ['job', 'run-now', 'refresh', 'aero', '--by', 'raymond', '--json'])
 
+    def test_backfill_prices_passthrough(self):
+        """Phase 3 R2 Task 7: a prices backfill; --refs is a comma list (HYPE's ref has '@', PUMP's upper case)."""
+        self.assertEqual(self.last('job run-now backfill-prices --from 2025-10-13'),
+                         ['job', 'run-now', 'backfill-prices', '--from', '2025-10-13', '--by', 'raymond', '--json'])
+        refs = 'eip155:1/0xd533a949740bb3306d119cc777fa900ba034cd52,hyperliquid:spot/@107,solana:mainnet/pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn'
+        self.assertEqual(self.last(f'job run-now backfill-prices --refs {refs} --to 2026-11-14 --from 2026-11-01'),
+                         ['job', 'run-now', 'backfill-prices', '--from', '2026-11-01', '--to', '2026-11-14', '--refs', refs,
+                          '--by', 'raymond', '--json'])
+        forty = ','.join(f'eip155:1/0x{i:040x}' for i in range(40))
+        self.assertEqual(self.last(f'job run-now backfill-prices --from 2026-11-01 --refs {forty}')[6], forty)
+        self.assertEqual(self.last(f"job run-now backfill-prices --from 2026-11-01 --refs {'a' * 120}")[6], 'a' * 120)
+
+    def test_backfill_prices_refused(self):
+        """Every malformed or injected form exits 64 before Orion runs."""
+        too_many = ','.join(f'eip155:1/0x{i:040x}' for i in range(41))
+        self.assert_refused([
+            'job run-now backfill-prices', 'job run-now backfill-prices --to 2026-11-14',
+            'job run-now backfill-prices aero --from 2026-11-01', 'job run-now backfill-prices --from 2026-11-01 --slot 2026-11-03T00:45:00Z',
+            'job run-now backfill-prices --from 2026-11-01 --metrics flow.fees', 'job run-now backfill-prices --from 2026-11-01 --backfill-days 3',
+            'job run-now backfill-prices --from 2026-11-01 --from 2026-11-02', 'job run-now backfill-prices --from 2026-11-01 --yes',
+            # dates: fullmatch of [0-9]{4}-[0-9]{2}-[0-9]{2}
+            'job run-now backfill-prices --from 2026-1-01', 'job run-now backfill-prices --from 2026-11-01T00:00:00Z',
+            'job run-now backfill-prices --from 20261101', "job run-now backfill-prices --from '2026-11-01\n'",
+            "job run-now backfill-prices --from 2026-11-01 --to '2026-11-02\n'", 'job run-now backfill-prices --from \u0662026-11-01',
+            # --refs injection forms
+            'job run-now backfill-prices --from 2026-11-01 --refs=--yes', 'job run-now backfill-prices --from 2026-11-01 --refs --yes',
+            'job run-now backfill-prices --from 2026-11-01 --refs a,-b', 'job run-now backfill-prices --from 2026-11-01 --refs a,--yes',
+            "job run-now backfill-prices --from 2026-11-01 --refs 'a\n'", "job run-now backfill-prices --from 2026-11-01 --refs 'a,b\n'",
+            'job run-now backfill-prices --from 2026-11-01 --refs a,,b', 'job run-now backfill-prices --from 2026-11-01 --refs a,',
+            "job run-now backfill-prices --from 2026-11-01 --refs ''", "job run-now backfill-prices --from 2026-11-01 --refs 'a, b'",
+            "job run-now backfill-prices --from 2026-11-01 --refs 'a;id'", 'job run-now backfill-prices --from 2026-11-01 --refs a,$(id)',
+            f"job run-now backfill-prices --from 2026-11-01 --refs {'a' * 121}",
+            f'job run-now backfill-prices --from 2026-11-01 --refs {too_many}',
+        ])
+        # --from/--to/--refs on any other kind is refused, and backfill/refresh are unchanged.
+        self.assert_refused(['job run-now backfill aero --metrics flow.fees --backfill-days 10 --refs a',
+                             'job run-now levels --from 2026-11-01', 'job run-now refresh aero --to 2026-11-01'])
+        self.assertEqual(self.last('job run-now refresh aero'), ['job', 'run-now', 'refresh', 'aero', '--by', 'raymond', '--json'])
+
     def test_purge_dry_run_by_default(self):
         argv = self.last('data purge aero --metrics flow.fees,flow_usd.fees')
         self.assertEqual(argv, ['data', 'purge', 'aero', '--metric', 'flow.fees', '--metric', 'flow_usd.fees', '--json'])
