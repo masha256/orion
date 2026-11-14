@@ -27,7 +27,7 @@ const H = MS_PER_HOUR;
 const DAY_MS = 24 * H;
 /** An hour block is cached (hour_blocks) only this far below the head: a younger block could still be reorged away. */
 export const HOUR_BLOCK_MIN_AGE_SEC = 3600;
-/** How far around the written hours the breach rule reads stored gaps (a skipped hour neither breaches nor resets). */
+/** How far around the written hours the breach rule reads stored rows (a null gap neither breaches nor resets; no row resets). */
 const BREACH_WINDOW_HOURS = 48;
 
 // ---- the per-chain registry (Ruling R4) ------------------------------------------------------------------------------
@@ -235,6 +235,7 @@ export async function writeChainPrices(
     calls: Object.fromEntries(chains.filter(isEvm).map((c) => [c, 0])),
     reachedMs: null,
     stoppedByBudget: false,
+    stoppedBySignal: false,
     errors: [],
   };
   if (fromHourMs === toHourMs) return result;
@@ -282,6 +283,12 @@ export async function writeChainPrices(
   const fetchedAt = deps.now.toISOString();
   const clock = opts.clock ?? Date.now;
   const started = clock();
+  const aborted = (): boolean => {
+    if (opts.signal?.aborted) result.stoppedBySignal = true;
+    return result.stoppedBySignal;
+  };
+  // The hours written per ref over the whole run: breaches are evaluated once, at the end, in time order.
+  const writtenAt = new Map<string, number[]>();
 
   const firstDay = dayStartOf(toHourMs - H);
   const lastDay = dayStartOf(fromHourMs);
@@ -303,7 +310,7 @@ export async function writeChainPrices(
 
     for (let ci = 0; ci < chains.length; ci++) {
       const chain = chains[ci]!;
-      if (opts.signal?.aborted) break days;
+      if (aborted()) break days;
       const st = stateOf(chain);
       if (st.failed) {
         complete = false;
@@ -331,6 +338,8 @@ export async function writeChainPrices(
       };
 
       for (const h of hours) {
+        // A lost lease / abort stops at the next hour; the chain-day read so far is not committed (below).
+        if (aborted()) break;
         const all = wantedAt.get(h)!;
         const todo = all.filter((e) => e.chain === chain);
         const offTodo = all.filter((e) => !isEvm(e.chain));
@@ -393,7 +402,8 @@ export async function writeChainPrices(
         collect(ready, h, r);
       }
 
-      // Commit the chain-day: its rows and the hour blocks it found, in one transaction.
+      // Commit the chain-day: its rows and the hour blocks it found, in one transaction. After an abort, nothing.
+      if (aborted()) break days;
       const fresh = st.blocks?.takeFresh() ?? [];
       if (rows.size > 0 || fresh.length > 0) {
         await db.tx(async (t) => {
@@ -410,7 +420,8 @@ export async function writeChainPrices(
       }
       for (const [ref, list] of rows) {
         result.written[ref] = (result.written[ref] ?? 0) + list.length;
-        result.breaches.push(...(await breachesOf(db, entryOf(ref), list.map((x) => Date.parse(x.ts)))));
+        if (!writtenAt.has(ref)) writtenAt.set(ref, []);
+        writtenAt.get(ref)!.push(...list.map((x) => Date.parse(x.ts)));
       }
       const more = ci < chains.length - 1 || day - DAY_MS >= lastDay;
       if (worked && opts.budgetMs !== undefined && clock() - started >= opts.budgetMs && more) {
@@ -419,8 +430,9 @@ export async function writeChainPrices(
         break days;
       }
     }
-    if (complete && !opts.signal?.aborted) result.reachedMs = oldest;
+    if (complete && !aborted()) result.reachedMs = oldest;
   }
+  for (const [ref, ms] of writtenAt) result.breaches.push(...(await breachesOf(db, entryOf(ref), ms)));
   result.breaches.sort((a, b) => (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : a.hourMs - b.hourMs));
   return result;
 }
@@ -436,24 +448,30 @@ async function storedHours(db: Db, entries: PriceEntry[], fromMs: number, toMs: 
 }
 
 /**
- * The breaches the rows just written for `entry` complete: over the stored gaps around them (null gaps skipped), a run of
+ * The breaches the rows a writer run wrote for `entry` complete, read once after the run so a run of breaching hours
+ * across midnight (or across chain-days) is one breach: over the stored rows around them in time order, a run of
  * `consecutive` breaching hours in a row (|gap| > tolerance; a `bound` check: gap != 0) that includes a new row, reported
- * at the hour that completes it, once per run.
+ * at the hour that completes it, once per run. A row with a null gap (a skipped check) neither breaches nor resets; an
+ * hour with no row at all resets the run.
  */
 async function breachesOf(db: Db, entry: PriceEntry, writtenMs: number[]): Promise<WriteResult['breaches']> {
   if (writtenMs.length === 0) return [];
   const span = (BREACH_WINDOW_HOURS + entry.check.consecutive) * H;
-  const rows = await db.all<{ ts: string; gap: number; check: string | null }>(
+  const rows = await db.all<{ ts: string; gap: number | null; check: string | null }>(
     `SELECT ts, check_gap_pct AS gap, "check" FROM prices
-     WHERE token_ref = $1 AND source = $2 AND ts >= $3 AND ts <= $4 AND check_gap_pct IS NOT NULL ORDER BY ts`,
+     WHERE token_ref = $1 AND source = $2 AND ts >= $3 AND ts <= $4 ORDER BY ts`,
     [entry.ref, methodSource(entry.primary), new Date(Math.min(...writtenMs) - span).toISOString(), new Date(Math.max(...writtenMs) + span).toISOString()],
   );
   const fresh = new Set(writtenMs);
   const breaching = (gap: number) => (entry.check.kind === 'bound' ? gap !== 0 : Math.abs(gap) > entry.check.tolerancePct);
   const out: WriteResult['breaches'] = [];
   let run: number[] = [];
+  let prev: number | null = null;
   for (const r of rows) {
     const ts = new Date(r.ts).getTime();
+    if (prev !== null && ts - prev > H) run = [];
+    prev = ts;
+    if (r.gap === null) continue;
     if (!breaching(r.gap)) {
       run = [];
       continue;

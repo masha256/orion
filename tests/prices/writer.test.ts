@@ -230,8 +230,30 @@ describe('hour blocks (Review Focus 1): Base on both sides of the 0.2 s switch',
     const ac = new AbortController();
     ac.abort();
     const r = await writeChainPrices(testDb(), deps({ 'eip155:8453': rpc }, '2026-11-06T02:00:00Z'), [VVV.ref], at('2026-11-05T00:00:00Z'), at('2026-11-06T00:00:00Z'), { signal: ac.signal });
-    expect(r).toMatchObject({ written: { [VVV.ref]: 0 }, reachedMs: null, stoppedByBudget: false });
+    expect(r).toMatchObject({ written: { [VVV.ref]: 0 }, reachedMs: null, stoppedByBudget: false, stoppedBySignal: true });
     expect(rpc.stats.multicall).toBe(0);
+  });
+
+  it('a signal aborted inside a multicall stops at the next hour: nothing of that chain-day is committed, no further read', async () => {
+    const rpc = baseChain('2026-11-06T02:00:00Z');
+    const ac = new AbortController();
+    const inner = rpc.multicall.bind(rpc);
+    let after: { multicall: number; getBlock: number } | null = null;
+    rpc.multicall = async (calls, block) => {
+      const out = await inner(calls, block);
+      // The 3rd multicall is the second hour's only read (the first hour reads B(H+1h) and B(H)).
+      if (rpc.stats.multicall === 3) {
+        ac.abort();
+        after = { multicall: rpc.stats.multicall, getBlock: rpc.stats.getBlock };
+      }
+      return out;
+    };
+    const r = await writeChainPrices(testDb(), deps({ 'eip155:8453': rpc }, '2026-11-06T02:00:00Z'), [VVV.ref], at('2026-11-04T00:00:00Z'), at('2026-11-06T00:00:00Z'), { signal: ac.signal });
+    expect(r).toMatchObject({ written: { [VVV.ref]: 0 }, reachedMs: null, stoppedByBudget: false, stoppedBySignal: true, breaches: [] });
+    expect(after).not.toBeNull();
+    expect({ multicall: rpc.stats.multicall, getBlock: rpc.stats.getBlock }).toEqual(after);
+    expect(await rows()).toEqual([]);
+    expect(await testDb().all('SELECT hour FROM hour_blocks')).toEqual([]);
   });
 
   it('no row and no read before the ref\'s valid_from', async () => {
@@ -307,6 +329,23 @@ describe('breaches: |gap| > tolerance for `consecutive` hours in a row; a skippe
     expect(r.written).toEqual({ [CVXCRV.ref]: 3 });
     expect((await rows(CVXCRV.ref))[1]).toMatchObject({ check_gap_pct: null, detail: { check: { skipped: 'call_failed' } } });
     expect(r.breaches.map((b) => b.hourMs)).toEqual([at(HOURS[2]!)]);
+  });
+
+  it('a run across midnight is one breach: 3.5% at 23:00, 00:00 and 01:00 in one writer run -> one breach, at 00:00', async () => {
+    const bad = ['2026-11-09T23:00:00Z', '2026-11-10T00:00:00Z', '2026-11-10T01:00:00Z'];
+    const rpc = ethChain('2026-11-11T00:00:00Z', (n, t) => ({ ...crvCalls(t), ...cvxCheck(bad.some((h) => ethBlockAt(h) + 300n === n) ? 3.5 : 0) }));
+    const r = await writeChainPrices(testDb(), deps({ 'eip155:1': rpc }, '2026-11-11T00:00:00Z'), [CVXCRV.ref], at('2026-11-09T22:00:00Z'), at('2026-11-10T03:00:00Z'));
+    expect(r.written).toEqual({ [CVXCRV.ref]: 5 });
+    expect(r.breaches.map((b) => [b.ref, iso(b.hourMs)])).toEqual([[CVXCRV.ref, iso(at('2026-11-10T00:00:00Z'))]]);
+  });
+
+  it('an hour with no row resets the run: 3.4% stored at 00:00, no row at 01:00, 3.5% written at 02:00 -> no breach', async () => {
+    await upsertToken(testDb(), { tokenRef: CVXCRV.ref, symbol: 'cvxCRV', decimals: 18, coingeckoId: null });
+    await upsertPrices(testDb(), CVXCRV.ref, 'chain:curve_oracle', [{ ts: iso(at(HOURS[0]!)), priceUsd: 0.0966, checkGapPct: 3.4, check: 'chain:curve_get_dy', detail: {} }], '2026-11-10T01:00:00Z');
+    const r = await writeChainPrices(testDb(), deps({ 'eip155:1': chainWithGaps([3.4, 3.5, 3.5]) }, '2026-11-11T00:00:00Z'), [CVXCRV.ref], at(HOURS[2]!), at('2026-11-10T03:00:00Z'));
+    expect(r.written).toEqual({ [CVXCRV.ref]: 1 });
+    expect((await rows(CVXCRV.ref)).map((x) => x.ts)).toEqual([iso(at(HOURS[0]!)), iso(at(HOURS[2]!))]);
+    expect(r.breaches).toEqual([]);
   });
 
   it('the run spans writer runs: 3.4% stored by one run, 3.5% by the next -> the breach is the second run\'s', async () => {

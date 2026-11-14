@@ -90,6 +90,8 @@ export interface WriteResult {
   /** The oldest hour of the oldest UTC day every chain of the run finished (null: none). */
   reachedMs: number | null;
   stoppedByBudget: boolean;
+  /** The run stopped on an aborted signal (a lost lease): the chain-day in flight was not committed. */
+  stoppedBySignal: boolean;
   /** A chain whose read threw (a transport failure): it is skipped for the rest of the run, which a re-run resumes. */
   errors: { chain: string; hourMs: number; error: string }[];
 }

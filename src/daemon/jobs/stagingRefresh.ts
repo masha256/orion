@@ -18,6 +18,8 @@ import type { JobContext, JobHandler, JobOutcome } from '../daemon.js';
  * - `snapshots_out`: staging's outbox numbers its snapshots for orion-data-staging; prod's seqs would collide there.
  * - `daemon_heartbeat`: the live staging daemon's row (and its drain flag).
  * - `day_blocks`: a cache of chain facts staging's code computed itself (a staging release may compute them anew).
+ *   `hour_blocks` (0008) is the opposite choice, restored from prod (Ruling R14): B(H) is a chain fact identical on every
+ *   env, so prod's cache comes with prod's prices; if wrong, staging only re-searches a few blocks.
  * - `schema_migrations`: staging's record of what its release applied; the refresh only runs when the dump's
  *   migrations are the same ids and checksums, so prod's copy would add nothing but prod's applied_at times.
  *
