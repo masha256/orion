@@ -118,6 +118,32 @@ describe('orion data reprice / rebuild-price-levels / purge-prices', () => {
     const yes = await orion(h, 'data', 'rebuild-price-levels', 'rpx', '--yes', '--json');
     expect(JSON.parse(yes.out)).toMatchObject({ asset: 'rpx', applied: true, days: 1, perMetric: [{ metric: 'price_usd', rebuilt: 1 }] });
     expect(await db().all("SELECT value, source_type FROM observations WHERE metric_key = 'price_usd' AND superseded_by IS NULL")).toEqual([{ value: 2, source_type: 'contract_state' }]);
+    // Nothing refused: exit 0 on the dry run and --yes.
+    expect(dry.exit).toEqual([]);
+    expect(yes.exit).toEqual([]);
+  });
+
+  it('rebuild-price-levels: a refused row exits 3 (dry run and --yes) and keeps its CoinGecko row', async () => {
+    const h = home();
+    await seed();
+    const cg = async (observedAt: string) => (await insertObservation(db(), {
+      assetId: 'rpx', metricKey: 'price_usd', observedAt, value: 2.1, periodDays: null, fetchedAt: NOW,
+      provenance: { method: 'measured', sourceType: 'market_data', chain: null, locator: { provider: 'coingecko' }, codeVersion: 'test', configHash: 'h' },
+    })).id;
+    await cg('2026-10-02T00:47:00.000Z');
+    // 10-10: no chain price within 6 h.
+    const gap = await cg('2026-10-10T00:47:00.000Z');
+    const dry = await orion(h, 'data', 'rebuild-price-levels', 'rpx');
+    expect(dry.exit).toEqual([3]);
+    expect(dry.out.split('\n')[1]).toBe(`  price_usd (${REF}): 2 CoinGecko row(s), 1 to rebuild, 1 refused`);
+    expect(dry.out.split('\n')[2]).toMatch(new RegExp(`^    REFUSED #${gap} 2026-10-10T00:47:00.000Z: no chain/first-party price`));
+    const jd = await orion(h, 'data', 'rebuild-price-levels', 'rpx', '--json');
+    expect(jd.exit).toEqual([3]);
+    expect(JSON.parse(jd.out).perMetric[0].refused.map((x: { id: number }) => x.id)).toEqual([gap]);
+    const yes = await orion(h, 'data', 'rebuild-price-levels', 'rpx', '--yes', '--json');
+    expect(yes.exit).toEqual([3]);
+    expect(JSON.parse(yes.out)).toMatchObject({ applied: true, perMetric: [{ metric: 'price_usd', rebuilt: 1 }] });
+    expect((await db().one<{ superseded_by: number | null }>('SELECT superseded_by FROM observations WHERE id = $1', [gap]))!.superseded_by).toBeNull();
   });
 
   it('purge-prices: refusals under --json exit 1; the dry run lists rows; --yes deletes', async () => {

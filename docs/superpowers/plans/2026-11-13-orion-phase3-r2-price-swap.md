@@ -362,10 +362,13 @@ The block, per env (stage first; prod only after the soak and Mike's go; every `
 8. Soak (stage): one scheduled nightly with no failed sources and no `ORION WATCH ... price` breach without a stated cause.
 
 - [ ] **Step 1: Write** the block, the verb table lines, the rollback note (0008 is expand-only; a rollback to
-  `orion-2026.11.12.1` reads `flow_usd_v`, whose CoinGecko rows are gone after step 6, so its reports read `value`,
-  which step 4 re-priced: numbers stay chain-priced; the old code then re-adds CoinGecko rows nightly, so a rollback
-  needs a forward fix within days; amended: a queued or deferred prices backfill fails silently on the old release, so
-  wait for it to finish first) and the followups note.
+  `orion-2026.11.12.1` reads `flow_usd_v`, which prefers CoinGecko `prices` rows but falls back to a stored price of any
+  source (0005); after step 6 (no CoinGecko rows) its reports price the recent hourly rows (`pricedHourlyAtIngest`)
+  from the chain rows through the view and read the rest from `value`, which step 4 re-priced: numbers stay
+  chain-priced until the old code's nightly re-adds CoinGecko rows, so a rollback needs a forward fix within days; a
+  rollback between steps 2 and 6 (CoinGecko rows still present): the old view prefers them, so old reports show
+  CoinGecko figures again, no data lost; amended: a queued or deferred prices backfill fails silently on the old
+  release, so wait for it to finish first) and the followups note.
 - [ ] **Step 2: Commit** `docs: Phase 3 R2 release block, plan amendments, followups; templates price via price.token`
   (amended: the commit also carries the plan amendments, the spec Status and the templates' `price.token` sources).
 
@@ -452,6 +455,10 @@ cadence) change no plan text and are listed there only.
   (the `orion-host.sh` re-run for the new orion-remote verbs, four RPC URLs, the Task 10 sign-off), `before/` `mid/`
   `after/` report sets on two days per asset, and the corrected rollback note; the onboarding templates T1-T10 price
   through `price.token` (the loader now refuses their CoinGecko price), pinned by `tests/config/templates.test.ts`.
+  Task 9 fix round 1: the rollback mechanism corrected (above); `data rebuild-price-levels` exits 3 when any row is
+  refused (dry run and `--yes`, as `data reprice`), so the block's steps 7-8 stop on it; every dry run and its `--yes`
+  are separate blocks with the prod go before each `--yes`; purge-prices output is saved and its counts compared; a
+  merge-to-main and tag prerequisite.
 
 ## Self-review notes
 - Spec §3.1 methods: Task 1 table + Tasks 2/4; checks never from the same pool (CAKE/LINK/UNI moved to pools, M10).

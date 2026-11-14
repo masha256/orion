@@ -121,8 +121,8 @@ rows (Task 8).
 
 ## Deferred minors
 
-From the reviews, by task (the ledger's `minor (deferred)` lines; the Task 8 fix-round re-review was still running when
-this note was written and may add items). None blocks the release.
+From the reviews, by task (the ledger's `minor (deferred)` lines, including the one the Task 8 fix-round re-review added
+after the first draft of this note). None blocks the release.
 
 ### Task 1
 - check method not validated against a chain (Meteora check on an Ethereum ref would load)
@@ -193,6 +193,12 @@ this note was written and may add items). None blocks the release.
 ### Task 8
 - reprice refuses a log_scan row with hourly_amounts but amount null as 'no token amounts' (none known)
 - CLI tests written after the code
+- an unknown future first_party:<x> label gets the contract_state rung (from the Task 8 fix-round re-review)
+
+### Task 9
+- `data compare-usd --days 400` (orion-remote's cap) reaches the first flow day (2025-10-14) only until about
+  2026-11-18; older days are covered by the reprice dry run's `refused` list (release block step 5)
+
 Notes kept: CAKE/LINK/UNI keep the check id `price_chainlink` (continuity) though it now checks the pool (Task 6b).
 
 ## Carried to later releases

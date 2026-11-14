@@ -1072,6 +1072,12 @@ class Phase3VerbTests(RemoteCase):
             'data rebuild-price-levels --yes',
         ])
 
+    def test_rebuild_price_levels_exit_3_passes_through(self):
+        # Orion exits 3 when a row is refused (dry run and --yes): the release block's stop rule reads it over ssh.
+        self.behave(node_exit=3)
+        for cmd in ('data rebuild-price-levels vvv', 'data rebuild-price-levels vvv --yes'):
+            self.assertEqual(self.remote(cmd)[0], 3, cmd)
+
     def test_purge_prices_passthrough(self):
         argv = self.last('data purge-prices --source coingecko')
         self.assertEqual(argv, ['data', 'purge-prices', '--source', 'coingecko', '--json'])

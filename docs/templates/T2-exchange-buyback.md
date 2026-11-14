@@ -23,7 +23,7 @@ revenue line and a partner cost.
 - Where the burn happens (the sink, and the sender that sends each burn).
 - Where the partner split is stated by the protocol itself (an app constant, a contract), never a stats page that
   applies it (a circular check).
-- A price reading off the exchange's own book for the price cross-check. The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary (a Chainlink feed, else the deepest pool's TWAP) and a check on another venue. CoinGecko id (CoinGecko for circulating supply only (until R3), never a price).
+- The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary, for an exchange token usually its own first-party venue (LIT: the Lighter spot order book x USDC/USD), and a check on another venue (LIT: the Uniswap v4 LIT/USDC pool). CoinGecko id (CoinGecko for circulating supply only (until R3), never a price).
 
 ## Checks
 
@@ -70,7 +70,7 @@ metrics:
     # with no entry is refused at load). No CoinGecko price is read (Phase 3 R2).
     source: { type: adapter, name: price.token, params: { ref: "{{price_ref}}" } }
     cross_checks:
-      - { tolerance_pct: 2, source: { type: http_json, url: "{{price_api_url}}", path: {{price_api_path}} } }
+      - { tolerance_pct: 3, source: { type: adapter, name: price.token_check, params: { ref: "{{price_ref}}" } } }
 
   total_supply:
     type: level
@@ -188,8 +188,6 @@ chain_id: 1
 rpc_url_env: ORION_ETH_RPC_URL
 coingecko_id: lighter
 price_ref: "eip155:1/0x232ce3bd40fcd6f80f3d55a522d03f25df784ee2"
-price_api_url: "https://mainnet.zklighter.elliot.ai/api/v1/orderBookDetails?market_id=2049"
-price_api_path: spot_order_book_details.0.last_trade_price
 staked_note: "staking rewards are bought LIT passed on, not a fee share"
 emission_note: "1B minted at launch"
 fees_adapter: lit.exchange_fees_daily

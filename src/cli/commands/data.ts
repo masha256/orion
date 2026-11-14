@@ -312,7 +312,8 @@ export function registerData(program: Command, ctx: CliContext): void {
     .command('rebuild-price-levels <asset>')
     .description(
       'for every CoinGecko price_usd / diem_price_usd level row: a new row at the same observed_at from the newest chain/first-party price ' +
-        'at least 1 h before it (refused beyond 6 h); a dry run unless --yes. Deletes nothing (data purge --source-type market_data does)',
+        'at least 1 h before it (refused beyond 6 h: the row keeps its CoinGecko value); a dry run unless --yes. Deletes nothing (data purge --source-type market_data does); ' +
+          `exits ${REPRICE_REFUSED_EXIT} when any row is refused`,
     )
     .option('--yes', 'write the rebuilt rows')
     .option('--json', 'JSON output')
@@ -323,6 +324,8 @@ export function registerData(program: Command, ctx: CliContext): void {
           await rebuildPriceLevels(db, loaded, { yes: opts.yes === true, now: ctx.now(), ...(ctx.release ? { release: ctx.release.tag } : {}) }),
         );
         output(ctx, opts.json, result, () => rebuildLines(result));
+        // A refused row keeps its CoinGecko row: exit 3 (dry run and --yes), as data reprice, so the release block stops.
+        if (result.perMetric.some((m) => m.refused.length > 0)) ctx.setExitCode?.(REPRICE_REFUSED_EXIT);
       }),
     );
 

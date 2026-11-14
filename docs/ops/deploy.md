@@ -467,7 +467,9 @@ ssh orion-<env> data reprice <asset> [--from <YYYY-MM-DD>] [--yes]
 ssh orion-<env> data rebuild-price-levels <asset> [--yes]
     # (R2 release on) per CoinGecko (market_data) price_usd / diem_price_usd row: a new row at the same observed_at from
     # the newest chain/first-party price at or before observed_at - 1 h (refused beyond 6 h). Deletes nothing: run
-    # `data purge <asset> --metrics price_usd[,diem_price_usd] --source-type market_data` afterwards.
+    # `data purge <asset> --metrics price_usd[,diem_price_usd] --source-type market_data` afterwards. A refused row
+    # keeps its CoinGecko row. Exits 3 when any row is refused (dry run and --yes, as `data reprice`; the JSON still
+    # lists `refused`; --yes still writes the rows it could rebuild).
     $ST data rebuild-price-levels vvv
 ssh orion-<env> data purge-prices --source coingecko [--yes]
     # (R2 release on) `job:prices` run lock; refused while an active observation has a coingecko:* token ref (run
@@ -678,7 +680,11 @@ stage/prod ssh commands above.
    price either, ruling R5), `ORION_BNB_RPC_URL` (CAKE), `ORION_BASE_RPC_URL` (VVV, DIEM, AERO) and `ORION_SOL_RPC_URL`
    (PUMP and its Meteora check; our own Solana RPC, never a pump.fun host, ruling R8). A missing URL fails that chain's
    writer, so the prices backfill fails with `price_chain_stopped` and one ALERT line.
-4. **A normal deploy, staging first.** 0008 is expand-only: no `--breaking`, no pre-deploy dump, rollback allowed (below).
+4. **Merge and tag on `main`.** `feat/phase3-third-party` is not merged when the block is written: merge it to `main`
+   (fast-forward), tag `orion-YYYY.MM.DD.N` on `main`, push the branch and the tag, then `scripts/release/build.sh
+   <tag>` (section 1). `deploy.sh` refuses a commit not reachable from `origin/main` (prod refuses `--branch`), so this
+   comes before step 1 on either env.
+5. **A normal deploy, staging first.** 0008 is expand-only: no `--breaking`, no pre-deploy dump, rollback allowed (below).
    Stage, one scheduled nightly soak (section 3 and the soak note below), then prod on Mike's go. As in R1,
    `staging_refresh` (Sunday 10:30 UTC) refuses a prod dump while the envs differ (stage at 0008, prod at 0007: `schema
    mismatch ...`), which also keeps prod's CoinGecko-priced rows off the re-priced stage; check that no Sunday 10:30 UTC
@@ -759,6 +765,9 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
    for a in $A; do ssh orion-<env> data compare-usd $a --days 400 > ~/r2-<env>/dry/compare-usd-$a.json; done
    for a in $A; do python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); bad=[m["metric"] for m in r if m["unpriced"]>0]; print(sys.argv[2], "STOP: unpriced in "+",".join(bad) if bad else "ok")' ~/r2-<env>/dry/compare-usd-$a.json $a; done
    ```
+   `--days 400` is orion-remote's cap (`--days <1..400>`); it reaches the first flow day (2025-10-14) only while the
+   block runs on or before about 2026-11-18. Later, the days older than 400 are not checked here: for them the gate is
+   step 6's reprice dry run, whose `refused` list (exit 3) names every row with an hour without a chain price.
    Every metric must have `unpriced` (`legacy_unpriced`: a row with hourly token amounts and an hour without a chain
    price) 0; otherwise stop (the backfill left a gap: re-queue it for that ref with `--refs`, or bring it to Mike). The
    gap columns (`gapPct`, `p50DayGapPct`, `p90DayGapPct`) are the chain-vs-CoinGecko move per metric; paste them beside
@@ -781,7 +790,8 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
      wait for R6). Skipped reasons elsewhere are by design (`usd_native`, `third_party`, `disclosed`, `periodic`),
      never a silent keep: compare the counts with Task 10's.
 
-   Then per asset (prod: only on Mike's go), stopping at the first non-zero exit:
+   **Stop here. Prod: only on Mike's go** (after he has seen the dry-run counts). Then per asset, stopping at the first
+   non-zero exit:
    ```
    for a in $A; do
      ssh orion-<env> data reprice $a --yes > ~/r2-<env>/yes/reprice-$a.json || { echo "STOP: $a exit $?"; break; }
@@ -792,35 +802,69 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
    day under the asset lock, and recomputes the derived rates over the repriced days (ruling R30). Its counts must equal
    the dry run's. A dry run afterwards shows 0 `repriced` (all `unchanged`): a second `--yes` writes nothing, and a
    rerun after an interrupted `--yes` finishes the derived rates too.
-7. **Rebuild the CoinGecko price levels: dry runs, then `--yes`:**
+7. **Rebuild the CoinGecko price levels: dry runs, then `--yes`.** Dry runs first, all 13 (exit 3 = a row was
+   refused):
    ```
-   for a in $A; do ssh orion-<env> data rebuild-price-levels $a > ~/r2-<env>/dry/rebuild-$a.json; done
-   for a in $A; do ssh orion-<env> data rebuild-price-levels $a --yes > ~/r2-<env>/yes/rebuild-$a.json || { echo "STOP: $a exit $?"; break; }; done
+   for a in $A; do
+     ssh orion-<env> data rebuild-price-levels $a > ~/r2-<env>/dry/rebuild-$a.json; rc=$?
+     [ $rc -eq 0 ] || echo "STOP: $a rebuild dry run exit $rc"
+   done
+   for a in $A; do python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); bad=[m["metric"] for m in r["perMetric"] if m["refused"]]; print(sys.argv[2], " ".join("%s rows=%d rebuild=%d refused=%d" % (m["metric"], m["rows"], m["rebuilt"], len(m["refused"])) for m in r["perMetric"]), "STOP: refused in "+",".join(bad) if bad else "ok")' ~/r2-<env>/dry/rebuild-$a.json $a; done
    ```
    Per `market_data` `price_usd` / `diem_price_usd` row, a new row at the same `observed_at` from the newest chain or
    first-party price at or before `observed_at - 1 h`. A row with no such price within 6 h is refused (ruling R31) and
-   listed: any refused row is a stop for Mike before step 8 (the purge would leave that day without a price level).
-   The `--yes` counts (`rebuilt`) must equal the dry run's; it deletes nothing.
-8. **Purge the CoinGecko prices and price levels: dry runs, then `--yes`:**
+   listed: any refused row (a non-zero exit, or a `STOP` line) is a stop for Mike, on stage too, before any `--yes`
+   here and before step 8 (the purge would leave that day without a price level). Paste the per-metric lines into the
+   thread.
+
+   **Stop here. Prod: only on Mike's go.** Then per asset, stopping at the first non-zero exit, and compare the counts:
    ```
-   ssh orion-<env> data purge-prices --source coingecko                 # dry run: rows per coingecko ref, tokens rows
-   ssh orion-<env> data purge-prices --source coingecko --yes
+   for a in $A; do
+     ssh orion-<env> data rebuild-price-levels $a --yes > ~/r2-<env>/yes/rebuild-$a.json || { echo "STOP: $a exit $?"; break; }
+   done
+   for a in $A; do python3 -c 'import json,sys; d,y=(json.load(open(f)) for f in sys.argv[1:3]); c=lambda r: [(m["metric"], m["rebuilt"]) for m in r["perMetric"]]; print(sys.argv[3], "ok" if c(d)==c(y) else "STOP: dry %s != yes %s" % (c(d), c(y)))' ~/r2-<env>/dry/rebuild-$a.json ~/r2-<env>/yes/rebuild-$a.json $a; done
+   ```
+   The `--yes` counts (`rebuilt`) must equal the dry run's; it deletes nothing.
+8. **Purge the CoinGecko prices, then the CoinGecko price levels: each a dry run, then `--yes`.**
+
+   8a. `purge-prices` dry run:
+   ```
+   ssh orion-<env> data purge-prices --source coingecko > ~/r2-<env>/dry/purge-prices.json || echo "STOP: purge-prices dry run exit $?"
+   python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print("rows", sum(p["rows"] for p in r["prices"]), "refs", len(r["prices"]), "deletedTokens", r["deletedTokens"]); print("STOP: keptTokens "+json.dumps(r["keptTokens"]) if r["keptTokens"] else "ok")' ~/r2-<env>/dry/purge-prices.json
+   ```
+   `purge-prices` is refused (non-zero exit, `error` in the JSON) while any active observation still has a
+   `coingecko:*` token ref (step 6 remaps them). Its dry run must have `keptTokens` empty (`[]`); a kept `coingecko:*`
+   row: stop. It shares the `job:prices` run lock with the prices backfill, so it is refused while a backfill run
+   holds it (step 3 must be `done`). Paste the rows per ref and `deletedTokens`.
+
+   **Stop here. Prod: only on Mike's go.** Then the `--yes` (irreversible but for its export) and the count check:
+   ```
+   ssh orion-<env> data purge-prices --source coingecko --yes > ~/r2-<env>/yes/purge-prices.json || echo "STOP: purge-prices exit $?"
+   python3 -c 'import json,sys; d,y=(json.load(open(f)) for f in sys.argv[1:3]); c=lambda r: (sorted((p["tokenRef"], p["rows"]) for p in r["prices"]), sorted(r["deletedTokens"])); print("ok" if c(d)==c(y) else "STOP: dry %s != yes %s" % (c(d), c(y)))' ~/r2-<env>/dry/purge-prices.json ~/r2-<env>/yes/purge-prices.json
+   ```
+   Its `--yes` writes `~/home/purged/prices-coingecko-<UTCstamp>.json` (`exportFile`, `exportSha256` in the JSON): keep
+   it.
+
+   8b. `market_data` price-level purge, dry runs:
+   ```
    for a in $A; do
      m=price_usd; [ $a = vvv ] && m=price_usd,diem_price_usd
-     ssh orion-<env> data purge $a --metrics $m --source-type market_data > ~/r2-<env>/dry/purge-$a.json
+     ssh orion-<env> data purge $a --metrics $m --source-type market_data > ~/r2-<env>/dry/purge-$a.json || echo "STOP: $a purge dry run exit $?"
    done
-   # after pasting the dry-run counts (prod: on Mike's go):
+   ```
+   Paste the per-metric `observations` counts. A refusal (an open anomaly, a kept row referencing a purged one): stop
+   and bring it to Mike. An asset with no CoinGecko price row reports nothing to purge.
+
+   **Stop here. Prod: only on Mike's go.** Then per asset, stopping at the first non-zero exit, and compare the counts:
+   ```
    for a in $A; do
      m=price_usd; [ $a = vvv ] && m=price_usd,diem_price_usd
      ssh orion-<env> data purge $a --metrics $m --source-type market_data --yes > ~/r2-<env>/yes/purge-$a.json || { echo "STOP: $a exit $?"; break; }
    done
+   for a in $A; do python3 -c 'import json,sys; d,y=(json.load(open(f)) for f in sys.argv[1:3]); c=lambda r: [(m["metric"], m["observations"]) for m in r["perMetric"]]; print(sys.argv[3], "ok" if c(d)==c(y) else "STOP: dry %s != yes %s" % (c(d), c(y)))' ~/r2-<env>/dry/purge-$a.json ~/r2-<env>/yes/purge-$a.json $a; done
    ```
-   `purge-prices` is refused while any active observation still has a `coingecko:*` token ref (step 6 remaps them); its
-   dry run must list no `kept tokens row` (a kept `coingecko:*` row: stop). It shares the `job:prices` run lock with the
-   prices backfill, so it is refused while a backfill run holds it (step 3 must be `done`). Its `--yes` writes `~/home/purged/prices-coingecko-<UTCstamp>.json`, each market_data
-   purge `~/home/purged/<asset>-price_usd[+1]-<UTCstamp>.json`: keep them all. Each deleted count must equal its dry
-   run's. A refusal (an open anomaly, a kept row referencing a purged one): stop and bring it to Mike. An asset with
-   no CoinGecko price row reports nothing to purge.
+   Each `--yes` writes `~/home/purged/<asset>-price_usd[+1]-<UTCstamp>.json`: keep them all. Each deleted count must
+   equal its dry run's.
 9. **Save `after/`:**
    ```
    for a in $A; do
@@ -841,8 +885,8 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
     (and `mid/`, to tell the switch and backfill from steps 6-8) to Mike; on stage: no prod deploy.
 
 Stage: steps 0-10 under the release go, then the soak (one scheduled 02:45 UTC nightly on the tag, section 3).
-Prod: on Mike's go after the soak passes, steps 0-10 with `<env>` = `prod`, each `--yes` (steps 6, 7, 8) only on
-Mike's go for prod.
+Prod: on Mike's go after the soak passes, steps 0-10 with `<env>` = `prod`, each `--yes` (steps 6, 7, 8a, 8b) only
+on Mike's go for prod, given at that step's "Stop here" line: never paste a prod `--yes` block before the go.
 
 **Soak note.** Through the stage soak stage's USD figures differ from prod's by the re-pricing (prod is still on
 CoinGecko until its own block): stage-vs-prod report parity is not the check. The soak verdict is the section 3 gate
@@ -852,10 +896,17 @@ cause. The controller updates Raymond's soak cron prompt (outside
 the repo) for this before the stage deploy; nothing in the repo changes for it.
 
 **Rollback across this release** (section 5): allowed, and short-lived by design. 0008 is expand-only, so
-`orion-2026.11.12.1` runs on schema 8. It reads `flow_usd_v`, which after step 8 has no CoinGecko `prices` rows, so its
-reports fall back to `value` for every hourly row, and `value` is already chain-priced by step 6: the figures stay
-chain-priced until that release's own nightly scans and hourly `levels` write CoinGecko prices and `price_usd` rows
-again. So a rollback is fixed forward within days (a new R2 tag, then steps 3-10 again for the days it wrote). Before
+`orion-2026.11.12.1` runs on schema 8. It reads `flow_usd_v`, which prefers a CoinGecko `prices` row but falls back to
+a stored price of any source (the newest within 6 h at or before the hour, `0005_tokens_prices.sql`). Its report takes
+that view USD for a row with every hour priced (`usd_basis` `hourly`) whose day starts within 90 days of its
+`fetched_at` (`pricedHourlyAtIngest`), and the stored `value` for every other row. After step 8 (no CoinGecko rows
+left) the view prices those hourly rows from the chain rows the backfill wrote, and `value` elsewhere is the one step 6
+repriced: the figures stay chain-priced until that release's own nightly scans and hourly `levels` write CoinGecko
+prices and `price_usd` rows again (which the view then prefers). A rollback between steps 3 and 8 (CoinGecko rows still
+present): the old view prefers them, so the old reports show CoinGecko-priced figures again on those hourly rows, over a
+`value` that step 6 may have partly repriced; no data is lost (the chain rows stay, and every `--yes` wrote its export).
+On the roll-forward, save `before/` again (step 0) on the rolled-back release, since its reports are the new base.
+So a rollback is fixed forward within days (a new R2 tag, then steps 3-10 again for the days it wrote). Before
 `rollback`: `ssh orion-<env> jobs` and wait until the prices backfill is `done` (a running one holds the worker; the
 drain waits for the current run's budget, at most 10 min plus one chain-day). A prices backfill still `queued` or
 deferred when the older release takes over fails silently there (it has no handler for op `prices`): after rolling

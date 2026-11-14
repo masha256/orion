@@ -67,11 +67,11 @@ jobs by priority under a 3 min lease renewed every 60 s; a job whose lease is lo
 | `snapshot_push` | 30 | 1 | publishes the newest pending snapshots (git driver: commit + push to the env's repo); a failure re-queues itself (1, 5, 15 min, then hourly) |
 | `levels` | 40 | 1 | writes the chain prices of every `prices.yaml` ref for each hour still missing in the last 48 h (Phase 3 R2), reads the level metrics of every active asset into `latest_levels`, posts watch fire/clear lines and price-check breaches, stores the `levels` snapshot, pings `ORION_DEADMAN_URL` |
 | `disclosure_watch` | 50 | 1 | the disclosure watcher's daily `scan` (`docs/ops/disclosure-watcher.md`) |
-| `backfill` | 70 | 1; op `prices` 3 | queued by `job run-now backfill` / `backfill-prices` only (`docs/ops/deploy.md`, R1 verb reference); defers around the env's nightly (-4 h/+2 h). Op `prices` (Phase 3 R2) works 10 min per run under the `job:prices` lock, then defers to now, until every hour of its frozen range is stored |
 | `retention` | 60 | 1 | deletes finished jobs older than 90 days, levels/watch rows of retired assets or metrics, and outbox rows older than 30 days (keeps the newest 7 `full` and the newest `levels`) |
+| `backfill` | 70 | 1; op `prices` 3 | queued by `job run-now backfill` / `backfill-prices` only (`docs/ops/deploy.md`, R1 verb reference); defers around the env's nightly (-4 h/+2 h). Op `prices` (Phase 3 R2) works 10 min per run under the `job:prices` lock, then defers to now, until every hour of its frozen range is stored |
 
 A `failed` job is retried only when it has attempts left and the handler asked for a retry; a handler that throws is
-retried after 10 min (only `refresh` has a second attempt).
+retried after 10 min while the job has attempts left (`refresh` 2, a `backfill` of op `prices` 3, every other kind 1).
 
 ## Slots (`schedule.yaml`, UTC; never a daily slot in 07:00-08:00 UTC)
 
