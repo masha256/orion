@@ -65,6 +65,11 @@ function shippedRelease(root: string): ReleaseInfo | null {
   return existsSync(join(root, '.git')) ? null : readRelease(root);
 }
 
+/** A release root (a `RELEASE` file, not a git checkout), as resolvePaths tells one: config/load.ts's strict prices.yaml rule (R32). */
+export function isReleaseRoot(root: string): boolean {
+  return shippedRelease(root) !== null;
+}
+
 /**
  * The paths for this process. `cliDir` is the directory of the running entry point (`<release>/dist/cli` when built,
  * `<checkout>/src/cli` from source): its release root is two levels up, and is the config root when it holds a

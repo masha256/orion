@@ -8,7 +8,7 @@ import { MS_PER_HOUR } from '../../db/prices.js';
 import { realFetchDeps } from '../../ingest/deps.js';
 import { fetchAsset, type FetchDeps, type FetchResult } from '../../ingest/run.js';
 import { sourceId } from '../../ingest/sourceId.js';
-import { formatPriceBreach } from '../../levels/levels.js';
+import { breachLines, PRICE_WATCH_MAX } from '../../levels/levels.js';
 import { slackClean } from '../../notify/format.js';
 import { loadPrices, methodSource, type PriceEntry } from '../../prices/config.js';
 import type { PriceDeps, WriteResult } from '../../prices/types.js';
@@ -39,8 +39,8 @@ export const PRICES_BACKFILL_MAX_DAYS = 550;
  * now. R28: 10 min, so a deploy's drain (a 30 min wait) waits for the current run's budget, <= 10 min + one chain-day.
  */
 export const PRICES_BACKFILL_BUDGET_MS = 10 * 60_000;
-/** The most ORION WATCH breach lines one prices backfill run posts; one summary line counts the rest. */
-export const PRICES_BACKFILL_WATCH_MAX = 20;
+/** The most ORION WATCH breach lines one backfill run posts (PRICE_WATCH_MAX, shared with levels and refresh); one summary line counts the rest. */
+export const PRICES_BACKFILL_WATCH_MAX = PRICE_WATCH_MAX;
 /**
  * The run lock (src/app/lock.ts) a prices backfill holds instead of an asset's (`data purge-prices` holds it too). Not
  * asset-shaped (an asset id is [a-z0-9-]), so no asset's run lock is ever this one.
@@ -281,17 +281,6 @@ function realPriceDeps(ctx: JobContext, prices: ReadonlyMap<string, PriceEntry>)
   return makePriceDeps(f.env, { rpcFactory: f.rpcFactory, prices, http: f.http, now: ctx.clock.now() });
 }
 
-/**
- * The run's breaches as `ORION WATCH <env> price <symbol> <ts>: <gap>% vs <check>` (as levels and refresh post them),
- * at most PRICES_BACKFILL_WATCH_MAX, then one line counting the rest, so a 550-day rebuild cannot flood Slack.
- */
-function breachLines(env: string, breaches: WriteResult['breaches'], prices: ReadonlyMap<string, PriceEntry>): string[] {
-  const lines = breaches.slice(0, PRICES_BACKFILL_WATCH_MAX).map((b) => formatPriceBreach(env, prices.get(b.ref)?.symbol ?? b.ref, b));
-  const rest = breaches.length - lines.length;
-  if (rest > 0) lines.push(`ORION WATCH ${env} price backfill: ${rest} more breaches not posted (${breaches.length} this run); the prices rows carry check_gap_pct`);
-  return lines;
-}
-
 /** Stored rows per ref in [fromHourMs, toHourMs), under each ref's primary source (the rows the writer skips). */
 async function storedRows(ctx: JobContext, prices: ReadonlyMap<string, PriceEntry>, refs: string[], fromHourMs: number, toHourMs: number): Promise<Record<string, number>> {
   const got = await ctx.db.all<{ token_ref: string; source: string; n: number }>(
@@ -325,6 +314,8 @@ async function runPricesBackfill(job: Job, ctx: JobContext, o: BackfillHandlerOp
   let result: PricesBackfillResult | PricesBackfillProgress | null = isPricesProgress(job.result) ? progressOf(job.result) : null;
   try {
     const prices = loadPrices(ctx.paths.configRoot);
+    // Ruling R32(c): a missing, empty or comment-only prices.yaml fails the job with its ALERT, never a "done" with nothing written.
+    if (prices.size === 0) throw new OrionError('invalid_price_config', 'prices.yaml has no entries');
     const now = ctx.clock.now();
     const params = parsePricesBackfillParams(job.params, prices);
     const until = await backfillWaitUntil(ctx, now);
@@ -349,7 +340,7 @@ async function runPricesBackfill(job: Job, ctx: JobContext, o: BackfillHandlerOp
       written: addCounts(before.written, w.written), breaches: before.breaches + w.breaches.length,
     };
     result = progress;
-    for (const text of breachLines(ctx.env, w.breaches, prices)) {
+    for (const text of breachLines(ctx.env, 'backfill', w.breaches, prices)) {
       if (ctx.signal.aborted) return aborted;
       const sent = await ctx.notify.post(text);
       if (!sent.ok) ctx.log(`breach line not delivered: ${sent.error ?? 'unknown error'}`);
@@ -446,6 +437,13 @@ export function makeBackfillHandler(o: BackfillHandlerOptions = {}): JobHandler 
         return await fetch(ctx.db, loaded, now, deps, { metrics, backfillDays, onProgress: (line) => ctx.log(line) });
       });
       if (ctx.signal.aborted) return aborted;
+      // M1: the price check breaches of the fetch's own price writes (a flow scan writing missing hours inline), as
+      // refresh posts them: at most PRICE_WATCH_MAX, then one summary line (breachLines). Posted whatever the outcome.
+      for (const text of breachLines(ctx.env, 'backfill', fetched.priceBreaches ?? [], loaded.prices)) {
+        if (ctx.signal.aborted) return aborted;
+        const sent = await ctx.notify.post(text);
+        if (!sent.ok) ctx.log(`breach line not delivered: ${sent.error ?? 'unknown error'}`);
+      }
       result.fetchLines = fetchSummary(fetched);
       for (const m of metrics) result.written[m] = fetched.written.filter((w) => w.metricKey === m).length;
       const primaries = new Set(metrics.map((m) => sourceId(loaded.config.metrics[m]!.source!)));

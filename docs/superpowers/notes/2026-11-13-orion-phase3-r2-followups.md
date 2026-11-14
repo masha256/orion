@@ -85,7 +85,7 @@ states it; "assessed here" where the ruling states none).
 - R25: Task 7 departures accepted: the CoinGecko price refusal lives in the loader (`parseAssetObject`, only when
   `prices.yaml` is present; zod would have failed 495 fixtures); refs match `^[A-Za-z0-9:/._@-]{1,120}$` (base58 PUMP)
   and dates `[0-9]`; op `prices` `max_attempts` 3; a stopped chain fails the job with one ALERT; progress kept in
-  `jobs.result_json`. Cost: small rework.
+  `jobs.result_json`. Cost: small rework. (The "only when prices.yaml is present" part is superseded by R32.)
 - R26: reprice scope = rows CoinGecko-priced at write: `transfer_flow` log-scan rows and PUMP `flow_usd.buyback` rows
   from `solana.supply_burn_daily` (daily mean; amount from the `flow_tokens.buyback` twin when missing); `usd_native`,
   DefiLlama (R4-R6), periodic/disclosed and manual rows are `skipped` with a reason, never `refused`; `coingecko:*` refs
@@ -106,6 +106,16 @@ states it; "assessed here" where the ruling states none).
 - R30: `data reprice` recomputes every stored derived row in the asset's range whose inputs include a repriced-or-marked
   flow day, writing only when the value differs (an interrupted `--yes` is finished by a rerun; a second `--yes` is a
   no-op). Cost: not stated in the ruling (assessed here: more derived rows read per run, none written needlessly).
+- R32 (final review I1; resolves the R25 partial disagreement): prices.yaml must be usable. An asset naming
+  `price.token` / `price.token_check` or a `unit: usd` transfer_flow is refused at load when its config root's
+  prices.yaml is missing, empty or comment-only (everywhere); in a release root (a `RELEASE` file) or with `ORION_ENV`
+  stage/prod every asset load refuses without at least one entry (AERO too), so there the CoinGecko price refusal and
+  the ref checks always run; the hourly `levels` job posts `ORION ALERT <env> levels prices: prices.yaml has no
+  entries` and the prices backfill fails with an ALERT on an empty map; `tools/phase2-proof/prod_copy.py` copies
+  prices.yaml into both homes. Cost: dev fixtures diverge from live rules (live envs strict).
+- R33 (final review I2): superseded/rejected flow rows keep their CoinGecko-priced write-time `value`; they are not
+  rewritten (history no report reads), but `data reprice` counts them per metric (`inactiveCoingeckoRows`, shown on the
+  dry run's metric line). Cost: they persist until R8 (no report reads them).
 - R31: `rebuild-price-levels` refuses a row whose newest price is more than 6 h older than its `observed_at - 1 h` (the
   view's staleness rule). Cost: not stated in the ruling (assessed here: a refused row blocks the market_data purge for
   that asset until Mike decides; release block step 7).
@@ -122,16 +132,19 @@ rows (Task 8).
 ## Deferred minors
 
 From the reviews, by task (the ledger's `minor (deferred)` lines, including the one the Task 8 fix-round re-review added
-after the first draft of this note). None blocks the release.
+after the first draft of this note). The final whole-branch review found four of them must-fix (Task 1: missing
+prices.yaml / the release-root test; Task 6a: the ref check only with a non-empty map; Task 6b: LIT `contract_state`
+without prices.yaml, one cause: I1) and fixed them in its fix wave (Ruling R32), with the two Task 9 minors; they are
+marked "fixed" below. None of the rest blocks the release.
 
 ### Task 1
 - check method not validated against a chain (Meteora check on an Ethereum ref would load)
 - chain 'lighter' accepts any EVM ref, not only eip155:1
 - valid_from checked by pattern only (2025-13-45 loads)
 - Solana mint in a ref key not checked for 32 bytes
-- missing prices.yaml gives config-only hashes silently at a config-root override (pack.sh prevents it for releases)
+- missing prices.yaml gives config-only hashes silently at a config-root override (pack.sh prevents it for releases) — fixed (R32)
 - check schema built with a type cast (no static typing on check fields)
-- no test pins that a release root, not ORION_HOME, supplies prices.yaml
+- no test pins that a release root, not ORION_HOME, supplies prices.yaml — fixed (R32(d), tests/cli/paths.test.ts)
 
 ### Task 2
 - usd_feed value recorded on pool rows but not its age (stale ETH/USD under VVV leaves no trace)
@@ -163,7 +176,7 @@ after the first draft of this note). None blocks the release.
 - hours_priced/hours_needed read n/24 on days without hourly buckets (use usd_basis, not hours_needed > 0)
 
 ### Task 6a
-- prices.yaml ref check at load runs only when the prices map is non-empty (a root without prices.yaml fails later with unknown_price_ref)
+- prices.yaml ref check at load runs only when the prices map is non-empty (a root without prices.yaml fails later with unknown_price_ref) — fixed (R32: an empty map refuses a chain-priced asset; release/stage/prod always have entries)
 - flow scan writer call has no budget or abort (a partial write shows as 'no price point')
 - view accepts non-hour-aligned prices; scan lookup does not (none stored)
 - no committed test of stored value == view usd
@@ -171,12 +184,14 @@ after the first draft of this note). None blocks the release.
 
 ### Task 6b
 - consecutive:2 (cvxCRV/yCRV) does not apply at fetch time (moot after R22: no level cross-check there)
-- a config parsed without prices.yaml labels LIT's price source contract_state (production always loads prices.yaml)
+- a config parsed without prices.yaml labels LIT's price source contract_state (production always loads prices.yaml) — fixed (R32: LIT no longer loads from such a root)
 - VVV price_usd and diem_price_usd share one source id (a DIEM-only failure streak merges with VVV's)
 - price.ts:104/111 comment says a failed read is retried by the next adapter (EVM block cache keeps failures)
 - per-run block cache shared across chains, keyed by block number only
 - off-chain observedAt is run start (ctx.nowIso)
 - LIT's v4 check read at the Ethereum head, not the run block
+
+Notes kept: CAKE/LINK/UNI keep the check id `price_chainlink` (continuity) though it now checks the pool (Task 6b).
 
 ### Task 6
 - FetchResult.priceBreaches not printed by the CLI fetch summary
@@ -198,8 +213,17 @@ after the first draft of this note). None blocks the release.
 ### Task 9
 - `data compare-usd --days 400` (orion-remote's cap) reaches the first flow day (2025-10-14) only until about
   2026-11-18; older days are covered by the reprice dry run's `refused` list (release block step 5)
+- src/daemon/daemon.ts:103 comment said only `refresh` has a second attempt (op `prices` backfills have 3) — fixed in
+  the final review wave
+- orion-remote usage text did not say `data reprice` / `data rebuild-price-levels` exit 3 on a refused row — fixed in
+  the final review wave
 
-Notes kept: CAKE/LINK/UNI keep the check id `price_chainlink` (continuity) though it now checks the pool (Task 6b).
+### Final whole-branch review
+- M1 (the daemon's op-fetch backfill dropped the breaches of its own price writes) and M2 (WATCH posts capped only in
+  the prices backfill) — fixed: every price-writing job posts through one `breachLines` (20 lines, then one summary)
+- M3: the hourly `levels` writer does not take `job:prices`, so during step 3 it and the prices backfill can both
+  report the same recent hour's breach (harmless upserts; WATCH noise only)
+- M4 (staging_refresh timing gaps after prod reaches schema 8) — documented in deploy.md's R2 block, item 5
 
 ## Carried to later releases
 
@@ -211,6 +235,10 @@ Notes kept: CAKE/LINK/UNI keep the check id `price_chainlink` (continuity) thoug
   `defillama_history`, R29), and so do their CoinGecko-derived token twins (`flow_tokens.buyback` amounts from those
   days); R6 replaces both with an on-chain series. Until then they are the last CoinGecko-derived values Orion keeps,
   counted by reason in the Task 10 dry run.
+- **Superseded/rejected flow rows (R33).** Superseded/rejected rows keep their write-time value; Mike decides keep vs
+  purge (R8 at the latest). `data reprice` counts them per metric (`inactiveCoingeckoRows`, the dry run's
+  `inactive: N superseded/rejected CoinGecko-priced row(s)`); the Task 10 table carries the count per asset. PUMP's
+  DefiLlama-era `flow_tokens.buyback` twins (R6 above) are the other CoinGecko-derived values left.
 - **R8: drop the `coingecko` source type and `tokens.coingecko_id`**, and with it guard `http_json`: a source pointed at
   a CoinGecko price URL still loads (Task 7 minor).
 - **Rollback window.** A rollback to `orion-2026.11.12.1` is a fix-forward-within-days (deploy.md rollback note): its

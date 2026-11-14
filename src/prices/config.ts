@@ -223,7 +223,11 @@ function cycleFrom(start: string, prices: Map<string, PriceEntry>): string[] | n
   return walk(start, [start]);
 }
 
-/** Loads `<rootDir>/prices.yaml`. A config root without one (a test home, an older release) has no price entries. */
+/**
+ * Loads `<rootDir>/prices.yaml`. A missing, empty or comment-only file is an empty map: callers refuse on it (Ruling R32:
+ * loadAsset refuses a chain-priced asset, and in a release root or stage/prod every asset; the levels job and the prices
+ * backfill post an ALERT), never price with nothing.
+ */
 export function loadPrices(rootDir: string): Map<string, PriceEntry> {
   const path = join(rootDir, PRICES_FILE);
   if (!existsSync(path)) return new Map();

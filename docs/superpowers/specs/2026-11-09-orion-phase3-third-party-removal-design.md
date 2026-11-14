@@ -10,7 +10,10 @@
 - 2026-11-14: R2 built on feat/phase3-third-party (plan Tasks 1-9; commits 4498513..3aca04e plus the Task 9 docs
   commit); not tagged: Task 10 (the prod-copy proof and Mike's sign-off table) comes first. Rulings that changed the
   plan: its "Amendments made during execution" section; release block `docs/ops/deploy.md` "Phase 3 R2 release";
-  followups note docs/superpowers/notes/2026-11-13-orion-phase3-r2-followups.md
+  followups note docs/superpowers/notes/2026-11-13-orion-phase3-r2-followups.md. Final review wave (R32, R33):
+  prices.yaml must be present with entries in a release root and on stage/prod; superseded/rejected rows keep their
+  write-time value; Mike decides keep vs purge (R8 at the latest) (`data reprice` counts them as
+  `inactiveCoingeckoRows`); PUMP's DefiLlama-era `flow_tokens.buyback` twins stay until R6.
 - 2026-11-13: R0b+R1 shipped (`orion-2026.11.12.1` = main 8f50ac6, stage 11-12, prod 11-13; orphan DefiLlama series
   purged on both). R2 scoping (`workspace/orion/phase3-r2-scoping/`) and Mike's "All recommendations" (#orion-dev):
   every token has a chain or first-party price (all seven Ethereum tokens have Chainlink feeds; SKY's is new, so "SKY

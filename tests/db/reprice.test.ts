@@ -188,6 +188,23 @@ describe('repriceAsset', () => {
     expect(() => readdirSync(exportDir)).toThrow();
   });
 
+  it('R33: superseded/rejected rows of the CoinGecko-priced classes are counted per metric (inactiveCoingeckoRows), never rewritten', async () => {
+    const { burn } = await seedEvm(db());
+    // A burn day re-scanned (its first row superseded), a rejected burn day, and a rejected DefiLlama fees day (not counted).
+    const superseded = await seedScan(db(), 'rpx', 'flow_usd.burn', '2026-10-05', hourlyOf({ 3: 1 }), 50);
+    const rejected = await seedScan(db(), 'rpx', 'flow_usd.burn', '2026-10-06', hourlyOf({ 4: 1 }), 60);
+    const llama = await seedPlain(db(), 'rpx', 'flow_usd.fees', dayEnd('2026-10-04'), 8, { method: 'measured', sourceType: 'third_party', chain: null, locator: { endpoint: 'https://api.llama.fi/summary/fees/x' }, codeVersion: 'test', configHash: 'h' });
+    await db().run('UPDATE observations SET superseded_by = $2 WHERE id = $1', [superseded, burn[3]]);
+    await db().run("UPDATE observations SET status = 'rejected' WHERE id = ANY($1::bigint[])", [[rejected, llama]]);
+    const dry = await repriceAsset(db(), evm(), { yes: false, now: NOW, exportDir: join(scratch(), 'repriced') });
+    expect(metric(dry, 'flow_usd.burn')).toMatchObject({ rows: 4, repriced: 4, inactiveCoingeckoRows: 2 });
+    expect(metric(dry, 'flow_usd.fees')).toMatchObject({ rows: 3, inactiveCoingeckoRows: 0 });
+    const yes = await repriceAsset(db(), evm(), { yes: true, now: NOW, exportDir: join(scratch(), 'repriced'), syncDir: () => undefined });
+    expect(metric(yes, 'flow_usd.burn').inactiveCoingeckoRows).toBe(2);
+    const kept = await db().all<{ id: number; value: number; locator: Record<string, unknown> }>('SELECT id, value, locator FROM observations WHERE id = ANY($1::bigint[]) ORDER BY id', [[superseded, rejected]]);
+    expect(kept.map((r) => [Number(r.id), r.value, 'repriced' in (r.locator ?? {})])).toEqual([[superseded, 50, false], [rejected, 60, false]]);
+  });
+
   it('Review Focus 5: a row with 23 of 24 hours priced is refused, counted, and keeps its value (dry run and --yes)', async () => {
     // Prices from 2026-10-01 01:00: hour 0 of 10-01 has an amount and no price at or within 6 h before it.
     await seedPrices(db(), REF, dayStartMs('2026-10-01') + H, 24 * 3);

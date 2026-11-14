@@ -4,7 +4,7 @@ import { listRegistry } from '../../db/registry.js';
 import { listWatchStates, putWatchStates } from '../../db/watchState.js';
 import { realFetchDeps } from '../../ingest/deps.js';
 import type { FetchDeps } from '../../ingest/run.js';
-import { formatPriceBreach, runLevels, type LevelsResult } from '../../levels/levels.js';
+import { breachLines, runLevels, type LevelsResult } from '../../levels/levels.js';
 import { loadPrices, type PriceEntry } from '../../prices/config.js';
 import { levelWatchRule, watchTransitions } from '../../levels/watchTransitions.js';
 import { pingDeadman } from '../../notify/deadman.js';
@@ -45,7 +45,8 @@ const aborted: JobOutcome = { status: 'failed', result: null, error: 'aborted: t
  * `ORION_DEADMAN_URL` when every asset's read ran (per-source failures included) and every post was delivered. After the
  * reads it writes the recent chain prices of every prices.yaml ref (runLevels) and posts each check breach as
  * `ORION WATCH <env> price <symbol> <ts>: <gap>% vs <check>` (never an anomaly: an anomaly starts a paid triage). A price
- * write that failed (prices.yaml unreadable, the writer threw, or it stopped a chain) posts one
+ * job posts at most PRICE_WATCH_MAX of them, then one line counting the rest (breachLines). A price
+ * write that failed (prices.yaml unreadable or without entries, R32(c); the writer threw, or it stopped a chain) posts one
  * `ORION ALERT <env> levels prices: <reason>` line (silence would hide a writer that stopped); the reads, the snapshot
  * and the dead-man ping go on as for any post. The job fails only when every asset failed; it is never retried
  * (`max_attempts` 1: the next hour is the retry).
@@ -70,6 +71,11 @@ export function makeLevelsHandler(o: LevelsHandlerOptions = {}): JobHandler {
     let pricesError: string | null = null;
     try {
       prices = loadPrices(ctx.paths.configRoot);
+      // Ruling R32(c): a missing, empty or comment-only prices.yaml is no price write at all, never a silent hour.
+      if (prices.size === 0) {
+        prices = null;
+        pricesError = 'prices.yaml has no entries';
+      }
     } catch (err) {
       pricesError = message(err).split('\n')[0];
     }
@@ -104,7 +110,7 @@ export function makeLevelsHandler(o: LevelsHandlerOptions = {}): JobHandler {
     }
     // Each price check breach the write completed, once (the writer reports a breach run once, at the hour completing it).
     const w = out.prices;
-    const breaches = (w?.result?.breaches ?? []).map((b) => formatPriceBreach(ctx.env, prices?.get(b.ref)?.symbol ?? b.ref, b));
+    const breaches = breachLines(ctx.env, 'levels', w?.result?.breaches ?? [], prices ?? undefined);
     const priceSummary: LevelsJobResult['prices'] = w === null && pricesError === null ? null : {
       written: Object.values(w?.result?.written ?? {}).reduce((a, b) => a + b, 0),
       missing: w?.result?.missing.length ?? 0,

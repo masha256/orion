@@ -12,6 +12,11 @@ import { yieldReport } from '../../src/report/load.js';
 import { canonicalJson, sha256 } from '../../src/util/canonical.js';
 import { MINI_ASSET_YAML, MINI_HOLDER_YAML } from '../helpers/assets.js';
 import { syntheticInput } from '../helpers/syntheticReport.js';
+import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
+
+/** The mini ingest asset: a CoinGecko price_usd (refused wherever prices.yaml has entries) and usd transfer_flows. */
+const MINI_CG_PRICE = INGEST_ASSET_YAML.replace('id: mini\n', 'id: cg\n');
+const MINI_FLOW_ONLY = INGEST_ASSET_YAML;
 
 describe('canonicalJson', () => {
   it('sorts object keys recursively and keeps array order', () => {
@@ -229,7 +234,7 @@ describe('config hash and prices.yaml (Phase 3 R2 Task 1)', () => {
     return stringifyYaml(obj);
   };
 
-  it('the hash input is the asset config plus entriesFor sorted by ref; a root without prices.yaml hashes the config alone', () => {
+  it('the hash input is the asset config plus entriesFor sorted by ref; parsed without a prices map the hash is the config alone', () => {
     const home = homeWith(pricesText);
     const bare = homeWith(null);
     try {
@@ -237,11 +242,13 @@ describe('config hash and prices.yaml (Phase 3 R2 Task 1)', () => {
       const entries = entriesFor(loaded.config, loadPrices(home));
       expect(entries.map((e) => e.ref)).toEqual([...entries.map((e) => e.ref)].sort());
       expect(loaded.hash).toBe(sha256(canonicalJson({ config: loaded.config, prices: entries })));
-      expect(loadAsset(bare, 'ycrv').hash).toBe(sha256(canonicalJson(loaded.config)));
-      expect(loadAsset(bare, 'ycrv').hash).toBe(parseAssetYaml(readFileSync(join(ROOT, 'assets/ycrv.yaml'), 'utf8')).hash);
+      expect(parseAssetYaml(readFileSync(join(ROOT, 'assets/ycrv.yaml'), 'utf8')).hash).toBe(sha256(canonicalJson(loaded.config)));
+      // Ruling R32(a): a root without prices.yaml no longer loads a chain-priced asset with its config-only hash.
+      expect(() => loadAsset(bare, 'ycrv')).toThrow(/prices\.yaml has no entries/);
       // Every asset uses at least its own ref (price.token since Task 6b, R11; AERO, which keeps its own price adapters
       // (R21), through its own token's entry since Task 6 fix E), so its hash differs from its config-only hash.
-      expect(moved(hashes(home), hashes(bare))).toEqual(listAssetIds(ROOT));
+      const configOnly = Object.fromEntries(listAssetIds(ROOT).map((id) => [id, parseAssetYaml(readFileSync(join(ROOT, 'assets', `${id}.yaml`), 'utf8')).hash]));
+      expect(moved(hashes(home), configOnly)).toEqual(listAssetIds(ROOT));
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(bare, { recursive: true, force: true });
@@ -289,9 +296,10 @@ describe('config hash and prices.yaml (Phase 3 R2 Task 1)', () => {
     expect(() => parseAssetObject(obj, prices)).toThrow(
       /^metrics\.flow_usd\.fees\.source: yv_crvusd \(eip155:1\/0xbf319ddc2edc1eb6fdf9910e39b37be221c8805f\) has no entry in prices\.yaml/,
     );
-    // Without a prices map (or with an empty one: a root with no prices.yaml) there is nothing to check against.
+    // Without a prices map (a hand-built test asset) there is nothing to check against; an empty map (a root whose
+    // prices.yaml is missing, empty or comment-only) is refused (Ruling R32(a)).
     expect(() => parseAssetObject(obj)).not.toThrow();
-    expect(() => parseAssetObject(obj, new Map())).not.toThrow();
+    expect(() => parseAssetObject(obj, new Map())).toThrow(/prices\.yaml has no entries/);
   });
 });
 
@@ -351,5 +359,91 @@ describe('metric watch', () => {
     // Re-pinned (Phase 3 R2 Task 6b): AERO names no ref (R11: entriesFor reads price.* params and scanned tokens; its price adapters are its own, R21).
     // Re-pinned (Phase 3 R2 Task 6 fix wave, E): entriesFor includes the asset's own token's prices.yaml entry (AERO's again).
     expect(asset('aero')).toBe('035327b9eec2de16fb96541b2b09dfc5a52015fd4ef6a246691e5cb8bcf6578d');
+  });
+});
+
+describe('prices.yaml must be usable (Ruling R32)', () => {
+  const ROOT = fileURLToPath(new URL('../..', import.meta.url));
+  const pricesText = readFileSync(join(ROOT, 'prices.yaml'), 'utf8');
+  const RELEASE = JSON.stringify({ tag: 'orion-2026.11.14.1', commit: 'abc', schema: 8, built_at: '2026-11-14T00:00:00.000Z' });
+  /** Missing, empty (0 bytes) and comment-only: every one parses to no entries. */
+  const UNUSABLE: [string, string | null][] = [['missing', null], ['empty', ''], ['comment-only', '# prices go here\n# none yet\n']];
+  const homeWith = (pricesFile: string | null, release = false): string => {
+    const home = mkdtempSync(join(tmpdir(), 'orion-r32-'));
+    mkdirSync(join(home, 'assets'));
+    for (const id of listAssetIds(ROOT)) writeFileSync(join(home, 'assets', `${id}.yaml`), readFileSync(join(ROOT, 'assets', `${id}.yaml`)));
+    if (pricesFile !== null) writeFileSync(join(home, 'prices.yaml'), pricesFile);
+    if (release) writeFileSync(join(home, 'RELEASE'), RELEASE);
+    return home;
+  };
+  const codeOf = (f: () => unknown): string | null => {
+    try {
+      f();
+      return null;
+    } catch (err) {
+      return (err as { code?: string }).code ?? 'thrown';
+    }
+  };
+  const withEnv = <T>(value: string | undefined, f: () => T): T => {
+    const before = process.env.ORION_ENV;
+    if (value === undefined) delete process.env.ORION_ENV;
+    else process.env.ORION_ENV = value;
+    try {
+      return f();
+    } finally {
+      if (before === undefined) delete process.env.ORION_ENV;
+      else process.env.ORION_ENV = before;
+    }
+  };
+
+  for (const [what, text] of UNUSABLE) {
+    it(`(a) a ${what} prices.yaml: every asset naming price.token/price.token_check or a usd transfer_flow is refused at load; AERO loads in dev`, () => {
+      const home = homeWith(text);
+      try {
+        withEnv(undefined, () => {
+          for (const id of listAssetIds(home).filter((i) => i !== 'aero')) {
+            expect(codeOf(() => loadAsset(home, id)), id).toBe('invalid_asset_config');
+          }
+          expect(() => loadAsset(home, 'lit')).toThrow(/prices\.yaml has no entries/);
+          // The usd transfer_flow alone (no price.* source) is refused too.
+          const flowOnly = MINI_FLOW_ONLY;
+          expect(() => parseAssetYaml(flowOnly, new Map())).toThrow(/^metrics\.flow_usd\.fees\.source \(transfer_flow, unit usd\): reads a chain price, but prices\.yaml has no entries/);
+          expect(codeOf(() => loadAsset(home, 'aero'))).toBeNull();
+        });
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    });
+
+    it(`(b) a ${what} prices.yaml in a release root, or with ORION_ENV stage/prod: every asset load refuses, AERO included`, () => {
+      const release = homeWith(text, true);
+      const dev = homeWith(text);
+      try {
+        withEnv(undefined, () => {
+          for (const id of listAssetIds(release)) expect(codeOf(() => loadAsset(release, id)), id).toBe('invalid_price_config');
+          expect(() => loadAsset(release, 'aero')).toThrow(/a release .* needs prices\.yaml with at least one entry/);
+        });
+        for (const env of ['stage', 'prod']) {
+          withEnv(env, () => expect(codeOf(() => loadAsset(dev, 'aero')), env).toBe('invalid_price_config'));
+        }
+        withEnv('dev', () => expect(codeOf(() => loadAsset(dev, 'aero'))).toBeNull());
+      } finally {
+        rmSync(release, { recursive: true, force: true });
+        rmSync(dev, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it('(b) a release root with the real prices.yaml loads every asset with the repo hash; the CoinGecko price refusal runs', () => {
+    const release = homeWith(pricesText, true);
+    try {
+      withEnv('prod', () => {
+        for (const id of listAssetIds(ROOT)) expect(loadAsset(release, id).hash, id).toBe(loadAsset(ROOT, id).hash);
+        writeFileSync(join(release, 'assets', 'cg.yaml'), MINI_CG_PRICE);
+        expect(() => loadAsset(release, 'cg')).toThrow(/coingecko/i);
+      });
+    } finally {
+      rmSync(release, { recursive: true, force: true });
+    }
   });
 });

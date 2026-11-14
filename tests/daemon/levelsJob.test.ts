@@ -5,7 +5,8 @@ import { listLatestLevels } from '../../src/db/latestLevels.js';
 import { setRegistryState } from '../../src/db/registry.js';
 import { INGEST_ASSET_YAML, METRICS_END, PRICED_INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 import { harness } from '../helpers/fetchHarness.js';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { PRICE_WATCH_MAX } from '../../src/levels/levels.js';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listPrices } from '../../src/db/prices.js';
@@ -38,7 +39,8 @@ describe('levels job', () => {
     const h = harness(testDb());
     const run = levelsContext(testDb(), w.root, SLOT, { ORION_DEADMAN_URL: DEADMAN });
     const out = await handlerFor(run, h.deps)(levelsJob(1, SLOT), run.ctx);
-    expect(out).toEqual({ status: 'done', result: { assets: 2, rows: 10, failed: [], fired: [], cleared: [], undelivered: [], deadman: true, prices: null } });
+    // The root's prices.yaml holds the mini token (Ruling R32(a)), so the hour's price write runs; price_usd is hand-entered (R24).
+    expect(out).toEqual({ status: 'done', result: { assets: 2, rows: 8, failed: [], fired: [], cleared: [], undelivered: [], deadman: true, prices: { written: 48, missing: 0, errors: [], breaches: [] } } });
     expect(run.pings).toEqual([DEADMAN]);
     expect((await listLatestLevels(testDb())).every((r) => r.jobId === 1)).toBe(true);
 
@@ -97,7 +99,7 @@ describe('levels job', () => {
     const seen: number[] = [];
     const out = await handlerFor(run, h.deps, { onLevels: async (_ctx, _job, r) => void seen.push(r.rows.length) })(levelsJob(1, SLOT), run.ctx);
     expect(out.status).toBe('done');
-    expect(seen).toEqual([5]);
+    expect(seen).toEqual([4]); // price_usd hand-entered in a root with prices.yaml (R24, R32(a))
     expect(run.enqueued).toEqual([{ kind: 'snapshot_push', assetId: null, slot: SLOT }]);
 
     const none = levelsContext(testDb(), w.root, SLOT);
@@ -185,6 +187,39 @@ describe('levels job', () => {
     const down = levelsContext(testDb(), w.root, '2026-09-19T15:15:00.000Z', { ORION_DEADMAN_URL: DEADMAN }, false);
     const out4 = await handlerFor(down, { ...h.deps, priceWriter: thrower })(levelsJob(4, SLOT), down.ctx);
     expect(out4).toMatchObject({ status: 'done', result: { undelivered: ['ORION ALERT dev levels prices: rpc down'], deadman: false } });
+  });
+
+  for (const [what, text] of [['missing', null], ['empty', ''], ['comment-only', '# no entries yet\n']] as const) {
+    it(`levelsJob: a ${what} prices.yaml posts one ORION ALERT <env> levels prices: prices.yaml has no entries (Ruling R32(c)); no write`, async () => {
+      const w = await world({}, []);
+      if (text === null) rmSync(join(w.root, 'prices.yaml'));
+      else writeFileSync(join(w.root, 'prices.yaml'), text);
+      const h = harness(testDb());
+      const writer = fakePriceWriter(() => 10);
+      const run = levelsContext(testDb(), w.root, SLOT, { ORION_DEADMAN_URL: DEADMAN });
+      const out = await handlerFor(run, { ...h.deps, priceWriter: writer })(levelsJob(1, SLOT), run.ctx);
+      expect(out).toMatchObject({ status: 'done', result: { prices: { written: 0, missing: 0, errors: ['prices.yaml has no entries'], breaches: [] } } });
+      expect(run.posts).toEqual(['ORION ALERT dev levels prices: prices.yaml has no entries']);
+      expect(writer.calls).toEqual([]);
+    });
+  }
+
+  it('levelsJob: breaches are posted at most PRICE_WATCH_MAX (20) a run, then one line counting the rest (M2)', async () => {
+    const w = await world({}, []);
+    writeFileSync(join(w.root, 'prices.yaml'), readFileSync(join(ROOT, 'prices.yaml'), 'utf8'));
+    const prices = loadPrices(w.root);
+    const crv = [...prices.values()].find((e) => e.symbol === 'CRV')!;
+    const first = Date.parse('2026-09-17T12:00:00.000Z');
+    const breaches = Array.from({ length: 23 }, (_, i) => ({ ref: crv.ref, hourMs: first + i * 3_600_000, gapPct: -1.7, check: 'chain:chainlink' }));
+    const h = harness(testDb());
+    const primary = (ref: string) => methodSource(prices.get(ref)!.primary);
+    const run = levelsContext(testDb(), w.root, SLOT);
+    const out = await handlerFor(run, { ...h.deps, priceWriter: fakePriceWriter(() => 10, { breaches }, primary) })(levelsJob(1, SLOT), run.ctx);
+    const watch = (i: number) => `ORION WATCH dev price CRV ${new Date(first + i * 3_600_000).toISOString()}: -1.70% vs chain:chainlink`;
+    const posts = [...Array.from({ length: 20 }, (_, i) => watch(i)), 'ORION WATCH dev price levels: 3 more breaches not posted (23 this run); the prices rows carry check_gap_pct'];
+    expect(run.posts).toEqual(posts);
+    expect(out).toMatchObject({ status: 'done', result: { prices: { breaches: posts } } });
+    expect(PRICE_WATCH_MAX).toBe(20);
   });
 
   it('levelsJob: the daemon runs the levels handler', () => {

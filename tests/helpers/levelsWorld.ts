@@ -9,12 +9,17 @@ import { insertRegistryRow } from '../../src/db/registry.js';
 import type { OrionDb } from '../../src/db/connection.js';
 import type { FetchDeps } from '../../src/ingest/run.js';
 import { FakeClock } from './clock.js';
+import { forPricedRoot, MINI_PRICES_YAML } from './ingestAsset.js';
 
-/** A config root with the given asset YAMLs, removed after the file. */
+/**
+ * A config root with the given asset YAMLs (forPricedRoot) and the mini token's prices.yaml (Ruling R32(a): a root's
+ * chain-priced assets need entries; a test that wants another prices.yaml overwrites it), removed after the file.
+ */
 export function levelsWorld(yamls: Record<string, string>): { root: string; cleanup(): void } {
   const root = mkdtempSync(join(tmpdir(), 'orion-levels-'));
   mkdirSync(join(root, 'assets'));
-  for (const [id, text] of Object.entries(yamls)) writeFileSync(join(root, 'assets', `${id}.yaml`), text);
+  for (const [id, text] of Object.entries(yamls)) writeFileSync(join(root, 'assets', `${id}.yaml`), forPricedRoot(text));
+  writeFileSync(join(root, 'prices.yaml'), MINI_PRICES_YAML);
   return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 

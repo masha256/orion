@@ -134,9 +134,10 @@ describe('refresh job', () => {
     expect(result.report.ingest?.fetch_run_id).not.toBeNull(); // a real (not dry) fetch ran
     expect(result.fetchLines[0]).toMatch(/^MINI fetch /);
     const rows = await listLatestLevels(testDb(), 'mini');
-    expect(rows.map((r) => r.metricKey)).toEqual(['circulating_supply', 'emission_rate_annual', 'price_usd', 'staked_supply', 'stats_price', 'total_supply']);
+    // price_usd is hand-entered in a root with prices.yaml (Rulings R24, R32(a)): not read.
+    expect(rows.map((r) => r.metricKey)).toEqual(['circulating_supply', 'emission_rate_annual', 'staked_supply', 'stats_price', 'total_supply']);
     expect(rows.every((r) => r.jobId === 1)).toBe(true);
-    expect(result.levels).toBe(6);
+    expect(result.levels).toBe(5);
     // The level watch's state is kept (no post: the nightly report shows it).
     expect(await listWatchStates(testDb(), 'mini')).toEqual([
       { assetId: 'mini', metricKey: 'stats_price', rule: 'outside', firing: true, since: NOW.toISOString(), lastValue: 10.1 },
@@ -186,6 +187,21 @@ describe('refresh job', () => {
     expect(run.posts).toEqual([post]);
     expect(out).toMatchObject({ result: { breaches: [post], undelivered: [] } });
     expect(await testDb().all("SELECT id FROM anomalies WHERE kind = 'cross_check_mismatch'")).toEqual([]);
+  });
+
+  it('refresh: breaches are posted at most 20 a run, then one line counting the rest (M2)', async () => {
+    const w = await world(PRICED_INGEST_ASSET_YAML);
+    writeFileSync(join(w.root, 'prices.yaml'), `"${MINI_REF}":\n  symbol: MINI\n  decimals: 18\n  chain: eip155:8453\n  valid_from: "2026-09-01"\n` +
+      `  primary: { kind: chainlink, feed: "0x${'a'.repeat(40)}" }\n  check: { kind: chainlink, feed: "0x${'b'.repeat(40)}", tolerance_pct: 2 }\n`);
+    const run = levelsContext(testDb(), w.root, NOW);
+    const h = harness(testDb());
+    const first = Date.parse('2026-09-17T00:00:00.000Z');
+    const breaches = Array.from({ length: 21 }, (_, i) => ({ ref: MINI_REF, hourMs: first + i * 3_600_000, gapPct: 2.5, check: 'chain:chainlink' }));
+    const out = await makeRefreshHandler({ fetchDeps: () => ({ ...h.deps, priceWriter: fakePriceWriter(() => 10, { breaches }) }) })(refreshJob(), run.ctx);
+    const watch = (i: number) => `ORION WATCH dev price MINI ${new Date(first + i * 3_600_000).toISOString()}: +2.50% vs chain:chainlink`;
+    const posts = [...Array.from({ length: 20 }, (_, i) => watch(i)), 'ORION WATCH dev price refresh: 1 more breaches not posted (21 this run); the prices rows carry check_gap_pct'];
+    expect(run.posts).toEqual(posts);
+    expect(out).toMatchObject({ status: 'done', result: { breaches: posts } });
   });
 
   it('refresh: the daemon runs the refresh handler', () => {

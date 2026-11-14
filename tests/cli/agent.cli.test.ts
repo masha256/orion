@@ -10,6 +10,8 @@ import { insertDocument } from '../../src/db/documents.js';
 import { insertProposal, type ProposalChange } from '../../src/db/proposals.js';
 import type { OrionError } from '../../src/types.js';
 import { AGENT_ASSET_YAML, PERSONA_MD } from '../helpers/agentWorld.js';
+import { MINI_HOLDER_YAML } from '../helpers/assets.js';
+import { MINI_PRICES_YAML } from '../helpers/ingestAsset.js';
 import { testCliContext, useTestDb } from '../helpers/db.js';
 import { calls, journalCall, say, scriptedModel, toolUse, type ScriptStep } from '../helpers/fakeModel.js';
 import { AS_OF } from '../helpers/obs.js';
@@ -113,6 +115,9 @@ describe('orion agent run', () => {
   it('cli: agent run is refused on stage before any request, even with a key in the env file (I-4)', async () => {
     // The stage watcher's CLI child re-reads ~/shared/.env through ORION_ENV_FILE: a key there must still not spend.
     writeFileSync(join(home, '.env'), 'ANTHROPIC_API_KEY=sk-ant-stage-test\n');
+    // Stage loads strictly (Ruling R32(b)): a prices.yaml with entries, so no CoinGecko price (R24): the hand-entered one.
+    writeFileSync(join(home, 'prices.yaml'), MINI_PRICES_YAML);
+    writeFileSync(join(home, 'assets', 'mini.yaml'), MINI_HOLDER_YAML.trimStart());
     const model = scriptedModel([calls(staked()), calls(journalCall()), say('Done.')]);
     const lines: string[] = [];
     exitCode = undefined;

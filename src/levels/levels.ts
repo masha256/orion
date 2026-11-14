@@ -74,6 +74,20 @@ export function formatPriceBreach(env: string, symbol: string, b: WriteResult['b
   return `ORION WATCH ${env} price ${symbol} ${new Date(b.hourMs).toISOString()}: ${b.gapPct >= 0 ? '+' : ''}${b.gapPct.toFixed(2)}% vs ${b.check}`;
 }
 
+/** The most check-breach WATCH lines one job run posts (levels, refresh, both backfill ops); the rest is one summary line. */
+export const PRICE_WATCH_MAX = 20;
+
+/**
+ * A run's breaches as formatPriceBreach lines, at most PRICE_WATCH_MAX, then one line counting the rest (`job`: the
+ * job that wrote them: levels, refresh, backfill), so no run can flood Slack. Symbols from `prices`, else the ref.
+ */
+export function breachLines(env: string, job: string, breaches: WriteResult['breaches'], prices: ReadonlyMap<string, PriceEntry> | undefined): string[] {
+  const lines = breaches.slice(0, PRICE_WATCH_MAX).map((b) => formatPriceBreach(env, prices?.get(b.ref)?.symbol ?? b.ref, b));
+  const rest = breaches.length - lines.length;
+  if (rest > 0) lines.push(`ORION WATCH ${env} price ${job}: ${rest} more breaches not posted (${breaches.length} this run); the prices rows carry check_gap_pct`);
+  return lines;
+}
+
 /**
  * The metrics the hourly job reads: level and schedule metrics with a source that is read (not derived, not a constant),
  * and, among monitor-only ones, only the watched (display data nobody watches waits for the nightly). Sorted.

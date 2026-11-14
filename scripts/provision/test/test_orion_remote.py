@@ -1040,6 +1040,15 @@ class Phase3VerbTests(RemoteCase):
                              'data compare-usd aero --days 401', 'data compare-usd aero --days 1e3',
                              'data compare-usd aero --json', 'data compare-usd aero lit'])
 
+    def test_usage_text_names_exit_3_for_reprice_and_rebuild_price_levels(self):
+        """Final review wave (Task 9 minor): the verb reference says a refused row exits 3 (the child's code)."""
+        with open(REMOTE) as f:
+            text = f.read()
+        head = text[:text.index('"""', text.index('"""') + 3)]
+        for verb in ('data reprice <a>', 'data rebuild-price-levels <a>'):
+            block = head[head.index(verb):].split('\n  data ', 1)[0]
+            self.assertIn('exit 3', block, verb)
+
     def test_reprice_passthrough(self):
         """Phase 3 R2 Task 8: a dry run by default; --from is a day, --yes the only write switch."""
         argv = self.last('data reprice crv')

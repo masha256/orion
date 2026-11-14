@@ -220,6 +220,7 @@ beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), 'orion-disclosure-e2e-'));
   await orion(home, 'init');
   writeFileSync(join(home, 'assets/lit.yaml'), preApprovalLitYaml());
+  copyFileSync(join(ROOT, 'prices.yaml'), join(home, 'prices.yaml')); // Ruling R32(a)
   cpSync(join(ROOT, 'personas'), join(home, 'personas'), { recursive: true });
   cpSync(join(ROOT, 'skills'), join(home, 'skills'), { recursive: true });
   await orion(home, 'persona', 'assign', 'lit', 'perp-exchange-analyst');
@@ -355,6 +356,7 @@ describe('approving the config proposal on a copy of assets/lit.yaml', () => {
     home2 = h2;
     await orion(h2, 'init');
     writeFileSync(join(h2, 'assets/lit.yaml'), preApprovalLitYaml());
+    copyFileSync(join(ROOT, 'prices.yaml'), join(h2, 'prices.yaml')); // Ruling R32(a)
     // The beforeAll seed is gone: every test starts on emptied tables (tests/helpers/db.ts), and this one needs none of
     // it (the dry run's results were captured in beforeAll), as it needed none of it on its own SQLite file before.
     expect(await counts(h2)).toEqual({ proposals: 0, journal: 0, observations: 0, documents: 0, agent_runs: 0 });

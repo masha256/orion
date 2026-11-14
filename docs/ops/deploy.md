@@ -689,6 +689,13 @@ stage/prod ssh commands above.
    `staging_refresh` (Sunday 10:30 UTC) refuses a prod dump while the envs differ (stage at 0008, prod at 0007: `schema
    mismatch ...`), which also keeps prod's CoinGecko-priced rows off the re-priced stage; check that no Sunday 10:30 UTC
    falls between the planned stage switch and the planned prod switch, or deploy stage after that Sunday's refresh.
+   Two gaps the schema check does not cover: (i) once prod is on schema 8, a Sunday `staging_refresh` that runs before
+   prod's steps 6-8 are done copies prod's un-repriced state (CoinGecko `prices` rows, CoinGecko-priced flow `value`s and
+   `price_usd` rows) onto stage, and stage's soak baseline is gone: finish prod's steps 6-8 before Sunday 10:30 UTC, or
+   pause `staging_refresh` for that Sunday, or accept it and re-run steps 3-8 on stage; (ii) a prod rollback to
+   `orion-2026.11.12.1` keeps schema 8, so the next `staging_refresh` no longer refuses and copies the CoinGecko rows the
+   old release writes again onto stage: after a prod rollback, pause the refresh (or expect it) until prod has rolled
+   forward and finished its block.
 
 **Timing.** Deploy outside the env's nightly window, the slot -4 h to +2 h (stage nightly 02:45 UTC: deploy 04:45-22:45
 UTC; prod 00:45 UTC: deploy 02:45-20:45 UTC), and queue the prices backfill right after the switch (step 3). The job
@@ -899,7 +906,7 @@ the repo) for this before the stage deploy; nothing in the repo changes for it.
 `orion-2026.11.12.1` runs on schema 8. It reads `flow_usd_v`, which prefers a CoinGecko `prices` row but falls back to
 a stored price of any source (the newest within 6 h at or before the hour, `0005_tokens_prices.sql`). Its report takes
 that view USD for a row with every hour priced (`usd_basis` `hourly`) whose day starts within 90 days of its
-`fetched_at` (`pricedHourlyAtIngest`), and the stored `value` for every other row. After step 8 (no CoinGecko rows
+`fetched_at` (`pricedHourlyAtIngest`), and the stored `value` for every other row. After step 8a (no CoinGecko rows
 left) the view prices those hourly rows from the chain rows the backfill wrote, and `value` elsewhere is the one step 6
 repriced: the figures stay chain-priced until that release's own nightly scans and hourly `levels` write CoinGecko
 prices and `price_usd` rows again (which the view then prefers). A rollback between steps 3 and 8 (CoinGecko rows still

@@ -11,7 +11,7 @@ import type { TransferLog } from '../../src/ingest/transport/rpc.js';
 import type { WrittenObservation } from '../../src/ingest/types.js';
 import { evaluateWatches } from '../../src/ingest/watch.js';
 import { defaultRoutes, GENESIS_TS, harness, NOW, STATS, type Harness } from '../helpers/fetchHarness.js';
-import { POOL } from '../helpers/ingestAsset.js';
+import { POOL, writeMiniHome } from '../helpers/ingestAsset.js';
 import { watchAsset, watchAssetYaml } from '../helpers/watchAsset.js';
 import { testCliContext, useTestDb } from '../helpers/db.js';
 import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
@@ -167,7 +167,7 @@ describe('orion data fetch: watches', () => {
     const h = world();
     const orion = (...args: string[]) => buildProgram(ctx).parseAsync(args, { from: 'user' });
     await orion('init');
-    writeFileSync(join(home, 'assets', 'mini.yaml'), watchAssetYaml({ above: 20 }));
+    writeMiniHome(home, 'mini', watchAssetYaml({ above: 20 }));
     await insertObservation(testDb(), { provenance: testProvenance('api'), assetId: 'mini', metricKey: 'stats_price', observedAt: '2026-09-18T12:00:00Z', value: 9.5, fetchedAt: '2026-09-18T12:00:00Z' });
     lines.length = 0;
     await orion('data', 'fetch', 'mini', '--dry-run');

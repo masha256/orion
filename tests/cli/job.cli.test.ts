@@ -7,7 +7,7 @@ import { buildProgram } from '../../src/cli/program.js';
 import { listJobs, PRICES_BACKFILL_MAX_ATTEMPTS } from '../../src/db/jobs.js';
 import { loadPrices } from '../../src/prices/config.js';
 import { testCliContext, useTestDb } from '../helpers/db.js';
-import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
+import { INGEST_ASSET_YAML, writeMiniHome } from '../helpers/ingestAsset.js';
 
 const db = useTestDb();
 const NOW = '2026-11-03T02:00:00.000Z';
@@ -22,7 +22,7 @@ function home(): string {
   const h = mkdtempSync(join(tmpdir(), 'orion-job-cli-'));
   dirs.push(h);
   mkdirSync(join(h, 'assets'));
-  writeFileSync(join(h, 'assets', 'mini.yaml'), INGEST_ASSET_YAML);
+  writeMiniHome(h, 'mini', INGEST_ASSET_YAML);
   return h;
 }
 

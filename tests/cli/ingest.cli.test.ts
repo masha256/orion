@@ -4,11 +4,21 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildProgram } from '../../src/cli/program.js';
 import { testCliContext, useTestDb } from '../helpers/db.js';
-import { harness, NOW, STATS } from '../helpers/fetchHarness.js';
+import { harness, MINI_REF, NOW, STATS } from '../helpers/fetchHarness.js';
+import { feedCalls } from '../helpers/livePrices.js';
 import type { Route } from '../helpers/fakeHttp.js';
-import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
+import { INGEST_ASSET_YAML, writeMiniHome } from '../helpers/ingestAsset.js';
 
 const testDb = useTestDb();
+
+/**
+ * The mini asset for these CLI tests: a root with prices.yaml refuses a CoinGecko price (Rulings R24, R32(a)), so its
+ * price_usd reads price.token on the mini token's prices.yaml entry (its Chainlink feed answering 10, as CoinGecko did
+ * before), with the same stats cross-check: what these tests exercise (a source, its check, anomalies) is the fetch.
+ */
+const MINI_YAML = INGEST_ASSET_YAML.replace('source: { type: coingecko, id: mini-token, field: price }', `source: { type: adapter, name: price.token, params: { ref: "${MINI_REF}" } }`);
+if (MINI_YAML === INGEST_ASSET_YAML) throw new Error('ingest.cli: the price_usd source moved');
+const FEEDS = { ...feedCalls(`0x${'a'.repeat(40)}`, 10, Math.floor(NOW.getTime() / 1000) - 600), ...feedCalls(`0x${'b'.repeat(40)}`, 10, Math.floor(NOW.getTime() / 1000) - 600) };
 
 let home: string;
 let routes: Record<string, Route>;
@@ -17,7 +27,7 @@ let stderr: string[];
 async function orion(...args: string[]): Promise<string> {
   const lines: string[] = [];
   const ctx = testCliContext(home, { stdout: (l) => lines.push(l), now: () => NOW, ingestDeps: () => h.deps, stderr: (l) => stderr.push(l) });
-  const h = harness(testDb(), { routes });
+  const h = harness(testDb(), { routes, calls: FEEDS });
   const program = buildProgram(ctx);
   await program.parseAsync(args, { from: 'user' });
   return lines.join('\n');
@@ -30,7 +40,7 @@ async function orionExit(...args: string[]): Promise<{ out: string; exitCodes: n
   const ctx = testCliContext(home, {
     stdout: (l) => lines.push(l), now: () => NOW, ingestDeps: () => h.deps, stderr: (l) => stderr.push(l), setExitCode: (c) => exitCodes.push(c),
   });
-  const h = harness(testDb(), { routes });
+  const h = harness(testDb(), { routes, calls: FEEDS });
   await buildProgram(ctx).parseAsync(args, { from: 'user' });
   return { out: lines.join('\n'), exitCodes };
 }
@@ -40,23 +50,25 @@ beforeEach(async () => {
   routes = {};
   stderr = [];
   await orion('init');
-  writeFileSync(join(home, 'assets', 'mini.yaml'), INGEST_ASSET_YAML);
+  writeMiniHome(home, 'mini', MINI_YAML);
 });
 
 describe('orion data fetch', () => {
   it('fetches one asset, writes observations, and reports each source', async () => {
     const result = JSON.parse(await orion('data', 'fetch', 'mini', '--json'));
     expect(result.outcome).toBe('ok');
-    expect(result.sources.map((s: { sourceId: string }) => s.sourceId)).toContain('coingecko');
+    expect(result.sources.map((s: { sourceId: string }) => s.sourceId)).toContain('coingecko'); // circulating_supply
+    expect(result.sources.map((s: { sourceId: string }) => s.sourceId)).toContain('adapter:price.token');
     const shown = JSON.parse(await orion('data', 'show', 'mini', 'price_usd', '--json'));
-    expect(shown[0]).toMatchObject({ value: 10, source: 'api' });
+    expect(shown[0]).toMatchObject({ value: 10, source: 'onchain' }); // price.token: the feed read at the run block
     expect(stderr.some((l) => /transfer_flow.*2026-09-18: 0 transfers/.test(l))).toBe(true);
   });
 
   it('prints a readable summary', async () => {
     const text = await orion('data', 'fetch', 'mini');
     expect(text).toMatch(/^MINI fetch ok$/m);
-    expect(text).toMatch(/ok\s+coingecko\s+wrote price_usd, circulating_supply/);
+    expect(text).toMatch(/ok\s+coingecko\s+wrote circulating_supply/);
+    expect(text).toMatch(/ok\s+adapter:price\.token\s+wrote price_usd/);
     expect(text).toMatch(/check price_usd vs http_json:.*10 vs 10\.1 \(1\.00% within 2%\)/);
   });
 
@@ -92,7 +104,7 @@ describe('orion data sources', () => {
   it('shows each sourced metric, its cross-checks, the last fetch outcome, and the age of the value in force', async () => {
     const before = JSON.parse(await orion('data', 'sources', 'mini', '--json'));
     expect(before.find((r: { metric: string }) => r.metric === 'price_usd')).toEqual({
-      metric: 'price_usd', type: 'coingecko', sourceId: 'coingecko', crossChecks: [{ sourceId: `http_json:${STATS}`, tolerancePct: 2 }],
+      metric: 'price_usd', type: 'adapter', sourceId: 'adapter:price.token', crossChecks: [{ sourceId: `http_json:${STATS}`, tolerancePct: 2 }],
       lastFetch: null, valueInForce: null,
     });
     expect(before.some((r: { metric: string }) => r.metric === 'revenue_run_rate_usd')).toBe(false);
@@ -101,10 +113,11 @@ describe('orion data sources', () => {
     const after = JSON.parse(await orion('data', 'sources', 'mini', '--json'));
     const price = after.find((r: { metric: string }) => r.metric === 'price_usd');
     expect(price.lastFetch).toEqual({ at: NOW.toISOString(), status: 'ok', error: null });
-    expect(price.valueInForce).toEqual({ value: 10, observedAt: NOW.toISOString(), ageDays: 0 });
+    // price.token observes at the run block (1 s before NOW in the harness chain).
+    expect(price.valueInForce).toMatchObject({ value: 10, observedAt: new Date(NOW.getTime() - 1000).toISOString() });
     const flow = after.find((r: { metric: string }) => r.metric === 'flow_usd.fees');
     expect(flow.valueInForce.ageDays).toBeCloseTo(0.5, 9); // the last complete day ended at midnight, twelve hours before NOW
-    expect(await orion('data', 'sources', 'mini')).toMatch(/price_usd\s+coingecko\s+last fetch ok\s+value 10 \(0\.0 days old\)/);
+    expect(await orion('data', 'sources', 'mini')).toMatch(/price_usd\s+adapter:price\.token\s+last fetch ok\s+value 10 \(0\.0 days old\)/);
   });
 });
 

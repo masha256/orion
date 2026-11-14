@@ -41,6 +41,9 @@ function home(): string {
   dirs.push(h);
   mkdirSync(join(h, 'assets'));
   writeFileSync(join(h, 'assets', 'rpx.yaml'), YAML);
+  // The RPX token's prices.yaml entry (Ruling R32(a): its price.token and usd flow need one).
+  writeFileSync(join(h, 'prices.yaml'), `"${REF}":\n  symbol: RPX\n  decimals: 18\n  chain: eip155:8453\n  valid_from: "2026-09-01"\n` +
+    `  primary: { kind: chainlink, feed: "0x${'a'.repeat(40)}" }\n  check: { kind: chainlink, feed: "0x${'b'.repeat(40)}", tolerance_pct: 2 }\n`);
   return h;
 }
 
@@ -78,7 +81,7 @@ describe('orion data reprice / rebuild-price-levels / purge-prices', () => {
     expect(dry.exit).toEqual([3]);
     expect(dry.out.split('\n')).toEqual([
       'RPX reprice (dry run), every day:',
-      '  flow_usd.burn: 2 row(s): 1 repriced (value sum 21.00 -> 20.00), 0 unchanged, 1 refused; skipped: none',
+      '  flow_usd.burn: 2 row(s): 1 repriced (value sum 21.00 -> 20.00), 0 unchanged, 1 refused; skipped: none; inactive: 0 superseded/rejected CoinGecko-priced row(s), kept as written',
       `    REFUSED #${gap} 2026-10-04: 0 of 1 hours with an amount priced`,
       `dry run: nothing written; --yes reprices (one transaction per day) after exporting to ${join(h, 'repriced')}`,
     ]);

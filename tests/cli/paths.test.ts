@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import { orionEnv, readRelease, resolvePaths } from '../../src/cli/paths.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
+import { loadAsset } from '../../src/config/load.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const RELEASE = { tag: 'orion-2026.11.02.1', commit: '0123456789abcdef0123456789abcdef01234567', schema: 1, built_at: '2026-11-02T10:00:00.000Z' };
@@ -150,4 +151,21 @@ describe('the CLI process', () => {
     expect(r.exit).toBe(0);
     expect(JSON.parse(r.stdout)).toEqual(['mini']);
   }, 30_000);
+
+  it('paths: a release root, not ORION_HOME, supplies prices.yaml (Phase 3 R2 Task 1 minor, Ruling R32)', () => {
+    const root = releaseRoot();
+    mkdirSync(join(root, 'assets'));
+    writeFileSync(join(root, 'prices.yaml'), readFileSync(join(ROOT, 'prices.yaml')));
+    writeFileSync(join(root, 'assets', 'lit.yaml'), readFileSync(join(ROOT, 'assets', 'lit.yaml')));
+    // ORION_HOME holds the same asset and no prices.yaml: were it the config root, lit would be refused.
+    const home = scratch('orion-home-');
+    mkdirSync(join(home, 'assets'));
+    writeFileSync(join(home, 'assets', 'lit.yaml'), readFileSync(join(ROOT, 'assets', 'lit.yaml')));
+    const p = resolvePaths({ ORION_HOME: home, ORION_ENV_FILE: join(home, '.env') }, join(root, 'dist', 'cli'));
+    expect(p.configRoot).toBe(root);
+    const loaded = loadAsset(p.configRoot, 'lit');
+    expect(loaded.prices?.size).toBeGreaterThan(0);
+    expect(loaded.hash).toBe(loadAsset(ROOT, 'lit').hash);
+    expect(() => loadAsset(home, 'lit')).toThrow(/prices\.yaml/);
+  });
 });

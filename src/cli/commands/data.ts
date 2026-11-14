@@ -89,7 +89,7 @@ function repriceLines(r: RepriceResult, exportDir: string): string[] {
     ...r.remapped.map((m) => `  remap ${m.from} -> ${m.to}: ${m.rows} row(s)`),
     ...r.perMetric.flatMap((m) => [
       `  ${m.metric}: ${m.rows} row(s): ${m.repriced} repriced (value sum ${usd(m.oldSum)} -> ${usd(m.newSum)}), ${m.unchanged} unchanged, ` +
-        `${m.refused.length} refused; skipped: ${skipped(m.skipped)}`,
+        `${m.refused.length} refused; skipped: ${skipped(m.skipped)}; inactive: ${m.inactiveCoingeckoRows} superseded/rejected CoinGecko-priced row(s), kept as written`,
       ...m.refused.map((x) => `    REFUSED #${x.id} ${x.day}: ${x.reason}`),
     ]),
     ...r.derived.map((d) => `  derived ${d.metric}: ${d.rows} row(s), ${d.recomputed} recomputed, ${d.unchanged} unchanged, ${d.incomplete} with an incomplete window`),

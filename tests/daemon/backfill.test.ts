@@ -1,4 +1,5 @@
-import { copyFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, rmSync, writeFileSync } from 'node:fs';
+import { MINI_REF } from '../helpers/fetchHarness.js';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -277,6 +278,23 @@ describe('backfill job', () => {
       `ORION BACKFILL dev MINI started: ${METRIC}, flow_usd.fees, 3 days`,
       `ORION BACKFILL dev MINI done in 0 min (3 days): ${METRIC} ${rows[METRIC]} rows, flow_usd.fees ${rows['flow_usd.fees']} rows; partial: ${check} failed`,
     ]);
+  });
+
+  it('backfill: op fetch posts the price breaches of its own writes, at most 20 plus one summary line (M1)', async () => {
+    const w = world();
+    const run = levelsContext(testDb(), w.root, '2026-09-19T12:00:00.000Z');
+    const first = Date.parse('2026-09-17T00:00:00.000Z');
+    const breaches = Array.from({ length: 22 }, (_, i) => ({ ref: MINI_REF, hourMs: first + i * 3_600_000, gapPct: 2.5, check: 'chain:chainlink' }));
+    const f = recordingFetch(async (db, loaded, now, deps, opts) => ({ ...(await fetchAsset(db, loaded, now, deps, opts)), priceBreaches: breaches }));
+    const out = await handlerIn(run.ctx, f.fn)(backfillJob(), run.ctx);
+    expect(out.status).toBe('done');
+    const watch = (i: number) => `ORION WATCH dev price MINI ${new Date(first + i * 3_600_000).toISOString()}: +2.50% vs chain:chainlink`;
+    expect(run.posts.slice(1, -1)).toEqual([
+      ...Array.from({ length: 20 }, (_, i) => watch(i)),
+      'ORION WATCH dev price backfill: 2 more breaches not posted (22 this run); the prices rows carry check_gap_pct',
+    ]);
+    expect(run.posts[0]).toMatch(/^ORION BACKFILL dev MINI started/);
+    expect(run.posts.at(-1)).toMatch(/^ORION BACKFILL dev MINI done/);
   });
 
   it('backfill: a job without an asset fails', async () => {
@@ -563,6 +581,20 @@ describe('backfill op: prices (Phase 3 R2 Task 7)', () => {
     ]);
     expect(await testDb().all('SELECT id FROM anomalies')).toEqual([]);
   });
+
+  for (const [what, text] of [['missing', null], ['empty', ''], ['comment-only', '# no entries yet\n']] as const) {
+    it(`prices: a ${what} prices.yaml fails the job with one ALERT line, never a done with nothing written (Ruling R32(c))`, async () => {
+      const w = pricesWorld();
+      if (text === null) rmSync(join(w.root, 'prices.yaml'));
+      else writeFileSync(join(w.root, 'prices.yaml'), text);
+      const run = levelsContext(testDb(), w.root, CLEAR);
+      const f = fakeWriter((refs) => emptyResult(refs));
+      const out = await makeBackfillHandler({ writer: f.fn, priceDeps: priceDepsOn(baseChain(CLEAR)) })(pricesJob({ op: 'prices', from: '2026-11-04' }), run.ctx);
+      expect(out).toMatchObject({ status: 'failed', error: 'invalid_price_config: prices.yaml has no entries' });
+      expect(run.posts).toEqual(['ORION ALERT dev backfill prices failed: invalid_price_config: prices.yaml has no entries']);
+      expect(f.calls).toEqual([]);
+    });
+  }
 
   it('prices: a chain the writer stopped fails the job with one ALERT line (a re-queued job resumes)', async () => {
     const w = pricesWorld();

@@ -1,3 +1,5 @@
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { parseAssetYaml, type LoadedAsset } from '../../src/config/load.js';
 
 export const TOKEN = '0x1111111111111111111111111111111111111111';
@@ -96,6 +98,24 @@ const CG_PRICE_USD = `  price_usd:
  */
 export const PRICED_INGEST_ASSET_YAML = INGEST_ASSET_YAML.replace(CG_PRICE_USD, '  price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }\n');
 if (PRICED_INGEST_ASSET_YAML === INGEST_ASSET_YAML) throw new Error('PRICED_INGEST_ASSET_YAML: the price_usd block moved');
+
+/** The mini token's prices.yaml entry (its usd flows are valued at it): what a config root needs since Ruling R32(a). */
+export const MINI_PRICES_YAML = `"eip155:8453/0x1111111111111111111111111111111111111111":\n  symbol: MINI\n  decimals: 18\n  chain: eip155:8453\n  valid_from: "2026-09-01"\n` +
+  `  primary: { kind: chainlink, feed: "0x${'a'.repeat(40)}" }\n  check: { kind: chainlink, feed: "0x${'b'.repeat(40)}", tolerance_pct: 2 }\n`;
+
+/**
+ * An asset YAML as a config root with prices.yaml takes it (Rulings R24, R32): INGEST_ASSET_YAML's CoinGecko price_usd
+ * (and its cross-check) becomes the hand-entered price_usd of PRICED_INGEST_ASSET_YAML; any other YAML is unchanged.
+ */
+export function forPricedRoot(yaml: string): string {
+  return yaml.replace(CG_PRICE_USD, '  price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }\n');
+}
+
+/** Writes `assets/<id>.yaml` (forPricedRoot) and the mini prices.yaml into `home` (Ruling R32(a): a usd flow needs its entry). */
+export function writeMiniHome(home: string, id: string, yaml: string): void {
+  writeFileSync(join(home, 'assets', `${id}.yaml`), forPricedRoot(yaml));
+  writeFileSync(join(home, 'prices.yaml'), MINI_PRICES_YAML);
+}
 
 export function ingestAsset(): LoadedAsset {
   return parseAssetYaml(INGEST_ASSET_YAML);

@@ -64,6 +64,12 @@ export interface RepriceMetric {
   /** Sum of value before and after, over the repriced rows. */
   oldSum: number;
   newSum: number;
+  /**
+   * Ruling R33: superseded or rejected rows (in range) of the CoinGecko-priced classes (a transfer scan, a Solana
+   * supply-drop chain day): never rewritten (history no report reads), counted so the dry run shows what keeps its
+   * write-time CoinGecko value; Mike decides keep vs purge (R8 at the latest).
+   */
+  inactiveCoingeckoRows: number;
 }
 
 export interface RepriceDerived {
@@ -287,7 +293,7 @@ async function planReprice(db: Db, loaded: LoadedAsset, from: string | undefined
 
   const perMetric = new Map<string, RepriceMetric>();
   const metricOf = (m: string): RepriceMetric => {
-    if (!perMetric.has(m)) perMetric.set(m, { metric: m, rows: 0, repriced: 0, unchanged: 0, refused: [], skipped: {}, oldSum: 0, newSum: 0 });
+    if (!perMetric.has(m)) perMetric.set(m, { metric: m, rows: 0, repriced: 0, unchanged: 0, refused: [], skipped: {}, oldSum: 0, newSum: 0, inactiveCoingeckoRows: 0 });
     return perMetric.get(m)!;
   };
   const flows: Write[] = [];
@@ -303,6 +309,16 @@ async function planReprice(db: Db, loaded: LoadedAsset, from: string | undefined
   };
   const isMarked = (r: Row): boolean => r.locator?.repriced !== undefined && r.locator?.repriced !== null;
   for (const r of all) if (isMarked(r)) markDay(r.metric_key, dayOf(r.observed_at));
+  // R33: the superseded/rejected rows in range, classified as an active row would be; those of a CoinGecko-priced class
+  // (priced or refused, not skipped by design) are counted, never written.
+  const inactive = (await db.all<Row>(
+    `SELECT ${ROW_COLS} FROM observations WHERE asset_id = $1 AND NOT (${ACTIVE}) AND period_days IS NOT NULL AND starts_with(metric_key, 'flow_usd.') ORDER BY observed_at, id`,
+    [asset],
+  )).map((r) => ({ ...r, observed_at: iso(r.observed_at) })).filter((r) => inRange(dayOf(r.observed_at)));
+  for (const r of inactive) {
+    const c = await classify(r);
+    if (c.kind !== 'skip') metricOf(r.metric_key).inactiveCoingeckoRows++;
+  }
   const newValue = new Map<number, number>();
   for (const r of rows) {
     const m = metricOf(r.metric_key);

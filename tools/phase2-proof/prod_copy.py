@@ -7,7 +7,8 @@ snapshot: since the Phase 1.5 cutover prod is Postgres on venus, and nothing may
 Prod is only ever read through orion-remote's `sql-ro` verb (prod_ro.py: a READ ONLY transaction as orion_prod_ro).
 <P> (a new directory inside $TMPDIR) receives:
   schema            p2proof_<UTC stamp, lowercase>, written before anything is created in Postgres (cleanup.py reads it)
-  old/, new/        homes. old/ gets the OLD release's assets/ personas/ skills/, new/ the worktree's; each has a
+  old/, new/        homes. old/ gets the OLD release's assets/ personas/ skills/ (and prices.yaml when it has one), new/
+                    the worktree's (prices.yaml included, Ruling R32(e)); each has a
                     mode-600 .env of two lines, ORION_DATABASE_URL (orion_dev) and ORION_DB_SCHEMA (the same schema)
   migrate-old.json  `db migrate --breaking --json` by the OLD release (ORION_HOME=<P>/old, ORION_ENV_FILE=<P>/old/.env):
                     the schema then sits at the release's migration level, which must equal prod's
@@ -39,6 +40,7 @@ from prod_ro import ProdRoError, Truncated, make_sql_ro, quote_ident, quote_lite
 DEV_URL = "postgresql://orion_dev@/orion_dev?host=/var/run/postgresql"
 SCHEMA_RE = re.compile(r"^p2proof_[0-9a-z_]+$")
 CONFIG_DIRS = ("assets", "personas", "skills")
+PRICES_FILE = "prices.yaml"
 FIRST_PAGE = 400
 SKIP_TABLES = ("schema_migrations",)  # written by the old release's own `db migrate`
 
@@ -186,12 +188,16 @@ def sum_mismatches(prod, local):
 
 
 def make_homes(P, release, worktree, schema):
-    """old/ <- the release's config, new/ <- the worktree's; a two-line mode-600 .env in each."""
+    """old/ <- the release's config, new/ <- the worktree's (prices.yaml too, when present); a two-line mode-600 .env in each."""
     for side, src in (("old", Path(release)), ("new", Path(worktree))):
         home = Path(P) / side
         home.mkdir()
         for d in CONFIG_DIRS:
             shutil.copytree(src / d, home / d)
+        # Ruling R32(e): prices.yaml (from R2 on) beside assets/, from the same config source; a home without one
+        # refuses its chain-priced assets. The old release (before R2) has none, so its home gets none.
+        if (src / PRICES_FILE).is_file():
+            shutil.copy2(src / PRICES_FILE, home / PRICES_FILE)
         fd = os.open(home / ".env", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
             os.write(fd, f"ORION_DATABASE_URL={DEV_URL}\nORION_DB_SCHEMA={schema}\n".encode())

@@ -11,7 +11,7 @@ import { listWatchStates, putWatchStates } from '../../db/watchState.js';
 import { realFetchDeps } from '../../ingest/deps.js';
 import { priceWriterOf, type FetchDeps, type FetchResult } from '../../ingest/run.js';
 import type { BlockRef, RpcFactory } from '../../ingest/transport/rpc.js';
-import { formatPriceBreach, levelMetricKeys, toLatestLevels } from '../../levels/levels.js';
+import { breachLines, levelMetricKeys, toLatestLevels } from '../../levels/levels.js';
 import { levelWatchRule, watchTransitions } from '../../levels/watchTransitions.js';
 import { formatWatchCleared, slackClean } from '../../notify/format.js';
 import { OrionError, type WatchRule } from '../../types.js';
@@ -148,7 +148,8 @@ export function makeRefreshHandler(o: RefreshHandlerOptions = {}): JobHandler {
           }
           // The price check breaches the fetch's own price writes completed (a flow scan writing its hours itself: a later
           // levels run finds them stored and never reports them), each once, as the levels job posts them.
-          const breaches = (fetched.priceBreaches ?? []).map((b) => formatPriceBreach(ctx.env, loaded.prices?.get(b.ref)?.symbol ?? b.ref, b));
+          // At most PRICE_WATCH_MAX lines, then one counting the rest (breachLines, as every price-writing job).
+          const breaches = breachLines(ctx.env, 'refresh', fetched.priceBreaches ?? [], loaded.prices);
           if (breaches.length > 0) {
             result.breaches = breaches;
             result.undelivered ??= [];

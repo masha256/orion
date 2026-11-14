@@ -333,6 +333,7 @@ describe('assets/lit.yaml', () => {
     const orion = (...args: string[]) => buildProgram(ctx).parseAsync(args, { from: 'user' });
     await orion('init');
     writeFileSync(join(home, 'assets', 'lit.yaml'), readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8'));
+    writeFileSync(join(home, 'prices.yaml'), readFileSync(`${ROOT}/prices.yaml`, 'utf8')); // Ruling R32(a)
     await fetchAsset(w.db, LOADED, NOW, w.deps);
     lines.length = 0;
     await orion('report', 'yield', 'lit', '--json');

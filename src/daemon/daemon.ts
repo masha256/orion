@@ -100,7 +100,7 @@ export const IDLE_POLL_MS = 5_000;
 export const LEASE_RENEW_MS = 60_000;
 /** The heartbeat row is written at each job start and end, and at least this often (never on the 30 s watchdog beat). */
 export const HEARTBEAT_INTERVAL_MS = 15 * 60_000;
-/** When a handler throws: a retry after 10 min, if the kind has attempts left (only `refresh` does). */
+/** When a handler throws: a retry after 10 min, if the job has attempts left (a `refresh` its second; an op `prices` backfill up to PRICES_BACKFILL_MAX_ATTEMPTS). */
 export const RESTART_RETRY_MS = 600_000;
 export const JOB_ERROR_MAX = 300;
 /** The singleton's lock id, in the run-lock key space (schema-scoped; no asset id contains a colon). */

@@ -4,10 +4,12 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { TickReport } from '../../src/app/tickReport.js';
 import { buildProgram } from '../../src/cli/program.js';
+import { insertObservation } from '../../src/db/observations.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
+import { testProvenance } from '../helpers/provenance.js';
 import { testCliContext, useTestDb } from '../helpers/db.js';
 import { harness, NOW } from '../helpers/fetchHarness.js';
-import { INGEST_ASSET_YAML, METRICS_END } from '../helpers/ingestAsset.js';
+import { INGEST_ASSET_YAML, METRICS_END, writeMiniHome } from '../helpers/ingestAsset.js';
 
 const testDb = useTestDb();
 
@@ -38,11 +40,13 @@ beforeEach(async () => {
   stderr = [];
   exitCodes = [];
   await orion('init');
-  writeFileSync(join(home, 'assets', 'mini.yaml'), `${INGEST_ASSET_YAML}${REPORTING}`);
+  writeMiniHome(home, 'mini', `${INGEST_ASSET_YAML}${REPORTING}`);
 });
 
 describe('orion tick', () => {
   it('prints one report line, appends it to ticks.jsonl, writes no signals.jsonl, summarises the fetch on stderr, and exits 0', async () => {
+    // price_usd is hand-entered in a root with prices.yaml (Rulings R24, R32(a)): the day's price, as CoinGecko gave it before.
+    await insertObservation(testDb(), { provenance: testProvenance('api'), assetId: 'mini', metricKey: 'price_usd', observedAt: '2026-09-18T12:00:00Z', value: 10, fetchedAt: '2026-09-18T12:00:00Z' });
     const text = await orion('tick', 'mini');
     expect(text.split('\n')).toHaveLength(1);
     const report = JSON.parse(text) as TickReport;
@@ -63,7 +67,7 @@ describe('orion tick', () => {
 
   it('exits 2 when the report cannot be built, still printing it, and 1 with an error report when the ingest cannot run', async () => {
     const volume = '  flow_usd.volume: { type: flow, unit: usd, staleness_days: 45, monitor_only: true }\n' + METRICS_END;
-    writeFileSync(join(home, 'assets', 'mini.yaml'), `${INGEST_ASSET_YAML.replace(METRICS_END, volume)}${REPORTING}  volume: [flow_usd.volume]\n`);
+    writeMiniHome(home, 'mini', `${INGEST_ASSET_YAML.replace(METRICS_END, volume)}${REPORTING}  volume: [flow_usd.volume]\n`);
     const unavailable = JSON.parse(await orion('tick', 'mini')) as TickReport;
     expect(unavailable).toMatchObject({ outcome: 'completed', holder_yield: null, report_error: { code: 'report_unavailable' }, ingest: { outcome: 'ok' } });
     expect(exitCodes).toEqual([2]);

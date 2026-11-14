@@ -33,10 +33,12 @@ undrains and restarts the daemon, logs `recovered ...` to deploys.log and prints
                                   <rung> one of the nine source types (RUNGS)
   data reprice <a> [--from <YYYY-MM-DD>] [--yes]
                                   a dry run without --yes; --yes exports the rows to ~/home/repriced/, then rewrites the
-                                  CoinGecko-priced flow values from chain prices (one transaction per day)
+                                  CoinGecko-priced flow values from chain prices (one transaction per day); exit 3
+                                  when any row is refused (dry run and --yes; the refused rows are still listed)
   data rebuild-price-levels <a> [--yes]
                                   a dry run without --yes; --yes writes chain-priced price_usd/diem_price_usd rows over
-                                  the CoinGecko ones (deletes nothing)
+                                  the CoinGecko ones (deletes nothing); exit 3 when any row is refused (dry run and
+                                  --yes; the refused rows are still listed)
   data purge-prices --source coingecko [--yes]
                                   a dry run without --yes; --yes exports the prices rows to ~/home/purged/, then deletes
                                   them and the unreferenced coingecko:* tokens rows (refused while a row still uses one)

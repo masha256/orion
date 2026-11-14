@@ -242,6 +242,28 @@ class HomesTest(unittest.TestCase):
                 self.assertEqual(env.read_text().splitlines(), [
                     f"ORION_DATABASE_URL={prod_copy.DEV_URL}", "ORION_DB_SCHEMA=p2proof_20261107t000000z"])
 
+    def test_prices_yaml_is_copied_into_each_home_from_its_config_source_when_present(self):
+        # Ruling R32(e): the new home (the worktree's config) needs prices.yaml or its chain-priced assets are refused;
+        # the old release (orion-2026.11.12.1) has none, so its home gets none.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for src in ("rel", "wt"):
+                for d in ("assets", "personas", "skills"):
+                    (root / src / d).mkdir(parents=True)
+            (root / "wt" / "prices.yaml").write_text("# worktree prices\n")
+            P = root / "p"
+            P.mkdir()
+            prod_copy.make_homes(P, root / "rel", root / "wt", "p2proof_20261107t000000z")
+            self.assertEqual((P / "new" / "prices.yaml").read_text(), "# worktree prices\n")
+            self.assertFalse((P / "old" / "prices.yaml").exists())
+            # Both sources have one: each home gets its own source's.
+            (root / "rel" / "prices.yaml").write_text("# release prices\n")
+            P2 = root / "p2"
+            P2.mkdir()
+            prod_copy.make_homes(P2, root / "rel", root / "wt", "p2proof_20261107t000000z")
+            self.assertEqual((P2 / "old" / "prices.yaml").read_text(), "# release prices\n")
+            self.assertEqual((P2 / "new" / "prices.yaml").read_text(), "# worktree prices\n")
+
     def test_the_old_release_migrates_the_fresh_scratch_schema_with_breaking(self):
         # 0006 is `-- breaking`: without --breaking the old release refuses a fresh schema (migration_breaking).
         with tempfile.TemporaryDirectory() as tmp:
