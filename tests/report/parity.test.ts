@@ -49,6 +49,15 @@ describe('parity map (ruling R7)', () => {
     }
   });
 
+  it.each(PARITY_ASSETS)('%s: a report whose USD days are on basis daily_mean (Phase 3 R2) reads the same pairs', (id) => {
+    const input = syntheticInput(repoAsset(id));
+    const priceBasis = new Map([...input.daily].filter(([m]) => m.startsWith('flow_usd.')).map(([m, days]) => [m, new Map([...days.keys()].map((d) => [d, 'daily_mean' as const]))]));
+    const v2 = JSON.parse(JSON.stringify(incomeStatementV2({ ...input, statementDaily: input.daily, priceBasis }))) as IsV2;
+    expect(JSON.stringify(v2)).toContain('"priceBasis":"daily_mean"');
+    const pairs = PARITY[id](v2, structuredClone(V1_GOLDEN[id]));
+    expect(pairs.filter(([, a, b]) => !(rel(a, b) <= REL))).toEqual([]);
+  });
+
   it('covers revenue, each holders line, holder flow, protocol, costs, payout ratio, every yield and dilution for each asset', () => {
     for (const id of PARITY_ASSETS) {
       const asset = repoAsset(id);

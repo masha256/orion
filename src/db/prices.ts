@@ -136,10 +136,11 @@ export async function listPrices(db: Db, tokenRef: string): Promise<StoredPrice[
   return rows.map((r) => ({ tokenRef: r.token_ref, ts: new Date(r.ts).toISOString(), priceUsd: r.price_usd, source: r.source, fetchedAt: new Date(r.fetched_at).toISOString() }));
 }
 
-/** One group of compared days: legacy `value` vs the USD re-priced from the hourly buckets (or the dollar amount). */
+/** One group of compared days: legacy `value` vs the chain view's USD (hourly buckets, the daily mean, or the dollar amount). */
 export interface GapStats {
   days: number;
   sumLegacy: number;
+  /** The chain view's USD of the same days (named for the hourly buckets most days are priced from). */
   sumHourly: number;
   /** (sumHourly / sumLegacy - 1) x 100; null when sumLegacy is 0. */
   gapPct: number | null;
@@ -156,61 +157,47 @@ export interface GapStats {
 
 export interface UsdComparison extends GapStats {
   metric: string;
-  /** Days within the hourly series (spec §4): their legacy USD was priced per transfer at hourly points. */
+  /** Days the chain view prices (flow_usd_chain_v basis hourly, daily_mean or usd_native): the days in the sums. */
   hourlyCovered: number;
+  /** Of those, days priced as the day's amount x the mean of its 24 chain hours (no hourly buckets: Solana's supply drop). */
+  dailyMean: number;
   /** Of those, days whose amount is already dollars (token 'usd'). */
   usdNative: number;
-  /** Days whose legacy USD was priced at DAILY points (written more than 90 days after the day, plan correction 13), re-priced hourly now. */
-  beyondHourly: number;
-  beyond: GapStats;
-  /** Days with tokens but an hour with an amount and no price (beyond the hourly price history): they keep `value`. */
+  /** Days with tokens but an hour with an amount and no chain price: they keep `value`. */
   unpriced: number;
   /** Days with no token columns (not backfilled, or a DefiLlama series): they keep `value`. */
   noTokens: number;
-  /** Days with tokens but no hourly buckets (Solana's supply drop): they keep `value`. */
+  /** Days with tokens but no hourly buckets and not all 24 chain hours priced: they keep `value`. */
   noHourly: number;
 }
 
-/** CoinGecko answers `days=90` with hourly points (src/ingest/flow.ts loadPrices): older transfers were priced daily. */
-export const HOURLY_SERIES_DAYS = 90;
-
 /**
- * Whether a daily row's stored USD (`value`) was priced from CoinGecko's hourly series at ingest: its day (observed_at
- * less 24 h) starts no more than HOURLY_SERIES_DAYS before its fetched_at. Older rows (a backfill reaching past the
- * hourly series) were priced from daily points (plan correction 13). The one rule for compareUsd's within/beyond split
- * and for the report's basis.
+ * The basis a report figure is priced on (Phase 3 R2, plan P3), from flow_usd_chain_v: `hourly` (tokens x the chain
+ * writer's hourly prices, every hour with an amount priced), `daily_mean` (a day's amount without hourly buckets x the
+ * mean of its 24 chain hours), `usd_native` (a first-party API's dollars), else `legacy` (the stored USD: some hour
+ * unpriced, no hourly buckets and not 24 chain hours, no tokens, e.g. DefiLlama and derived rows). There is no ingest
+ * gate: a row's basis depends on the prices stored now, not on how its `value` was priced when it was written.
  */
-export function pricedHourlyAtIngest(observedAt: string, fetchedAt: string): boolean {
-  return Date.parse(observedAt) - 86_400_000 >= Date.parse(fetchedAt) - HOURLY_SERIES_DAYS * 86_400_000;
+export type PriceBasis = 'hourly' | 'daily_mean' | 'usd_native' | 'legacy';
+
+/** flow_usd_chain_v's `usd_basis` folded to the report's four labels. */
+export function priceBasisOf(usdBasis: string): PriceBasis {
+  if (usdBasis === 'usd_native' || usdBasis === 'hourly' || usdBasis === 'daily_mean') return usdBasis;
+  return 'legacy';
 }
 
 /**
- * The basis a report figure is priced on (Task 8, after G2): `hourly` (flow_usd_v's tokens x hourly prices, every hour
- * with an amount priced, on a row whose stored USD was itself hourly-priced at ingest), `usd_native` (a first-party API's
- * dollars), else `legacy` (the stored USD: some hour unpriced, no hourly buckets, no tokens, e.g. DefiLlama and derived
- * rows, or a row backfilled with daily prices, which G2 did not sign off at hourly prices).
- */
-export type PriceBasis = 'hourly' | 'usd_native' | 'legacy';
-
-/** flow_usd_v's `usd_basis` and the row's ingest pricing (pricedHourlyAtIngest) folded to the report's three labels. */
-export function priceBasisOf(usdBasis: string, hourlyAtIngest: boolean): PriceBasis {
-  if (usdBasis === 'usd_native') return 'usd_native';
-  return usdBasis === 'hourly' && hourlyAtIngest ? 'hourly' : 'legacy';
-}
-
-/**
- * Per active USD flow row of the asset (flow_usd_v), the USD the report's income statement reads and its basis: the
- * view's `usd` where the basis is hourly or usd_native, else the stored `value` (`legacy_usd`). Keyed by observation id,
- * so the caller selects the rows exactly as it selects `value` rows. Read-only.
+ * Per active USD flow row of the asset (flow_usd_chain_v), the USD the report's income statement reads and its basis:
+ * the view's `usd` where the basis is hourly, daily_mean or usd_native, else the stored `value` (`legacy_usd`). Keyed by
+ * observation id, so the caller selects the rows exactly as it selects `value` rows. Read-only.
  */
 export async function listFlowUsd(db: Db, assetId: string): Promise<Map<number, { usd: number; basis: PriceBasis }>> {
-  const rows = await db.all<{ id: number; observed_at: string; fetched_at: string; usd: number; legacy_usd: number; usd_basis: string }>(
-    `SELECT v.id, v.observed_at, o.fetched_at, v.usd, v.legacy_usd, v.usd_basis
-     FROM flow_usd_v v JOIN observations o ON o.id = v.id WHERE v.asset_id = $1`, [assetId],
+  const rows = await db.all<{ id: number; usd: number; legacy_usd: number; usd_basis: string }>(
+    'SELECT id, usd, legacy_usd, usd_basis FROM flow_usd_chain_v WHERE asset_id = $1', [assetId],
   );
   const out = new Map<number, { usd: number; basis: PriceBasis }>();
   for (const r of rows) {
-    const basis = priceBasisOf(r.usd_basis, pricedHourlyAtIngest(r.observed_at, r.fetched_at));
+    const basis = priceBasisOf(r.usd_basis);
     out.set(Number(r.id), { usd: basis === 'legacy' ? r.legacy_usd : r.usd, basis });
   }
   return out;
@@ -236,8 +223,7 @@ function gapStats(rows: { legacy: number; hourly: number }[]): GapStats {
 
 /**
  * Per USD flow metric of the asset, over the active daily rows observed in (now - days, now]: the legacy USD (`value`)
- * against the view's re-priced USD (flow_usd_v), with days inside the hourly series and days beyond it (correction 13)
- * reported apart. Read-only; for gate G2, nothing else reads the view.
+ * against the chain view's USD (flow_usd_chain_v), every priced day in one group. Read-only.
  */
 export async function compareUsd(
   db: Db, asset: { id: string; metrics: Record<string, { type: string; unit: string }> }, days: number, opts: { now?: Date } = {},
@@ -246,17 +232,16 @@ export async function compareUsd(
   const from = new Date(now.getTime() - days * 86_400_000).toISOString();
   const metrics = Object.entries(asset.metrics).filter(([, d]) => d.type === 'flow' && d.unit === 'usd').map(([k]) => k).sort();
   if (metrics.length === 0) return [];
-  const rows = await db.all<{ metric_key: string; observed_at: string; fetched_at: string; legacy_usd: number; usd: number; usd_basis: string }>(
-    `SELECT v.metric_key, v.observed_at, o.fetched_at, v.legacy_usd, v.usd, v.usd_basis
-     FROM flow_usd_v v JOIN observations o ON o.id = v.id
-     WHERE v.asset_id = $1 AND v.metric_key = ANY($2::text[]) AND v.period_days = 1 AND v.observed_at > $3 AND v.observed_at <= $4
-     ORDER BY v.metric_key, v.observed_at`,
+  const rows = await db.all<{ metric_key: string; legacy_usd: number; usd: number; usd_basis: string }>(
+    `SELECT metric_key, legacy_usd, usd, usd_basis FROM flow_usd_chain_v
+     WHERE asset_id = $1 AND metric_key = ANY($2::text[]) AND period_days = 1 AND observed_at > $3 AND observed_at <= $4
+     ORDER BY metric_key, observed_at`,
     [asset.id, metrics, from, now.toISOString()],
   );
   return metrics.map((metric) => {
     const mine = rows.filter((r) => r.metric_key === metric);
-    const within: { legacy: number; hourly: number }[] = [];
-    const beyond: { legacy: number; hourly: number }[] = [];
+    const priced: { legacy: number; hourly: number }[] = [];
+    let dailyMean = 0;
     let usdNative = 0;
     let unpriced = 0;
     let noTokens = 0;
@@ -266,14 +251,11 @@ export async function compareUsd(
       else if (r.usd_basis === 'legacy_no_tokens') noTokens++;
       else if (r.usd_basis === 'legacy_no_hourly') noHourly++;
       else {
-        const pricedDaily = r.usd_basis === 'hourly' && !pricedHourlyAtIngest(r.observed_at, r.fetched_at);
-        (pricedDaily ? beyond : within).push({ legacy: r.legacy_usd, hourly: r.usd });
+        priced.push({ legacy: r.legacy_usd, hourly: r.usd });
         if (r.usd_basis === 'usd_native') usdNative++;
+        if (r.usd_basis === 'daily_mean') dailyMean++;
       }
     }
-    return {
-      metric, ...gapStats(within), days: mine.length, hourlyCovered: within.length, usdNative, beyondHourly: beyond.length, beyond: gapStats(beyond),
-      unpriced, noTokens, noHourly,
-    };
+    return { metric, ...gapStats(priced), days: mine.length, hourlyCovered: priced.length, dailyMean, usdNative, unpriced, noTokens, noHourly };
   });
 }

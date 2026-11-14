@@ -78,12 +78,12 @@ function purgeLines(r: PurgeResult, sourceType: string | undefined, exportDir: s
 function compareLines(assetId: string, days: number, rows: UsdComparison[]): string[] {
   if (rows.length === 0) return [`${assetId.toUpperCase()}: no USD flow metric`];
   return [
-    `${assetId.toUpperCase()} legacy USD vs hourly buckets, ${days} days (within the hourly series; beyond it apart, plan correction 13)`,
+    `${assetId.toUpperCase()} legacy USD vs the chain-priced USD (flow_usd_chain_v), ${days} days`,
     ...rows.flatMap((r) => [
-      `  ${r.metric}: ${r.hourlyCovered} day(s) within: legacy ${usd(r.sumLegacy)} vs hourly ${usd(r.sumHourly)} (${pct(r.gapPct)}), day gap p50 ${pct(r.p50DayGapPct)} p90 ${pct(r.p90DayGapPct)}` +
-        `${r.usdNative > 0 ? ` (${r.usdNative} dollar-native)` : ''}${r.legacyZeroDays > 0 ? `; ${r.legacyZeroDays} day(s) with legacy 0 and hourly not 0, counted at 100%` : ''}`,
-      `    beyond: ${r.beyondHourly} day(s): legacy ${usd(r.beyond.sumLegacy)} vs hourly ${usd(r.beyond.sumHourly)} (${pct(r.beyond.gapPct)}); ` +
-        `keep value: ${r.unpriced} unpriced, ${r.noTokens} without tokens, ${r.noHourly} without hourly buckets`,
+      `  ${r.metric}: ${r.hourlyCovered} day(s) priced: legacy ${usd(r.sumLegacy)} vs chain ${usd(r.sumHourly)} (${pct(r.gapPct)}), day gap p50 ${pct(r.p50DayGapPct)} p90 ${pct(r.p90DayGapPct)}` +
+        `${r.dailyMean > 0 ? ` (${r.dailyMean} on the daily mean)` : ''}${r.usdNative > 0 ? ` (${r.usdNative} dollar-native)` : ''}` +
+        `${r.legacyZeroDays > 0 ? `; ${r.legacyZeroDays} day(s) with legacy 0 and chain not 0, counted at 100%` : ''}`,
+      `    keep value: ${r.unpriced} unpriced, ${r.noTokens} without tokens, ${r.noHourly} without hourly buckets`,
     ]),
   ];
 }
@@ -234,7 +234,7 @@ export function registerData(program: Command, ctx: CliContext): void {
 
   data
     .command('compare-usd <asset>')
-    .description('per USD flow metric: the stored USD (value) vs the hourly token buckets x hourly prices (flow_usd_v), days within and beyond the hourly series apart; read-only')
+    .description('per USD flow metric: the stored USD (value) vs the chain-priced USD (flow_usd_chain_v: hourly buckets, or the daily mean, x chain/first-party prices); read-only')
     .option('--days <n>', 'window in days, ending now', '91')
     .option('--json', 'JSON output')
     .action(async (assetId: string, opts: { days: string; json?: boolean }) => {

@@ -38,9 +38,9 @@ export type IsMethod = 'measured' | 'derived' | 'disclosed' | 'not_measured';
 /**
  * Task 8: what a line's USD days are priced on, over every day its figures read: the window and growth's prior window
  * (a line's growth reads the same series as its annualized figure, over both windows). One label when every such day of
- * every USD series the line reads has it (`hourly`: tokens x hourly prices; `usd_native`: a first-party API's dollars;
- * `legacy`: the stored USD), `mixed` otherwise, null when the line reads no daily USD series (a level, a line not
- * measured).
+ * every USD series the line reads has it (`hourly`: tokens x hourly prices; `daily_mean`: a day amount x the mean
+ * of its 24 chain hours; `usd_native`: a first-party API's dollars; `legacy`: the stored USD), `mixed` otherwise, null
+ * when the line reads no daily USD series (a level, a line not measured).
  */
 export type LinePriceBasis = PriceBasis | 'mixed' | null;
 
@@ -1017,7 +1017,7 @@ export function incomeStatementV2(input: ReportInput): IsV2 {
       price, metric: STD_METRICS.price, sourceType: priceDef ? sourceTypeOf(priceDef, asset.metrics) : null, source: priceDef ? sourceLabelOf(priceDef) : null,
       day, asOf: lv.asOf ?? null, flows: dayBasis === undefined
         ? "each flow day's USD at that day's price (the stored value)"
-        : "each flow day's USD from its tokens x hourly prices where every hour is priced and the stored value was itself hourly-priced at ingest (the G2-signed days), else the stored value (per line: priceBasis)",
+        : "each flow day's USD from its tokens x the chain/first-party hourly prices where every hour with an amount is priced (hourly), or its day amount x the mean of the day's 24 chain hours (daily_mean), else the stored value (per line: priceBasis)",
     },
     checks: (input.checks ?? []).map((c) => ({
       id: c.checkId, type: c.type, status: c.status, lhs: c.lhs, rhs: c.rhs, gapPct: c.gapPct,

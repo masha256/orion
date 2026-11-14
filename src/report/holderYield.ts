@@ -50,8 +50,8 @@ export interface ReportInput {
    */
   provenance?: Map<string, Map<string, DayProvenance>>;
   /**
-   * Task 8 (after G2): the statement's daily series, priced from the stored tokens x hourly prices where a row's hourly
-   * coverage is full (flow_usd_v) and its stored USD was hourly-priced at ingest, else the stored USD. Absent: the
+   * Task 8 (after G2), Phase 3 R2: the statement's daily series, priced from the stored tokens x the chain writer's prices
+   * (flow_usd_chain_v: every hour with an amount priced, or a day amount x its 24-hour mean), else the stored USD. Absent: the
    * statement reads `daily`. The header's figures (yields, dilution, supply) are on the same series as the statement.
    */
   statementDaily?: Map<string, Map<string, number>>;

@@ -136,6 +136,8 @@ export const PARITY_PATHS: Record<string, PathPair[]> = {
 /**
  * PARITY[a](v2, v1): each pair's two values, read from the same paths compare.py reads in the report JSON. `v1` is an
  * old release's v1 report JSON (`report yield --json` before D9, or `--legacy` before Task 11): this release has no v1.
+ * Every pair reads a number, never a line's `priceBasis` label, so a report on any basis (hourly, daily_mean since
+ * Phase 3 R2, usd_native, legacy, mixed) reads the same fields.
  */
 export const PARITY: Record<string, (v2: IsV2, v1: unknown) => [label: string, a: number | null, b: number | null][]> = Object.fromEntries(
   Object.entries(PARITY_PATHS).map(([a, pairs]) => [

@@ -20,6 +20,9 @@ import { ALL_ASSETS, repoAsset, syntheticInput } from '../helpers/syntheticRepor
  * The only paths that moved: CAKE/UNI incomeStatement.volume (not_measured: DefiLlama's gross fees removed), VVV's
  * business-line crossCheck (DefiLlama's dailyRevenue removed), and the provenance.thirdParty / provenance.sources / flags
  * entries that named the removed LIT buyback and VVV burn/revenue cross-checks. No revenue, holder, yield or dilution path.
+ *
+ * Phase 3 R2 Task 5 rewrote one path only: incomeStatement.priceBasis.flows (the chain-priced basis text, no ingest gate)
+ * in the 39 loader-shaped entries (<asset>/loader, /prior, /growing-loader); inputs unchanged, every other path identical.
  */
 const GOLDEN = fileURLToPath(new URL('./golden/v2-report-13.json', import.meta.url));
 

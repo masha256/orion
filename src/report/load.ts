@@ -77,11 +77,11 @@ async function dailyOf(db: Db, assetId: string, metricKey: string): Promise<Map<
 }
 
 /**
- * Task 8 (after G2): income statement v2's daily series. The rows `dailyOf` reads (`rowsOf`: the same days), each valued from
- * flow_usd_v: tokens x hourly prices where every hour with an amount is priced and the row's stored USD was itself
- * hourly-priced at ingest (`pricedHourlyAtIngest`: the G2-signed days), a first-party API's dollars where the row is
- * usd-native, else the stored `value`; `basis` says which per day. A metric that is not a USD flow (tokens, a
- * level) is not in the view: its days keep `value` and get no basis. Periodic streams are left to `periodicDaily`
+ * Task 8 (after G2), Phase 3 R2: income statement v2's daily series. The rows `dailyOf` reads (`rowsOf`: the same days),
+ * each valued from flow_usd_chain_v (chain/first-party prices only): tokens x hourly prices where every hour with an amount
+ * is priced, a day amount x the mean of its 24 chain hours (daily_mean), a first-party API's dollars where the row is
+ * usd-native, else the stored `value`; `basis` says which per day (no ingest gate). A metric that is not a USD flow
+ * (tokens, a level) is not in the view: its days keep `value` and get no basis. Periodic streams are left to `periodicDaily`
  * (stored value, basis legacy).
  */
 async function statementSeries(

@@ -1,7 +1,8 @@
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { insertObservation } from '../../src/db/observations.js';
-import { compareUsd, evmTokenRef, HOURLY_SERIES_DAYS, listFlowUsd, listPrices, pricedHourlyAtIngest, upsertPrices, upsertToken, USD_TOKEN } from '../../src/db/prices.js';
+import { compareUsd, evmTokenRef, listFlowUsd, listPrices, priceBasisOf, upsertPrices, upsertToken, USD_TOKEN } from '../../src/db/prices.js';
+import { readFileSync } from 'node:fs';
 import { parseMarketChart } from '../../src/ingest/flow.js';
 import { COINGECKO_PRICE_SOURCE, fetchHourlyRange, hourlyPriceRows } from '../../src/prices/coingeckoHourly.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
@@ -152,48 +153,160 @@ describe('the flow_usd_v naming rule', () => {
   });
 });
 
-describe('pricedHourlyAtIngest (correction 13: one rule for compareUsd and the report)', () => {
-  it('a day starting within HOURLY_SERIES_DAYS of its fetch was priced hourly at ingest; earlier, daily', () => {
-    expect(HOURLY_SERIES_DAYS).toBe(90);
-    const fetched = '2026-11-05T06:00:00Z';
-    // observed_at = day end; the day starts 24 h earlier. Boundary: start == fetched - 90 d is within.
-    expect(pricedHourlyAtIngest('2026-08-08T06:00:00Z', fetched)).toBe(true);
-    expect(pricedHourlyAtIngest('2026-08-08T05:59:59.999Z', fetched)).toBe(false);
-    expect(pricedHourlyAtIngest('2026-11-05T00:00:00Z', fetched)).toBe(true);
-    expect(pricedHourlyAtIngest('2026-07-02T00:00:00Z', fetched)).toBe(false);
+const chainView = async (id: number) =>
+  await testDb().one<{ usd: number; usd_basis: string; legacy_usd: number; usd_hourly: number | null; hours_priced: number; hours_needed: number }>(
+    'SELECT usd, usd_basis, legacy_usd, usd_hourly, hours_priced, hours_needed FROM flow_usd_chain_v WHERE id = $1', [id],
+  );
+
+/** Prices of the chain writer's sources (src/prices/config.ts methodSource): 'chain:<kind>' and 'first_party:<venue>'. */
+const CHAINLINK = 'chain:chainlink';
+
+describe('flow_usd_chain_v (Task 5, plan P3)', () => {
+  it('has flow_usd_v\'s columns, in order; 0008 creates it and leaves flow_usd_v alone (rollback reads it)', async () => {
+    const cols = async (v: string) =>
+      (await testDb().all<{ c: string; t: string }>(
+        `SELECT column_name AS c, data_type AS t FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 ORDER BY ordinal_position`, [v],
+      )).map((x) => `${x.c}:${x.t}`);
+    const old = await cols('flow_usd_v');
+    expect(old.length).toBeGreaterThan(10);
+    expect(await cols('flow_usd_chain_v')).toEqual(old);
+    const sql = readFileSync(fileURLToPath(new URL('../../src/db/pg/migrations/0008_chain_prices.sql', import.meta.url)), 'utf8');
+    expect(sql).toMatch(/^CREATE VIEW flow_usd_chain_v AS$/m);
+    expect(sql).not.toMatch(/(VIEW|TABLE)\s+flow_usd_v\b/);
+    expect(sql).not.toMatch(/^-- breaking/m);
   });
 
-  it('listFlowUsd: a fully priced row fetched > 90 days after its day reads its stored USD, labelled legacy', async () => {
+  it('CoinGecko rows only: legacy_unpriced in the new view, hourly in the old one (untouched)', async () => {
     await upsertToken(testDb(), TOKEN);
     const hourly = Array.from({ length: 24 }, (_, h) => (h === 12 ? 10 : 0));
-    await upsertPrices(testDb(), REF, 'coingecko', dayPrices('2026-07-01', () => 2), '2026-11-05T06:00:00Z');
+    await upsertPrices(testDb(), REF, 'coingecko', dayPrices('2026-10-01', () => 2), '2026-10-02T00:00:00Z');
+    const row = await flowRow('2026-10-01', 19.9, { amount: 10, hourly });
+    expect(await view(row.id)).toMatchObject({ usd: 20, usd_basis: 'hourly' });
+    expect(await chainView(row.id)).toEqual({ usd: 19.9, usd_basis: 'legacy_unpriced', legacy_usd: 19.9, usd_hourly: null, hours_priced: 0, hours_needed: 1 });
+  });
+
+  it('chain rows: hourly at the chain price (the old view still prefers CoinGecko); a first_party row prices too', async () => {
+    await upsertToken(testDb(), TOKEN);
+    const hourly = Array.from({ length: 24 }, (_, h) => (h === 3 ? 2 : h === 20 ? 1.5 : 0));
+    await upsertPrices(testDb(), REF, 'coingecko', dayPrices('2026-10-01', () => 99), '2026-10-02T00:00:00Z');
+    await upsertPrices(testDb(), REF, CHAINLINK, dayPrices('2026-10-01', (h) => 10 + h), '2026-10-02T00:00:00Z');
+    const row = await flowRow('2026-10-01', 70.9, { amount: 3.5, hourly });
+    expect(await chainView(row.id)).toEqual({ usd: 2 * 13 + 1.5 * 30, usd_basis: 'hourly', legacy_usd: 70.9, usd_hourly: 71, hours_priced: 24, hours_needed: 2 });
+    expect(await view(row.id)).toMatchObject({ usd: 3.5 * 99, usd_basis: 'hourly' });
+    await upsertPrices(testDb(), REF, 'first_party:hyperliquid', dayPrices('2026-10-02', () => 4), '2026-10-03T00:00:00Z');
+    const fp = await flowRow('2026-10-02', 13, { amount: 3.5, hourly });
+    expect(await chainView(fp.id)).toMatchObject({ usd: 14, usd_basis: 'hourly' });
+  });
+
+  it('a CoinGecko row newer than the chain row is ignored; the 6-hour rule holds on chain rows', async () => {
+    await upsertToken(testDb(), TOKEN);
+    const hourly = Array.from({ length: 24 }, (_, h) => (h === 12 ? 10 : 0));
+    await upsertPrices(testDb(), REF, CHAINLINK, [{ ts: '2026-10-01T08:00:00.000Z', priceUsd: 5 }], '2026-10-02T00:00:00Z');
+    await upsertPrices(testDb(), REF, 'coingecko', [{ ts: '2026-10-01T12:00:00.000Z', priceUsd: 99 }], '2026-10-02T00:00:00Z');
+    const row = await flowRow('2026-10-01', 49, { amount: 10, hourly });
+    expect(await chainView(row.id)).toMatchObject({ usd: 50, usd_basis: 'hourly' });
+    // 06:00 is more than 6 hours before 13:00: a gap, never a price (the CoinGecko row at 12:00 does not fill it).
+    const late = Array.from({ length: 24 }, (_, h) => (h === 13 ? 10 : 0));
+    const day2 = await flowRow('2026-10-01', 48, { amount: 10, hourly: late }, { metricKey: 'flow_usd.other' });
+    await testDb().run("DELETE FROM prices WHERE source = $1 AND ts = '2026-10-01T08:00:00Z'", [CHAINLINK]);
+    await upsertPrices(testDb(), REF, CHAINLINK, [{ ts: '2026-10-01T06:00:00.000Z', priceUsd: 5 }], '2026-10-02T00:00:00Z');
+    expect(await chainView(day2.id)).toMatchObject({ usd: 48, usd_basis: 'legacy_unpriced' });
+  });
+
+  it('two chain sources at one hour: the newest write (fetched_at) wins (ruling R6)', async () => {
+    await upsertToken(testDb(), TOKEN);
+    const hourly = Array.from({ length: 24 }, (_, h) => (h === 12 ? 10 : 0));
+    await upsertPrices(testDb(), REF, 'chain:v2_pool_twap', [{ ts: '2026-10-01T12:00:00.000Z', priceUsd: 7 }], '2026-10-03T00:00:00Z');
+    await upsertPrices(testDb(), REF, CHAINLINK, [{ ts: '2026-10-01T12:00:00.000Z', priceUsd: 5 }], '2026-10-02T00:00:00Z');
+    const row = await flowRow('2026-10-01', 1, { amount: 10, hourly });
+    expect(await chainView(row.id)).toMatchObject({ usd: 70, usd_basis: 'hourly' });
+    await upsertPrices(testDb(), REF, CHAINLINK, [{ ts: '2026-10-01T12:00:00.000Z', priceUsd: 5 }], '2026-10-04T00:00:00Z');
+    expect(await chainView(row.id)).toMatchObject({ usd: 50, usd_basis: 'hourly' });
+  });
+
+  it('a PUMP-style row (amount, no hourly buckets): 24 chain hours priced in the day -> daily_mean (amount x mean); 23 -> legacy_no_hourly', async () => {
+    await upsertToken(testDb(), TOKEN);
+    // Prices 2 and 4 alternating: mean 3. A CoinGecko row in the missing hour never completes the day.
+    await upsertPrices(testDb(), REF, 'chain:pumpswap_reserves', dayPrices('2026-10-01', (h) => (h % 2 === 0 ? 2 : 4)), '2026-10-02T00:00:00Z');
+    await upsertPrices(testDb(), REF, 'chain:pumpswap_reserves', dayPrices('2026-10-02', (h) => (h % 2 === 0 ? 2 : 4)).filter((_, h) => h !== 7), '2026-10-03T00:00:00Z');
+    await upsertPrices(testDb(), REF, 'coingecko', dayPrices('2026-10-02', () => 3), '2026-10-03T00:00:00Z');
+    const full = await flowRow('2026-10-01', 29, { amount: 10, hourly: null });
+    const gap = await flowRow('2026-10-02', 28, { amount: 10, hourly: null });
+    expect(await chainView(full.id)).toEqual({ usd: 30, usd_basis: 'daily_mean', legacy_usd: 29, usd_hourly: null, hours_priced: 24, hours_needed: 24 });
+    expect(await chainView(gap.id)).toEqual({ usd: 28, usd_basis: 'legacy_no_hourly', legacy_usd: 28, usd_hourly: null, hours_priced: 23, hours_needed: 24 });
+    // The old view has no daily_mean.
+    expect(await view(full.id)).toMatchObject({ usd: 29, usd_basis: 'legacy_no_hourly' });
+    // The day is the row's 24 hours [observed_at - 24 h, observed_at): the next day's first hour is not in it.
+    await upsertPrices(testDb(), REF, 'chain:pumpswap_reserves', [{ ts: '2026-10-03T00:00:00.000Z', priceUsd: 100 }], '2026-10-04T00:00:00Z');
+    expect(await chainView(gap.id)).toMatchObject({ usd_basis: 'legacy_no_hourly', hours_priced: 23 });
+    expect(await chainView(full.id)).toMatchObject({ usd: 30, usd_basis: 'daily_mean' });
+    // Two sources at one hour count once (newest write wins): still 24 hours, mean moves with the winner.
+    await upsertPrices(testDb(), REF, 'chain:meteora_dlmm', [{ ts: '2026-10-01T00:00:00.000Z', priceUsd: 26 }], '2026-10-05T00:00:00Z');
+    expect(await chainView(full.id)).toMatchObject({ usd: 10 * (3 + 24 / 24), usd_basis: 'daily_mean', hours_priced: 24 });
+    // A dollar row stays usd_native; a row with no tokens keeps its value.
+    await upsertToken(testDb(), USD_TOKEN);
+    const usd = await flowRow('2026-10-01', 7.25, { amount: 7.25, hourly: null, ref: 'usd' }, { metricKey: 'flow_usd.lighter' });
+    const none = await flowRow('2026-10-01', 8, undefined, { metricKey: 'flow_usd.llama' });
+    expect(await chainView(usd.id)).toMatchObject({ usd: 7.25, usd_basis: 'usd_native', hours_priced: 0, hours_needed: 0 });
+    expect(await chainView(none.id)).toMatchObject({ usd: 8, usd_basis: 'legacy_no_tokens', hours_priced: 0, hours_needed: 0 });
+  });
+
+  it('daily_mean hours do not depend on the session TimeZone (DST change day 2026-11-01)', async () => {
+    await upsertToken(testDb(), TOKEN);
+    await upsertPrices(testDb(), REF, CHAINLINK, [...dayPrices('2026-10-31', () => 99), ...dayPrices('2026-11-01', () => 3)], '2026-11-02T00:00:00Z');
+    const row = await flowRow('2026-11-01', 1, { amount: 10, hourly: null });
+    const underLa = await testDb().tx(async (t) => {
+      await t.run("SET LOCAL TIME ZONE 'America/Los_Angeles'");
+      return await t.one('SELECT usd, usd_basis, hours_priced FROM flow_usd_chain_v WHERE id = $1', [row.id]);
+    });
+    expect(underLa).toEqual({ usd: 30, usd_basis: 'daily_mean', hours_priced: 24 });
+  });
+});
+
+describe('listFlowUsd / priceBasisOf (the ingest gate removed)', () => {
+  it('priceBasisOf folds the chain view\'s usd_basis to the report\'s four labels', () => {
+    expect(priceBasisOf('hourly')).toBe('hourly');
+    expect(priceBasisOf('daily_mean')).toBe('daily_mean');
+    expect(priceBasisOf('usd_native')).toBe('usd_native');
+    for (const b of ['legacy_unpriced', 'legacy_no_hourly', 'legacy_no_tokens']) expect(priceBasisOf(b)).toBe('legacy');
+  });
+
+  it('listFlowUsd reads flow_usd_chain_v: a fully chain-priced row fetched > 90 days after its day is hourly; CoinGecko-only is legacy', async () => {
+    await upsertToken(testDb(), TOKEN);
+    const hourly = Array.from({ length: 24 }, (_, h) => (h === 12 ? 10 : 0));
+    await upsertPrices(testDb(), REF, CHAINLINK, dayPrices('2026-07-01', () => 2), '2026-11-05T06:00:00Z');
     await upsertPrices(testDb(), REF, 'coingecko', dayPrices('2026-10-20', () => 2), '2026-11-05T06:00:00Z');
-    const beyond = await flowRow('2026-07-01', 30, { amount: 10, hourly }, { fetchedAt: '2026-11-05T06:00:00Z' });
-    const within = await flowRow('2026-10-20', 30, { amount: 10, hourly }, { fetchedAt: '2026-11-05T06:00:00Z' });
-    expect((await view(beyond.id))!.usd_basis).toBe('hourly'); // the view alone cannot tell
+    await upsertPrices(testDb(), REF, CHAINLINK, dayPrices('2026-10-21', () => 3), '2026-11-05T06:00:00Z');
+    const old = await flowRow('2026-07-01', 30, { amount: 10, hourly }, { fetchedAt: '2026-11-05T06:00:00Z' });
+    const cg = await flowRow('2026-10-20', 30, { amount: 10, hourly }, { fetchedAt: '2026-11-05T06:00:00Z' });
+    const mean = await flowRow('2026-10-21', 31, { amount: 10, hourly: null }, { metricKey: 'flow_usd.burn', fetchedAt: '2026-11-05T06:00:00Z' });
     const got = await listFlowUsd(testDb(), 'crv');
-    expect(got.get(beyond.id)).toEqual({ usd: 30, basis: 'legacy' });
-    expect(got.get(within.id)).toEqual({ usd: 20, basis: 'hourly' });
+    expect(got.get(old.id)).toEqual({ usd: 20, basis: 'hourly' });
+    expect(got.get(cg.id)).toEqual({ usd: 30, basis: 'legacy' });
+    expect(got.get(mean.id)).toEqual({ usd: 30, basis: 'daily_mean' });
   });
 });
 
 describe('compareUsd', () => {
-  it('compare-usd separates days beyond the hourly series (correction 13)', async () => {
+  it('compare-usd: legacy value vs the chain view\'s USD, every priced day in one group (no within/beyond split)', async () => {
     await upsertToken(testDb(), TOKEN);
     const hourly = (tokens: number) => Array.from({ length: 24 }, (_, h) => (h === 12 ? tokens : 0));
-    const fetchedAt = '2026-11-05T06:00:00Z'; // the nightly that wrote the rows: hourly CoinGecko reaches back 90 days from here
-    // Within the hourly series (written within 90 days of their day): priced 10 now, legacy within a cent or so.
+    const fetchedAt = '2026-11-05T06:00:00Z';
     for (const [day, legacy] of [['2026-10-20', 100.5], ['2026-10-21', 99], ['2026-10-22', 200]] as const) {
-      await upsertPrices(testDb(), REF, 'coingecko', dayPrices(day, () => 10), fetchedAt);
+      await upsertPrices(testDb(), REF, CHAINLINK, dayPrices(day, () => 10), fetchedAt);
       await flowRow(day, legacy, { amount: legacy === 200 ? 20 : 10, hourly: hourly(legacy === 200 ? 20 : 10) }, { fetchedAt });
     }
-    // Beyond it: a day written more than 90 days after it ended (its legacy USD came from daily points). Hourly prices
-    // exist now (the backfill fetched them), so it is re-priced, but reported apart.
-    await upsertPrices(testDb(), REF, 'coingecko', dayPrices('2026-07-01', () => 2), fetchedAt);
+    // A day written long after it ended: priced from the chain rows like any other (the 90-day ingest gate is gone).
+    await upsertPrices(testDb(), REF, CHAINLINK, dayPrices('2026-07-01', () => 2), fetchedAt);
     await flowRow('2026-07-01', 30, { amount: 10, hourly: hourly(10) }, { fetchedAt });
-    // Beyond the key's reach: no hourly price at all, so it keeps value (counted, not in either sum).
+    // CoinGecko prices only: unpriced in the chain view, it keeps value (counted, not in the sums).
+    await upsertPrices(testDb(), REF, 'coingecko', dayPrices('2026-06-01', () => 4), fetchedAt);
     await flowRow('2026-06-01', 40, { amount: 10, hourly: hourly(10) }, { fetchedAt });
-    // Not backfilled yet.
+    // A PUMP-style day priced on its 24 chain hours (daily_mean), one with 23 (no hourly), and one not backfilled.
+    await upsertPrices(testDb(), REF, CHAINLINK, dayPrices('2026-10-10', () => 3), fetchedAt);
+    await upsertPrices(testDb(), REF, CHAINLINK, dayPrices('2026-10-11', () => 3).slice(1), fetchedAt);
+    await flowRow('2026-10-10', 33, { amount: 10, hourly: null }, { fetchedAt });
+    await flowRow('2026-10-11', 33, { amount: 10, hourly: null }, { fetchedAt });
     await flowRow('2026-10-23', 50, undefined, { fetchedAt });
     // A tokens metric is not compared (its value is not USD).
     await flowRow('2026-10-20', 10, { amount: 10, hourly: hourly(10) }, { metricKey: 'flow_tokens.fees', fetchedAt });
@@ -201,27 +314,38 @@ describe('compareUsd', () => {
     const [row, ...rest] = await compareUsd(testDb(), { id: 'crv', metrics: { 'flow_usd.fees': { type: 'flow', unit: 'usd' }, 'flow_tokens.fees': { type: 'flow', unit: 'tokens' } } }, 200, { now: new Date('2026-11-05T12:00:00Z') });
     expect(rest).toEqual([]);
     expect(row).toMatchObject({
-      metric: 'flow_usd.fees', days: 6, hourlyCovered: 3, sumLegacy: 399.5, sumHourly: 400, gapPct: expect.closeTo((400 / 399.5 - 1) * 100, 9),
-      beyondHourly: 1, unpriced: 1, noTokens: 1,
-      beyond: { days: 1, sumLegacy: 30, sumHourly: 20, gapPct: expect.closeTo(-100 / 3, 9) },
+      metric: 'flow_usd.fees', days: 8, hourlyCovered: 5, dailyMean: 1, usdNative: 0, sumLegacy: 100.5 + 99 + 200 + 30 + 33, sumHourly: 100 + 100 + 200 + 20 + 30,
+      unpriced: 1, noTokens: 1, noHourly: 1,
     });
-    // Day gaps (absolute): 100.5 vs 100 (0.4975%), 99 vs 100 (1.0101%), 200 vs 200 (0).
-    expect(row!.p50DayGapPct).toBeCloseTo((0.5 / 100.5) * 100, 9);
-    expect(row!.p90DayGapPct).toBeCloseTo((1 / 99) * 100, 9);
+    expect(row!.gapPct).toBeCloseTo((450 / 462.5 - 1) * 100, 9);
+    expect(row).not.toHaveProperty('beyond');
+    expect(row).not.toHaveProperty('beyondHourly');
     // A shorter window leaves the old days out.
-    const [recent] = await compareUsd(testDb(), { id: 'crv', metrics: { 'flow_usd.fees': { type: 'flow', unit: 'usd' } } }, 20, { now: new Date('2026-11-05T12:00:00Z') });
-    expect(recent).toMatchObject({ days: 4, hourlyCovered: 3, beyondHourly: 0, unpriced: 0, noTokens: 1 });
+    const [recent] = await compareUsd(testDb(), { id: 'crv', metrics: { 'flow_usd.fees': { type: 'flow', unit: 'usd' } } }, 30, { now: new Date('2026-11-05T12:00:00Z') });
+    expect(recent).toMatchObject({ days: 6, hourlyCovered: 4, dailyMean: 1, unpriced: 0, noTokens: 1, noHourly: 1 });
   });
 
-  it('compare-usd counts a day whose legacy USD is 0 in the day-gap percentiles (100% when hourly is not 0)', async () => {
+  it('compare-usd counts a day whose legacy USD is 0 in the day-gap percentiles (100% when the new USD is not 0)', async () => {
     await upsertToken(testDb(), TOKEN);
     const hourly = (tokens: number) => Array.from({ length: 24 }, (_, h) => (h === 12 ? tokens : 0));
     const fetchedAt = '2026-11-05T06:00:00Z';
-    for (const day of ['2026-10-20', '2026-10-21', '2026-10-22']) await upsertPrices(testDb(), REF, 'coingecko', dayPrices(day, () => 10), fetchedAt);
+    for (const day of ['2026-10-20', '2026-10-21', '2026-10-22']) await upsertPrices(testDb(), REF, CHAINLINK, dayPrices(day, () => 10), fetchedAt);
     await flowRow('2026-10-20', 100, { amount: 10, hourly: hourly(10) }, { fetchedAt }); // 0%
     await flowRow('2026-10-21', 0, { amount: 0, hourly: hourly(0) }, { fetchedAt }); // 0 vs 0: 0%
     await flowRow('2026-10-22', 0, { amount: 1, hourly: hourly(1) }, { fetchedAt }); // 0 vs 10: 100%
     const [row] = await compareUsd(testDb(), { id: 'crv', metrics: { 'flow_usd.fees': { type: 'flow', unit: 'usd' } } }, 30, { now: new Date('2026-11-05T12:00:00Z') });
     expect(row).toMatchObject({ hourlyCovered: 3, sumLegacy: 100, sumHourly: 110, p50DayGapPct: 0, p90DayGapPct: 100, legacyZeroDays: 1 });
+  });
+
+  it('day-gap percentiles over every priced day: 100.5 vs 100, 99 vs 100, 200 vs 200', async () => {
+    await upsertToken(testDb(), TOKEN);
+    const hourly = (tokens: number) => Array.from({ length: 24 }, (_, h) => (h === 12 ? tokens : 0));
+    for (const [day, legacy] of [['2026-10-20', 100.5], ['2026-10-21', 99], ['2026-10-22', 200]] as const) {
+      await upsertPrices(testDb(), REF, CHAINLINK, dayPrices(day, () => 10), '2026-11-05T06:00:00Z');
+      await flowRow(day, legacy, { amount: legacy === 200 ? 20 : 10, hourly: hourly(legacy === 200 ? 20 : 10) });
+    }
+    const [row] = await compareUsd(testDb(), { id: 'crv', metrics: { 'flow_usd.fees': { type: 'flow', unit: 'usd' } } }, 30, { now: new Date('2026-11-05T12:00:00Z') });
+    expect(row!.p50DayGapPct).toBeCloseTo((0.5 / 100.5) * 100, 9);
+    expect(row!.p90DayGapPct).toBeCloseTo((1 / 99) * 100, 9);
   });
 });

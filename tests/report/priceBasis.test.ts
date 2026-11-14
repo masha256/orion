@@ -11,14 +11,17 @@ import { useTestDb } from '../helpers/db.js';
 import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
 /**
- * Task 8 (after G2): income statement v2 reads tokens x prices (flow_usd_v) where a row's hourly coverage is full, else
- * the stored USD; each line says which (`priceBasis`). Since Task 11 there is no v1 beside it.
+ * Task 8 (after G2): income statement v2 reads tokens x prices where a row's hourly coverage is full, else the stored USD;
+ * each line says which (`priceBasis`). Since Task 11 there is no v1 beside it. Since Phase 3 R2 (Task 5) the prices are
+ * the chain writer's (flow_usd_chain_v: sources chain:* / first_party:*), so the fixtures seed a chain source (ruling
+ * R17: the same values the CoinGecko rows had, so no figure moves); a CoinGecko row is never read.
  */
 const testDb = useTestDb();
 const asset = parseAssetYaml(MINI_REPORT_YAML).config; // window 10, revenue = holders = flow_usd.fees
 const REF = evmTokenRef(1, '0x00000000000000000000000000000000000000aa');
 const DAY = '2026-10-10';
 const YEAR = 365;
+const CHAIN = 'chain:chainlink';
 
 type Kind = 'hourly' | 'partial' | 'usd' | 'none';
 
@@ -35,7 +38,7 @@ async function seed(db: Db, last: string, kind: (i: number) => Kind, days = 25, 
     const k = kind(i);
     // 10 tokens in hour 12 (priced 10.5: 105 USD by the hour); `partial` also has 1 token in hour 3, never priced.
     const hourly = Array.from({ length: 24 }, (_, h) => (h === 12 ? 10 : k === 'partial' && h === 3 ? 1 : 0));
-    if (k === 'hourly' || k === 'partial') await upsertPrices(db, REF, 'coingecko', [{ ts: `${day}T12:00:00.000Z`, priceUsd: 10.5 }], end);
+    if (k === 'hourly' || k === 'partial') await upsertPrices(db, REF, CHAIN, [{ ts: `${day}T12:00:00.000Z`, priceUsd: 10.5 }], end);
     await insertObservation(db, {
       provenance: testProvenance(k === 'none' ? 'api' : 'onchain'), assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value: 100,
       fetchedAt: fetched?.(i) ?? end,
@@ -64,7 +67,9 @@ describe('v2 reads tokens x prices where hourly coverage is full (Task 8)', () =
     // The yields are on the statement's basis: the same daily series.
     expect(is.yields.cash).toBe(is.holderFlow.lines[0]!.yield);
     expect(is.yields.cash).toBe((10 * 105 * YEAR) / 10 / (1_000_000 * 2));
-    expect(is.priceBasis.flows).toMatch(/hourly/);
+    expect(is.priceBasis.flows).toBe(
+      "each flow day's USD from its tokens x the chain/first-party hourly prices where every hour with an amount is priced (hourly), or its day amount x the mean of the day's 24 chain hours (daily_mean), else the stored value (per line: priceBasis)",
+    );
   });
 
   it('without prices every row falls back to its stored USD, and says so; the header does not move', async () => {
@@ -92,17 +97,48 @@ describe('v2 reads tokens x prices where hourly coverage is full (Task 8)', () =
     expect(mixed.revenue.lines[0]!.priceBasis).toBe('mixed');
   });
 
-  it('a row backfilled with daily prices (its day starts > HOURLY_SERIES_DAYS before fetched_at) reads its stored USD even with full hourly prices', async () => {
+  it('no ingest gate: a row written long after its day reads the chain price like any other (hourly)', async () => {
     const db = testDb();
-    // Every row has full hourly coverage; the prior window's rows (i >= 10, window 10) were fetched long after their day,
-    // so their stored USD came from daily prices at ingest (correction 13, compareUsd's `beyond`): G2 never signed them off.
+    // The prior window's rows (i >= 10, window 10) were fetched months after their day; before R2 their stored USD was
+    // kept (pricedHourlyAtIngest). Now every fully chain-priced row reads tokens x the chain price.
     await seed(db, DAY, () => 'hourly', 25, (i) => (i >= 10 ? '2027-02-01T00:00:00.000Z' : `${addDays(DAY, -i + 1)}T00:00:00.000Z`));
     const r = await reportOf(db);
     const line = r.incomeStatement!.revenue.lines[0]!;
     expect(line.growth.current).toBe(10 * 105);
-    expect(line.growth.prior).toBe(10 * 100);
-    // The label covers every day the line's figures read: hourly now, legacy in growth's prior window.
+    expect(line.growth.prior).toBe(10 * 105);
+    expect(line.priceBasis).toBe('hourly');
+  });
+
+  it('CoinGecko rows are never read: the same prices under source coingecko leave every row on its stored USD', async () => {
+    const db = testDb();
+    await seed(db, DAY, () => 'hourly');
+    await db.run("UPDATE prices SET source = 'coingecko'");
+    const is = (await reportOf(db)).incomeStatement!;
+    expect(is.revenue.annualized).toBe((10 * 100 * YEAR) / 10);
+    expect(is.revenue.lines[0]!.priceBasis).toBe('legacy');
+  });
+
+  it('a day amount without hourly buckets (PUMP-style) and 24 chain hours: daily_mean, amount x the day\'s mean price', async () => {
+    const db = testDb();
+    await seed(db, DAY, () => 'none');
+    // Re-seed the window's rows as token amounts without buckets: 10 tokens a day, priced 10 and 11 alternately (mean 10.5).
+    await db.run('DELETE FROM observations WHERE metric_key = $1', ['flow_usd.fees']);
+    for (let i = 0; i < 25; i++) {
+      const day = addDays(DAY, -i);
+      const prices = Array.from({ length: 24 }, (_, h) => ({ ts: new Date(Date.parse(`${day}T00:00:00Z`) + h * 3_600_000).toISOString(), priceUsd: h % 2 === 0 ? 10 : 11 }));
+      await upsertPrices(db, REF, 'chain:pumpswap_reserves', i < 10 ? prices : prices.slice(1), `${addDays(DAY, 1)}T00:00:00.000Z`);
+      await insertObservation(db, {
+        provenance: testProvenance('onchain'), assetId: 'mini', metricKey: 'flow_usd.fees', observedAt: `${addDays(day, 1)}T00:00:00.000Z`, periodDays: 1, value: 100,
+        fetchedAt: `${addDays(DAY, 1)}T00:00:00.000Z`, tokens: { tokenRef: REF, amount: 10, hourlyAmounts: null },
+      });
+    }
+    const line = (await reportOf(db)).incomeStatement!.revenue.lines[0]!;
+    // The window's days (24 hours priced) read 105; growth's prior window (23 hours) keeps its stored 100.
+    expect(line.annualized).toBe((10 * 105 * YEAR) / 10);
+    expect(line.growth).toMatchObject({ current: 10 * 105, prior: 10 * 100 });
     expect(line.priceBasis).toBe('mixed');
+    await db.run("DELETE FROM observations WHERE metric_key = 'flow_usd.fees' AND observed_at <= $1", [`${addDays(DAY, -9)}T00:00:00.000Z`]);
+    expect((await reportOf(db)).incomeStatement!.revenue.lines[0]!.priceBasis).toBe('daily_mean');
   });
 
   it('priceBasis covers growth\'s prior window too: hourly now, legacy before is mixed', async () => {
@@ -139,7 +175,7 @@ describe('v2 reads tokens x prices where hourly coverage is full (Task 8)', () =
     const last = '2026-11-01';
     await seed(db, last, (i) => (i === 0 ? 'hourly' : 'none'));
     // A price 99 at 11:00 UTC: an hour bucket shifted one hour early (calendar-day arithmetic) would take it.
-    await upsertPrices(db, REF, 'coingecko', [{ ts: '2026-11-01T11:00:00.000Z', priceUsd: 99 }], '2026-11-02T00:00:00Z');
+    await upsertPrices(db, REF, CHAIN, [{ ts: '2026-11-01T11:00:00.000Z', priceUsd: 99 }], '2026-11-02T00:00:00Z');
     const want = ((9 * 100 + 105) * YEAR) / 10;
     const utc = (await reportOf(db, last)).incomeStatement!;
     expect(utc.revenue.annualized).toBe(want);

@@ -151,7 +151,7 @@ describe('orion data anomalies, resolve, ack', () => {
 });
 
 describe('orion data backfill-tokens / compare-usd', () => {
-  it('backfill-tokens re-scans under the run lock and reports; compare-usd prints the within and beyond groups', async () => {
+  it('backfill-tokens re-scans under the run lock and reports; compare-usd prints the priced days and the kept ones', async () => {
     await orion('data', 'fetch', 'mini', '--json');
     // The fetch wrote tokens already (dual write): nothing is left to fill, and nothing is refused.
     const dry = JSON.parse(await orion('data', 'backfill-tokens', 'mini', '--days', '3', '--dry-run', '--json'));
@@ -163,8 +163,9 @@ describe('orion data backfill-tokens / compare-usd', () => {
 
     const cmp = JSON.parse(await orion('data', 'compare-usd', 'mini', '--days', '91', '--json'));
     expect(cmp.map((r: { metric: string }) => r.metric)).toEqual(['flow_usd.fees', 'flow_usd.fees_programmatic']);
-    expect(cmp[0]).toMatchObject({ days: 3, hourlyCovered: 3, sumLegacy: 0, sumHourly: 0, beyondHourly: 0, noTokens: 0 });
-    expect(await orion('data', 'compare-usd', 'mini')).toMatch(/flow_usd\.fees: 3 day\(s\) within: legacy 0\.00 vs hourly 0\.00/);
+    expect(cmp[0]).toMatchObject({ days: 3, hourlyCovered: 3, dailyMean: 0, sumLegacy: 0, sumHourly: 0, noTokens: 0 });
+    expect(cmp[0]).not.toHaveProperty('beyondHourly');
+    expect(await orion('data', 'compare-usd', 'mini')).toMatch(/flow_usd\.fees: 3 day\(s\) priced: legacy 0\.00 vs chain 0\.00/);
   });
 
   it('backfill-tokens exits non-zero when a day was refused (and 0 otherwise)', async () => {
