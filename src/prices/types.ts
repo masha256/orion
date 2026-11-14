@@ -1,0 +1,48 @@
+import type { HttpTransport } from '../ingest/transport/http.js';
+import type { RpcTransport } from '../ingest/transport/rpc.js';
+
+/**
+ * Shared shapes of the Phase 3 R2 price writer (Ruling R3): the EVM readers (evmMethods.ts), the off-chain readers
+ * (Task 4) and the writer (Task 3) import from here, never from each other, so there is no import cycle.
+ */
+
+/** One ref's price for one hour bucket [H, H+1h), read at B(H+1h) (plan P2), with its check's outcome. */
+export interface HourPrice {
+  usd: number;
+  /** The primary's source: `chain:<kind>` or `first_party:<venue>` (methodSource). */
+  source: string;
+  /** (check - primary) / primary x 100; for a `bound` check the distance outside the band in % of the bound (0 inside).
+   * null when the check could not be read this hour (zero in-range liquidity, a failed call, a missing quote). */
+  checkGapPct: number | null;
+  /** The check's label: its source, plus its config label (`same_venue`, `no_independent_check`) when it has one. */
+  check: string;
+  /** JSON-safe: what was read (blocks, raw answers as strings, feed ages, the quote used) for the primary and the check. */
+  detail: Record<string, unknown>;
+}
+
+/** Solana reads for PUMP's price methods. Interface only: Task 4 implements it (and narrows the result types). */
+export interface SolanaPriceTransport {
+  getMultipleAccounts(keys: string[]): Promise<unknown>;
+  slotAt(tsSec: number): Promise<number>;
+  signaturesBefore(address: string, beforeSig: string | null, limit: number): Promise<unknown>;
+  getTransaction(sig: string): Promise<unknown>;
+}
+
+/** Everything the price writer reads through. `rpcFor` takes a price chain (`eip155:<id>`). */
+export interface PriceDeps {
+  rpcFor(chain: string): RpcTransport;
+  solana: SolanaPriceTransport;
+  http: HttpTransport;
+  now: Date;
+}
+
+/** What one writer run did (plan Task 3). */
+export interface WriteResult {
+  written: Record<string, number>;
+  skippedExisting: number;
+  missing: { ref: string; hourMs: number; reason: string }[];
+  breaches: { ref: string; hourMs: number; gapPct: number; check: string }[];
+  calls: { [chain: string]: number };
+  reachedMs: number | null;
+  stoppedByBudget: boolean;
+}

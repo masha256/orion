@@ -1,3 +1,4 @@
+import { reserveTwap, sideOf, sqrtPriceInQuote } from '../../prices/evmMethods.js';
 import { DAYS_PER_YEAR } from '../../types.js';
 import { firstBlockAtOrAfter, type BlockRef, type ContractCall } from '../transport/rpc.js';
 import type { SourceContext, SourceValue } from '../types.js';
@@ -96,10 +97,7 @@ async function side(ctx: SourceContext, pool: string, token: string): Promise<0 
     { address: pool, signature: view('token0'), functionName: 'token0' },
     { address: pool, signature: view('token1'), functionName: 'token1' },
   ]);
-  const want = BigInt(token);
-  if (t0 === want) return 0;
-  if (t1 === want) return 1;
-  throw new Error(`pool ${pool} does not hold ${token}`);
+  return sideOf(t0, t1, token, pool);
 }
 
 // ---- chain.counter_rate ------------------------------------------------------------------------------------------------
@@ -193,15 +191,9 @@ async function v2TwapPrice(ctx: SourceContext, p: Params): Promise<SourceValue> 
   const start = await blockAt(ctx, block.timestamp - (p.seconds as number));
   const [c0, c1, t] = await readAt(ctx, block.number, calls);
   const [s0, s1, st] = await readAt(ctx, start.number, calls);
-  const dt = Number(t - st);
-  if (!(dt > 0)) throw new Error(`no time elapsed between the pool's cumulative readings (${st} -> ${t})`);
-  const r0 = Number(c0 - s0) / dt;
-  const r1 = Number(c1 - s1) / dt;
   const td = (p.token_decimals as number | undefined) ?? 18;
   const qd = p.quote_decimals as number;
-  const [rToken, rQuote] = which === 0 ? [r0, r1] : [r1, r0];
-  if (!(rToken > 0 && rQuote > 0)) throw new Error(`time-weighted reserves are not positive (${r0}, ${r1})`);
-  const inQuote = rQuote / 10 ** qd / (rToken / 10 ** td);
+  const { dt, inQuote } = reserveTwap([c0, c1, t], [s0, s1, st], which, td, qd);
   const feed = await feedPrice(ctx, p);
   return level(ctx, inQuote * feed.usd, `${at(block)}: pool ${pool} twap ${dt} s from ${at(start)}, ${inQuote} quote per token${feed.detail}`);
 }
@@ -213,11 +205,9 @@ async function clSpotPrice(ctx: SourceContext, p: Params): Promise<SourceValue> 
   const [sqrt] = await readAt(ctx, block.number, [
     { address: pool, signature: 'function slot0() view returns (uint256, uint256, uint256, uint256, uint256, uint256)', functionName: 'slot0', pick: 0 },
   ]);
-  if (!(sqrt > 0n)) throw new Error('slot0 sqrtPriceX96 is zero');
-  const raw = (Number(sqrt) / 2 ** 96) ** 2; // token1 raw units per token0 raw unit
   const td = (p.token_decimals as number | undefined) ?? 18;
   const qd = p.quote_decimals as number;
-  const inQuote = (which === 0 ? raw : 1 / raw) * 10 ** (td - qd);
+  const inQuote = sqrtPriceInQuote(sqrt, which, td, qd);
   const feed = await feedPrice(ctx, p);
   return level(ctx, inQuote * feed.usd, `${at(block)}: pool ${pool} slot0 sqrtPriceX96 ${sqrt}, ${inQuote} quote per token${feed.detail}`);
 }
