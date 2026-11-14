@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
 import { loadAsset } from '../../config/load.js';
-import { parseBackfillParams, parsePricesBackfillParams } from '../../daemon/jobs/backfill.js';
+import { parseBackfillParams, pricesBackfillRequest } from '../../daemon/jobs/backfill.js';
 import { enqueueJob, JOB_KINDS, listJobs, type BackfillParams, type BackfillPricesParams, type Job, type JobKind } from '../../db/jobs.js';
 import { getRegistryRow } from '../../db/registry.js';
 import { loadPrices } from '../../prices/config.js';
@@ -56,9 +56,9 @@ function backfillParams(ctx: CliContext, kind: JobKind, asset: string | undefine
 }
 
 /**
- * `--from` / `--to` / `--refs a,b` into a prices backfill's params, checked against the home's prices.yaml and today as
- * the handler checks them (`parsePricesBackfillParams`): an unknown ref, a day after today, from after to or a span over
- * 400 days is refused before the queue. No asset, --slot, --metric or --backfill-days.
+ * `--from` / `--to` / `--refs a,b` into a prices backfill's params (`pricesBackfillRequest`, R27): `to` frozen at enqueue
+ * (no --to: today, UTC) and stored; an unknown ref, a day after today, from after to or a span over
+ * PRICES_BACKFILL_MAX_DAYS (550) is refused before the queue. No asset, --slot, --metric or --backfill-days.
  */
 function pricesParams(ctx: CliContext, asset: string | undefined, opts: RunNowOptions): BackfillPricesParams {
   if (asset !== undefined) throw new OrionError('asset_not_allowed', `a prices backfill is not per asset; leave out "${asset}"`);
@@ -69,7 +69,7 @@ function pricesParams(ctx: CliContext, asset: string | undefined, opts: RunNowOp
   const raw: Record<string, unknown> = { op: 'prices', from: opts.from };
   if (opts.to !== undefined) raw.to = opts.to;
   if (opts.refs !== undefined) raw.refs = opts.refs.split(',');
-  return parsePricesBackfillParams(raw, loadPrices(ctx.configRoot), ctx.now());
+  return pricesBackfillRequest(raw, loadPrices(ctx.configRoot), ctx.now());
 }
 
 function paramsText(p: BackfillParams | null): string {
@@ -93,7 +93,7 @@ export function registerJob(program: Command, ctx: CliContext): void {
     .option('--metric <key>', 'backfill: a flow metric to re-scan (repeatable)', collect, [])
     .option('--backfill-days <n>', 'backfill: re-scan this many days back (1-400), ignoring the saved cursor')
     .option('--from <day>', 'backfill-prices: the first UTC day (YYYY-MM-DD) to write chain prices for')
-    .option('--to <day>', 'backfill-prices: the last UTC day (default: up to the last completed hour); at most 400 days from --from')
+    .option('--to <day>', 'backfill-prices: the last UTC day (default: today, frozen at enqueue); at most 550 days from --from')
     .option('--refs <a,b>', 'backfill-prices: prices.yaml refs, comma-separated (default: every ref)')
     .option('--json', 'JSON output')
     .action((kindText: string, asset: string | undefined, opts: RunNowOptions) =>

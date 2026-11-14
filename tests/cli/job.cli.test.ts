@@ -104,7 +104,8 @@ describe('orion job run-now backfill-prices (Phase 3 R2 Task 7)', () => {
     expect(r.exit).toEqual([]);
     expect(JSON.parse(r.out)).toMatchObject({
       kind: 'backfill', assetId: null, slot: NOW, priority: 70, maxAttempts: PRICES_BACKFILL_MAX_ATTEMPTS, status: 'queued', requestedBy: 'run-now:mike',
-      params: { op: 'prices', from: '2025-10-13' },
+      // R27: no --to -> today (UTC) at enqueue, stored in the params.
+      params: { op: 'prices', from: '2025-10-13', to: '2026-11-03' },
     });
     await db().run('DELETE FROM jobs');
     const t = await orion(h, 'job', 'run-now', 'backfill-prices', '--from', '2026-11-01', '--to', '2026-11-02', '--refs', `${REFS[0]},hyperliquid:spot/@107`, '--by', 'mike');
@@ -115,7 +116,11 @@ describe('orion job run-now backfill-prices (Phase 3 R2 Task 7)', () => {
     ]);
     await db().run('DELETE FROM jobs');
     expect((await orion(h, 'job', 'run-now', 'backfill-prices', '--from', '2026-11-03', '--by', 'mike')).out)
-      .toBe(`queued job ${(await listJobs(db(), {}))[0]!.id} backfill slot ${NOW}: prices 2026-11-03..today, every ref`);
+      .toBe(`queued job ${(await listJobs(db(), {}))[0]!.id} backfill slot ${NOW}: prices 2026-11-03..2026-11-03, every ref`);
+    await db().run('DELETE FROM jobs');
+    // Op prices' cap is 550 days (R27): 2025-05-03..2026-11-03 is 550, accepted.
+    expect((await orion(h, 'job', 'run-now', 'backfill-prices', '--from', '2025-05-03', '--by', 'mike', '--json')).exit).toEqual([]);
+    expect((await listJobs(db(), { kind: 'backfill' })).map((j) => j.params)).toEqual([{ op: 'prices', from: '2025-05-03', to: '2026-11-03' }]);
   });
 
   it('cli: job run-now backfill-prices refuses an unknown ref, a bad range and stray options before the queue', async () => {
@@ -126,7 +131,7 @@ describe('orion job run-now backfill-prices (Phase 3 R2 Task 7)', () => {
     expect(await run('--from', '2026-11-04')).toBe('invalid_backfill_params'); // after today (2026-11-03)
     expect(await run('--from', '2026-11-01', '--to', '2026-11-04')).toBe('invalid_backfill_params');
     expect(await run('--from', '2026-11-02', '--to', '2026-11-01')).toBe('invalid_backfill_params');
-    expect(await run('--from', '2025-09-29')).toBe('invalid_backfill_params'); // 401 days to 2026-11-03
+    expect(await run('--from', '2025-05-02')).toBe('invalid_backfill_params'); // 551 days to 2026-11-03
     expect(await run('--from', '2026-11-01', '--refs', '')).toBe('invalid_backfill_params');
     expect(await run('--from', 'yesterday')).toBe('invalid_backfill_params');
     expect(await run('mini', '--from', '2026-11-01')).toBe('asset_not_allowed');

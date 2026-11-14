@@ -124,9 +124,10 @@ export async function purgeMetrics(db: OrionDb, loaded: LoadedAsset, opts: Purge
 
 /**
  * The run lock `data purge-prices` holds: the one the daemon's prices backfill takes (src/daemon/jobs/backfill.ts
- * PRICES_LOCK; a test pins the two equal), so a purge never runs beside a writer of the same table.
+ * PRICES_LOCK; a test pins the two equal), so a purge never runs beside a writer of the same table. Namespaced, never an
+ * asset id ([a-z0-9-]), so an asset named `prices` does not share it.
  */
-export const PRICES_RUN_LOCK = 'prices';
+export const PRICES_RUN_LOCK = 'job:prices';
 
 export interface PurgePricesOptions {
   /** Only `coingecko` (Phase 3 R2: the CoinGecko price history goes once the chain prices replaced it). */

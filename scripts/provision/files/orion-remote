@@ -47,7 +47,7 @@ undrains and restarts the daemon, logs `recovered ...` to deploys.log and prints
                                   queues a backfill job (Orion gets --metric once per item; at most 20 items)
   job run-now backfill-prices --from <YYYY-MM-DD> [--to <YYYY-MM-DD>] [--refs <r1,r2,...>]
                                   queues a prices backfill job (resumable; Orion checks the refs against prices.yaml,
-                                  from <= to <= today, at most 400 days); at most 40 refs, each REF_RE
+                                  no --to: today at enqueue; from <= to <= today, at most 550 days); at most 40 refs, each REF_RE
   job run-now <kind> [asset] [--slot <iso>] | sql-ro <query> (prod: orion db query-ro as orion_prod_ro, never psql) | refresh-staging (stage) | reconcile --allow-retire [--yes]
   refresh-staging --stdin <sha256> (stage) a pg_dump -Fc dump on stdin (8 GB cap) -> ~/home/incoming/staging-refresh.dump
                                   (600), sha256 checked; the daemon's staging_refresh job restores it, then it is removed

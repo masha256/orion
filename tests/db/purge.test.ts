@@ -412,8 +412,9 @@ metrics:
   const priceCount = async (d: Db, source?: string): Promise<number> =>
     Number((await d.one<{ n: number }>('SELECT count(*)::bigint AS n FROM prices WHERE $1::text IS NULL OR source = $1', [source ?? null]))!.n);
 
-  it('takes the `prices` run lock the prices backfill takes', () => {
+  it('takes the `job:prices` run lock the prices backfill takes (namespaced: never an asset id)', () => {
     expect(PRICES_RUN_LOCK).toBe(PRICES_LOCK);
+    expect(PRICES_RUN_LOCK).toBe('job:prices');
   });
 
   it('refuses while an active observation still has a coingecko:* ref (dry run and --yes), and succeeds after the reprice remap', async () => {

@@ -7,7 +7,7 @@ import { parseAssetYaml, type LoadedAsset } from '../../src/config/load.js';
 import { defaultHandlers, type JobContext } from '../../src/daemon/daemon.js';
 import {
   BACKFILL_CLEARANCE_MS, BACKFILL_DEFER_AFTER_MS, BACKFILL_MAX_DAYS, BACKFILL_NIGHTLY_RECHECK_MS, backfillHandler, makeBackfillHandler, parseBackfillParams,
-  parsePricesBackfillParams, PRICES_BACKFILL_BUDGET_MS, PRICES_BACKFILL_WATCH_MAX, PRICES_LOCK,
+  parsePricesBackfillParams, PRICES_BACKFILL_BUDGET_MS, PRICES_BACKFILL_MAX_DAYS, PRICES_BACKFILL_WATCH_MAX, PRICES_LOCK, pricesBackfillRequest,
 } from '../../src/daemon/jobs/backfill.js';
 import { REFRESH_LOCKED_RETRY_MS } from '../../src/daemon/jobs/refresh.js';
 import type { Db } from '../../src/db/connection.js';
@@ -366,11 +366,16 @@ function fakeWriter(result: (refs: string[]) => WriteResult) {
 describe('backfill op: prices (Phase 3 R2 Task 7)', () => {
   const TODAY = new Date('2026-11-14T10:00:00.000Z');
 
-  it('prices: the constants; params parse: from <= to <= today, at most 400 days, refs in prices.yaml, nothing else', () => {
-    expect(PRICES_BACKFILL_BUDGET_MS).toBe(20 * 60_000);
+  it('prices: the constants; the enqueue check freezes to (default today), from <= to <= today, at most 550 days, refs in prices.yaml, nothing else', () => {
+    // R28: 10 min a run, so a deploy drain (30 min wait) never times out behind one run (<= 10 min + one chain-day).
+    expect(PRICES_BACKFILL_BUDGET_MS).toBe(10 * 60_000);
     expect(PRICES_BACKFILL_WATCH_MAX).toBe(20);
-    expect(PRICES_LOCK).toBe('prices');
-    const ok = (raw: unknown) => parsePricesBackfillParams(raw, PRICES, TODAY);
+    // R27: op prices has its own cap; op fetch keeps 400.
+    expect(PRICES_BACKFILL_MAX_DAYS).toBe(550);
+    expect(BACKFILL_MAX_DAYS).toBe(400);
+    // Item 5: not asset-shaped (ASSET_RE [a-z0-9-]), so an asset named `prices` never shares it.
+    expect(PRICES_LOCK).toBe('job:prices');
+    const ok = (raw: unknown) => pricesBackfillRequest(raw, PRICES, TODAY);
     const code = (raw: unknown): string => {
       try {
         ok(raw);
@@ -379,13 +384,20 @@ describe('backfill op: prices (Phase 3 R2 Task 7)', () => {
       }
       return '';
     };
-    expect(ok({ op: 'prices', from: '2025-10-13' })).toEqual({ op: 'prices', from: '2025-10-13' });
+    // R27 (a): no `to` -> today (UTC) at enqueue, stored, so the range never moves with a later run's day.
+    expect(ok({ op: 'prices', from: '2025-10-13' })).toEqual({ op: 'prices', from: '2025-10-13', to: '2026-11-14' });
     expect(ok({ op: 'prices', from: '2026-11-01', to: '2026-11-14', refs: [VVV.ref, 'hyperliquid:spot/@107'] }))
       .toEqual({ op: 'prices', from: '2026-11-01', to: '2026-11-14', refs: [VVV.ref, 'hyperliquid:spot/@107'] });
-    // 400 days, from..to inclusive: 2025-10-11..2026-11-14 is 400; one more is refused.
-    expect(ok({ op: 'prices', from: '2025-10-11', to: '2026-11-14' })).toMatchObject({ from: '2025-10-11' });
-    expect(code({ op: 'prices', from: '2025-10-10', to: '2026-11-14' })).toMatch(/^invalid_backfill_params: .*401 days.*at most 400/);
-    expect(code({ op: 'prices', from: '2025-10-10' })).toMatch(/401 days/);
+    // 550 days, from..to inclusive: 2025-05-14..2026-11-14 is 550; one more is refused (R27 (c)).
+    expect(ok({ op: 'prices', from: '2025-05-14', to: '2026-11-14' })).toMatchObject({ from: '2025-05-14' });
+    expect(ok({ op: 'prices', from: '2025-05-14' })).toMatchObject({ from: '2025-05-14', to: '2026-11-14' });
+    expect(code({ op: 'prices', from: '2025-05-13', to: '2026-11-14' })).toMatch(/^invalid_backfill_params: .*551 days.*at most 550/);
+    expect(code({ op: 'prices', from: '2025-05-13' })).toMatch(/2025-05-13\.\.2026-11-14 is 551 days/);
+    // The release command's range (deploy.md, M4) fits: 2025-10-13 + 549 days is 2027-04-15.
+    expect(pricesBackfillRequest({ op: 'prices', from: '2025-10-13' }, PRICES, new Date('2027-04-15T23:00:00Z'))).toMatchObject({ to: '2027-04-15' });
+    // The run-time parse (the handler's) checks the shape only: no span cap, no 'today' (R27 (b)).
+    expect(parsePricesBackfillParams({ op: 'prices', from: '2024-01-01', to: '2026-11-14' }, PRICES)).toEqual({ op: 'prices', from: '2024-01-01', to: '2026-11-14' });
+    expect(() => parsePricesBackfillParams({ op: 'prices', from: '2026-11-02', to: '2026-11-01' }, PRICES)).toThrow(/from 2026-11-02 is after to 2026-11-01/);
     expect(code({ op: 'prices', from: '2026-11-15' })).toMatch(/from 2026-11-15 is after today \(2026-11-14\)/);
     expect(code({ op: 'prices', from: '2026-11-10', to: '2026-11-15' })).toMatch(/to 2026-11-15 is after today \(2026-11-14\)/);
     expect(code({ op: 'prices', from: '2026-11-10', to: '2026-11-09' })).toMatch(/from 2026-11-10 is after to 2026-11-09/);
@@ -402,7 +414,7 @@ describe('backfill op: prices (Phase 3 R2 Task 7)', () => {
     expect(code({ op: 'fetch', from: '2026-11-01' })).toMatch(/op must be "prices"/);
   });
 
-  it('prices: one run writes [from 00:00Z, min(to + 1 day, the last completed hour)) for every ref by default, 20 min budget, under the `prices` run lock', async () => {
+  it('prices: one run writes [from 00:00Z, min(to + 1 day, the last completed hour)) for every ref by default, PRICES_BACKFILL_BUDGET_MS (10 min) a run, under the `job:prices` run lock', async () => {
     const w = pricesWorld();
     const run = levelsContext(testDb(), w.root, '2026-11-06T12:34:00.000Z');
     const f = fakeWriter((refs) => emptyResult(refs, { reachedMs: at('2026-11-04T00:00:00Z') }));
@@ -412,8 +424,8 @@ describe('backfill op: prices (Phase 3 R2 Task 7)', () => {
     // to in the past: to + 1 day.
     expect((await h(pricesJob({ op: 'prices', from: '2026-11-04', to: '2026-11-04', refs: [VVV.ref] }, 2), run.ctx)).status).toBe('done');
     expect(f.calls.map((c) => [c.refs, new Date(c.fromHourMs).toISOString(), new Date(c.toHourMs).toISOString(), c.budgetMs])).toEqual([
-      [[...PRICES.keys()].sort(), '2026-11-04T00:00:00.000Z', '2026-11-06T12:00:00.000Z', 20 * 60_000],
-      [[VVV.ref], '2026-11-04T00:00:00.000Z', '2026-11-05T00:00:00.000Z', 20 * 60_000],
+      [[...PRICES.keys()].sort(), '2026-11-04T00:00:00.000Z', '2026-11-06T12:00:00.000Z', 10 * 60_000],
+      [[VVV.ref], '2026-11-04T00:00:00.000Z', '2026-11-05T00:00:00.000Z', PRICES_BACKFILL_BUDGET_MS],
     ]);
     expect(f.calls[0]!.signal).toBe(run.ctx.signal);
     expect(f.calls[0]!.lockHolder).toMatch(/^daemon backfill prices pid \d+$/);
@@ -573,5 +585,62 @@ describe('backfill op: prices (Phase 3 R2 Task 7)', () => {
     expect(named.status).toBe('failed');
     expect(await h(pricesJob(PARAMS, 3), run.ctx)).toMatchObject({ status: 'failed', error: 'a backfill job needs an asset' });
     expect(f.calls).toEqual([]);
+  });
+  it('prices: a stored job runs whatever its span is against today (R27: the span is checked at enqueue only)', async () => {
+    const w = pricesWorld();
+    const run = levelsContext(testDb(), w.root, CLEAR);
+    const f = fakeWriter((refs) => emptyResult(refs));
+    const h = makeBackfillHandler({ writer: f.fn, priceDeps: priceDepsOn(baseChain(CLEAR)) });
+    // 2025-04-01..2026-11-05 is 584 days: over both caps, yet stored, so it runs.
+    expect((await h(pricesJob({ op: 'prices', from: '2025-04-01', to: '2026-11-05', refs: [VVV.ref] }), run.ctx)).status).toBe('done');
+    // A job stored without `to` (queued before R27) runs open-ended, to the last completed hour, whatever today is.
+    expect((await h(pricesJob({ op: 'prices', from: '2025-04-01', refs: [VVV.ref] }, 2), run.ctx)).status).toBe('done');
+    expect(f.calls.map((c) => [new Date(c.fromHourMs).toISOString(), new Date(c.toHourMs).toISOString()])).toEqual([
+      ['2025-04-01T00:00:00.000Z', '2026-11-06T00:00:00.000Z'],
+      ['2025-04-01T00:00:00.000Z', '2026-11-06T12:00:00.000Z'],
+    ]);
+    expect(run.posts.filter((p) => p.startsWith('ORION ALERT'))).toEqual([]);
+  });
+
+  it('prices: a run that uses its budget and has a chain error defers, and still posts and logs one ALERT line for the error', async () => {
+    const w = pricesWorld();
+    const run = levelsContext(testDb(), w.root, CLEAR);
+    const logs: string[] = [];
+    const ctx = { ...run.ctx, log: (line: string) => void logs.push(line) };
+    const f = fakeWriter((refs) => emptyResult(refs, {
+      stoppedByBudget: true, reachedMs: at('2026-11-05T00:00:00Z'),
+      errors: [{ chain: 'eip155:1', hourMs: at('2026-11-05T07:00:00Z'), error: 'timeout\nstack' }],
+    }));
+    const out = await makeBackfillHandler({ writer: f.fn, priceDeps: priceDepsOn(baseChain(CLEAR)) })(pricesJob({ op: 'prices', from: '2026-11-04', to: '2026-11-05' }), ctx);
+    expect(out).toEqual({ status: 'deferred', untilMs: at(CLEAR) });
+    const alert = 'ORION ALERT dev backfill prices: price_chain_stopped: eip155:1 stopped at 2026-11-05T07:00:00.000Z: timeout; '
+      + 'the job defers (budget used) and its next run reads the chain again';
+    expect(run.posts).toEqual([alert]);
+    expect(logs).toContain(alert);
+  });
+
+  it('prices: a later run that fails before the writer keeps the progress saved by the earlier runs', async () => {
+    const w = pricesWorld();
+    const run = levelsContext(testDb(), w.root, CLEAR);
+    const f = fakeWriter((refs) => emptyResult(refs));
+    const saved = { op: 'prices', runs: 2, workMs: 1_200_000, calls: { 'eip155:1': 900 }, written: { [VVV.ref]: 48 }, breaches: 3 };
+    const out = await makeBackfillHandler({ writer: f.fn, priceDeps: priceDepsOn(baseChain(CLEAR)) })(
+      pricesJob({ op: 'prices', from: '2026-11-04', refs: ['eip155:1/0x0000000000000000000000000000000000000001'] }, 1, { result: saved }), run.ctx);
+    expect(out).toMatchObject({ status: 'failed', result: saved, error: expect.stringMatching(/^invalid_backfill_params: /) });
+    expect(f.calls).toEqual([]);
+  });
+
+  it('prices: the run lock is `job:prices`, so a run lock held for an asset named `prices` does not block it', async () => {
+    const w = pricesWorld();
+    const run = levelsContext(testDb(), w.root, CLEAR);
+    const f = fakeWriter((refs) => emptyResult(refs));
+    const asset = await testDb().tryAssetRunLock('prices', 'orion tick pid 1');
+    try {
+      const out = await makeBackfillHandler({ writer: f.fn, priceDeps: priceDepsOn(baseChain(CLEAR)) })(pricesJob({ op: 'prices', from: '2026-11-04', to: '2026-11-05' }), run.ctx);
+      expect(out.status).toBe('done');
+    } finally {
+      await asset!.release();
+    }
+    expect(f.calls.map((c) => c.lockHolder)).toEqual([expect.stringMatching(/^daemon backfill prices pid \d+$/)]);
   });
 });
