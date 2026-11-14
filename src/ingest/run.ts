@@ -3,8 +3,9 @@ import type { PriceEntry } from '../prices/config.js';
 import type { MetricDef } from '../config/schema.js';
 import { isChainSource } from '../config/sources.js';
 import { findStandingAnomaly, raiseAnomaly } from '../db/anomalies.js';
-import { chainHourPrices } from '../db/prices.js';
+import { chainHourPrices, MS_PER_HOUR } from '../db/prices.js';
 import { makePriceDeps, writeChainPrices } from '../prices/writer.js';
+import type { WriteResult } from '../prices/types.js';
 import type { Db } from '../db/connection.js';
 import type { DayBlockCache } from '../db/dayBlocks.js';
 import { getCursor } from '../db/fetchCursors.js';
@@ -22,7 +23,7 @@ import { DEFAULT_API_FLOW_BACKFILL_DAYS, DEFILLAMA_REVISION_DAYS, writeApiFlow }
 import { writePeriodicPayments } from './periodic.js';
 import { compareLevel, compareMonthly } from './crosscheck.js';
 import { derivedFunction, type DerivedName } from './derived.js';
-import { scanFlowGroup, type ChainPriceWriter } from './flow.js';
+import { CHAIN_DRY_RUN_SOURCE, scanFlowGroup, type ChainPriceWriter } from './flow.js';
 import { buildPlan, hasSources, type FlowGroup, type SourceBatch } from './plan.js';
 import { sourceId } from './sourceId.js';
 import { getSourceHandler } from './sources/registry.js';
@@ -92,6 +93,12 @@ export interface FetchResult {
   anomalies: RaisedAnomaly[];
   /** Watched monitor-only metrics that moved, computed on dry runs too. Never an anomaly. */
   watch: WatchFiring[];
+  /**
+   * The price check breaches this run's own chain price writes completed (flow scans, PUMP's burn days), each once, in
+   * ref then hour order: the caller posts them (plan P5: the job that wrote a row posts its breach; never an anomaly).
+   * Absent when there are none (always on a dry run).
+   */
+  priceBreaches?: WriteResult['breaches'];
 }
 
 /**
@@ -244,10 +251,32 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   }
   const historyDays = opts.backfillDays ?? (firstAdapterFlow ? (asset.ingest?.backfill_days ?? DEFAULT_API_FLOW_BACKFILL_DAYS) : undefined);
   const runHttp = withRunCache(deps.http);
+  // The breaches of this run's own price writes, by ref|hour (one post each), and the batch whose adapter is running (a
+  // price write's chain errors are noted on it).
+  const priceBreaches = new Map<string, WriteResult['breaches'][number]>();
+  const keepBreaches = (list: WriteResult['breaches']) => {
+    for (const b of list) priceBreaches.set(`${b.ref}|${b.hourMs}|${b.check}`, b);
+  };
+  let runningBatch: string | null = null;
   const ctx: SourceContext = {
     asset, nowIso: startedAt, http: runHttp, rpc, block, env: deps.env, contract: contractResolver(asset),
     observations: async (metricKey) => await listActiveObservations(db, asset.id, metricKey),
-    chainHourPrices: async (tokenRef, fromMs, toMs) => await chainHourPrices(db, tokenRef, fromMs, toMs),
+    // Ensured first through the run's price writer, as a flow scan ensures its hours (Task 6 fix C): a dry run computes
+    // them in memory (R19) and they rank with the stored rows.
+    chainHourPrices: async (tokenRef, fromMs, toMs) => {
+      const fromHourMs = Math.ceil(fromMs / MS_PER_HOUR) * MS_PER_HOUR;
+      const toHourMs = Math.floor(toMs / MS_PER_HOUR) * MS_PER_HOUR;
+      // Nothing to write with (no injected writer, and the ref is not in the asset's prices.yaml): the stored rows only.
+      if (fromHourMs >= toHourMs || (!deps.priceWriter && !loaded.prices?.has(tokenRef))) return await chainHourPrices(db, tokenRef, fromMs, toMs);
+      const w = await priceWriterOf(deps, loaded.prices)(db, [tokenRef], fromHourMs, toHourMs, { dryRun });
+      if (runningBatch !== null) {
+        for (const e of w.errors) outcomeOf(runningBatch).notes.push(`chain prices: ${e.chain} stopped at ${new Date(e.hourMs).toISOString()}: ${e.error}`);
+      }
+      keepBreaches(w.breaches);
+      const nowIso = now.toISOString();
+      const extra = (w.rows?.[tokenRef] ?? []).map((r) => ({ ts: r.ts, priceUsd: r.priceUsd, source: CHAIN_DRY_RUN_SOURCE, fetchedAt: nowIso }));
+      return await chainHourPrices(db, tokenRef, fromMs, toMs, extra);
+    },
     // The price.* adapters: prices.yaml and the price chains' transports (a ref off the asset's chain, the off-chain venues).
     ...(loaded.prices ? { prices: loaded.prices, priceDeps: makePriceDeps(deps.env, { rpcFactory: deps.priceRpcFactory ?? deps.rpcFactory, prices: loaded.prices, http: runHttp, now }) } : {}),
     ...(historyDays !== undefined ? { backfillDays: historyDays } : {}),
@@ -283,11 +312,14 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     if (chainError !== null && readsChain(batch)) {
       results = batch.requests.map(() => failed(chainError));
     } else {
+      runningBatch = batch.sourceId;
       try {
         results = await getSourceHandler(batch.requests[0].source.type).fetch(batch.requests, ctx);
       } catch (err) {
         if (err instanceof OrionError) throw err; // configuration error
         results = batch.requests.map(() => failed(message(err)));
+      } finally {
+        runningBatch = null;
       }
     }
     batch.requests.forEach((r, i) => readings.set(r, results[i] ?? failed('the source returned no result for this request')));
@@ -411,6 +443,11 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       if (r.role !== 'cross_check' || def.type === 'flow') continue;
       const outcome = outcomeOf(batch.sourceId);
       const result = readings.get(r)!;
+      if (!result.ok && result.noReading) {
+        // Nothing to compare this run (Ruling R22: LIT's zero-liquidity check pool): no anomaly, no source failure.
+        outcome.notes.push(`${r.metricKey}: cross-check skipped, the check has no reading this run: ${result.error}`);
+        continue;
+      }
       if (!result.ok) {
         markFailed(outcome, `${r.metricKey}: ${result.error}`);
         continue;
@@ -462,6 +499,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     });
     outcomes.set(group.sourceId, scan.outcome);
     written.push(...scan.written);
+    keepBreaches(scan.breaches);
     for (const [metricKey, points] of scan.daily) scannedDaily.set(metricKey, points);
 
     const bySender = new Map<string, typeof scan.unlisted>();
@@ -635,5 +673,6 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   const watch = evaluateWatches(asset, watchBefore, written, previousLevelIn(watchBefore));
   const endedAt = deps.now().toISOString();
   const fetchRunId = dryRun ? null : await insertFetchRun(db, { assetId: asset.id, startedAt, endedAt, outcome, detail: { sources, ...(watch.length > 0 ? { watch } : {}) } });
-  return { assetId: asset.id, dryRun, fetchRunId, outcome, startedAt, endedAt, sources, written, anomalies, watch };
+  const breaches = [...priceBreaches.values()].sort((a, b) => (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : a.hourMs - b.hourMs));
+  return { assetId: asset.id, dryRun, fetchRunId, outcome, startedAt, endedAt, sources, written, anomalies, watch, ...(breaches.length > 0 ? { priceBreaches: breaches } : {}) };
 }

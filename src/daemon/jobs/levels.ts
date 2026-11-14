@@ -8,7 +8,7 @@ import { formatPriceBreach, runLevels, type LevelsResult } from '../../levels/le
 import { loadPrices, type PriceEntry } from '../../prices/config.js';
 import { levelWatchRule, watchTransitions } from '../../levels/watchTransitions.js';
 import { pingDeadman } from '../../notify/deadman.js';
-import { formatWatchCleared, formatWatchPost } from '../../notify/format.js';
+import { formatWatchCleared, formatWatchPost, slackClean } from '../../notify/format.js';
 import type { WatchRule } from '../../types.js';
 import type { JobContext, JobHandler, JobOutcome } from '../daemon.js';
 import { levelsSnapshot } from './snapshotPush.js';
@@ -44,8 +44,11 @@ const aborted: JobOutcome = { status: 'failed', result: null, error: 'aborted: t
  * alert when a level watch starts or stops firing (state in `watch_state`; flow watches are the nightly's), and pings
  * `ORION_DEADMAN_URL` when every asset's read ran (per-source failures included) and every post was delivered. After the
  * reads it writes the recent chain prices of every prices.yaml ref (runLevels) and posts each check breach as
- * `ORION WATCH <env> price <symbol> <ts>: <gap>% vs <check>` (never an anomaly: an anomaly starts a paid triage). The job
- * fails only when every asset failed; it is never retried (`max_attempts` 1: the next hour is the retry).
+ * `ORION WATCH <env> price <symbol> <ts>: <gap>% vs <check>` (never an anomaly: an anomaly starts a paid triage). A price
+ * write that failed (prices.yaml unreadable, the writer threw, or it stopped a chain) posts one
+ * `ORION ALERT <env> levels prices: <reason>` line (silence would hide a writer that stopped); the reads, the snapshot
+ * and the dead-man ping go on as for any post. The job fails only when every asset failed; it is never retried
+ * (`max_attempts` 1: the next hour is the retry).
  */
 export function makeLevelsHandler(o: LevelsHandlerOptions = {}): JobHandler {
   return async (job, ctx) => {
@@ -102,13 +105,15 @@ export function makeLevelsHandler(o: LevelsHandlerOptions = {}): JobHandler {
     // Each price check breach the write completed, once (the writer reports a breach run once, at the hour completing it).
     const w = out.prices;
     const breaches = (w?.result?.breaches ?? []).map((b) => formatPriceBreach(ctx.env, prices?.get(b.ref)?.symbol ?? b.ref, b));
-    posts.push(...breaches);
     const priceSummary: LevelsJobResult['prices'] = w === null && pricesError === null ? null : {
       written: Object.values(w?.result?.written ?? {}).reduce((a, b) => a + b, 0),
       missing: w?.result?.missing.length ?? 0,
       errors: [...(pricesError !== null ? [pricesError] : []), ...(w?.error !== null && w?.error !== undefined ? [w.error] : []), ...(w?.result?.errors ?? []).map((e) => `${e.chain}: ${e.error}`)],
       breaches,
     };
+    // One alert for a failed price write, whatever its reasons (Task 6 fix B).
+    if (priceSummary !== null && priceSummary.errors.length > 0) posts.push(`ORION ALERT ${ctx.env} levels prices: ${slackClean(priceSummary.errors.join('; '))}`);
+    posts.push(...breaches);
     const undelivered: string[] = [];
     for (const text of posts) {
       if (ctx.signal.aborted) return aborted;

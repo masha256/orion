@@ -163,9 +163,8 @@ metrics:
     staleness_days: 7
     # DIEM: the Aerodrome v2 DIEM/VVV 1 h TWAP x VVV's chain price; check the Slipstream DIEM/USDC 1 h TWAP
     # (prices.yaml).
+    # No fetch-time cross-check (R22): the check runs hourly in the price writer (ORION WATCH, never an anomaly).
     source: { type: adapter, name: price.token, params: { ref: "eip155:8453/0xf4d97f2da56e8c3098f3a8d538db630a2606a024" } }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: adapter, name: price.token_check, params: { ref: "eip155:8453/0xf4d97f2da56e8c3098f3a8d538db630a2606a024" } } }
 
   # 1 minus Venice's take on DIEM-locked stake. The contract returns a fraction scaled by 1e18 (verified 2026-09-19).
   diem_locked_yield_share:

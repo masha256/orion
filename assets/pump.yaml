@@ -71,9 +71,9 @@ metrics:
     source: { type: constant, value: 0, note: "mint authority revoked; unlocks move tokens already in total supply" }
 
   # The holder flow: PUMP burned each completed UTC day (the fall in supply between daily readings, spread over the time
-  # between them), priced at the mean of the day's 24 chain prices (prices.yaml; a day with fewer gets no USD row). Before
-  # the first on-chain reading: DefiLlama's daily holders
-  # revenue (its pump adapter sums the same two wallets' burns; 09-22 to 10-15: supply fall 25.4M USD vs DefiLlama 25.5M).
+  # between them), priced at the mean of the day's 24 chain prices (prices.yaml; the fetch ensures them through the price
+  # writer first; a day with fewer gets no USD row). Before the first on-chain reading: DefiLlama's daily holders revenue
+  # (its pump adapter sums the same two wallets' burns; 09-22 to 10-15: supply fall 25.4M USD vs DefiLlama 25.5M).
   flow_usd.buyback:
     type: flow
     unit: usd

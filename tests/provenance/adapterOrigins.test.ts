@@ -271,7 +271,8 @@ describe('the adapter origin registry (review I-1)', () => {
     const ctx = sourceCtx({ asset: hype, prices: PRICES, priceDeps });
     for (const name of ['price.token', 'price.token_check']) {
       const v = await getAdapter(name).run(ctx, { ref: priceRef('HYPE') });
-      const source = name === 'price.token' ? hype.metrics.price_usd!.source! : hype.metrics.price_usd!.cross_checks![0]!.source;
+      // HYPE's price has no fetch-time cross-check since R22: its check adapter is read as price.token_check of the same ref.
+      const source = { ...hype.metrics.price_usd!.source!, name } as typeof hype.metrics.price_usd.source & object;
       const sourceType = sourceTypeOf({ ...hype.metrics.price_usd!, source })!;
       expect(sourceType).toBe('first_party_api');
       expect(stampOf(v)).toBe(originOf({ method: 'measured', sourceType, locator: { adapter: name, params: {} }, formula: null }));

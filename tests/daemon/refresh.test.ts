@@ -7,7 +7,10 @@ import type { Job } from '../../src/db/jobs.js';
 import { listLatestLevels } from '../../src/db/latestLevels.js';
 import { getRegistryRow, setRegistryState } from '../../src/db/registry.js';
 import { listWatchStates, putWatchStates } from '../../src/db/watchState.js';
-import { harness, NOW } from '../helpers/fetchHarness.js';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fakePriceWriter } from '../helpers/chainPrices.js';
+import { harness, MINI_REF, NOW } from '../helpers/fetchHarness.js';
 import { useTestDb } from '../helpers/db.js';
 import { INGEST_ASSET_YAML, METRICS_END } from '../helpers/ingestAsset.js';
 import { activate, cleanupAfterAll, levelsContext, levelsWorld } from '../helpers/levelsWorld.js';
@@ -163,6 +166,25 @@ describe('refresh job', () => {
     const down = levelsContext(testDb(), w.root, NOW, {}, false);
     const out2 = await makeRefreshHandler({ fetchDeps: () => h.deps })(refreshJob(1, 2), down.ctx);
     expect(out2).toMatchObject({ status: 'done', result: { undelivered: ['ORION WATCH MINI cleared: stats_price outside'] } });
+  });
+
+  it('refresh: a breach the nightly scan\'s own price write reports is posted once (ORION WATCH <env> price ...), never an anomaly', async () => {
+    const w = await world();
+    // The mini token's prices.yaml entry (its usd flows are valued at it), so the post names its symbol.
+    writeFileSync(join(w.root, 'prices.yaml'), `"${MINI_REF}":\n  symbol: MINI\n  decimals: 18\n  chain: eip155:8453\n  valid_from: "2026-09-01"\n` +
+      `  primary: { kind: chainlink, feed: "0x${'a'.repeat(40)}" }\n  check: { kind: chainlink, feed: "0x${'b'.repeat(40)}", tolerance_pct: 2 }\n`);
+    const run = levelsContext(testDb(), w.root, NOW);
+    const h = harness(testDb());
+    const breach = { ref: MINI_REF, hourMs: Date.parse('2026-09-18T05:00:00.000Z'), gapPct: 2.5, check: 'chain:chainlink' };
+    // Every writer call of the run reports the breach (the mini asset has more than one scan): it is posted once.
+    const writer = fakePriceWriter(() => 10, { breaches: [breach] });
+    const out = await makeRefreshHandler({ fetchDeps: () => ({ ...h.deps, priceWriter: writer }) })(refreshJob(), run.ctx);
+    expect(out.status).toBe('done');
+    expect(writer.calls.length).toBeGreaterThan(0);
+    const post = 'ORION WATCH dev price MINI 2026-09-18T05:00:00.000Z: +2.50% vs chain:chainlink';
+    expect(run.posts).toEqual([post]);
+    expect(out).toMatchObject({ result: { breaches: [post], undelivered: [] } });
+    expect(await testDb().all("SELECT id FROM anomalies WHERE kind = 'cross_check_mismatch'")).toEqual([]);
   });
 
   it('refresh: the daemon runs the refresh handler', () => {

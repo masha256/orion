@@ -50,9 +50,8 @@ metrics:
     critical: true
     # yCRV: the Curve yCRV/CRV EMA x CRV; check get_dy on the thin second pool (prices.yaml; Phase 3 R2: read live
     # at the run, no CoinGecko).
+    # No fetch-time cross-check (R22): the check runs hourly in the price writer (ORION WATCH, never an anomaly).
     source: { type: adapter, name: price.token, params: { ref: "eip155:1/0xfcc5c47be19d06bf83eb04298b026f81069ff65b" } }
-    cross_checks:
-      - { tolerance_pct: 3, source: { type: adapter, name: price.token_check, params: { ref: "eip155:1/0xfcc5c47be19d06bf83eb04298b026f81069ff65b" } } }
 
   total_supply:
     type: level

@@ -70,7 +70,8 @@ const CASES: Case[] = [
     id: 'cvxcrv',
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
-    hash: 'e2ba388d44ea14dae0ef80ec95075ec4ff944f9029383604494f85122a854ded',
+    // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): no fetch-time price cross-check (its check runs hourly in the writer).
+    hash: '5df3f84495c0bb20c955d7eef7deb38431094f160ff08027dd72cc164f754a4d',
     coingecko: 'convex-crv',
     price: 0.1392,
     supply: 423_825_801n,
@@ -87,7 +88,8 @@ const CASES: Case[] = [
     id: 'sdcrv',
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
-    hash: '357ee9ca0f1500ee2f6f2203a13af2dcb982c6d3f381189b3688aa6cdb919924',
+    // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): no fetch-time price cross-check (its check runs hourly in the writer).
+    hash: '09a7ff1a81fdcaea3dcda853821d095a7706ae3d4c8369c7d785631cbd08a981',
     coingecko: 'stake-dao-crv',
     price: 0.1884,
     supply: 119_049_969n,
@@ -181,12 +183,13 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     expect(loadAsset(ROOT, c.id).hash).toBe(c.hash);
     // Supply definitions (Mike, 2026-10-12): CoinGecko has no circulating supply for the wrappers, so it is the on-chain total;
     // No total_supply cross-check on either (Phase 3 R1 removed CoinGecko's total and DefiLlama's price). The price is its
-    // prices.yaml method with its check (Task 6b): cvxCRV's get_dy on the old pool at 3%; sdCRV's 0.3-1.0 CRV band (0).
+    // prices.yaml method (Task 6b); its check (cvxCRV's get_dy on the old pool, sdCRV's 0.3-1.0 CRV band) runs hourly in
+    // the writer, never at fetch (Ruling R22).
     expect(config.metrics.circulating_supply?.source).toEqual(config.metrics.total_supply.source);
     expect(config.metrics.total_supply.cross_checks).toBeUndefined();
     const ref = priceRef(c.id === 'cvxcrv' ? 'cvxCRV' : 'sdCRV');
     expect(config.metrics.price_usd.source).toEqual({ type: 'adapter', name: 'price.token', params: { ref } });
-    expect(config.metrics.price_usd.cross_checks).toEqual([{ tolerance_pct: c.id === 'cvxcrv' ? 3 : 0, source: { type: 'adapter', name: 'price.token_check', params: { ref } } }]);
+    expect(config.metrics.price_usd.cross_checks).toBeUndefined();
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -215,7 +218,7 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     expect(r.anomalies).toEqual([]);
     const rows = async (metric: string) => await listActiveObservations(w.db, c.id, metric);
     expect((await rows('price_usd')).at(-1)!.value).toBeCloseTo(c.price, 12); // EMA in CRV x CRV in crvUSD x crvUSD
-    expect(r.sources.flatMap((s) => s.crossChecks).map((x) => [x.metricKey, x.ok])).toEqual([['price_usd', true]]);
+    expect(r.sources.flatMap((s) => s.crossChecks).map((x) => [x.metricKey, x.ok])).toEqual([]); // no price cross-check (R22)
       expect(w.http.calls.filter((x) => new URL(x.url).host === 'coins.llama.fi').map((x) => x.url)).toEqual([]); // Phase 3 R1
     expect((await rows('total_supply')).at(-1)!.value).toBe(Number(c.supply));
     expect((await rows('staked_supply')).at(-1)!.value).toBe(Number(c.staked));

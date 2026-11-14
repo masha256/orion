@@ -27,7 +27,7 @@ export interface LevelsResult {
   prices: LevelsPriceWrite | null;
 }
 
-/** How far back the hourly job writes a ref's chain prices: the hours since its newest stored hour, at most this many. */
+/** How far back the hourly job writes a ref's chain prices: every hour of the last this many it lacks. */
 export const LEVELS_PRICE_HOURS = 48;
 
 export interface LevelsPriceWrite {
@@ -39,24 +39,32 @@ export interface LevelsPriceWrite {
 }
 
 /**
- * The hours the hourly job writes (Phase 3 R2 Task 6a): for every ref of prices.yaml, from the hour after its newest row
- * under its primary's source, at most LEVELS_PRICE_HOURS back, up to the top of the current hour (the last completed
- * hour is the newest a row can be written for). One writer run over the earliest such hour: hours already stored are
- * skipped without a read. Null when every ref is up to date.
+ * The hours the hourly job writes (Phase 3 R2 Task 6a; gaps filled since the Task 6 fix wave, D): every hour of the last
+ * LEVELS_PRICE_HOURS, up to the top of the current hour (the last completed hour is the newest a row can be written for),
+ * that a ref of prices.yaml lacks under its primary's source, from the ref's `valid_from` on. One writer run from the
+ * earliest such hour of any ref: the writer skips each ref's stored hours without a read, so a gap 10 h back is filled and
+ * a ref that can never be written (an off-chain venue down) keeps the run at its oldest missing hour but costs only its
+ * own hours, never the other refs'. Null when every ref has every hour.
  */
 export async function recentPriceHours(db: Db, prices: ReadonlyMap<string, PriceEntry>, now: Date): Promise<{ fromHourMs: number; toHourMs: number } | null> {
   if (prices.size === 0) return null;
   const toHourMs = Math.floor(now.getTime() / MS_PER_HOUR) * MS_PER_HOUR;
   const floor = toHourMs - LEVELS_PRICE_HOURS * MS_PER_HOUR;
-  const newest = await db.all<{ token_ref: string; source: string; ts: string }>(
-    'SELECT token_ref, source, max(ts) AS ts FROM prices WHERE token_ref = ANY($1::text[]) AND ts >= $2 GROUP BY token_ref, source',
-    [[...prices.keys()], new Date(floor).toISOString()],
+  const stored = await db.all<{ token_ref: string; source: string; ts: string }>(
+    'SELECT token_ref, source, ts FROM prices WHERE token_ref = ANY($1::text[]) AND ts >= $2 AND ts < $3',
+    [[...prices.keys()], new Date(floor).toISOString(), new Date(toHourMs).toISOString()],
   );
+  const have = new Set(stored.map((r) => `${r.token_ref}|${r.source}|${new Date(r.ts).getTime()}`));
   let fromHourMs = toHourMs;
   for (const e of prices.values()) {
-    const row = newest.find((r) => r.token_ref === e.ref && r.source === methodSource(e.primary));
-    const from = row ? Math.max(floor, new Date(row.ts).getTime() + MS_PER_HOUR) : floor;
-    fromHourMs = Math.min(fromHourMs, from);
+    const source = methodSource(e.primary);
+    const start = Math.max(floor, Date.parse(`${e.validFrom}T00:00:00Z`));
+    for (let h = start; h < fromHourMs; h += MS_PER_HOUR) {
+      if (!have.has(`${e.ref}|${source}|${h}`)) {
+        fromHourMs = h;
+        break;
+      }
+    }
   }
   return fromHourMs < toHourMs ? { fromHourMs, toHourMs } : null;
 }

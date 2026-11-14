@@ -123,7 +123,8 @@ describe('assets/sky.yaml', () => {
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
-    expect(loadAsset(ROOT, 'sky').hash).toBe('be03451c4a2e4e2832ffd64f3ea28b69178f62ed7707552b94b3cda2ea9e84ad');
+    // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): no fetch-time price cross-check (its check runs hourly in the writer).
+    expect(loadAsset(ROOT, 'sky').hash).toBe('215dfdf1f0709ce084a77c57d9b847fcd86ea94c338803bea21bceab02b382b9');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -140,11 +141,11 @@ describe('assets/sky.yaml', () => {
     });
   });
 
-  it('plans the two holder-flow scans, the treasury scans, the chain levels and the price with its feed check', () => {
+  it('plans the two holder-flow scans, the treasury scans, the chain levels and the price (no price cross-check: R22)', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
       ['adapter:price.token', ['primary:price_usd']],
-      ['adapter:price.token_check', ['cross_check:price_usd']],
+      // No price.token_check cross-check (Ruling R22): the check runs hourly in the price writer (ORION WATCH).
       ['chain_levels', ['primary:total_supply', 'primary:staked_supply', 'primary:splitter_burn_share']],
       ['coingecko', ['primary:circulating_supply']],
       ['constant', ['primary:staker_emission_share', 'primary:emission_rate_annual']],
@@ -164,8 +165,9 @@ describe('assets/sky.yaml', () => {
     await fetchAsset(w.db, { config, hash: 'backfill' }, NOW, w.deps, { backfillDays: 362, metrics: ['flow_tokens.rewards_staker', 'flow_tokens.rewards_usds', 'flow_tokens.buyback', 'treasury_net_payout'] });
     const r = await fetchAsset(w.db, loadAsset(ROOT, 'sky'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error])).toEqual([]);
-    // CoinGecko's and DefiLlama's checks are gone (Phase 3 R1); the price's prices.yaml check (the SKY/USD feed) since Task 6b.
-    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
+    // CoinGecko's and DefiLlama's checks are gone (Phase 3 R1); the price's prices.yaml check (the SKY/USD feed) runs hourly
+    // in the writer, never at fetch (Ruling R22).
+    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([]);
     expect(w.http.calls.filter((c) => new URL(c.url).host === 'coins.llama.fi').map((c) => c.url)).toEqual([]); // Phase 3 R1
 
     const rows = async (metric: string) => await listActiveObservations(w.db, 'sky', metric);

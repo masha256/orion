@@ -1,15 +1,15 @@
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { loadAsset, parseAssetObject, rawConfig } from '../../src/config/load.js';
+import { listAssetIds, loadAsset, parseAssetObject, rawConfig } from '../../src/config/load.js';
 import { adapterNeedsRpc, getAdapter, type AdapterSource } from '../../src/ingest/adapters/registry.js';
 import { compareLevel } from '../../src/ingest/crosscheck.js';
 import type { RpcTransport } from '../../src/ingest/transport/rpc.js';
-import type { SourceContext, SourceValue } from '../../src/ingest/types.js';
+import { NoReading, type SourceContext, type SourceValue } from '../../src/ingest/types.js';
 import type { PriceDeps } from '../../src/prices/types.js';
 import { chainOfSource } from '../../src/provenance/locator.js';
 import { sourceLabelOf, sourceTypeOf } from '../../src/report/sourceTypes.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
-import { fakeRpc, type FakeRpc } from '../helpers/fakeRpc.js';
+import { callKey, fakeRpc, type FakeRpc } from '../helpers/fakeRpc.js';
 import { ETH_USDC_FEED, feedCalls, hyperliquidMids, lighterBook, liveEvmCalls, PRICES, priceRef, pumpLiveSolana, type Calls, type LiveWant } from '../helpers/livePrices.js';
 import { sourceCtx } from '../helpers/sourceCtx.js';
 
@@ -220,7 +220,8 @@ describe('params, rungs and the run\'s RPC', () => {
     const rows = ['crv', 'cake', 'vvv', 'hype', 'lit', 'pump'].map((id) => {
       const { config } = loadAsset(ROOT, id);
       const def = config.metrics.price_usd!;
-      const check = def.cross_checks![0]!.source as AdapterSource;
+      // CRV and HYPE have no fetch-time cross-check since R22: their check adapter is read as price.token_check of the same ref.
+      const check = (def.cross_checks?.[0]?.source ?? { type: 'adapter', name: 'price.token_check', params: { ...(def.source as AdapterSource).params } }) as AdapterSource;
       return [id, sourceTypeOf(def, config.metrics), sourceLabelOf(def), chainOfSource(config, def.source!), adapterNeedsRpc(def.source as AdapterSource), sourceTypeOf({ ...def, source: check }), chainOfSource(config, check), adapterNeedsRpc(check)];
     });
     expect(rows).toEqual([
@@ -231,5 +232,39 @@ describe('params, rungs and the run\'s RPC', () => {
       ['lit', 'first_party_api', 'first_party_api:price.token', null, false, 'contract_state', 'eip155:1', true],
       ['pump', 'contract_state', 'contract_state:price.token', 'solana:mainnet', false, 'contract_state', 'solana:mainnet', false],
     ]);
+  });
+});
+
+describe('price level cross-checks only where one existed before R2 (Ruling R22)', () => {
+  it('price.token_check is a cross-check on CAKE, LINK, LIT, PUMP, UNI and VVV price_usd only, each at its prices.yaml check tolerance', () => {
+    const found: string[] = [];
+    for (const id of listAssetIds(ROOT)) {
+      const { config } = loadAsset(ROOT, id);
+      for (const [metricKey, def] of Object.entries(config.metrics)) {
+        for (const c of def.cross_checks ?? []) {
+          if (c.source.type !== 'adapter' || c.source.name !== 'price.token_check') continue;
+          found.push(`${id}.${metricKey}`);
+          const entry = PRICES.get(String(c.source.params.ref))!;
+          expect(c.tolerance_pct, `${id}.${metricKey}`).toBe((entry.check as { tolerancePct: number }).tolerancePct);
+        }
+      }
+    }
+    expect(found.sort()).toEqual(['cake.price_usd', 'link.price_usd', 'lit.price_usd', 'pump.price_usd', 'uni.price_usd', 'vvv.price_usd']);
+    // The others have no fetch-time price cross-check at all: their check runs hourly in the writer (ORION WATCH).
+    for (const id of ['crv', 'cvxcrv', 'hype', 'sdcrv', 'sky', 'ycrv']) expect(loadAsset(ROOT, id).config.metrics.price_usd!.cross_checks ?? [], id).toEqual([]);
+    expect(loadAsset(ROOT, 'vvv').config.metrics.diem_price_usd!.cross_checks ?? []).toEqual([]);
+  });
+
+  it('a check the hour could not read for zero in-range liquidity (LIT\'s v4 pool) is no reading (NoReading), never a value', async () => {
+    const LIT = priceRef('LIT');
+    const sv = (PRICES.get(LIT)!.check as { state_view: string; pool_id: string });
+    const v4 = liveEvmCalls({ [LIT]: { usd: 3.3573 * 0.99978 } }, { endTs: NOW_TS, startTs: NOW_TS - 3600, feedUsd: { [ETH_USDC_FEED]: 0.99978 } });
+    const calls = { ...v4.end, [callKey(sv.state_view.toLowerCase(), 'getLiquidity', [sv.pool_id.toLowerCase()])]: 0n };
+    const eth = fakeRpc({ genesisTs: NOW_TS - 12_000_000, latest: 1_000_000n, blockTimeSec: 12, calls });
+    const ctx = await ctxFor('lit', eth, { http: fakeHttp(lighterBook(2049, '3.3547', '3.3577')), chains: { 'eip155:1': eth } });
+    expect((await run('price.token', ctx, LIT)).value).toBeCloseTo(3.3562 * 0.99978, 10);
+    const err = await getAdapter('price.token_check').run(ctx, { ref: LIT }).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(NoReading);
+    expect((err as Error).message).toMatch(/zero_liquidity/);
   });
 });

@@ -11,7 +11,7 @@ import { listWatchStates, putWatchStates } from '../../db/watchState.js';
 import { realFetchDeps } from '../../ingest/deps.js';
 import { priceWriterOf, type FetchDeps, type FetchResult } from '../../ingest/run.js';
 import type { BlockRef, RpcFactory } from '../../ingest/transport/rpc.js';
-import { levelMetricKeys, toLatestLevels } from '../../levels/levels.js';
+import { formatPriceBreach, levelMetricKeys, toLatestLevels } from '../../levels/levels.js';
 import { levelWatchRule, watchTransitions } from '../../levels/watchTransitions.js';
 import { formatWatchCleared, slackClean } from '../../notify/format.js';
 import { OrionError, type WatchRule } from '../../types.js';
@@ -38,7 +38,9 @@ export interface RefreshJobResult {
   alerted?: boolean;
   /** Present when this fetch cleared a level watch that was firing (R-c15): the `cleared` lines posted. */
   cleared?: string[];
-  /** With `cleared`: the lines Slack did not take after its retries (kept here; the refresh is not retried for them). */
+  /** Present when the fetch's own chain price writes completed a check breach (plan P5): the `ORION WATCH ... price` lines posted. */
+  breaches?: string[];
+  /** With `cleared` or `breaches`: the lines Slack did not take after its retries (kept here; the refresh is not retried for them). */
   undelivered?: string[];
 }
 
@@ -141,6 +143,21 @@ export function makeRefreshHandler(o: RefreshHandlerOptions = {}): JobHandler {
               if (!posted.ok) {
                 result.undelivered.push(text);
                 ctx.log(`watch cleared line not delivered: ${posted.error ?? 'unknown error'}`);
+              }
+            }
+          }
+          // The price check breaches the fetch's own price writes completed (a flow scan writing its hours itself: a later
+          // levels run finds them stored and never reports them), each once, as the levels job posts them.
+          const breaches = (fetched.priceBreaches ?? []).map((b) => formatPriceBreach(ctx.env, loaded.prices?.get(b.ref)?.symbol ?? b.ref, b));
+          if (breaches.length > 0) {
+            result.breaches = breaches;
+            result.undelivered ??= [];
+            for (const text of breaches) {
+              if (ctx.signal.aborted) return aborted;
+              const posted = await ctx.notify.post(text);
+              if (!posted.ok) {
+                result.undelivered.push(text);
+                ctx.log(`price breach line not delivered: ${posted.error ?? 'unknown error'}`);
               }
             }
           }

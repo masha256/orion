@@ -239,24 +239,25 @@ describe('config hash and prices.yaml (Phase 3 R2 Task 1)', () => {
       expect(loaded.hash).toBe(sha256(canonicalJson({ config: loaded.config, prices: entries })));
       expect(loadAsset(bare, 'ycrv').hash).toBe(sha256(canonicalJson(loaded.config)));
       expect(loadAsset(bare, 'ycrv').hash).toBe(parseAssetYaml(readFileSync(join(ROOT, 'assets/ycrv.yaml'), 'utf8')).hash);
-      // Every asset but AERO uses at least its own ref (price.token since Task 6b, R11), so its hash differs from its
-      // config-only hash. AERO keeps its own price adapters (R21) and scans no token: it names no ref.
-      expect(moved(hashes(home), hashes(bare))).toEqual(listAssetIds(ROOT).filter((id) => id !== 'aero'));
+      // Every asset uses at least its own ref (price.token since Task 6b, R11; AERO, which keeps its own price adapters
+      // (R21), through its own token's entry since Task 6 fix E), so its hash differs from its config-only hash.
+      expect(moved(hashes(home), hashes(bare))).toEqual(listAssetIds(ROOT));
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(bare, { recursive: true, force: true });
     }
   });
 
-  it('changing an entry moves the hash of exactly the assets that use it: crvUSD moves crv, cvxcrv, sdcrv, ycrv; AERO none (R11, R21)', () => {
+  it('changing an entry moves the hash of exactly the assets that use it: crvUSD moves crv, cvxcrv, sdcrv, ycrv; AERO\'s moves aero (R11, Task 6 fix E)', () => {
     const base = homeWith(pricesText);
     const crvusd = homeWith(edited(CRVUSD, (e) => { e.check.tolerance_pct = 0.6; }));
     const aero = homeWith(edited(AERO, (e) => { e.check.tolerance_pct = 2.5; }));
     try {
       const before = hashes(base);
       expect(moved(before, hashes(crvusd))).toEqual(['crv', 'cvxcrv', 'sdcrv', 'ycrv']);
-      // AERO's price_usd reads its own adapters (R21), not price.token: its entry serves the history and level rebuild only.
-      expect(moved(before, hashes(aero))).toEqual([]);
+      // AERO's price_usd reads its own adapters (R21), but its entry drives its history and level rebuild: the asset's own
+      // token's entry is in its hash (Task 6 fix E), so a method change shows as "config" on AERO, and on no other asset.
+      expect(moved(before, hashes(aero))).toEqual(['aero']);
     } finally {
       for (const h of [base, crvusd, aero]) rmSync(h, { recursive: true, force: true });
     }
@@ -343,9 +344,12 @@ describe('metric watch', () => {
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
-    expect(asset('vvv')).toBe('b9e654a8fe835036a520c12abbefb22afdd48c129f0c2a7e92f049862072258b');
-    expect(asset('hype')).toBe('af6d3b0124f28fd140ee7e979af22ef34ae2fcf2dad15033f6f9062b44f02d1e');
+    // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): diem_price_usd has no fetch-time cross-check (its check runs hourly in the writer).
+    expect(asset('vvv')).toBe('359d286886b9358bf4d6a4f11bc75fbea4dcae8381c60ae1fd1b0243bfc31717');
+    // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): no fetch-time price cross-check (its check runs hourly in the writer).
+    expect(asset('hype')).toBe('74c59b28b4d619a0915ab4cf5cbe5f335849b8503c2a180bfaaef3bdbbf80c4a');
     // Re-pinned (Phase 3 R2 Task 6b): AERO names no ref (R11: entriesFor reads price.* params and scanned tokens; its price adapters are its own, R21).
-    expect(asset('aero')).toBe('3c413feb4fbdba98b9ab17c4802ea46cc4306e9e700fb8d1384fa984dde4d19b');
+    // Re-pinned (Phase 3 R2 Task 6 fix wave, E): entriesFor includes the asset's own token's prices.yaml entry (AERO's again).
+    expect(asset('aero')).toBe('035327b9eec2de16fb96541b2b09dfc5a52015fd4ef6a246691e5cb8bcf6578d');
   });
 });

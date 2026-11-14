@@ -21,7 +21,7 @@ const SECONDS_PER_DAY = 86_400;
 const DAY_BLOCK_MIN_AGE_SEC = 3600;
 const MAX_LISTED_UNLISTED = 50;
 /** The source a dry run's in-memory chain prices rank under (a chain source, newest write: they win their hour). */
-const CHAIN_DRY_RUN_SOURCE = 'chain:dry_run';
+export const CHAIN_DRY_RUN_SOURCE = 'chain:dry_run';
 
 /**
  * The chain price writer a flow scan ensures its hours with (Phase 3 R2 Task 6a): writeChainPrices bound to the run's
@@ -86,6 +86,11 @@ export interface FlowScanResult {
   unlisted: UnlistedTransfer[];
   /** Day values of this scan per member metric, also on a dry run. */
   daily: Map<string, DailyPoint[]>;
+  /**
+   * The price check breaches the scan's own price write completed (the hours it wrote): the job that ran the scan posts
+   * them (plan P5), since a later levels run finds those hours stored and never reports them. Empty on a dry run.
+   */
+  breaches: WriteResult['breaches'];
 }
 
 /** EIP-1167 minimal proxy: prefix, 20-byte implementation, suffix. Clones with immutable args append bytes after it. */
@@ -380,7 +385,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
   // R20: the members this run writes. The scan counts every member (one pass), but a member left out is not written.
   const writes = args.only ? group.members.filter((m) => args.only!.has(m.metricKey)) : group.members;
   const withheld = group.members.filter((m) => !writes.includes(m)).map((m) => m.metricKey);
-  const result: FlowScanResult = { outcome, written: [], unlisted: [], daily: new Map(writes.map((m) => [m.metricKey, []])) };
+  const result: FlowScanResult = { outcome, written: [], unlisted: [], daily: new Map(writes.map((m) => [m.metricKey, []])), breaches: [] };
   const nowIso = args.now.toISOString();
 
   try {
@@ -436,6 +441,7 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
     if (refs.length > 0) {
       const w = await args.priceWriter(db, refs, rangeStartMs, rangeEndMs, { dryRun });
       for (const e of w.errors) outcome.notes.push(`chain prices: ${e.chain} stopped at ${new Date(e.hourMs).toISOString()}: ${e.error}`);
+      result.breaches.push(...w.breaches);
       for (const ref of refs) {
         const extra: ChainPriceCandidate[] = (w.rows?.[ref] ?? []).map((r) => ({ ts: r.ts, priceUsd: r.priceUsd, source: CHAIN_DRY_RUN_SOURCE, fetchedAt: nowIso }));
         byRef.set(ref, await chainPricesAt(db, ref, rangeStartMs, rangeEndMs, extra));

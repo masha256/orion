@@ -95,7 +95,8 @@ describe('assets/aero.yaml', () => {
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6b): AERO names no ref (R11: entriesFor reads price.* params and scanned tokens; its price adapters are its own, R21).
-    expect(loadAsset(ROOT, 'aero').hash).toBe('3c413feb4fbdba98b9ab17c4802ea46cc4306e9e700fb8d1384fa984dde4d19b');
+    // Re-pinned (Phase 3 R2 Task 6 fix wave, E): entriesFor includes the asset's own token's prices.yaml entry (AERO's again).
+    expect(loadAsset(ROOT, 'aero').hash).toBe('035327b9eec2de16fb96541b2b09dfc5a52015fd4ef6a246691e5cb8bcf6578d');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

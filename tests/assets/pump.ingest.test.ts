@@ -9,7 +9,7 @@ import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import { solanaTokenRef } from '../../src/db/prices.js';
-import { seedChainPrices } from '../helpers/chainPrices.js';
+import { fakePriceWriter, seedChainPrices } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { fakeRpc } from '../helpers/fakeRpc.js';
 import { ETH_USDC_FEED, feedCalls, pumpLiveAccounts } from '../helpers/livePrices.js';
@@ -79,6 +79,31 @@ async function seedReadings(db: Db, n: number, supplyNow: number) {
 }
 
 describe('assets/pump.yaml', () => {
+  it('a burn day with no stored PUMP prices: the fetch ensures its 24 hours through the price writer (as a flow scan does), then prices it; a dry run writes no prices row', async () => {
+    const supplyNow = 827.6e9;
+    const w = world(supplyNow);
+    await seedReadings(w.db, 10, supplyNow);
+    const ref = solanaTokenRef(MINT);
+    const todayStart = Math.floor(NOW.getTime() / DAY) * DAY;
+    const dry = fakePriceWriter((r) => (r === ref ? PRICE : null));
+    const d = await fetchAsset(w.db, LOADED, NOW, { ...w.deps, priceWriter: dry }, { metrics: ['flow_usd.buyback'], dryRun: true });
+    expect(dry.calls.length).toBeGreaterThan(0);
+    expect(dry.calls.every((c) => c.dryRun && c.refs.join() === ref && c.toHourMs === todayStart)).toBe(true);
+    expect(await w.db.all('SELECT * FROM prices')).toEqual([]);
+    const dryDays = d.written.filter((x) => x.metricKey === 'flow_usd.buyback' && x.periodDays === 1).slice(-7);
+    expect(dryDays.map((x) => Math.round(x.value))).toEqual(Array(7).fill(5_000_000));
+
+    const writer = fakePriceWriter((r) => (r === ref ? PRICE : null));
+    await fetchAsset(w.db, LOADED, NOW, { ...w.deps, priceWriter: writer }, { metrics: ['flow_usd.buyback'] });
+    expect(writer.calls.length).toBeGreaterThan(0);
+    for (const c of writer.calls) {
+      expect(c).toMatchObject({ refs: [ref], toHourMs: todayStart, dryRun: false });
+      expect(c.fromHourMs).toBeLessThanOrEqual(todayStart - 7 * DAY);
+    }
+    const last7 = (await listActiveObservations(w.db, 'pump', 'flow_usd.buyback')).filter((o) => o.periodDays === 1).slice(-7);
+    expect(last7.map((o) => Math.round(o.value))).toEqual(Array(7).fill(5_000_000));
+  });
+
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'pump', symbol: 'PUMP', chain: 'solana' });
     expect(config.ingest).toBeUndefined(); // no EVM RPC: Solana is read by the solana.* adapters

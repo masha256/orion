@@ -261,8 +261,10 @@ export function usdFlowRefs(asset: AssetConfig): { metricKey: string; contract: 
 
 /**
  * The refs an asset uses (Ruling R11): the `ref` of every `price.token` / `price.token_check` source (primaries and
- * cross-checks), and the token every transfer_flow scans and every share's `share_price.underlying`, as refs on the
- * asset's ingest chain; then their quote refs, transitively. A ref not in prices.yaml adds nothing. Sorted by ref, so
+ * cross-checks), the token every transfer_flow scans and every share's `share_price.underlying`, and the asset's own
+ * `token` contract (Task 6 fix E: AERO prices itself with its own adapters, R21, but its prices.yaml entry drives its
+ * history and level rebuild, so a method change there shows as "config" on AERO), as refs on the asset's ingest chain;
+ * then their quote refs, transitively. A ref not in prices.yaml adds nothing. Sorted by ref, so
  * the config hash does not depend on file order.
  */
 export function entriesFor(asset: AssetConfig, prices: ReadonlyMap<string, PriceEntry>): PriceEntry[] {
@@ -271,6 +273,7 @@ export function entriesFor(asset: AssetConfig, prices: ReadonlyMap<string, Price
     const address = name === undefined ? undefined : asset.contracts?.[name];
     if (asset.ingest && address !== undefined && /^0x[0-9a-fA-F]{40}$/.test(String(address))) used.add(evmTokenRef(asset.ingest.chain_id, String(address)));
   };
+  contractRef('token');
   for (const def of Object.values(asset.metrics)) {
     for (const s of [def.source, ...(def.cross_checks ?? []).map((c) => c.source)]) {
       if (s?.type === 'adapter' && (s.name === 'price.token' || s.name === 'price.token_check') && typeof s.params.ref === 'string') used.add(s.params.ref);

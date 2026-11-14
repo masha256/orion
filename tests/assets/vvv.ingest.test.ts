@@ -103,7 +103,8 @@ describe('assets/vvv.yaml', () => {
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
-    expect(loadAsset(ROOT, 'vvv').hash).toBe('b9e654a8fe835036a520c12abbefb22afdd48c129f0c2a7e92f049862072258b');
+    // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): diem_price_usd has no fetch-time cross-check (its check runs hourly in the writer).
+    expect(loadAsset(ROOT, 'vvv').hash).toBe('359d286886b9358bf4d6a4f11bc75fbea4dcae8381c60ae1fd1b0243bfc31717');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -186,8 +187,9 @@ describe('assets/vvv.yaml ingestion', () => {
 
     const checked = r.sources.flatMap((s) => s.crossChecks).map((c) => c.metricKey).sort();
     expect(checked).toEqual([
-      'circulating_supply', 'diem_price_usd', 'diem_supply', 'diem_target_supply', 'emission_rate_annual', 'locked_supply', 'price_usd',
-      // Venice's own; CoinGecko's total check is gone (Phase 3 R1); the two prices' prices.yaml checks (Task 6b).
+      'circulating_supply', 'diem_supply', 'diem_target_supply', 'emission_rate_annual', 'locked_supply', 'price_usd',
+      // Venice's own; CoinGecko's total check is gone (Phase 3 R1); VVV's price check (Task 6b). DIEM's price check runs
+      // hourly in the writer, never at fetch (Ruling R22: DIEM had none before R2).
       'staked_supply', 'staker_emission_share', 'total_supply',
     ]);
     expect(w.http.calls.filter((c) => /llama\.fi/.test(new URL(c.url).host)).map((c) => c.url)).toEqual([]); // Phase 3 R1

@@ -147,6 +147,44 @@ describe('levels job', () => {
     expect(next.posts).toEqual([]);
   });
 
+  it('levelsJob: a price write that throws or reports chain errors posts one ORION ALERT <env> levels prices line; reads, snapshot_push and dead-man as before', async () => {
+    const w = await world({ mini: INGEST_ASSET_YAML }, ['mini']);
+    const mini = `"eip155:8453/0x1111111111111111111111111111111111111111":\n  symbol: MINI\n  decimals: 18\n  chain: eip155:8453\n  valid_from: "2026-09-01"\n` +
+      `  primary: { kind: chainlink, feed: "0x${'a'.repeat(40)}" }\n  check: { kind: chainlink, feed: "0x${'b'.repeat(40)}", tolerance_pct: 2 }\n`;
+    writeFileSync(join(w.root, 'prices.yaml'), `${readFileSync(join(ROOT, 'prices.yaml'), 'utf8')}\n${mini}`);
+    const h = harness(testDb());
+    const seen: number[] = [];
+    const onLevels = async (_c: unknown, _j: unknown, r: { rows: unknown[] }) => void seen.push(r.rows.length);
+
+    // The writer throws.
+    const run = levelsContext(testDb(), w.root, SLOT, { ORION_DEADMAN_URL: DEADMAN });
+    const thrower = async () => Promise.reject(new Error('rpc down'));
+    const out = await handlerFor(run, { ...h.deps, priceWriter: thrower }, { onLevels })(levelsJob(1, SLOT), run.ctx);
+    expect(out).toMatchObject({ status: 'done', result: { rows: 5, failed: [], deadman: true, undelivered: [], prices: { written: 0, errors: ['rpc down'] } } });
+    expect(run.posts).toEqual(['ORION ALERT dev levels prices: rpc down']);
+    expect(run.pings).toEqual([DEADMAN]);
+    expect(seen).toEqual([5]);
+    expect(run.enqueued).toEqual([{ kind: 'snapshot_push', assetId: null, slot: SLOT }]);
+
+    // The writer returns chain errors (it stopped two chains): still one line, naming both.
+    const run2 = levelsContext(testDb(), w.root, '2026-09-19T13:15:00.000Z', { ORION_DEADMAN_URL: DEADMAN });
+    const errs = fakePriceWriter(() => 10, { errors: [{ chain: 'eip155:1', hourMs: Date.parse('2026-09-19T10:00:00.000Z'), error: 'timeout' }, { chain: 'eip155:56', hourMs: Date.parse('2026-09-19T11:00:00.000Z'), error: 'refused' }] });
+    const out2 = await handlerFor(run2, { ...h.deps, priceWriter: errs })(levelsJob(2, SLOT), run2.ctx);
+    expect(out2).toMatchObject({ status: 'done', result: { deadman: true } });
+    expect(run2.posts).toEqual(['ORION ALERT dev levels prices: eip155:1: timeout; eip155:56: refused']);
+
+    // A clean write posts nothing.
+    const run3 = levelsContext(testDb(), w.root, '2026-09-19T14:15:00.000Z', { ORION_DEADMAN_URL: DEADMAN });
+    await handlerFor(run3, { ...h.deps, priceWriter: fakePriceWriter(() => 10) })(levelsJob(3, SLOT), run3.ctx);
+    expect(run3.posts).toEqual([]);
+    expect(run3.pings).toEqual([DEADMAN]);
+
+    // An undelivered alert withholds the ping, as any undelivered post does.
+    const down = levelsContext(testDb(), w.root, '2026-09-19T15:15:00.000Z', { ORION_DEADMAN_URL: DEADMAN }, false);
+    const out4 = await handlerFor(down, { ...h.deps, priceWriter: thrower })(levelsJob(4, SLOT), down.ctx);
+    expect(out4).toMatchObject({ status: 'done', result: { undelivered: ['ORION ALERT dev levels prices: rpc down'], deadman: false } });
+  });
+
   it('levelsJob: the daemon runs the levels handler', () => {
     expect(defaultHandlers().levels).toBe(levelsHandler);
   });

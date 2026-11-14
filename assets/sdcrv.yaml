@@ -53,9 +53,8 @@ metrics:
     critical: true
     # sdCRV: the Curve sdCRV/CRV EMA x CRV; no independent venue, so the check is the 0.3-1.0 CRV band (tolerance
     # 0: the band is the tolerance) (prices.yaml; Phase 3 R2: read live at the run, no CoinGecko).
+    # No fetch-time cross-check (R22): the check runs hourly in the price writer (ORION WATCH, never an anomaly).
     source: { type: adapter, name: price.token, params: { ref: "eip155:1/0xd1b5651e55d4ceed36251c61c50c889b36f6abb5" } }
-    cross_checks:
-      - { tolerance_pct: 0, source: { type: adapter, name: price.token_check, params: { ref: "eip155:1/0xd1b5651e55d4ceed36251c61c50c889b36f6abb5" } } }
 
   total_supply:
     type: level

@@ -98,7 +98,8 @@ describe('assets/crv.yaml', () => {
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its check; entriesFor reads refs (R11).
-    expect(loadAsset(ROOT, 'crv').hash).toBe('9787bef1f28e0f08cd156f5f4582e8c33989a6411922d43a41e7c908e6953ca4');
+    // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): no fetch-time price cross-check (its check runs hourly in the writer).
+    expect(loadAsset(ROOT, 'crv').hash).toBe('c25e7423726715544eb4d3649a857f781b2bfee24bd7467721cc7e743049940d');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -122,7 +123,7 @@ describe('assets/crv.yaml', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
       ['adapter:price.token', ['primary:price_usd']],
-      ['adapter:price.token_check', ['cross_check:price_usd']],
+      // No price.token_check cross-check (Ruling R22): the check runs hourly in the price writer (ORION WATCH).
       [
         'chain_levels',
         [
@@ -173,7 +174,7 @@ describe('assets/crv.yaml', () => {
     expect(await rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
 
     const checked = r.sources.flatMap((s) => s.crossChecks);
-    expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true], ['vote_incentive_run_rate_usd', true]]);
+    expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['vote_incentive_run_rate_usd', true]]); // no price cross-check (R22)
     expect(w.http.calls.filter((c) => c.url === LLAMA).map((c) => c.url)).toEqual([]); // Phase 3 R1
     expect(w.rpc.stats.logRanges).toHaveLength(300); // three scans (fees, protocol revenue, treasury), 100 days each: the scanner commits a day at a time; a mainnet day (7,200 blocks) fits one call
     expect(w.rpc.stats.logRanges.every(([a, b]) => b - a + 1n <= 10_000n)).toBe(true);

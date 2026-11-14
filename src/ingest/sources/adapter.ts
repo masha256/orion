@@ -1,7 +1,7 @@
 import { getAdapter } from '../adapters/registry.js';
-import { failed, narrow, type ReadingResult, type SourceHandler } from '../types.js';
+import { failed, narrow, NoReading, type ReadingResult, type SourceHandler } from '../types.js';
 
-/** Dispatches to named adapters. An adapter that throws fails only its own reading. */
+/** Dispatches to named adapters. An adapter that throws fails only its own reading; one that throws NoReading has none. */
 export const adapterSource: SourceHandler = {
   id: 'adapter',
   async fetch(requests, ctx) {
@@ -12,6 +12,10 @@ export const adapterSource: SourceHandler = {
       try {
         results.push({ ok: true, value: await def.run(ctx, s.params) });
       } catch (err) {
+        if (err instanceof NoReading) {
+          results.push({ ok: false, error: `adapter ${s.name}: ${err.message}`, noReading: true });
+          continue;
+        }
         results.push(failed(`adapter ${s.name}: ${err instanceof Error ? err.message : String(err)}`));
       }
     }

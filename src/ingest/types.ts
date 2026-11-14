@@ -75,7 +75,20 @@ export interface PeriodDue {
   dueDay: string;
 }
 
-export type ReadingResult = { ok: true; value: SourceValue } | { ok: false; error: string };
+/**
+ * `noReading`: the source had nothing to read this run and that is not a failure (LIT's v4 check pool with zero in-range
+ * liquidity, Ruling R22). A cross-check with no reading is skipped (a note; no anomaly, no source failure, no streak); a
+ * primary with none still fails.
+ */
+export type ReadingResult = { ok: true; value: SourceValue } | { ok: false; error: string; noReading?: true };
+
+/** Thrown by an adapter that has no reading this run for a reason that is not a failure (see ReadingResult.noReading). */
+export class NoReading extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NoReading';
+  }
+}
 
 export function failed(error: string): ReadingResult {
   return { ok: false, error };
@@ -112,8 +125,10 @@ export interface SourceContext {
   /** The asset's active stored observations of one metric (oldest first): for adapters that work from earlier readings (Solana's supply drop). */
   observations?: (metricKey: string) => Promise<Observation[]>;
   /**
-   * The stored chain/first-party price of a ref at each hour in [fromMs, toMs) that has one (exactly at the hour; CoinGecko
-   * rows are never read): for adapters that price from the chain writer's rows (Solana's supply drop, Phase 3 R2).
+   * The chain/first-party price of a ref at each hour in [fromMs, toMs) that has one (exactly at the hour; CoinGecko rows
+   * are never read): for adapters that price from the chain writer's rows (Solana's supply drop, Phase 3 R2). The run
+   * first ensures those hours through its price writer, as a flow scan does (a dry run computes them in memory and writes
+   * no row, Ruling R19), so a day the hourly job missed is priced all the same.
    */
   chainHourPrices?: (tokenRef: string, fromMs: number, toMs: number) => Promise<Map<number, number>>;
   /** prices.yaml as the asset was loaded with it (LoadedAsset.prices): the `price.*` adapters look their ref up here. */

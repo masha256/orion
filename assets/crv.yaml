@@ -32,9 +32,8 @@ metrics:
     critical: true
     # CRV: the TriCRV EMA x crvUSD; check the CRV/USD feed (prices.yaml; Phase 3 R2: read live at the run, no
     # CoinGecko).
+    # No fetch-time cross-check (R22): the check runs hourly in the price writer (ORION WATCH, never an anomaly).
     source: { type: adapter, name: price.token, params: { ref: "eip155:1/0xd533a949740bb3306d119cc777fa900ba034cd52" } }
-    cross_checks:
-      - { tolerance_pct: 1.5, source: { type: adapter, name: price.token_check, params: { ref: "eip155:1/0xd533a949740bb3306d119cc777fa900ba034cd52" } } }
 
   # No burn: the ERC-20 total is the total supply. Locked CRV stays inside it.
   total_supply:

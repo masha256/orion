@@ -5,7 +5,7 @@ import type { HourPrice } from '../../prices/types.js';
 import { priceSourceVenue, priceVenue, type PriceAdapterName } from '../../prices/venue.js';
 import { OrionError } from '../../types.js';
 import { firstBlockAtOrAfter, type BlockRef, type RpcTransport } from '../transport/rpc.js';
-import type { SourceContext, SourceValue } from '../types.js';
+import { NoReading, type SourceContext, type SourceValue } from '../types.js';
 import type { AdapterDef, AdapterSource, AdapterValidateContext } from './registry.js';
 
 /**
@@ -21,7 +21,10 @@ import type { AdapterDef, AdapterSource, AdapterValidateContext } from './regist
  *
  * price.token_check is the check of the same read (one read per run serves both): its USD value, or for a `bound` check
  * (sdCRV: 0.3-1.0 CRV) the primary itself inside the band and the nearer bound in USD outside it, so the cross-check's gap
- * is the distance outside the band (0 inside; the detail names the band and the primary in the quote's units).
+ * is the distance outside the band (0 inside; the detail names the band and the primary in the quote's units). A check
+ * pool with zero in-range liquidity gives no reading (NoReading): the cross-check is skipped. Ruling R22: only CAKE, LINK,
+ * LIT, PUMP, UNI and VVV use it as a cross-check (the assets that had a price_usd cross-check before R2); the others'
+ * checks run hourly in the writer (ORION WATCH, never an anomaly).
  */
 
 type Params = Record<string, unknown>;
@@ -131,6 +134,8 @@ async function tokenCheck(ctx: SourceContext, p: Params): Promise<SourceValue> {
   const check = (price.detail.check ?? {}) as Record<string, unknown>;
   const stamp = stampOf('price.token_check', entry);
   const level = (value: number, detail: string): SourceValue => ({ kind: 'level', value, observedAt: r.observedAt, source: stamp, detail: `${entry.symbol} ${entry.ref} check ${price.check} at ${r.at}: ${detail}` });
+  // Zero in-range liquidity (LIT's v4 pool) is no reading, not a failure (Ruling R22): the cross-check is skipped.
+  if (check.skipped === 'zero_liquidity') throw new NoReading(`${entry.symbol} (${entry.ref}): check ${price.check} not read at ${r.at}: zero_liquidity`);
   if (typeof check.skipped === 'string') throw new Error(`${entry.symbol} (${entry.ref}): check ${price.check} not read at ${r.at}: ${check.skipped}${typeof check.error === 'string' ? ` (${check.error})` : ''}`);
   if (entry.check.kind === 'bound') {
     const inQuote = num(check.in_quote);

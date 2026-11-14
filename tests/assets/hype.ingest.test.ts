@@ -107,7 +107,8 @@ describe('assets/hype.yaml', () => {
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
-    expect(loadAsset(ROOT, 'hype').hash).toBe('af6d3b0124f28fd140ee7e979af22ef34ae2fcf2dad15033f6f9062b44f02d1e');
+    // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): no fetch-time price cross-check (its check runs hourly in the writer).
+    expect(loadAsset(ROOT, 'hype').hash).toBe('74c59b28b4d619a0915ab4cf5cbe5f335849b8503c2a180bfaaef3bdbbf80c4a');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -129,7 +130,7 @@ describe('assets/hype.yaml', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
       ['adapter:price.token', ['primary:price_usd']],
-      ['adapter:price.token_check', ['cross_check:price_usd']],
+      // No price.token_check cross-check (Ruling R22): the check runs hourly in the price writer (ORION WATCH).
       ['adapter:hype.total_supply', ['primary:total_supply']],
       ['coingecko', ['primary:circulating_supply']],
       ['adapter:hype.staked_supply', ['primary:staked_supply']],
@@ -165,13 +166,14 @@ describe('assets/hype.yaml', () => {
     // No derived run rate any more (it fed only the valuation).
     expect(await listActiveObservations(w.db, 'hype', 'revenue_run_rate_usd')).toEqual([]);
     const checked = r.sources.flatMap((s) => s.crossChecks);
-    // CoinGecko's total and DefiLlama's price checks are gone (Phase 3 R1); the price's prices.yaml check (the perp) since Task 6b.
-    expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
+    // CoinGecko's total and DefiLlama's price checks are gone (Phase 3 R1); the price's prices.yaml check (the perp) runs
+    // hourly in the writer, never at fetch (Ruling R22).
+    expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([]);
     expect(w.http.calls.filter((c) => c.url === LLAMA_PRICE).map((c) => c.url)).toEqual([]); // Phase 3 R1
     // Five posts: the spot meta, one clearinghouse state per subtracted address, and the validators once (the stake and emission
     // adapters share the cached reply); plus the report-only fills, one per day of the 14.
     const posts = w.http.calls.filter((c) => c.url === INFO).map((c) => (c.body as { type: string }).type);
-    // allMids once: price.token and price.token_check share the run's one read (Task 6b).
+    // allMids once: price.token's read (Task 6b; no fetch-time check since R22).
     expect(posts.filter((t) => t !== 'userFillsByTime').sort()).toEqual(['allMids', 'spotClearinghouseState', 'spotClearinghouseState', 'spotClearinghouseState', 'spotMetaAndAssetCtxs', 'userNonFundingLedgerUpdates', 'validatorSummaries']);
     // The reserve yield's first period (2026-08-26 .. 09-24) is not over on 09-24: nothing stored, nothing due.
     expect(await listActiveObservations(w.db, 'hype', 'flow_usd.reserve_yield')).toEqual([]);

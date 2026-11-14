@@ -256,28 +256,45 @@ describe('chain prices after the level reads (Phase 3 R2 Task 6a)', () => {
   const PRICES = loadPrices(ROOT);
   const H = 3_600_000;
   const TO = Math.floor(NOW.getTime() / H) * H; // the top of the current hour: the last completed hour is TO - 1 h
-  const [A, B] = [...PRICES.values()].sort((x, y) => (x.ref < y.ref ? -1 : 1));
+  // Two refs priced from before the window (LIT, AERO, HYPE and PUMP start after NOW: their valid_from asks for nothing).
+  const [A, B] = [...PRICES.values()].filter((e) => Date.parse(`${e.validFrom}T00:00:00Z`) <= TO - 48 * H).sort((x, y) => (x.ref < y.ref ? -1 : 1));
   const two = new Map([[A!.ref, A!], [B!.ref, B!]]);
-  const seed = async (ref: string, source: string, hourMs: number) => {
+
+  /** Seeds `ref` at every hour of [fromMs, toMs) under `source` but the hours in `gaps`. */
+  const seedHours = async (ref: string, source: string, fromMs: number, toMs: number, gaps: number[] = []) => {
     await upsertToken(testDb(), { tokenRef: ref, symbol: 'X', decimals: 18, coingeckoId: null });
-    await upsertPrices(testDb(), ref, source, [{ ts: new Date(hourMs).toISOString(), priceUsd: 1 }], NOW.toISOString());
+    const rows = [];
+    for (let h = fromMs; h < toMs; h += H) if (!gaps.includes(h)) rows.push({ ts: new Date(h).toISOString(), priceUsd: 1 });
+    await upsertPrices(testDb(), ref, source, rows, NOW.toISOString());
   };
 
-  it('recentPriceHours: from the hour after each ref\'s newest row under its primary\'s source, at most 48 h back, to the top of the hour', async () => {
+  it('recentPriceHours: from the earliest hour of the last 48 h any ref lacks under its primary\'s source (a gap inside the window included), to the top of the hour', async () => {
     // Nothing stored: 48 h back.
     expect(await recentPriceHours(testDb(), two, NOW)).toEqual({ fromHourMs: TO - LEVELS_PRICE_HOURS * H, toHourMs: TO });
-    // A up to TO - 3 h; B only under another source (a CoinGecko row is not the ref's chain row): still 48 h for B.
-    await seed(A!.ref, methodSource(A!.primary), TO - 3 * H);
-    await seed(B!.ref, 'coingecko', TO - H);
+    // A stored for the whole window but a gap 10 h back: the write starts at the gap, not after A's newest row.
+    await seedHours(A!.ref, methodSource(A!.primary), TO - 48 * H, TO, [TO - 10 * H]);
+    expect(await recentPriceHours(testDb(), new Map([[A!.ref, A!]]), NOW)).toEqual({ fromHourMs: TO - 10 * H, toHourMs: TO });
+    // B only under another source (a CoinGecko row is not the ref's chain row): still 48 h for B.
+    await seedHours(B!.ref, 'coingecko', TO - 48 * H, TO);
     expect(await recentPriceHours(testDb(), two, NOW)).toEqual({ fromHourMs: TO - 48 * H, toHourMs: TO });
-    expect(await recentPriceHours(testDb(), new Map([[A!.ref, A!]]), NOW)).toEqual({ fromHourMs: TO - 2 * H, toHourMs: TO });
-    // Both up to the last completed hour: nothing to write.
-    await seed(A!.ref, methodSource(A!.primary), TO - H);
-    await seed(B!.ref, methodSource(B!.primary), TO - H);
+    // Both complete: nothing to write.
+    await seedHours(A!.ref, methodSource(A!.primary), TO - 10 * H, TO - 9 * H);
+    await seedHours(B!.ref, methodSource(B!.primary), TO - 48 * H, TO);
     expect(await recentPriceHours(testDb(), two, NOW)).toBeNull();
-    // A ref whose newest row is older than 48 h starts 48 h back (the cap), not at its newest row.
+    // Hours older than 48 h are never asked for (the cap): 100 h later the window starts 48 h back.
     expect(await recentPriceHours(testDb(), new Map([[A!.ref, A!]]), new Date(NOW.getTime() + 100 * H))).toEqual({ fromHourMs: TO + 100 * H - 48 * H, toHourMs: TO + 100 * H });
+    // A ref whose valid_from is after the window asks for nothing (the writer would write no row for it).
+    expect(await recentPriceHours(testDb(), new Map([[A!.ref, { ...A!, validFrom: '2099-01-01' }]]), NOW)).toBeNull();
     expect(await recentPriceHours(testDb(), new Map(), NOW)).toBeNull();
+  });
+
+  it('runLevels: a gap 10 h back inside the window is filled (every other hour of every ref stored)', async () => {
+    for (const e of PRICES.values()) await seedHours(e.ref, methodSource(e.primary), TO - 48 * H, TO, e.ref === A!.ref ? [TO - 10 * H] : []);
+    const h = harness(testDb());
+    const r = await runLevels(testDb(), [h.loaded], h.deps, NOW, 7, { prices: PRICES });
+    expect(r.prices).toMatchObject({ fromHourMs: TO - 10 * H, toHourMs: TO, error: null });
+    expect(h.prices.calls.map((c) => [c.fromHourMs, c.toHourMs])).toEqual([[TO - 10 * H, TO]]);
+    expect((await listPrices(testDb(), A!.ref)).map((p) => p.ts)).toContain(new Date(TO - 10 * H).toISOString());
   });
 
   it('runLevels: after the reads, one writer run over every prices.yaml ref; a writer that throws is recorded, never fails the read', async () => {

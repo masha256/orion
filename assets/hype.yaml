@@ -30,9 +30,8 @@ metrics:
     critical: true
     # HYPE: Hyperliquid spot @107 mid (allMids) x USDC/USD; check the perp mid, same venue (prices.yaml; Phase 3
     # R2: read live at the run, no CoinGecko).
+    # No fetch-time cross-check (R22): the check runs hourly in the price writer (ORION WATCH, never an anomaly).
     source: { type: adapter, name: price.token, params: { ref: "hyperliquid:spot/@107" } }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: adapter, name: price.token_check, params: { ref: "hyperliquid:spot/@107" } } }
 
   # Total supply (the HYPE/USDC pair in the spot meta) less the HYPE held at the fund and the two dead addresses (their
   # clearinghouse balances), about 951.3M. The docs call the fund's HYPE burned; the chain still holds it, so it is subtracted

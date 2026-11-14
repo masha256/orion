@@ -73,7 +73,7 @@ const APP_HTML = '<!doctype html><html><head><script type="module" crossorigin s
 const APP_INDEX = 'const r=()=>import("./exchange-stats-B7xq2LmN.js");export{r as l};';
 const APP_CHUNK = 'const mt=new Set([`maker_fee`,`taker_fee`,`transfer_fee`,`withdraw_fee`]);function vt(e){return mt.has(e)?.5:1}export{vt as s};';
 
-function world() {
+function world(calls: Record<string, bigint> = {}) {
   const all = trades();
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'lighter', symbol: 'lit', current_price: PRICE, market_cap: 7.6e8, circulating_supply: 250_000_000, total_supply: 1_000_000_000 }],
@@ -116,6 +116,7 @@ function world() {
       [callKey(C.token, 'decimals')]: 18n,
       [callKey(C.token, 'balanceOf', [C.dead])]: 18_090_720n * E18,
       [callKey(C.token, 'balanceOf', [C.ecosystem_reserve])]: 231_809_000n * E18,
+      ...calls,
     },
   });
   // The two quarterly burns, from the Safe to dead.
@@ -145,6 +146,22 @@ function world() {
 }
 
 describe('assets/lit.yaml', () => {
+  it('a zero-liquidity v4 check pool gives no check reading (R22): the cross-check is skipped, no anomaly, no source failure, no streak', async () => {
+    const check = prices!.get(priceRef('LIT'))!.check as { state_view: string; pool_id: string };
+    const w = world({ [callKey(lc(check.state_view), 'getLiquidity', [lc(check.pool_id)])]: 0n });
+    for (let i = 0; i < 3; i++) {
+      const r = await fetchAsset(w.db, LOADED, new Date(NOW.getTime() + i * 3_600_000), w.deps, { metrics: ['price_usd'] });
+      expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error])).toEqual([]);
+      expect(r.sources.flatMap((s) => s.crossChecks)).toEqual([]);
+      expect(r.sources.flatMap((s) => s.notes).filter((n) => /price_usd: cross-check skipped/.test(n))).toEqual([
+        expect.stringMatching(/zero_liquidity/),
+      ]);
+      expect(r.anomalies).toEqual([]);
+      expect(r.written.map((x) => [x.metricKey, x.value])).toEqual([['price_usd', PRICE]]);
+    }
+    expect(await w.db.all('SELECT kind FROM anomalies')).toEqual([]);
+  });
+
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'lit', symbol: 'LIT', chain: 'ethereum', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
     // Mike, 2026-10-16: discretionary.

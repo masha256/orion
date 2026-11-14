@@ -91,7 +91,8 @@ describe('assets/ycrv.yaml', () => {
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members (share_price.underlying on the shares).
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
-    expect(loadAsset(ROOT, 'ycrv').hash).toBe('908f12e73f6774e284cdafa2404b33201fc9d87edcd83136e365f2afb039a9e0');
+    // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): no fetch-time price cross-check (its check runs hourly in the writer).
+    expect(loadAsset(ROOT, 'ycrv').hash).toBe('9d7e62d3b7b00d7d54b4b7eeb4db0fc250a0b43585d0789ce7bae1b24ad8200d');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -139,9 +140,8 @@ describe('assets/ycrv.yaml', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
       // No total_supply check: CoinGecko's yCRV supply is a 2022 snapshot (Mike, 2026-10-12). The price is its prices.yaml
-      // method and check (Task 6b): no CoinGecko read is left.
+      // method (Task 6b): no CoinGecko read is left. Its check runs hourly in the writer, never at fetch (Ruling R22).
       ['adapter:price.token', ['primary:price_usd']],
-      ['adapter:price.token_check', ['cross_check:price_usd']],
       ['chain_levels', ['primary:total_supply', 'primary:circulating_supply', 'primary:staked_supply']], // circulating = the on-chain total
       ['constant', ['primary:staker_emission_share', 'primary:emission_rate_annual']],
     ]);
@@ -191,8 +191,9 @@ describe('assets/ycrv.yaml', () => {
       const sum = gf.get(o.observedAt)! + gi.get(o.observedAt)!;
       expect(Math.abs(sum - o.value), o.observedAt).toBeLessThanOrEqual(1e-12 * Math.max(Math.abs(o.value), Number.MIN_VALUE));
     }
-    // The DefiLlama price check is gone (Phase 3 R1); the price's prices.yaml check (get_dy on the second pool) since Task 6b.
-    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
+    // The DefiLlama price check is gone (Phase 3 R1); the price's prices.yaml check (get_dy on the second pool) runs hourly in
+    // the writer, never at fetch (Ruling R22).
+    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([]);
     expect(w.http.calls.filter((c) => c.url === LLAMA).map((c) => c.url)).toEqual([]); // Phase 3 R1
   });
 

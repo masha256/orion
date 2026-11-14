@@ -41,9 +41,8 @@ metrics:
     critical: true
     # SKY: the Uniswap v2 SKY/USDS TWAP x USDS; check the SKY/USD feed (prices.yaml; Phase 3 R2: read live at the
     # run, no CoinGecko).
+    # No fetch-time cross-check (R22): the check runs hourly in the price writer (ORION WATCH, never an anomaly).
     source: { type: adapter, name: price.token, params: { ref: "eip155:1/0x56072c95faa701256059aa122697b133aded9279" } }
-    cross_checks:
-      - { tolerance_pct: 2.5, source: { type: adapter, name: price.token_check, params: { ref: "eip155:1/0x56072c95faa701256059aa122697b133aded9279" } } }
 
   # 23.45B: every MKR-equivalent, including about 2.07B SKY in the converter for unconverted MKR (fully convertible).
   # Small burns (about 7M in the month to 2026-10-16) show up here.
