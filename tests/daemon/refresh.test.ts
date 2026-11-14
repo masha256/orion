@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { harness, MINI_REF, NOW } from '../helpers/fetchHarness.js';
 import { useTestDb } from '../helpers/db.js';
-import { INGEST_ASSET_YAML, METRICS_END } from '../helpers/ingestAsset.js';
+import { INGEST_ASSET_YAML, METRICS_END, PRICED_INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 import { activate, cleanupAfterAll, levelsContext, levelsWorld } from '../helpers/levelsWorld.js';
 
 const testDb = useTestDb();
@@ -23,8 +23,8 @@ const SLOT = '2026-09-19T00:45:00.000Z';
 const refreshJob = (attempts = 1, id = 1): Job =>
   ({ id, kind: 'refresh', assetId: 'mini', slot: SLOT, status: 'running', attempts, maxAttempts: 2 }) as Job;
 
-async function world() {
-  const w = levelsWorld({ mini: INGEST_ASSET_YAML });
+async function world(yaml = INGEST_ASSET_YAML) {
+  const w = levelsWorld({ mini: yaml });
   worlds.push(w);
   await activate(testDb(), ['mini']);
   return w;
@@ -169,7 +169,8 @@ describe('refresh job', () => {
   });
 
   it('refresh: a breach the nightly scan\'s own price write reports is posted once (ORION WATCH <env> price ...), never an anomaly', async () => {
-    const w = await world();
+    // A config root with prices.yaml refuses a CoinGecko price (Ruling R24): price_usd entered by hand.
+    const w = await world(PRICED_INGEST_ASSET_YAML);
     // The mini token's prices.yaml entry (its usd flows are valued at it), so the post names its symbol.
     writeFileSync(join(w.root, 'prices.yaml'), `"${MINI_REF}":\n  symbol: MINI\n  decimals: 18\n  chain: eip155:8453\n  valid_from: "2026-09-01"\n` +
       `  primary: { kind: chainlink, feed: "0x${'a'.repeat(40)}" }\n  check: { kind: chainlink, feed: "0x${'b'.repeat(40)}", tolerance_pct: 2 }\n`);

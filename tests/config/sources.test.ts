@@ -1,7 +1,12 @@
+import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { parseAssetYaml } from '../../src/config/load.js';
+import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
+import { loadPrices } from '../../src/prices/config.js';
 import { contractNames, isChainSource } from '../../src/config/sources.js';
-import { MINI_ASSET_YAML } from '../helpers/assets.js';
+import { MINI_ASSET_YAML, MINI_HOLDER_YAML } from '../helpers/assets.js';
 import { REVENUE_STALE_MOVE_PCT } from '../../src/ingest/alerts.js';
 import { INGEST_ASSET_YAML, ingestAsset } from '../helpers/ingestAsset.js';
 
@@ -154,5 +159,45 @@ describe('declarative sources in the asset config', () => {
   it('fixes the stale-revenue threshold at 30 percent, and refuses the old per-asset key', () => {
     expect(REVENUE_STALE_MOVE_PCT).toBe(30);
     expect(bad(`${INGEST_ASSET_YAML}review_triggers: { revenue_stale_move_pct: 45 }\n`)).toMatch(/Unrecognized key: "review_triggers"/);
+  });
+});
+
+describe('no CoinGecko price comes back through a config (Phase 3 R2, Ruling R24)', () => {
+  const ROOT = fileURLToPath(new URL('../..', import.meta.url));
+  const PRICES = loadPrices(ROOT);
+  const PRICE = 'price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }';
+  const SUPPLY = 'staked_supply: { type: level, unit: tokens, staleness_days: 7 }';
+  const withPrice = (source: string) => MINI_HOLDER_YAML.replace(PRICE, `price_usd: { type: level, unit: usd, staleness_days: 3, critical: true, ${source} }`);
+  const refusal = (yaml: string): string => {
+    try {
+      parseAssetYaml(yaml, PRICES);
+    } catch (err) {
+      return `${(err as { code?: string }).code}: ${(err as Error).message}`;
+    }
+    return '';
+  };
+
+  it('refuses a coingecko source reading a price field, by name, as primary or cross-check, when parsed with prices.yaml', () => {
+    expect(refusal(withPrice('source: { type: coingecko, id: mini, field: price }')))
+      .toMatch(/^invalid_asset_config: .*metrics\.price_usd\.source: coingecko field "price" is refused: no CoinGecko price is read/);
+    expect(refusal(withPrice('source: { type: coingecko, id: mini, field: market_cap }')))
+      .toMatch(/metrics\.price_usd\.source: coingecko field "market_cap" is refused/);
+    const asCheck = withPrice(`source: { type: adapter, name: price.token, params: { ref: "${[...PRICES.keys()][0]}" } }, cross_checks: [ { source: { type: coingecko, id: mini, field: price } } ]`);
+    expect(refusal(asCheck)).toMatch(/metrics\.price_usd\.cross_checks\.0\.source: coingecko field "price" is refused/);
+  });
+
+  it('still loads a coingecko circulating_supply (R3 removes it) and total_supply', () => {
+    const supply = (field: string) => MINI_HOLDER_YAML.replace(SUPPLY, `staked_supply: { type: level, unit: tokens, staleness_days: 7, source: { type: coingecko, id: mini, field: ${field} } }`);
+    expect(refusal(supply('circulating_supply'))).toBe('');
+    expect(refusal(supply('total_supply'))).toBe('');
+  });
+
+  it('loadAsset refuses it from a config root with prices.yaml (every release); a test home without one has no price rules', () => {
+    const home = mkdtempSync(join(tmpdir(), 'orion-cgprice-'));
+    mkdirSync(join(home, 'assets'));
+    writeFileSync(join(home, 'assets', 'mini.yaml'), withPrice('source: { type: coingecko, id: mini, field: price }'));
+    expect(() => loadAsset(home, 'mini')).not.toThrow();
+    copyFileSync(join(ROOT, 'prices.yaml'), join(home, 'prices.yaml'));
+    expect(() => loadAsset(home, 'mini')).toThrow(/metrics\.price_usd\.source: coingecko field "price" is refused/);
   });
 });

@@ -3,7 +3,7 @@ import { defaultHandlers } from '../../src/daemon/daemon.js';
 import { levelsHandler } from '../../src/daemon/jobs/levels.js';
 import { listLatestLevels } from '../../src/db/latestLevels.js';
 import { setRegistryState } from '../../src/db/registry.js';
-import { INGEST_ASSET_YAML, METRICS_END } from '../helpers/ingestAsset.js';
+import { INGEST_ASSET_YAML, METRICS_END, PRICED_INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 import { harness } from '../helpers/fetchHarness.js';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -118,7 +118,8 @@ describe('levels job', () => {
   });
 
   it('levelsJob: writes the last completed hour of every prices.yaml ref, and posts each breach the write reports once (ORION WATCH, never an anomaly)', async () => {
-    const w = await world({ mini: INGEST_ASSET_YAML }, ['mini']);
+    // A config root with prices.yaml refuses a CoinGecko price (Ruling R24): price_usd entered by hand.
+    const w = await world({ mini: PRICED_INGEST_ASSET_YAML }, ['mini']);
     // The repo's prices.yaml, plus the mini token (its usd flows are valued at it: the load-time check wants its entry).
     const mini = `"eip155:8453/0x1111111111111111111111111111111111111111":\n  symbol: MINI\n  decimals: 18\n  chain: eip155:8453\n  valid_from: "2026-09-01"\n` +
       `  primary: { kind: chainlink, feed: "0x${'a'.repeat(40)}" }\n  check: { kind: chainlink, feed: "0x${'b'.repeat(40)}", tolerance_pct: 2 }\n`;
@@ -148,7 +149,8 @@ describe('levels job', () => {
   });
 
   it('levelsJob: a price write that throws or reports chain errors posts one ORION ALERT <env> levels prices line; reads, snapshot_push and dead-man as before', async () => {
-    const w = await world({ mini: INGEST_ASSET_YAML }, ['mini']);
+    // A config root with prices.yaml refuses a CoinGecko price (Ruling R24): price_usd entered by hand, so 4 level rows.
+    const w = await world({ mini: PRICED_INGEST_ASSET_YAML }, ['mini']);
     const mini = `"eip155:8453/0x1111111111111111111111111111111111111111":\n  symbol: MINI\n  decimals: 18\n  chain: eip155:8453\n  valid_from: "2026-09-01"\n` +
       `  primary: { kind: chainlink, feed: "0x${'a'.repeat(40)}" }\n  check: { kind: chainlink, feed: "0x${'b'.repeat(40)}", tolerance_pct: 2 }\n`;
     writeFileSync(join(w.root, 'prices.yaml'), `${readFileSync(join(ROOT, 'prices.yaml'), 'utf8')}\n${mini}`);
@@ -160,10 +162,10 @@ describe('levels job', () => {
     const run = levelsContext(testDb(), w.root, SLOT, { ORION_DEADMAN_URL: DEADMAN });
     const thrower = async () => Promise.reject(new Error('rpc down'));
     const out = await handlerFor(run, { ...h.deps, priceWriter: thrower }, { onLevels })(levelsJob(1, SLOT), run.ctx);
-    expect(out).toMatchObject({ status: 'done', result: { rows: 5, failed: [], deadman: true, undelivered: [], prices: { written: 0, errors: ['rpc down'] } } });
+    expect(out).toMatchObject({ status: 'done', result: { rows: 4, failed: [], deadman: true, undelivered: [], prices: { written: 0, errors: ['rpc down'] } } });
     expect(run.posts).toEqual(['ORION ALERT dev levels prices: rpc down']);
     expect(run.pings).toEqual([DEADMAN]);
-    expect(seen).toEqual([5]);
+    expect(seen).toEqual([4]);
     expect(run.enqueued).toEqual([{ kind: 'snapshot_push', assetId: null, slot: SLOT }]);
 
     // The writer returns chain errors (it stopped two chains): still one line, naming both.

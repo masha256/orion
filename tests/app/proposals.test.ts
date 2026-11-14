@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { approveProposal, rejectProposal } from '../../src/app/proposals.js';
 import type { ReleaseInfo } from '../../src/cli/paths.js';
@@ -10,6 +11,7 @@ import { getObservationsByIds, getProvenanceByIds, insertObservation, listActive
 import { getProposal, insertProposal, type NewProposal, type ProposalChange } from '../../src/db/proposals.js';
 import type { OrionError } from '../../src/types.js';
 import { AGENT_ASSET_YAML, agentWorld, type AgentWorld } from '../helpers/agentWorld.js';
+import { MINI_HOLDER_YAML } from '../helpers/assets.js';
 import { AS_OF } from '../helpers/obs.js';
 import { useTestDb } from '../helpers/db.js';
 import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
@@ -264,6 +266,20 @@ describe('approving a config proposal', () => {
       code: 'invalid_asset_config', message: expect.stringContaining('metrics.flow_usd.fees.source: Unrecognized key: "price_coingecko_id"'),
     }));
     expect((await getProposal(w.db, p.id))!.status).toBe('pending');
+    expect(readFileSync(yamlPath, 'utf8')).toBe(before);
+  });
+
+  it('proposals: approving a config proposal that adds a CoinGecko price source is refused by name (Ruling R24)', async () => {
+    copyFileSync(join(fileURLToPath(new URL('../..', import.meta.url)), 'prices.yaml'), join(home, 'prices.yaml'));
+    writeFileSync(yamlPath, MINI_HOLDER_YAML.trimStart());
+    const before = readFileSync(yamlPath, 'utf8');
+    for (const field of ['price', 'market_cap']) {
+      const p = await file({ kind: 'config', edits: [{ path: ['metrics', 'price_usd', 'source'], value: { type: 'coingecko', id: 'mini', field } }] }, [null]);
+      await expect(approve(p.id), field).rejects.toThrow(expect.objectContaining({
+        code: 'invalid_asset_config', message: expect.stringContaining(`metrics.price_usd.source: coingecko field "${field}" is refused`),
+      }));
+      expect((await getProposal(w.db, p.id))!.status).toBe('pending');
+    }
     expect(readFileSync(yamlPath, 'utf8')).toBe(before);
   });
 

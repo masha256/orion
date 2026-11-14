@@ -1,4 +1,8 @@
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { parseAssetYaml } from '../../src/config/load.js';
+import { loadPrices } from '../../src/prices/config.js';
+import { MINI_HOLDER_YAML } from '../helpers/assets.js';
 import { AGENT_TOOLS, toApiTools, toolsForRun } from '../../src/agent/tools/index.js';
 import { decideAnomaly, raiseAnomaly } from '../../src/db/anomalies.js';
 import { eligibleObservations, valueInForce } from '../../src/app/eligibility.js';
@@ -340,6 +344,25 @@ describe('propose_change', () => {
     expect(r).toMatchObject({ isError: true, result: { refused: 'invalid_asset_config' } });
     expect(JSON.stringify(r.result)).toContain('metrics.flow_usd.fees.source: Unrecognized key: \\"price_coingecko_id\\"');
     expect(w.ledger.proposals()).toEqual([]);
+  });
+
+  it('propose_change: filing parses with the run\'s prices.yaml: a CoinGecko price source and an unknown price ref are refused at filing (Ruling R24)', async () => {
+    const prices = loadPrices(fileURLToPath(new URL('../..', import.meta.url)));
+    const ww = await freshWorld(MINI_HOLDER_YAML);
+    ww.ctx.loaded = parseAssetYaml(MINI_HOLDER_YAML, prices);
+    const file = (value: unknown) => ww.call('propose_change', { rationale: 'because', citations: [DOC_CITE], kind: 'config', edits: [{ path: ['metrics', 'price_usd', 'source'], value }] });
+    const cg = await file({ type: 'coingecko', id: 'mini', field: 'price' });
+    expect(cg).toMatchObject({ isError: true, result: { refused: 'invalid_asset_config' } });
+    expect(JSON.stringify(cg.result)).toContain('metrics.price_usd.source: coingecko field \\"price\\" is refused');
+    const unknownRef = 'eip155:1/0x0000000000000000000000000000000000000001';
+    const bad = await file({ type: 'adapter', name: 'price.token', params: { ref: unknownRef } });
+    expect(bad).toMatchObject({ isError: true, result: { refused: 'invalid_asset_config' } });
+    expect(JSON.stringify(bad.result)).toContain(`ref ${unknownRef} is not in prices.yaml`);
+    expect(ww.ledger.proposals()).toEqual([]);
+    // A ref prices.yaml names is filed.
+    const ok = await file({ type: 'adapter', name: 'price.token', params: { ref: [...prices.keys()][0] } });
+    expect(ok.isError).toBe(false);
+    expect(ww.ledger.proposals()).toHaveLength(1);
   });
 
   it('cannot reach its own limits or the asset id', async () => {

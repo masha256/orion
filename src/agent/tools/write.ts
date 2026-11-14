@@ -303,7 +303,9 @@ const proposeChange = defineTool({
         const raw = rawConfig(ctx.loaded);
         const filedAgainst = edits.map((e) => getAtPath(raw, e.path));
         if (edits.every((e, i) => canonicalJson(e.value) === canonicalJson(filedAgainst[i]))) refuse('no_change', 'these edits change nothing');
-        parseAssetObject(applyEditsToObject(raw, edits)); // throws invalid_asset_config, which the model sees as a refusal
+        // With the run's prices.yaml (Ruling R24): an unknown price ref or a CoinGecko price is refused here, at filing,
+        // as approve would refuse it. Throws invalid_asset_config, which the model sees as a refusal.
+        parseAssetObject(applyEditsToObject(raw, edits), ctx.loaded.prices);
         return fileProposal(ctx, { change: { kind: 'config', edits }, filedAgainst, rationale, evidence, citations });
       }
 

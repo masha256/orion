@@ -8,7 +8,7 @@ import { getProvenanceByIds, listActiveObservations } from '../../src/db/observa
 import { insertProposal } from '../../src/db/proposals.js';
 import { fetchAsset } from '../../src/ingest/run.js';
 import { harness, NOW } from '../helpers/fetchHarness.js';
-import { INGEST_ASSET_YAML, TOKEN } from '../helpers/ingestAsset.js';
+import { PRICED_INGEST_ASSET_YAML as INGEST_ASSET_YAML, TOKEN } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
 
 const testDb = useTestDb();
@@ -42,7 +42,7 @@ describe('the combined config hash on every stored path (Ruling R10)', () => {
     // The fetch path: provenance carries loaded.hash.
     const h = harness(testDb(), { loaded });
     await fetchAsset(h.db, h.loaded, NOW, h.deps);
-    const fetched = await listActiveObservations(h.db, 'mini', 'price_usd');
+    const fetched = await listActiveObservations(h.db, 'mini', 'circulating_supply');
     expect(fetched.length).toBeGreaterThan(0);
     const [fetchedProv] = await getProvenanceByIds(h.db, [fetched.at(-1)!.id]);
 

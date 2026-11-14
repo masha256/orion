@@ -161,6 +161,32 @@ const LEVEL_CHECK: ReadonlySet<string> = new Set(['coingecko', 'http_json', 'erc
 const FLOW_PRIMARY: ReadonlySet<string> = new Set(['transfer_flow', 'defillama', 'adapter']);
 const FLOW_CHECK: ReadonlySet<string> = new Set(['defillama', 'adapter']);
 
+/**
+ * The CoinGecko `/coins/markets` fields that carry its price: `price`, and `market_cap` (its price times its supply).
+ * Phase 3 R2 (Ruling R24): a config that reads one, as primary or cross-check, is refused by name (coingeckoPriceIssues).
+ * `circulating_supply` (R3 removes it) and `total_supply` still load.
+ */
+export const COINGECKO_PRICE_FIELDS: ReadonlySet<string> = new Set(['price', 'market_cap']);
+
+/**
+ * Every coingecko source of `asset` reading a COINGECKO_PRICE_FIELDS field, as `metrics.<key>.source` or
+ * `metrics.<key>.cross_checks.<i>.source`, so no config (a hand edit, a proposal at filing or at approve) brings a
+ * CoinGecko price back: a token's USD price comes from prices.yaml.
+ */
+export function coingeckoPriceIssues(asset: Pick<SourceBearingAsset, 'metrics'>): string[] {
+  const issues: string[] = [];
+  const check = (where: string, s: SourceConfig | undefined) => {
+    if (s?.type === 'coingecko' && COINGECKO_PRICE_FIELDS.has(s.field)) {
+      issues.push(`${where}: coingecko field "${s.field}" is refused: no CoinGecko price is read (Phase 3 R2); a token's USD price comes from prices.yaml (adapter price.token)`);
+    }
+  };
+  for (const [key, def] of Object.entries(asset.metrics)) {
+    check(`metrics.${key}.source`, def.source);
+    (def.cross_checks ?? []).forEach((c, i) => check(`metrics.${key}.cross_checks.${i}.source`, c.source));
+  }
+  return issues;
+}
+
 export interface SourceBearingAsset {
   contracts: Record<string, string>;
   ingest?: unknown;

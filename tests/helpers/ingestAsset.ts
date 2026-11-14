@@ -80,6 +80,23 @@ metrics:
 ${METRICS_END}
 `;
 
+/** INGEST_ASSET_YAML's CoinGecko price: refused from a config root with a prices.yaml (Phase 3 R2, Ruling R24). */
+const CG_PRICE_USD = `  price_usd:
+    type: level
+    unit: usd
+    staleness_days: 3
+    critical: true
+    source: { type: coingecko, id: mini-token, field: price }
+    cross_checks:
+      - { tolerance_pct: 2, source: { type: http_json, url: "https://api.example.test/stats", path: price } }
+`;
+/**
+ * INGEST_ASSET_YAML for a config root with a prices.yaml, where a CoinGecko price is refused (Ruling R24): the same asset
+ * with price_usd entered by hand (no source, no cross-check); every other metric unchanged.
+ */
+export const PRICED_INGEST_ASSET_YAML = INGEST_ASSET_YAML.replace(CG_PRICE_USD, '  price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }\n');
+if (PRICED_INGEST_ASSET_YAML === INGEST_ASSET_YAML) throw new Error('PRICED_INGEST_ASSET_YAML: the price_usd block moved');
+
 export function ingestAsset(): LoadedAsset {
   return parseAssetYaml(INGEST_ASSET_YAML);
 }

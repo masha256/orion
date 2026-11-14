@@ -8,6 +8,7 @@ import { notePriceVenues } from '../prices/venue.js';
 import { OrionError } from '../types.js';
 import { canonicalJson, sha256 } from '../util/canonical.js';
 import { AssetConfigSchema, type AssetConfig } from './schema.js';
+import { coingeckoPriceIssues } from './sources.js';
 
 export interface LoadedAsset {
   config: AssetConfig;
@@ -31,7 +32,7 @@ export function rawConfig(loaded: LoadedAsset): unknown {
  * it uses (entriesFor, sorted by ref), so a price-method change moves the hash of exactly the assets that read it. With
  * no entries (no prices map, or none of its refs) the hash is the config's alone, as before prices.yaml.
  */
-export function parseAssetObject(obj: unknown, prices?: Map<string, PriceEntry>): LoadedAsset {
+export function parseAssetObject(obj: unknown, prices?: ReadonlyMap<string, PriceEntry>): LoadedAsset {
   let config: AssetConfig;
   try {
     config = AssetConfigSchema.parse(obj);
@@ -45,6 +46,11 @@ export function parseAssetObject(obj: unknown, prices?: Map<string, PriceEntry>)
   const paramIssues = adapterParamIssues(config, prices);
   if (paramIssues.length > 0) throw new OrionError('invalid_asset_config', paramIssues.join('\n'));
   if (prices && prices.size > 0) {
+    // No CoinGecko price (Phase 3 R2, Ruling R24): a config root with prices.yaml (every release since R2) refuses one by
+    // name, at load, at a proposal's filing (the run's prices) and at its approve (the home's). A home without prices.yaml
+    // (a test home, an older release) has no price rules.
+    const cg = coingeckoPriceIssues(config);
+    if (cg.length > 0) throw new OrionError('invalid_asset_config', cg.join('\n'));
     // Every usd transfer_flow is valued at its token's chain price (Phase 3 R2): the ref must be priced in prices.yaml.
     const unpriced = usdFlowRefs(config).filter((u) => !prices.has(u.ref));
     if (unpriced.length > 0) {
@@ -71,7 +77,7 @@ function adapterParamIssues(config: AssetConfig, prices: ReadonlyMap<string, Pri
   return issues;
 }
 
-export function parseAssetYaml(text: string, prices?: Map<string, PriceEntry>): LoadedAsset {
+export function parseAssetYaml(text: string, prices?: ReadonlyMap<string, PriceEntry>): LoadedAsset {
   return parseAssetObject(parseYaml(text), prices);
 }
 
