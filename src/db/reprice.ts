@@ -16,7 +16,7 @@ import { exportStamp, fsyncDir, writeDurableExport } from './purge.js';
  * - (b) Solana supply-drop rows (`locator.adapter` solana.supply_burn_daily) on chain days: value = the day's amount x the
  *   mean of its 24 chain hours (the view's `daily_mean`). A row written before 0005 has no amount: it takes the amount
  *   of its `flow_tokens.*` twin (same asset and observed_at) and the mint's ref. Days that began before the first stored
- *   supply reading are DefiLlama dollars (the adapter's `history`): skipped (R6), never refused.
+ *   supply reading (not rejected) are DefiLlama dollars (the adapter's `history`): skipped (R6), never refused.
  * Skipped by design (counted by reason): dollars a first-party API reports (`usd_native`), third-party (DefiLlama) rows,
  * disclosed/manual rows, derived rows, periodic rows (period > 1 day), anything else not CoinGecko-priced at write.
  * Refused (listed; the row keeps its value): a CoinGecko-priced row with an hour that has an amount and no chain price
@@ -24,8 +24,9 @@ import { exportStamp, fsyncDir, writeDurableExport } from './purge.js';
  *
  * In the same pass: the `coingecko:crvusd` / `coingecko:yearn-crv` token refs of the asset's rows (every row, every
  * metric) become the crvUSD / yCRV address refs before those rows are priced; the stored `derived` rows over a repriced
- * flow (burn_momentum, flow_annualized) whose window holds a changed day are recomputed with src/ingest/derived.ts at
- * their own observed_at. Every changed row gets `locator.repriced = { at, release, basis }`.
+ * flow (burn_momentum, flow_annualized) whose window holds a day this run prices or one already marked (Ruling R30: a
+ * rerun after an interrupted --yes, a 0 -> 0 day) are recomputed with src/ingest/derived.ts at their own observed_at
+ * and written only where the value differs. Every changed row gets `locator.repriced = { at, release, basis }`.
  *
  * A dry run by default (no lock, no write, no file). `yes`: under the asset's run lock, the plan is made, every row it
  * touches is written whole (to_jsonb) to `<exportDir>/<asset>-<UTCstamp>.json` (fsynced, as `data purge`), then one
@@ -224,7 +225,7 @@ async function planReprice(db: Db, loaded: LoadedAsset, from: string | undefined
     const supply = typeof params.supply_metric === 'string' ? params.supply_metric : '';
     if (!firstReading.has(supply)) {
       const r = await db.one<{ first: string | null }>(
-        "SELECT min(observed_at) AS first FROM observations WHERE asset_id = $1 AND metric_key = $2 AND locator->>'adapter' = 'solana.token_supply'",
+        "SELECT min(observed_at) AS first FROM observations WHERE asset_id = $1 AND metric_key = $2 AND locator->>'adapter' = 'solana.token_supply' AND status <> 'rejected'",
         [asset, supply],
       );
       firstReading.set(supply, r?.first ? Date.parse(iso(r.first)) : null);
@@ -290,8 +291,18 @@ async function planReprice(db: Db, loaded: LoadedAsset, from: string | undefined
     return perMetric.get(m)!;
   };
   const flows: Write[] = [];
-  /** Flow rows (by metric) whose value changes, and every planned new flow value by id. */
-  const changedDays = new Map<string, Set<string>>();
+  /**
+   * Ruling R30: the flow days (by metric) a derived row over them must be recomputed for: every day this run prices
+   * (changed or not: a 0 -> 0 day, a day an interrupted earlier run already committed) and every day already carrying
+   * the marker. Every planned new flow value by id.
+   */
+  const repricedDays = new Map<string, Set<string>>();
+  const markDay = (metric: string, day: string): void => {
+    if (!repricedDays.has(metric)) repricedDays.set(metric, new Set());
+    repricedDays.get(metric)!.add(day);
+  };
+  const isMarked = (r: Row): boolean => r.locator?.repriced !== undefined && r.locator?.repriced !== null;
+  for (const r of all) if (isMarked(r)) markDay(r.metric_key, dayOf(r.observed_at));
   const newValue = new Map<number, number>();
   for (const r of rows) {
     const m = metricOf(r.metric_key);
@@ -345,7 +356,8 @@ async function planReprice(db: Db, loaded: LoadedAsset, from: string | undefined
       }
       usd = c.amount * (sum / HOURS_PER_DAY);
     }
-    const hasMarker = r.locator?.repriced !== undefined && r.locator?.repriced !== null;
+    markDay(r.metric_key, day);
+    const hasMarker = isMarked(r);
     const tokenMoves = c.tokenRef !== r.token_ref || c.setAmount !== null;
     if (usd === r.value && hasMarker && !tokenMoves) {
       m.unchanged++;
@@ -355,10 +367,6 @@ async function planReprice(db: Db, loaded: LoadedAsset, from: string | undefined
     m.oldSum += r.value;
     m.newSum += usd;
     newValue.set(Number(r.id), usd);
-    if (usd !== r.value) {
-      if (!changedDays.has(r.metric_key)) changedDays.set(r.metric_key, new Set());
-      changedDays.get(r.metric_key)!.add(day);
-    }
     flows.push({ id: Number(r.id), metric: r.metric_key, day, oldValue: r.value, newValue: usd, oldTokenRef: r.token_ref, newTokenRef: c.tokenRef, newAmount: c.setAmount, basis });
   }
 
@@ -371,7 +379,8 @@ async function planReprice(db: Db, loaded: LoadedAsset, from: string | undefined
       oldTokenRef: r.token_ref, newTokenRef: remapOf(r.token_ref), newAmount: null, basis: null,
     }));
 
-  // Derived rows over a repriced flow: recomputed at their observed_at from the flows' new values.
+  // Derived rows over a repriced flow: recomputed at their observed_at from the flows' new values; written only when the
+  // value differs (so a second --yes stays a no-op).
   const derivedWrites: Write[] = [];
   const derived: RepriceDerived[] = [];
   for (const [key, def] of Object.entries(config.metrics).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
@@ -409,7 +418,7 @@ async function planReprice(db: Db, loaded: LoadedAsset, from: string | undefined
     const points = new Map(derivedFunction(s.name as DerivedName)(days, windowDays).map((p) => [p.day, p.value]));
     const touches = (day: string): boolean => {
       for (const m of [...plus, ...minus]) {
-        const changed = changedDays.get(m);
+        const changed = repricedDays.get(m);
         if (!changed) continue;
         for (let i = 0; i < windowDays; i++) if (changed.has(addDays(day, -i))) return true;
       }

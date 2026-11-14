@@ -74,7 +74,8 @@ describe('orion data reprice / rebuild-price-levels / purge-prices', () => {
     const h = home();
     const { ok, gap } = await seed();
     const dry = await orion(h, 'data', 'reprice', 'rpx');
-    expect(dry.exit).toEqual([]);
+    // A refused row exits 3 (dry run and --yes) so a script can't miss it.
+    expect(dry.exit).toEqual([3]);
     expect(dry.out.split('\n')).toEqual([
       'RPX reprice (dry run), every day:',
       '  flow_usd.burn: 2 row(s): 1 repriced (value sum 21.00 -> 20.00), 0 unchanged, 1 refused; skipped: none',
@@ -86,9 +87,16 @@ describe('orion data reprice / rebuild-price-levels / purge-prices', () => {
     const file = join(h, 'repriced', 'rpx-20261114T120000Z.json');
     const sha = createHash('sha256').update(readFileSync(file)).digest('hex');
     expect(yes.out.split('\n').at(-1)).toBe(`repriced 1 day(s); exported to ${file} sha256 ${sha}`);
+    expect(yes.exit).toEqual([3]);
+    // --json keeps the refused list and exits 3 too.
+    const jr = await orion(h, 'data', 'reprice', 'rpx', '--json');
+    expect(jr.exit).toEqual([3]);
+    expect(JSON.parse(jr.out).perMetric[0].refused).toEqual([{ id: gap, day: '2026-10-04', reason: '0 of 1 hours with an amount priced' }]);
     expect((await db().one<{ value: number }>('SELECT value FROM observations WHERE id = $1', [ok]))!.value).toBe(20);
     const j = JSON.parse((await orion(h, 'data', 'reprice', 'rpx', '--from', '2026-10-01', '--json')).out);
     expect(j).toMatchObject({ asset: 'rpx', from: '2026-10-01', applied: false, perMetric: [{ metric: 'flow_usd.burn', repriced: 0, unchanged: 1 }] });
+    // Nothing refused from 10-05 on: exit 0.
+    expect((await orion(h, 'data', 'reprice', 'rpx', '--from', '2026-10-05')).exit).toEqual([]);
     const bad = await orion(h, 'data', 'reprice', 'rpx', '--from', '2026-10-32', '--json');
     expect(bad.exit).toEqual([1]);
     expect(JSON.parse(bad.out).error.code).toBe('invalid_day');

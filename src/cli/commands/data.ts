@@ -37,6 +37,9 @@ interface SetOpts {
 
 const collect = (value: string, previous: string[]): string[] => [...previous, value];
 
+/** `data reprice`'s exit when a row is refused (distinct from 1, an error): the refused rows are still listed. */
+export const REPRICE_REFUSED_EXIT = 3;
+
 const anomalyLine = (a: Anomaly): string =>
   `#${a.id}  ${a.status}  ${a.severity}  ${a.kind}  ${a.metricKey || '(source)'}  ${a.dedupeKey}  x${a.occurrences}  last seen ${a.lastSeenAt}${a.note ? `  note: ${a.note}` : ''}`;
 
@@ -286,7 +289,8 @@ export function registerData(program: Command, ctx: CliContext): void {
     .description(
       'rewrite, in place, the stored USD value of every CoinGecko-priced flow row (transfer scans, the Solana supply drop) from the chain prices ' +
         'flow_usd_chain_v reads; remaps coingecko:crvusd / coingecko:yearn-crv refs and recomputes the derived rates over them. ' +
-        'A dry run unless --yes, which first writes every row it touches to $ORION_HOME/repriced. Rows with an unpriced hour are refused and keep their value',
+        'A dry run unless --yes, which first writes every row it touches to $ORION_HOME/repriced. Rows with an unpriced hour are refused and keep their value; ' +
+        `exits ${REPRICE_REFUSED_EXIT} when any row is refused`,
     )
     .option('--from <day>', 'first UTC day (YYYY-MM-DD) to reprice (default: every day)')
     .option('--yes', 'write, after the export')
@@ -299,6 +303,8 @@ export function registerData(program: Command, ctx: CliContext): void {
           await repriceAsset(db, loaded, { from: opts.from, yes: opts.yes === true, now: ctx.now(), exportDir, ...(ctx.release ? { release: ctx.release.tag } : {}) }),
         );
         output(ctx, opts.json, result, () => repriceLines(result, exportDir));
+        // A refused row keeps its CoinGecko value: exit 3 (dry run and --yes) so an operator or script can't miss it.
+        if (result.perMetric.some((m) => m.refused.length > 0)) ctx.setExitCode?.(REPRICE_REFUSED_EXIT);
       }),
     );
 

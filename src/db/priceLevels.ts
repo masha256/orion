@@ -140,10 +140,11 @@ export async function rebuildPriceLevels(db: OrionDb, loaded: LoadedAsset, opts:
     for (const day of days) {
       await db.tx(async (t) => {
         for (const p of byDay.get(day)!) {
-          const firstParty = p.source.startsWith('first_party:');
+          // The rung is the venue's (src/prices/venue.ts), so a new first-party venue can't disagree with it.
           const venue = venueOfMethod({ ref: p.tokenRef }, { kind: kindOfSource(p.source) as PriceMethod['kind'] });
+          const firstParty = venue.rung === 'first_party_api';
           const provenance: Provenance = {
-            method: 'derived', sourceType: firstParty ? 'first_party_api' : 'contract_state', chain: venue.chain,
+            method: 'derived', sourceType: venue.rung, chain: venue.chain,
             locator: { from: 'prices', token_ref: p.tokenRef, ts: p.ts, source: p.source, ...(firstParty ? { [INPUT_ORIGIN_KEY]: 'api' } : {}) },
             formula: 'price_level_from_prices@1', codeVersion: version, configHash: loaded.hash,
           };

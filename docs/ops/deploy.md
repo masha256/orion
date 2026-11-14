@@ -455,7 +455,8 @@ ssh orion-<env> data reprice <asset> [--from <YYYY-MM-DD>] [--yes]
     # third_party, disclosed, periodic, defillama_history). --yes (asset run lock) first writes every row it touches to
     # ~/home/repriced/<asset>-<UTCstamp>.json, then rewrites value in place, one transaction per day; remaps
     # coingecko:crvusd / coingecko:yearn-crv to the address refs and recomputes the derived rates over the repriced flows.
-    # A second --yes writes nothing.
+    # A second --yes writes nothing; a rerun after an interrupted --yes finishes the derived rates too. Exits 3 when any
+    # row is refused (dry run and --yes; the JSON still lists `refused`).
     $ST data reprice crv --from 2025-10-13
 ssh orion-<env> data rebuild-price-levels <asset> [--yes]
     # (R2 release on) per CoinGecko (market_data) price_usd / diem_price_usd row: a new row at the same observed_at from

@@ -199,8 +199,11 @@ describe('repriceAsset', () => {
       const burn = metric(r, 'flow_usd.burn');
       expect(burn.refused).toEqual([{ id: gap, day: '2026-10-01', reason: '1 of 2 hours with an amount priced' }]);
       expect(burn.rows).toBe(2);
-      expect(burn.repriced).toBe(yes ? 1 : 1);
+      expect(burn.repriced).toBe(1);
     }
+    // After --yes: a third call finds the repriced row at its new value (unchanged) and the gap row still refused.
+    const third = metric(await repriceAsset(db(), evm(), { yes: false, now: NOW, exportDir }), 'flow_usd.burn');
+    expect(third).toMatchObject({ rows: 2, repriced: 0, unchanged: 1, refused: [{ id: gap, day: '2026-10-01', reason: '1 of 2 hours with an amount priced' }] });
     const row = await db().one<{ value: number; locator: Record<string, unknown> }>('SELECT value, locator FROM observations WHERE id = $1', [gap]);
     expect(row!.value).toBe(100);
     expect(row!.locator.repriced).toBeUndefined();
@@ -370,6 +373,66 @@ describe('repriceAsset', () => {
     expect(refs[1]!.value).toBe(7); // yCRV has no chain price here: refused, but remapped
     expect(refs[2]!.value).toBe(10); // a token row: remapped only
     expect(await d.one("SELECT 1 FROM observations WHERE token_ref LIKE 'coingecko:%'")).toBeUndefined();
+  });
+
+  it('R30: a day that failed mid-apply, then a rerun: every derived row equals derived.ts on the final flows; a third run is a no-op', async () => {
+    // Five burn days; 10-04 burns nothing (value 0 stays 0, so its flow only gets the marker). usage_index = burn_momentum 3 d.
+    const days5 = ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05'];
+    const d = db();
+    await seedPrices(d, REF, dayStartMs('2026-09-30'), 24 * 7);
+    const amounts = days5.map((_, k) => (k === 3 ? hourlyOf({}) : hourlyOf({ [k]: 3 + k, [10 + k]: 1.5, 22: 0.25 * (k + 1) })));
+    const values = [10, 11, 12, 0, 14];
+    const burn: number[] = [];
+    for (let i = 0; i < days5.length; i++) burn.push(await seedScan(d, 'rpx', 'flow_usd.burn', days5[i]!, amounts[i]!, values[i]!));
+    const old = new Map(days5.map((day, i) => [day, values[i]!]));
+    const derivedProv = (name: string): Provenance => ({ method: 'derived', sourceType: 'derived', chain: null, locator: { metrics: ['flow_usd.burn'] }, formula: `${name}@1`, codeVersion: 'test', configHash: 'h' });
+    for (const p of burnMomentum(old, 3)) await seedPlain(d, 'rpx', 'usage_index', dayEnd(p.day), p.value, derivedProv('burn_momentum'), { periodDays: null });
+    for (const p of flowAnnualized(old, 2)) await seedPlain(d, 'rpx', 'burn_rate', dayEnd(p.day), p.value, derivedProv('flow_annualized'), { periodDays: null });
+
+    // The 10-04 day transaction fails once (a crash or reprice_conflict mid-apply): 10-01..10-03 stay committed.
+    await d.run("CREATE OR REPLACE FUNCTION t8_fail() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 't8 boom'; END $$ LANGUAGE plpgsql");
+    await d.run(`CREATE TRIGGER t8_fail BEFORE UPDATE ON observations FOR EACH ROW WHEN (OLD.id = ${Number(burn[3])}) EXECUTE FUNCTION t8_fail()`);
+    const exportDir = join(scratch(), 'repriced');
+    await expect(repriceAsset(d, evm(), { yes: true, now: NOW, exportDir })).rejects.toThrow(/t8 boom/);
+    await d.run('DROP TRIGGER t8_fail ON observations');
+    await d.run('DROP FUNCTION t8_fail()');
+    expect((await d.one<{ value: number }>('SELECT value FROM observations WHERE id = $1', [burn[0]]))!.value).toBeCloseTo(hourlyUsd(days5[0]!, amounts[0]!), 12);
+
+    await repriceAsset(d, evm(), { yes: true, now: new Date(NOW.getTime() + 1000), exportDir });
+    const flows = await d.all<{ observed_at: string; value: number }>("SELECT observed_at, value FROM observations WHERE metric_key = 'flow_usd.burn' AND superseded_by IS NULL ORDER BY observed_at");
+    const finalDays = new Map(flows.map((f) => [new Date(Date.parse(new Date(f.observed_at).toISOString()) - D).toISOString().slice(0, 10), f.value]));
+    const storedOf = async (m: string) => (await d.all<{ observed_at: string; value: number }>(
+      'SELECT observed_at, value FROM observations WHERE metric_key = $1 AND superseded_by IS NULL ORDER BY observed_at', [m],
+    )).map((g) => [new Date(g.observed_at).toISOString(), g.value]);
+    const want = burnMomentum(finalDays, 3);
+    expect(await storedOf('usage_index')).toEqual(want.map((p) => [dayEnd(p.day), p.value]));
+    expect(await storedOf('burn_rate')).toEqual(flowAnnualized(finalDays, 2).map((p) => [dayEnd(p.day), p.value]));
+    // The usage_index of 10-04 moved off its CoinGecko-era value (the stale case the review reproduced).
+    expect(want.find((p) => p.day === '2026-10-04')!.value).not.toBe(burnMomentum(old, 3).find((p) => p.day === '2026-10-04')!.value);
+
+    // A third --yes writes nothing and exports nothing.
+    const after = await snapshot(d);
+    const r3 = await repriceAsset(d, evm(), { yes: true, now: new Date(NOW.getTime() + 2000), exportDir });
+    expect(r3.exportFile).toBeNull();
+    expect(r3.days).toBe(0);
+    expect(r3.derived.every((x) => x.recomputed === 0)).toBe(true);
+    expect(await snapshot(d)).toEqual(after);
+  });
+
+  it('PUMP: a rejected supply reading does not move the history/chain split (the adapter reads active rows only)', async () => {
+    const d = db();
+    await upsertToken(d, { tokenRef: PUMP_REF, symbol: 'PUMP', decimals: null, coingeckoId: null });
+    const supplyProv: Provenance = { method: 'measured', sourceType: 'contract_state', chain: 'solana:mainnet', locator: { adapter: 'solana.token_supply' }, codeVersion: 'test', configHash: 'h' };
+    // A rejected reading on 10-20 before the first active one on 10-24: 10-23 is still DefiLlama history.
+    const rejected = await seedPlain(d, 'pmp', 'total_supply', '2026-10-20T00:00:00.000Z', 1e12, supplyProv, { periodDays: null });
+    await d.run("UPDATE observations SET status = 'rejected' WHERE id = $1", [rejected]);
+    await seedPlain(d, 'pmp', 'total_supply', '2026-10-24T00:00:00.000Z', 1e12, supplyProv, { periodDays: null });
+    const burnProv: Provenance = { method: 'measured', sourceType: 'contract_state', chain: 'solana:mainnet', locator: { adapter: 'solana.supply_burn_daily', params: { unit: 'usd' } }, codeVersion: 'test', configHash: 'h' };
+    await seedPlain(d, 'pmp', 'flow_usd.buyback', dayEnd('2026-10-23'), 900, burnProv);
+    await seedPlain(d, 'pmp', 'flow_tokens.buyback', dayEnd('2026-10-23'), 450, burnProv);
+    await seedPrices(d, PUMP_REF, dayStartMs('2026-10-23'), 24, [], 'chain:solana_vaults');
+    const m = metric(await repriceAsset(d, pump(), { yes: false, now: NOW, exportDir: scratch() }), 'flow_usd.buyback');
+    expect(m).toMatchObject({ rows: 1, repriced: 0, refused: [], skipped: { defillama_history: 1 } });
   });
 
   it('run_in_progress while another holder has the asset lock: --yes writes nothing and no export', async () => {
