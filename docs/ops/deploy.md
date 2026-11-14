@@ -447,6 +447,24 @@ ssh orion-<env> data purge <asset> --metrics <k1,k2,...> [--source-type <rung>] 
     # ~/home/purged/<asset>-<first metric>[+N]-<UTCstamp>.json (src/db/purge.ts), then deletes. <rung>: contract_state, log_scan, first_party_api, pool_scan, disclosure, derived, constant,
     # market_data, third_party. Prod purges only on Mike's go.
     $PR data purge lit --metrics unlocks_next_year --source-type third_party      # dry run: prints the counts
+ssh orion-<env> data reprice <asset> [--from <YYYY-MM-DD>] [--yes]
+    # (R2 release on) a dry run without --yes: per USD flow metric the rows repriced, unchanged, refused (listed: an hour
+    # with an amount and no chain price, < 24 hours on the daily mean, no twin amount) and skipped by reason (usd_native,
+    # third_party, disclosed, periodic, defillama_history). --yes (asset run lock) first writes every row it touches to
+    # ~/home/repriced/<asset>-<UTCstamp>.json, then rewrites value in place, one transaction per day; remaps
+    # coingecko:crvusd / coingecko:yearn-crv to the address refs and recomputes the derived rates over the repriced flows.
+    # A second --yes writes nothing.
+    $ST data reprice crv --from 2025-10-13
+ssh orion-<env> data rebuild-price-levels <asset> [--yes]
+    # (R2 release on) per CoinGecko (market_data) price_usd / diem_price_usd row: a new row at the same observed_at from
+    # the newest chain/first-party price at or before observed_at - 1 h (refused beyond 6 h). Deletes nothing: run
+    # `data purge <asset> --metrics price_usd[,diem_price_usd] --source-type market_data` afterwards.
+    $ST data rebuild-price-levels vvv
+ssh orion-<env> data purge-prices --source coingecko [--yes]
+    # (R2 release on) `prices` run lock; refused while an active observation has a coingecko:* token ref (run
+    # `data reprice --yes` first). --yes writes ~/home/purged/prices-coingecko-<UTCstamp>.json, then deletes every
+    # coingecko prices row and the coingecko:* tokens rows nothing references.
+    $ST data purge-prices --source coingecko
 ```
 
 - **Size a backfill:** a backfill must be sized to finish inside the 4 h clearance before the env's nightly; split it by

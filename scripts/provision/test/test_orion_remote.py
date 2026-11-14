@@ -1040,6 +1040,56 @@ class Phase3VerbTests(RemoteCase):
                              'data compare-usd aero --days 401', 'data compare-usd aero --days 1e3',
                              'data compare-usd aero --json', 'data compare-usd aero lit'])
 
+    def test_reprice_passthrough(self):
+        """Phase 3 R2 Task 8: a dry run by default; --from is a day, --yes the only write switch."""
+        argv = self.last('data reprice crv')
+        self.assertEqual(argv, ['data', 'reprice', 'crv', '--json'])
+        self.assertNotIn('--yes', argv)
+        self.assertEqual(self.last('data reprice crv --from 2025-10-13'), ['data', 'reprice', 'crv', '--from', '2025-10-13', '--json'])
+        self.assertEqual(self.last('data reprice crv --yes --from 2025-10-13'),
+                         ['data', 'reprice', 'crv', '--from', '2025-10-13', '--yes', '--json'])
+        self.assertEqual(self.last('data reprice pump --yes'), ['data', 'reprice', 'pump', '--yes', '--json'])
+
+    def test_reprice_refused(self):
+        self.assert_refused([
+            'data reprice', 'data reprice CRV', 'data reprice crv vvv', 'data reprice --yes', 'data reprice crv --yes yes',
+            'data reprice crv --yes --yes', 'data reprice crv --from', 'data reprice crv --from 2025-10-13 --from 2025-10-14',
+            'data reprice crv --from 2025-1-13', 'data reprice crv --from 20251013', 'data reprice crv --from 2025-10-13T00:00:00Z',
+            "data reprice crv --from '2025-10-13\n'", "data reprice 'crv\n'", 'data reprice crv --from \u0662025-10-13',
+            'data reprice crv --from=2025-10-13', 'data reprice crv --from --yes', 'data reprice crv --json', 'data reprice crv --force',
+            "data reprice 'crv;id'", 'data reprice crv --from $(id)', 'data reprice crv --metrics flow_usd.fees', 'data reprice crv --all',
+        ])
+
+    def test_rebuild_price_levels_passthrough(self):
+        argv = self.last('data rebuild-price-levels vvv')
+        self.assertEqual(argv, ['data', 'rebuild-price-levels', 'vvv', '--json'])
+        self.assertNotIn('--yes', argv)
+        self.assertEqual(self.last('data rebuild-price-levels vvv --yes'), ['data', 'rebuild-price-levels', 'vvv', '--yes', '--json'])
+        self.assert_refused([
+            'data rebuild-price-levels', 'data rebuild-price-levels VVV', 'data rebuild-price-levels vvv aero',
+            'data rebuild-price-levels vvv --yes --yes', 'data rebuild-price-levels vvv --yes=1', 'data rebuild-price-levels vvv --from 2025-10-13',
+            'data rebuild-price-levels vvv --json', "data rebuild-price-levels 'vvv\n'", "data rebuild-price-levels 'vvv;id'",
+            'data rebuild-price-levels --yes',
+        ])
+
+    def test_purge_prices_passthrough(self):
+        argv = self.last('data purge-prices --source coingecko')
+        self.assertEqual(argv, ['data', 'purge-prices', '--source', 'coingecko', '--json'])
+        self.assertNotIn('--yes', argv)
+        self.assertEqual(self.last('data purge-prices --yes --source coingecko'), ['data', 'purge-prices', '--source', 'coingecko', '--yes', '--json'])
+
+    def test_purge_prices_refused(self):
+        """--source is required and only `coingecko` (fullmatch); no asset, no other option."""
+        self.assert_refused([
+            'data purge-prices', 'data purge-prices --yes', 'data purge-prices coingecko', 'data purge-prices aero --source coingecko',
+            'data purge-prices --source', 'data purge-prices --source defillama', 'data purge-prices --source COINGECKO',
+            'data purge-prices --source coingecko,defillama', "data purge-prices --source 'coingecko\n'", "data purge-prices --source 'coingecko '",
+            'data purge-prices --source coingeckox', "data purge-prices --source ''", 'data purge-prices --source=coingecko',
+            'data purge-prices --source coingecko --source coingecko', 'data purge-prices --source coingecko --yes --yes',
+            'data purge-prices --source coingecko --json', 'data purge-prices --source coingecko --metrics price_usd',
+            "data purge-prices --source 'coingecko;id'", 'data purge-prices --source $(id)', 'data purge-prices --source --yes',
+        ])
+
 
 class RecoveryTests(RemoteCase):
     """M-11: an orion-remote that died between drain and restart (ssh drop, OOM) leaves ~/.deploy-pending behind."""

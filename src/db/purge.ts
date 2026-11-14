@@ -101,9 +101,9 @@ export async function purgeMetrics(db: OrionDb, loaded: LoadedAsset, opts: Purge
       if (total > 0) {
         // The export is on disk (fsynced) before the first delete; a failure to write it throws, rolling back nothing
         // because nothing was written yet.
-        ({ file: exportFile, sha256: exportSha256 } = writeExport(opts.exportDir, asset, metrics, opts.now, {
+        ({ file: exportFile, sha256: exportSha256 } = writeDurableExport(opts.exportDir, exportFileName(asset, metrics, opts.now), {
           asset, metrics, sourceType: opts.sourceType ?? null, createdAt: opts.now.toISOString(), perMetric: plans.map((p) => p.count), ...rows,
-        }, opts.syncDir ?? fsyncDir));
+        }, opts.syncDir ?? fsyncDir, 'purge_export_failed', 'nothing was deleted'));
       }
       // The self-referencing FK: a deleted row may be superseded by another deleted row (or by a kept one). Clear the
       // pointers inside the set first, so the delete never trips it; a kept row pointing into the set was refused above.
@@ -120,6 +120,99 @@ export async function purgeMetrics(db: OrionDb, loaded: LoadedAsset, opts: Purge
       return { asset, perMetric: plans.map((p) => p.count), exportFile, exportSha256, applied: true };
     }, { lockAsset: asset }),
   );
+}
+
+/**
+ * The run lock `data purge-prices` holds: the one the daemon's prices backfill takes (src/daemon/jobs/backfill.ts
+ * PRICES_LOCK; a test pins the two equal), so a purge never runs beside a writer of the same table.
+ */
+export const PRICES_RUN_LOCK = 'prices';
+
+export interface PurgePricesOptions {
+  /** Only `coingecko` (Phase 3 R2: the CoinGecko price history goes once the chain prices replaced it). */
+  source: 'coingecko';
+  yes: boolean;
+  /** `$ORION_HOME/purged` from the CLI. */
+  exportDir: string;
+  now: Date;
+  syncDir?: (dir: string) => void;
+}
+
+export interface PurgePricesResult {
+  source: string;
+  applied: boolean;
+  /** Per token ref: the `prices` rows of the source to delete (or deleted). */
+  prices: { tokenRef: string; rows: number; firstTs: string; lastTs: string }[];
+  /** `coingecko:*` tokens rows nothing references once those rows go. */
+  deletedTokens: string[];
+  /** `coingecko:*` tokens rows still referenced (by a superseded or rejected observation, or another source's prices). */
+  keptTokens: { tokenRef: string; reason: string }[];
+  exportFile: string | null;
+  exportSha256: string | null;
+}
+
+/**
+ * `orion data purge-prices --source coingecko` (Phase 3 R2 plan P4/D3): deletes every `prices` row of the source, then
+ * the `coingecko:*` `tokens` rows nothing references any more. Refused (`purge_prices_coingecko_refs`, nothing written)
+ * while an active observation still carries a `coingecko:*` token ref: run `data reprice --yes` (its P4 remap) first.
+ * A dry run by default; `yes` holds the `prices` run lock and, in one transaction, writes every row it deletes to
+ * `<exportDir>/prices-coingecko-<UTCstamp>.json` (fsynced, as `data purge`) before deleting.
+ */
+export async function purgePrices(db: OrionDb, opts: PurgePricesOptions): Promise<PurgePricesResult> {
+  if (opts.source !== 'coingecko') throw new OrionError('invalid_price_source', `--source must be coingecko; got ${String(opts.source)}`);
+  const source = opts.source;
+  if (!opts.yes) return (await planPricesPurge(db, source)).result;
+  return await withRunLock(db, PRICES_RUN_LOCK, lockHolder('orion data purge-prices'), opts.now, async () =>
+    await db.tx(async (t) => {
+      const { result, tokens } = await planPricesPurge(t, source);
+      if (result.prices.length === 0 && tokens.length === 0) return { ...result, applied: true };
+      const rows = async (sql: string, params: unknown[]): Promise<unknown[]> => (await t.all<{ row: unknown }>(sql, params as never)).map((r) => r.row);
+      const doc = {
+        source, createdAt: opts.now.toISOString(), summary: result.prices, deletedTokens: tokens, keptTokens: result.keptTokens,
+        prices: await rows('SELECT to_jsonb(p) AS row FROM prices p WHERE source = $1 ORDER BY token_ref, ts', [source]),
+        tokens: await rows('SELECT to_jsonb(k) AS row FROM tokens k WHERE token_ref = ANY($1::text[]) ORDER BY token_ref', [tokens]),
+      };
+      const { file, sha256 } = writeDurableExport(opts.exportDir, `prices-${source}-${exportStamp(opts.now)}.json`, doc, opts.syncDir ?? fsyncDir, 'purge_export_failed', 'nothing was deleted');
+      await t.run('DELETE FROM prices WHERE source = $1', [source]);
+      if (tokens.length > 0) {
+        const deleted = (await t.run('DELETE FROM tokens WHERE token_ref = ANY($1::text[])', [tokens])).rowCount;
+        if (deleted !== tokens.length) throw new OrionError('purge_conflict', `expected to delete ${tokens.length} tokens row(s), deleted ${deleted}`);
+      }
+      return { ...result, applied: true, exportFile: file, exportSha256: sha256 };
+    }),
+  );
+}
+
+async function planPricesPurge(db: Db, source: string): Promise<{ result: PurgePricesResult; tokens: string[] }> {
+  const refs = await db.all<{ asset_id: string; n: number }>(
+    `SELECT asset_id, count(*)::bigint AS n FROM observations
+      WHERE starts_with(token_ref, 'coingecko:') AND superseded_by IS NULL AND status <> 'rejected' GROUP BY asset_id ORDER BY asset_id`,
+  );
+  if (refs.length > 0) {
+    throw new OrionError(
+      'purge_prices_coingecko_refs',
+      `active observations still carry a coingecko:* token ref (${refs.map((r) => `${r.asset_id} ${n(r.n)}`).join(', ')}): run \`data reprice <asset> --yes\` first, which remaps them`,
+    );
+  }
+  const prices = (await db.all<{ token_ref: string; rows: number; first_ts: string; last_ts: string }>(
+    'SELECT token_ref, count(*)::bigint AS rows, min(ts) AS first_ts, max(ts) AS last_ts FROM prices WHERE source = $1 GROUP BY token_ref ORDER BY token_ref',
+    [source],
+  )).map((r) => ({ tokenRef: r.token_ref, rows: n(r.rows), firstTs: new Date(r.first_ts).toISOString(), lastTs: new Date(r.last_ts).toISOString() }));
+  const candidates = await db.all<{ token_ref: string; obs: number; other_prices: number }>(
+    `SELECT k.token_ref,
+            (SELECT count(*) FROM observations o WHERE o.token_ref = k.token_ref)::bigint AS obs,
+            (SELECT count(*) FROM prices p WHERE p.token_ref = k.token_ref AND p.source <> $1)::bigint AS other_prices
+       FROM tokens k WHERE starts_with(k.token_ref, 'coingecko:') ORDER BY k.token_ref`,
+    [source],
+  );
+  const tokens: string[] = [];
+  const keptTokens: { tokenRef: string; reason: string }[] = [];
+  for (const c of candidates) {
+    if (n(c.obs) > 0) keptTokens.push({ tokenRef: c.token_ref, reason: `${n(c.obs)} observation(s) still reference it` });
+    else if (n(c.other_prices) > 0) keptTokens.push({ tokenRef: c.token_ref, reason: `${n(c.other_prices)} prices row(s) of another source` });
+    else tokens.push(c.token_ref);
+  }
+  return { result: { source, applied: false, prices, deletedTokens: tokens, keptTokens, exportFile: null, exportSha256: null }, tokens };
 }
 
 /** A cursor whose scan key is `<sourceId>><metric>`: an API flow's own cursor (no LIKE, so `_` in a key is literal). */
@@ -229,12 +322,18 @@ async function exportRows(db: Db, asset: string, ids: number[], gone: string[]) 
  * `pump-flow_usd.fees+2-...`: a long --metric list never exceeds the 255-byte name limit; the JSON lists every metric.
  */
 export function exportFileName(asset: string, metrics: string[], now: Date): string {
-  const stamp = now.toISOString().replace(/\.\d{3}Z$/, 'Z').replace(/[-:]/g, '');
+  const stamp = exportStamp(now);
   const rest = metrics.length > 1 ? `+${metrics.length - 1}` : '';
   return `${asset}-${metrics[0]}${rest}-${stamp}.json`.replace(/[^A-Za-z0-9._+-]/g, '_');
 }
 
-function fsyncDir(dir: string): void {
+/** The UTC stamp export names carry: `20261112T031500Z`. */
+export function exportStamp(now: Date): string {
+  return now.toISOString().replace(/\.\d{3}Z$/, 'Z').replace(/[-:]/g, '');
+}
+
+/** Opens, fsyncs and closes one directory (its entries): the default `syncDir` of every export writer. */
+export function fsyncDir(dir: string): void {
   const fd = openSync(dir, 'r');
   try {
     fsyncSync(fd);
@@ -244,12 +343,16 @@ function fsyncDir(dir: string): void {
 }
 
 /**
- * Writes the export and makes it durable before any delete: the file is fsynced, then its directory (so the new name
- * survives a crash after the DB commit), and, when this call created the directory, each parent up to the existing one
- * (`$ORION_HOME` on the first purge). Any failure is `purge_export_failed`, thrown before the first delete.
+ * Writes an export and makes it durable before any write to the rows it holds: the file is fsynced, then its directory
+ * (so the new name survives a crash after the DB commit), and, when this call created the directory, each parent up to
+ * the existing one (`$ORION_HOME` on the first export). Any failure is `failCode` (the purge's `purge_export_failed`),
+ * thrown before the first write; `failNote` says what was left alone. Shared by `data purge`, `data purge-prices` and
+ * `data reprice` (src/db/reprice.ts).
  */
-function writeExport(dir: string, asset: string, metrics: string[], now: Date, doc: unknown, syncDir: (dir: string) => void): { file: string; sha256: string } {
-  const file = join(dir, exportFileName(asset, metrics, now));
+export function writeDurableExport(
+  dir: string, fileName: string, doc: unknown, syncDir: (dir: string) => void, failCode: string, failNote: string,
+): { file: string; sha256: string } {
+  const file = join(dir, fileName);
   const bytes = Buffer.from(`${JSON.stringify(doc, null, 2)}\n`, 'utf8');
   try {
     // The first directory it created, or undefined when `dir` already existed.
@@ -271,7 +374,7 @@ function writeExport(dir: string, asset: string, metrics: string[], now: Date, d
     }
     for (const d of toSync) syncDir(d);
   } catch (err) {
-    throw new OrionError('purge_export_failed', `could not write the export ${file}: ${(err as Error).message}; nothing was deleted`);
+    throw new OrionError(failCode, `could not write the export ${file}: ${(err as Error).message}; ${failNote}`);
   }
   return { file, sha256: createHash('sha256').update(bytes).digest('hex') };
 }

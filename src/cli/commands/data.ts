@@ -4,7 +4,9 @@ import { listAssetIds, loadAsset } from '../../config/load.js';
 import { decideAnomaly, listAnomalies, type Anomaly } from '../../db/anomalies.js';
 import { confirmObservation, getObservationsByIds, insertObservation, listActiveObservations, rejectObservation } from '../../db/observations.js';
 import { compareUsd, type UsdComparison } from '../../db/prices.js';
-import { purgeMetrics, type PurgeResult } from '../../db/purge.js';
+import { rebuildPriceLevels, type RebuildResult } from '../../db/priceLevels.js';
+import { purgeMetrics, purgePrices, type PurgePricesResult, type PurgeResult } from '../../db/purge.js';
+import { repriceAsset, type RepriceResult } from '../../db/reprice.js';
 import { describeSources } from '../../ingest/describe.js';
 import { backfillTokens, type BackfillTokensResult } from '../../ingest/tokenBackfill.js';
 import { lockHolder, withRunLock } from '../../app/lock.js';
@@ -66,6 +68,54 @@ function purgeLines(r: PurgeResult, sourceType: string | undefined, exportDir: s
       `  ${m.metric} (${m.configured ? 'configured' : 'not configured'}): ${m.observations} observation(s), ${m.superseded} superseded, ` +
         `${m.firstDay === null ? 'no rows' : `${m.firstDay} to ${m.lastDay}`}, value sum ${m.valueSum}; ` +
         `latest_levels ${m.latestLevels}, watch_state ${m.watchState}, fetch_cursors ${m.fetchCursors}`),
+    !r.applied
+      ? `dry run: nothing deleted; --yes deletes and exports to ${exportDir}`
+      : r.exportFile === null
+        ? 'nothing to delete'
+        : `deleted; exported to ${r.exportFile} sha256 ${r.exportSha256}`,
+  ];
+}
+
+function repriceLines(r: RepriceResult, exportDir: string): string[] {
+  const skipped = (s: Record<string, number>): string => {
+    const e = Object.entries(s).sort(([a], [b]) => (a < b ? -1 : 1));
+    return e.length === 0 ? 'none' : e.map(([k, v]) => `${v} ${k}`).join(', ');
+  };
+  return [
+    `${r.asset.toUpperCase()} reprice${r.applied ? '' : ' (dry run)'}, ${r.from === null ? 'every day' : `from ${r.from}`}:`,
+    ...r.remapped.map((m) => `  remap ${m.from} -> ${m.to}: ${m.rows} row(s)`),
+    ...r.perMetric.flatMap((m) => [
+      `  ${m.metric}: ${m.rows} row(s): ${m.repriced} repriced (value sum ${usd(m.oldSum)} -> ${usd(m.newSum)}), ${m.unchanged} unchanged, ` +
+        `${m.refused.length} refused; skipped: ${skipped(m.skipped)}`,
+      ...m.refused.map((x) => `    REFUSED #${x.id} ${x.day}: ${x.reason}`),
+    ]),
+    ...r.derived.map((d) => `  derived ${d.metric}: ${d.rows} row(s), ${d.recomputed} recomputed, ${d.unchanged} unchanged, ${d.incomplete} with an incomplete window`),
+    !r.applied
+      ? `dry run: nothing written; --yes reprices (one transaction per day) after exporting to ${exportDir}`
+      : r.exportFile === null
+        ? 'nothing to reprice'
+        : `repriced ${r.days} day(s); exported to ${r.exportFile} sha256 ${r.exportSha256}`,
+  ];
+}
+
+function rebuildLines(r: RebuildResult): string[] {
+  return [
+    `${r.asset.toUpperCase()} rebuild-price-levels${r.applied ? '' : ' (dry run)'}:`,
+    ...(r.perMetric.length === 0 ? ['  no price_usd or diem_price_usd metric'] : []),
+    ...r.perMetric.flatMap((m) => [
+      `  ${m.metric} (${m.tokenRef ?? 'no price ref'}): ${m.rows} CoinGecko row(s), ${m.rebuilt} ${r.applied ? 'rebuilt' : 'to rebuild'}, ${m.refused.length} refused`,
+      ...m.refused.map((x) => `    REFUSED #${x.id} ${x.observedAt}: ${x.reason}`),
+    ]),
+    r.applied ? `wrote ${r.days} day(s); the CoinGecko rows are superseded (data purge --source-type market_data deletes them)` : 'dry run: nothing written; --yes writes the rebuilt rows',
+  ];
+}
+
+function purgePricesLines(r: PurgePricesResult, exportDir: string): string[] {
+  return [
+    `purge-prices ${r.source}${r.applied ? '' : ' (dry run)'}:`,
+    ...(r.prices.length === 0 ? ['  no prices rows of this source'] : r.prices.map((p) => `  ${p.tokenRef}: ${p.rows} row(s), ${p.firstTs} to ${p.lastTs}`)),
+    `  tokens rows to delete: ${r.deletedTokens.length === 0 ? 'none' : r.deletedTokens.join(', ')}`,
+    ...r.keptTokens.map((k) => `  kept tokens row ${k.tokenRef}: ${k.reason}`),
     !r.applied
       ? `dry run: nothing deleted; --yes deletes and exports to ${exportDir}`
       : r.exportFile === null
@@ -228,6 +278,64 @@ export function registerData(program: Command, ctx: CliContext): void {
           await purgeMetrics(db, loaded, { metrics: opts.metric, sourceType: opts.sourceType as SourceType | undefined, apply: opts.yes === true, exportDir, now: ctx.now() }),
         );
         output(ctx, opts.json, result, () => purgeLines(result, opts.sourceType, exportDir));
+      }),
+    );
+
+  data
+    .command('reprice <asset>')
+    .description(
+      'rewrite, in place, the stored USD value of every CoinGecko-priced flow row (transfer scans, the Solana supply drop) from the chain prices ' +
+        'flow_usd_chain_v reads; remaps coingecko:crvusd / coingecko:yearn-crv refs and recomputes the derived rates over them. ' +
+        'A dry run unless --yes, which first writes every row it touches to $ORION_HOME/repriced. Rows with an unpriced hour are refused and keep their value',
+    )
+    .option('--from <day>', 'first UTC day (YYYY-MM-DD) to reprice (default: every day)')
+    .option('--yes', 'write, after the export')
+    .option('--json', 'JSON output')
+    .action(async (assetId: string, opts: { from?: string; yes?: boolean; json?: boolean }) =>
+      await guarded(ctx, opts.json, async () => {
+        const loaded = loadAsset(ctx.configRoot, assetId);
+        const exportDir = join(ctx.home, 'repriced');
+        const result = await withDb(ctx, async (db) =>
+          await repriceAsset(db, loaded, { from: opts.from, yes: opts.yes === true, now: ctx.now(), exportDir, ...(ctx.release ? { release: ctx.release.tag } : {}) }),
+        );
+        output(ctx, opts.json, result, () => repriceLines(result, exportDir));
+      }),
+    );
+
+  data
+    .command('rebuild-price-levels <asset>')
+    .description(
+      'for every CoinGecko price_usd / diem_price_usd level row: a new row at the same observed_at from the newest chain/first-party price ' +
+        'at least 1 h before it (refused beyond 6 h); a dry run unless --yes. Deletes nothing (data purge --source-type market_data does)',
+    )
+    .option('--yes', 'write the rebuilt rows')
+    .option('--json', 'JSON output')
+    .action(async (assetId: string, opts: { yes?: boolean; json?: boolean }) =>
+      await guarded(ctx, opts.json, async () => {
+        const loaded = loadAsset(ctx.configRoot, assetId);
+        const result = await withDb(ctx, async (db) =>
+          await rebuildPriceLevels(db, loaded, { yes: opts.yes === true, now: ctx.now(), ...(ctx.release ? { release: ctx.release.tag } : {}) }),
+        );
+        output(ctx, opts.json, result, () => rebuildLines(result));
+      }),
+    );
+
+  data
+    .command('purge-prices')
+    .description(
+      'delete every prices row of a source (only coingecko), then the coingecko:* tokens rows nothing references; refused while an active ' +
+        'observation still has a coingecko:* token ref (data reprice --yes remaps them). A dry run unless --yes, which first exports to $ORION_HOME/purged',
+    )
+    .requiredOption('--source <source>', 'the price source to delete (coingecko)')
+    .option('--yes', 'delete, after writing the export')
+    .option('--json', 'JSON output')
+    .action(async (opts: { source: string; yes?: boolean; json?: boolean }) =>
+      await guarded(ctx, opts.json, async () => {
+        const exportDir = join(ctx.home, 'purged');
+        const result = await withDb(ctx, async (db) =>
+          await purgePrices(db, { source: opts.source as 'coingecko', yes: opts.yes === true, exportDir, now: ctx.now() }),
+        );
+        output(ctx, opts.json, result, () => purgePricesLines(result, exportDir));
       }),
     );
 

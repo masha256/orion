@@ -7,7 +7,10 @@ import { parseAssetYaml, type LoadedAsset } from '../../src/config/load.js';
 import { raiseAnomaly } from '../../src/db/anomalies.js';
 import type { Db } from '../../src/db/connection.js';
 import { insertObservation } from '../../src/db/observations.js';
-import { exportFileName, purgeMetrics } from '../../src/db/purge.js';
+import { exportFileName, PRICES_RUN_LOCK, purgeMetrics, purgePrices } from '../../src/db/purge.js';
+import { listPrices, upsertPrices, upsertToken } from '../../src/db/prices.js';
+import { repriceAsset } from '../../src/db/reprice.js';
+import { PRICES_LOCK } from '../../src/daemon/jobs/backfill.js';
 import { startAgentRun } from '../../src/db/agentRuns.js';
 import type { Provenance } from '../../src/provenance/types.js';
 import type { SourceType } from '../../src/report/sourceTypes.js';
@@ -359,5 +362,127 @@ describe('purgeMetrics', () => {
     const exportDir = join(scratch(), 'purged');
     expect(await errCode(purgeMetrics(db(), loaded(), { metrics: [], apply: false, exportDir, now: NOW }))).toBe('purge_no_metric');
     expect(await errCode(purgeMetrics(db(), loaded(), { metrics: ['x'], sourceType: 'defillama' as SourceType, apply: false, exportDir, now: NOW }))).toBe('invalid_source_type');
+  });
+});
+
+describe('purgePrices', () => {
+  const CRVUSD = 'eip155:1/0xf939e0a03fb07f59a73314e73794be0e57ac1b4e';
+  /** A transfer-scan asset whose flows were written under CoinGecko's crvUSD id. */
+  const CRV_YAML = `
+id: crvp
+symbol: CRVP
+name: Purge Prices Test
+chain: ethereum
+contracts:
+  crvusd: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E"
+  sink: "0x00000000000000000000000000000000000000b1"
+  sender: "0x00000000000000000000000000000000000000b2"
+ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
+metrics:
+  price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }
+  total_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
+  staked_supply: { type: level, unit: tokens, staleness_days: 7 }
+  emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400 }
+  flow_usd.fees: { type: flow, unit: usd, staleness_days: 4, source: { type: transfer_flow, token: crvusd, to: sink, from_allowlist: [ sender ], unit: usd } }
+`;
+  const crv = (): LoadedAsset => {
+    const { config, hash } = parseAssetYaml(CRV_YAML);
+    return { config, hash };
+  };
+
+  /** CoinGecko and chain prices of crvUSD (address ref), a CoinGecko-only id ref, and one flow row under that id. */
+  async function seedPrices(d: Db, withFlow = true): Promise<number | null> {
+    await upsertToken(d, { tokenRef: 'coingecko:crvusd', symbol: 'crvusd', decimals: null, coingeckoId: 'crvusd' });
+    await upsertToken(d, { tokenRef: 'coingecko:spare', symbol: 'spare', decimals: null, coingeckoId: 'spare' });
+    await upsertToken(d, { tokenRef: CRVUSD, symbol: 'crvUSD', decimals: 18, coingeckoId: 'crvusd' });
+    const hours = Array.from({ length: 24 }, (_, i) => new Date(Date.parse('2026-10-01T00:00:00Z') + i * 3_600_000).toISOString());
+    await upsertPrices(d, 'coingecko:crvusd', 'coingecko', hours.map((ts) => ({ ts, priceUsd: 1.001 })), NOW.toISOString());
+    await upsertPrices(d, 'coingecko:spare', 'coingecko', hours.slice(0, 2).map((ts) => ({ ts, priceUsd: 3 })), NOW.toISOString());
+    await upsertPrices(d, CRVUSD, 'coingecko', hours.map((ts) => ({ ts, priceUsd: 1.002 })), NOW.toISOString());
+    await upsertPrices(d, CRVUSD, 'chain:chainlink_feed', hours.map((ts) => ({ ts, priceUsd: 0.999 })), NOW.toISOString());
+    if (!withFlow) return null;
+    const o = await insertObservation(d, {
+      assetId: 'crvp', metricKey: 'flow_usd.fees', observedAt: '2026-10-02T00:00:00.000Z', periodDays: 1, value: 100.1, fetchedAt: NOW.toISOString(),
+      provenance: { method: 'measured', sourceType: 'log_scan', chain: 'eip155:1', locator: { event: 'Transfer(address,address,uint256)' }, codeVersion: 'test', configHash: 'test' },
+      tokens: { tokenRef: 'coingecko:crvusd', amount: 100, hourlyAmounts: Array.from({ length: 24 }, (_, i) => (i === 3 ? 100 : 0)) },
+    });
+    return o.id;
+  }
+
+  const priceCount = async (d: Db, source?: string): Promise<number> =>
+    Number((await d.one<{ n: number }>('SELECT count(*)::bigint AS n FROM prices WHERE $1::text IS NULL OR source = $1', [source ?? null]))!.n);
+
+  it('takes the `prices` run lock the prices backfill takes', () => {
+    expect(PRICES_RUN_LOCK).toBe(PRICES_LOCK);
+  });
+
+  it('refuses while an active observation still has a coingecko:* ref (dry run and --yes), and succeeds after the reprice remap', async () => {
+    const d = db();
+    await seedPrices(d);
+    const exportDir = join(scratch(), 'purged');
+    for (const yes of [false, true]) {
+      expect(await errCode(purgePrices(d, { source: 'coingecko', yes, exportDir, now: NOW }))).toBe('purge_prices_coingecko_refs');
+    }
+    expect(await priceCount(d)).toBe(24 + 2 + 24 + 24);
+    expect(() => readdirSync(exportDir)).toThrow();
+
+    // The reprice remaps the flow's ref to the crvUSD address (and prices it there): nothing references coingecko:* now.
+    await repriceAsset(d, crv(), { yes: true, now: NOW, exportDir: join(scratch(), 'repriced') });
+    const dry = await purgePrices(d, { source: 'coingecko', yes: false, exportDir, now: NOW });
+    expect(dry).toMatchObject({
+      source: 'coingecko', applied: false, exportFile: null, deletedTokens: ['coingecko:crvusd', 'coingecko:spare'], keptTokens: [],
+      prices: [
+        { tokenRef: 'coingecko:crvusd', rows: 24, firstTs: '2026-10-01T00:00:00.000Z', lastTs: '2026-10-01T23:00:00.000Z' },
+        { tokenRef: 'coingecko:spare', rows: 2, firstTs: '2026-10-01T00:00:00.000Z', lastTs: '2026-10-01T01:00:00.000Z' },
+        { tokenRef: CRVUSD, rows: 24, firstTs: '2026-10-01T00:00:00.000Z', lastTs: '2026-10-01T23:00:00.000Z' },
+      ],
+    });
+    expect(await priceCount(d)).toBe(74);
+
+    const before = (await d.all<{ row: unknown }>("SELECT to_jsonb(p) AS row FROM prices p WHERE source = 'coingecko' ORDER BY token_ref, ts")).map((r) => r.row);
+    const tokensBefore = (await d.all<{ row: unknown }>("SELECT to_jsonb(t) AS row FROM tokens t WHERE token_ref LIKE 'coingecko:%' ORDER BY token_ref")).map((r) => r.row);
+    const r = await purgePrices(d, { source: 'coingecko', yes: true, exportDir, now: NOW });
+    expect(r.applied).toBe(true);
+    expect(r.exportFile).toBe(join(exportDir, 'prices-coingecko-20261112T120000Z.json'));
+    const bytes = readFileSync(r.exportFile!);
+    expect(r.exportSha256).toBe(createHash('sha256').update(bytes).digest('hex'));
+    expect(statSync(r.exportFile!).mode & 0o777).toBe(0o600);
+    const doc = JSON.parse(bytes.toString('utf8'));
+    expect(doc.prices).toEqual(before);
+    expect(doc.tokens).toEqual(tokensBefore);
+    // Only the chain rows are left; the coingecko:* tokens rows nothing references are gone, the address ref stays.
+    expect(await priceCount(d, 'coingecko')).toBe(0);
+    expect((await listPrices(d, CRVUSD)).map((p) => p.source)).toEqual(Array(24).fill('chain:chainlink_feed'));
+    expect((await d.all<{ token_ref: string }>("SELECT token_ref FROM tokens WHERE token_ref <> 'usd' ORDER BY token_ref")).map((t) => t.token_ref)).toEqual([CRVUSD]);
+    // A second --yes has nothing to do.
+    const again = await purgePrices(d, { source: 'coingecko', yes: true, exportDir, now: new Date('2026-11-12T13:00:00.000Z') });
+    expect(again).toMatchObject({ applied: true, exportFile: null, prices: [], deletedTokens: [] });
+  });
+
+  it('keeps a coingecko:* tokens row a superseded observation still references (listed), and deletes its prices', async () => {
+    const d = db();
+    const id = await seedPrices(d);
+    // A rejected row keeps the ref (not active: no refusal), so the tokens row cannot go.
+    await d.run("UPDATE observations SET status = 'rejected' WHERE id = $1", [id]);
+    const r = await purgePrices(d, { source: 'coingecko', yes: true, exportDir: join(scratch(), 'purged'), now: NOW });
+    expect(r.deletedTokens).toEqual(['coingecko:spare']);
+    expect(r.keptTokens).toEqual([{ tokenRef: 'coingecko:crvusd', reason: '1 observation(s) still reference it' }]);
+    expect(await priceCount(d, 'coingecko')).toBe(0);
+  });
+
+  it('refuses another source, and run_in_progress while the `prices` lock is held', async () => {
+    const d = db();
+    await seedPrices(d, false);
+    const exportDir = join(scratch(), 'purged');
+    expect(await errCode(purgePrices(d, { source: 'defillama' as 'coingecko', yes: false, exportDir, now: NOW }))).toBe('invalid_price_source');
+    const held = await d.tryAssetRunLock(PRICES_RUN_LOCK, 'daemon backfill prices pid 1');
+    try {
+      expect(await errCode(purgePrices(d, { source: 'coingecko', yes: true, exportDir, now: NOW }))).toBe('run_in_progress');
+      expect((await purgePrices(d, { source: 'coingecko', yes: false, exportDir, now: NOW })).prices).toHaveLength(3);
+    } finally {
+      await held!.release();
+    }
+    expect(await priceCount(d)).toBe(74);
+    expect(() => readdirSync(exportDir)).toThrow();
   });
 });
