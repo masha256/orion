@@ -46,6 +46,13 @@ const BASE_VAULT = '8TqK4PL3x7zWR2dNinr1LMi8Uf4vTRSFE2Ev1yYW9bhC';
 const QUOTE_VAULT = '68Vdm7mQJ7RBxWioLVEUXbeTTpTtyiR1CL9vLRxmdr8t';
 const POOL = '2uF4Xh61rDwxnG9woyxsVQP7zuA6kLFpb3NvnRQeoiSd';
 const PAIR = '9SMp4yLKGtW9TnLimfVPkDARsyNSfJw43WMke4r7KoZj';
+// The LbPair's reserve_x @152 (PUMP, a Token-2022 account) and reserve_y @184 (USDC), and one of the 12 token accounts
+// the pair also owns (airdrop spam: a second USDC account holding 0.01 USDC), measured 2026-11-14.
+const RESERVE_X = '6uVEyA1RRhuTzDroFGBrDsAHwE4b6hCSwgyXAHjTZEUv';
+const RESERVE_Y = '5RLzTiyGuadAC4SE3s7MGonXszFShJtZewVmmHGUUbkV';
+const SPAM_USDC = 'EjYhsATUHBw9MWy6ubTFinSc3W8ZCNJCoC7h9zN48fnS';
+const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+const TOKENKEG = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
 /** Every fake HTTP transport made in this file: R8 is checked over all of them at the end. */
 const transports: FakeHttp[] = [];
@@ -135,6 +142,25 @@ describe('HYPE: Hyperliquid spot @107 candle close x USDC/USD, checked against t
     expect(r.prices.get(from)!.checkGapPct).toBeCloseTo(0.05, 8);
     expect(r.prices.get(NO_PERP)).toMatchObject({ checkGapPct: null, detail: { check: { skipped: 'no_candle' } } });
     expect(r.calls).toBe(2);
+  });
+
+  it('never prices the still-open candle: now 14:30Z leaves 14:00Z unpriced (no_block_yet), in a range and in one hour', async () => {
+    const now = '2026-11-13T14:30:00Z';
+    const h = hyperliquid(() => 40);
+    const from = at('2026-11-13T12:00:00Z');
+    const r = await priceRangeOffchain(deps({ http: h, now }), HYPE, from, at('2026-11-13T16:00:00Z'), () => USDC_USD);
+    expect([...r.prices.keys()]).toEqual([from, from + HOUR]);
+    expect(r.missing).toEqual([{ hourMs: at('2026-11-13T14:00:00Z'), reason: 'no_block_yet' }, { hourMs: at('2026-11-13T15:00:00Z'), reason: 'no_block_yet' }]);
+    expect(h.calls.every((c) => (c.body as HlBody).req!.endTime < at('2026-11-13T14:00:00Z'))).toBe(true);
+    const h2 = hyperliquid(() => 40);
+    const one = await priceHourOffchain(deps({ http: h2, now }), [HYPE], at('2026-11-13T14:00:00Z'), FEEDS);
+    expect(one.prices.size).toBe(0);
+    expect(one.missing).toEqual([{ ref: HYPE.ref, reason: 'no_block_yet' }]);
+    expect(h2.calls).toHaveLength(0);
+    // The closed 13:00Z candle prices, and its fetch reaches no further than 14:00Z.
+    const closed = await priceHourOffchain(deps({ http: h2, now }), [HYPE], at('2026-11-13T13:00:00Z'), FEEDS);
+    expect(closed.prices.get(HYPE.ref)!.usd).toBeCloseTo(40 * USDC_USD, 10);
+    expect(h2.calls.every((c) => (c.body as HlBody).req!.endTime < at('2026-11-13T14:00:00Z'))).toBe(true);
   });
 
   it('an hour without the USDC/USD feed value is quote_missing, and nothing is fetched for it', async () => {
@@ -256,9 +282,10 @@ function firstSlotAt(ts: number): number {
   return s;
 }
 
-interface TokenBal { accountIndex: number; mint: string; owner: string; uiTokenAmount: { amount: string; decimals: number; uiAmountString: string } }
+interface TokenBal { accountIndex: number; mint: string; owner: string; programId: string; uiTokenAmount: { amount: string; decimals: number; uiAmountString: string } }
 interface FakeTx { signature: string; slot: number; err: unknown; keys: string[]; loaded?: string[]; pre: TokenBal[]; post: TokenBal[] }
-const bal = (accountIndex: number, mint: string, owner: string, raw: bigint): TokenBal => ({ accountIndex, mint, owner, uiTokenAmount: { amount: raw.toString(), decimals: 6, uiAmountString: (Number(raw) / 1e6).toString() } });
+/** A meta token balance as getTransaction answers it: PUMP accounts are Token-2022, USDC accounts Tokenkeg (measured). */
+const bal = (accountIndex: number, mint: string, owner: string, raw: bigint): TokenBal => ({ accountIndex, mint, owner, programId: mint === USDC_MINT ? TOKENKEG : TOKEN_2022, uiTokenAmount: { amount: raw.toString(), decimals: 6, uiAmountString: (Number(raw) / 1e6).toString() } });
 const RAW = (tokens: number) => BigInt(Math.round(tokens * 1e6));
 
 /** A PumpSwap swap (vaults in the v0 lookup table: loadedAddresses) leaving reserves `pump` PUMP and `usdc` USDC. */
@@ -271,20 +298,33 @@ function pumpSwap(signature: string, slot: number, pump: number, usdc: number, e
     post: [bal(2, PUMP_MINT, POOL, RAW(pump)), bal(3, USDC_MINT, POOL, RAW(usdc))],
   };
 }
-/** A Meteora DLMM swap: the pair's PUMP reserve moves by dPump and its USDC reserve by dUsdc (raw, 6 decimals). */
+/**
+ * A Meteora DLMM swap: the pair's PUMP reserve (reserve_x) moves by dPump and its USDC reserve (reserve_y) by dUsdc (raw,
+ * 6 decimals). The pair's spam USDC account is listed first and is pair-owned too: only the LbPair's reserve keys count.
+ */
 function dlmmTx(signature: string, slot: number, dPump: bigint, dUsdc: bigint, err: unknown = null): FakeTx {
-  const PX = 'DLMMreservePUMP1111111111111111111111111111';
-  const PY = 'DLMMreserveUSDC1111111111111111111111111111';
   const p0 = 343_300_000n * 1_000_000n;
   const u0 = 189_800n * 1_000_000n;
+  const spam = 10_000n; // 0.01 USDC
   return {
-    signature, slot, err, keys: ['Trader1111111111111111111111111111111111111', PAIR, PX, PY],
-    pre: [bal(2, PUMP_MINT, PAIR, p0), bal(3, USDC_MINT, PAIR, u0)],
-    post: [bal(2, PUMP_MINT, PAIR, p0 + dPump), bal(3, USDC_MINT, PAIR, u0 + dUsdc)],
+    signature, slot, err, keys: ['Trader1111111111111111111111111111111111111', PAIR, SPAM_USDC, RESERVE_X, RESERVE_Y],
+    pre: [bal(2, USDC_MINT, PAIR, spam), bal(3, PUMP_MINT, PAIR, p0), bal(4, USDC_MINT, PAIR, u0)],
+    post: [bal(2, USDC_MINT, PAIR, spam + 1n), bal(3, PUMP_MINT, PAIR, p0 + dPump), bal(4, USDC_MINT, PAIR, u0 + dUsdc)],
   };
 }
+/** The LbPair account (904 bytes, base64): active_id @76, bin_step @80, token_x/y mints @88/@120, reserve_x/y @152/@184. */
+function lbPair(activeId = -2885, o: { x?: string; y?: string; rx?: string; ry?: string } = {}) {
+  const buf = Buffer.alloc(904);
+  buf.writeInt32LE(activeId, 76);
+  buf.writeUInt16LE(20, 80);
+  Buffer.from(b58decode(o.x ?? PUMP_MINT)).copy(buf, 88);
+  Buffer.from(b58decode(o.y ?? USDC_MINT)).copy(buf, 120);
+  Buffer.from(b58decode(o.rx ?? RESERVE_X)).copy(buf, 152);
+  Buffer.from(b58decode(o.ry ?? RESERVE_Y)).copy(buf, 184);
+  return { owner: 'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo', lamports: 7_182_720, data: [buf.toString('base64'), 'base64'] };
+}
 
-interface SolFake { txs: Record<string, FakeTx[]>; accounts?: Record<string, unknown>; head?: number }
+interface SolFake { txs: Record<string, FakeTx[]>; accounts?: Record<string, unknown>; head?: number; failSignatures?: string }
 /** Solana JSON-RPC over the fake HTTP: one route, answering by method. */
 function solanaHttp(f: SolFake): FakeHttp {
   const head = f.head ?? HEAD;
@@ -310,6 +350,7 @@ function solanaHttp(f: SolFake): FakeHttp {
         }
         case 'getSignaturesForAddress': {
           const [address, opts] = params as [string, { before?: string; limit: number }];
+          if (address === f.failSignatures) return err(-32603, 'Internal error');
           const list = [...(f.txs[address] ?? [])].sort((a, b) => b.slot - a.slot);
           let rest = list;
           if (opts.before?.startsWith('blk')) {
@@ -380,11 +421,12 @@ describe('PUMP: PumpSwap vaults after the last swap before H+1h, checked against
   const addLiq = dlmmTx('dlmmADD', slotAtT(END - 10), RAW(1_000), RAW(3.5));
   const dlmmSwap = dlmmTx('dlmmSWAP', slotAtT(END - 120), dPump, RAW(317));
   const dlmmAfter = dlmmTx('dlmmAFTER', seekSlot + 1, -RAW(1000), RAW(5));
-  const world = (extra: Partial<Record<string, FakeTx[]>> = {}): SolFake => ({
+  const world = (extra: Partial<Record<string, FakeTx[]>> = {}, accounts: Record<string, unknown> = { [PAIR]: lbPair() }): SolFake => ({
     txs: {
       [QUOTE_VAULT]: extra[QUOTE_VAULT] ?? [afterHour, failed(1, END - 2), failed(2, END - 20), goodPump, pumpSwap('pumpOLD', slotAtT(END - 400), 3_000_000_000, 10_000_000)],
       [PAIR]: extra[PAIR] ?? [dlmmAfter, addLiq, dlmmSwap],
     },
+    accounts,
   });
 
   it('prices the hour from the first successful swap before H+1h: USDC vault / PUMP vault, x USDC/USD; Meteora exec as the check', async () => {
@@ -410,6 +452,54 @@ describe('PUMP: PumpSwap vaults after the last swap before H+1h, checked against
     expect(txReqs.map(([s]) => s)).toEqual(['pumpOK', 'dlmmADD', 'dlmmSWAP']); // failed signatures are never fetched
     expect(txReqs.every(([, o]) => o.maxSupportedTransactionVersion === 1)).toBe(true);
     expect(r.calls).toBe(h.calls.length);
+  });
+
+  it('the Meteora check reads the LbPair\'s reserve_x/reserve_y (once per run) and ignores a pair-owned spam USDC account', async () => {
+    const h = solanaHttp(world());
+    const d = deps({ solana: solanaPriceTransport(h, SOL_URL) });
+    const r = await priceHourOffchain(d, [PUMP], H, FEEDS);
+    const p = r.prices.get(PUMP.ref)!;
+    expect(p.detail.check).toMatchObject({ signature: 'dlmmSWAP', in_usdc: expect.closeTo(0.0035093, 9), reserve_x: RESERVE_X, reserve_y: RESERVE_Y });
+    expect(p.checkGapPct).toBeCloseTo(((0.0035093 - 0.0035042) / 0.0035042) * 100, 4);
+    // A second hour of the same run does not read the LbPair again.
+    await priceHourOffchain(d, [PUMP], H - HOUR, FEEDS);
+    const reads = rpcCalls(h, 'getMultipleAccounts').map((c) => (c.body as { params: [string[]] }).params[0]);
+    expect(reads).toEqual([[PAIR]]);
+  });
+
+  it('an LbPair whose mints are not PUMP/USDC is a check error, never a gap; the primary still prices', async () => {
+    const h = solanaHttp(world({}, { [PAIR]: lbPair(-2885, { y: PUMP_MINT, x: USDC_MINT, rx: RESERVE_Y, ry: RESERVE_X }) }));
+    const ok = await priceHourOffchain(deps({ solana: solanaPriceTransport(h, SOL_URL) }), [PUMP], H, FEEDS);
+    // reversed (USDC is x): still the same two reserves, matched by key
+    expect(ok.prices.get(PUMP.ref)!.detail.check).toMatchObject({ in_usdc: expect.closeTo(0.0035093, 9) });
+    const bad = solanaHttp(world({}, { [PAIR]: lbPair(-2885, { y: PUMP_MINT }) }));
+    const r = await priceHourOffchain(deps({ solana: solanaPriceTransport(bad, SOL_URL) }), [PUMP], H, FEEDS);
+    expect(r.missing).toEqual([]);
+    expect(r.prices.get(PUMP.ref)).toMatchObject({ usd: expect.closeTo(0.0035042 * USDC_USD, 12), checkGapPct: null, detail: { check: { skipped: 'check_error', error: expect.stringContaining('not') } } });
+  });
+
+  it('a Meteora check read that throws keeps the PUMP primary (check_error) and does not stop the chain', async () => {
+    const h = solanaHttp({ ...world(), failSignatures: PAIR });
+    const r = await priceHourOffchain(deps({ solana: solanaPriceTransport(h, SOL_URL) }), [PUMP], H, FEEDS);
+    expect(r.missing).toEqual([]);
+    const p = r.prices.get(PUMP.ref)!;
+    expect(p.usd).toBeCloseTo(0.0035042 * USDC_USD, 12);
+    expect(p).toMatchObject({ checkGapPct: null, detail: { check: { method: 'meteora_dlmm', skipped: 'check_error', error: expect.stringContaining('Internal error') } } });
+    // A missing LbPair account is a check error too.
+    const h2 = solanaHttp(world({}, {}));
+    const r2 = await priceHourOffchain(deps({ solana: solanaPriceTransport(h2, SOL_URL) }), [PUMP], H, FEEDS);
+    expect(r2.prices.get(PUMP.ref)).toMatchObject({ checkGapPct: null, detail: { check: { skipped: 'check_error' } } });
+  });
+
+  it('a pair whose read budget is spent before a swap is read_budget_spent; a history that ends first is no_swap', async () => {
+    const adds = Array.from({ length: 7 }, (_, i) => dlmmTx(`dlmmADD${i}`, slotAtT(END - 10 - i), RAW(1_000), RAW(3.5)));
+    const h = solanaHttp(world({ [PAIR]: [...adds, dlmmSwap] }));
+    const r = await priceHourOffchain(deps({ solana: solanaPriceTransport(h, SOL_URL) }), [PUMP], H, FEEDS);
+    expect(r.prices.get(PUMP.ref)).toMatchObject({ checkGapPct: null, detail: { check: { skipped: 'read_budget_spent', transactions_read: 6 } } });
+    const bots = Array.from({ length: 130 }, (_, i) => failed(500 + i, END - 1 - Math.floor(i / 5)));
+    const h2 = solanaHttp(world({ [QUOTE_VAULT]: bots.slice(0, 1000) }));
+    const r2 = await priceHourOffchain(deps({ solana: solanaPriceTransport(h2, SOL_URL) }), [PUMP], H, FEEDS);
+    expect(r2.missing).toEqual([{ ref: PUMP.ref, reason: 'no_swap', detail: expect.objectContaining({ transactions_read: 0 }) }]);
   });
 
   it('no swap in the hour before H+1h: the reserves of the newest earlier swap, with its age; refused beyond 6 h', async () => {
@@ -458,7 +548,13 @@ describe('PUMP: PumpSwap vaults after the last swap before H+1h, checked against
   });
 
   it('live: getMultipleAccounts on the two vaults and the pair; Meteora active bin (1 + 20/1e4)^active_id', async () => {
-    const tokenAccount = (mint: string, raw: bigint) => ({ owner: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', lamports: 2_039_280, data: { program: 'spl-token', parsed: { type: 'account', info: { mint, owner: POOL, tokenAmount: { amount: raw.toString(), decimals: 6 } } } } });
+    // As measured: the PUMP vault is a Token-2022 account (immutableOwner + transferHookAccount), the USDC vault Tokenkeg.
+    const tokenAccount = (mint: string, raw: bigint) => {
+      const t22 = mint !== USDC_MINT;
+      const tokenAmount = { amount: raw.toString(), decimals: 6, uiAmount: Number(raw) / 1e6, uiAmountString: (Number(raw) / 1e6).toString() };
+      const info = { isNative: false, mint, owner: POOL, state: 'initialized', tokenAmount, ...(t22 ? { extensions: [{ extension: 'immutableOwner' }, { extension: 'transferHookAccount', state: { transferring: false } }] } : {}) };
+      return { owner: t22 ? TOKEN_2022 : TOKENKEG, lamports: 2_074_080, data: { program: t22 ? 'spl-token-2022' : 'spl-token', parsed: { type: 'account', info }, space: t22 ? 175 : 165 } };
+    };
     const activeId = Math.round(Math.log(0.0034953) / Math.log(1.002));
     const pair = Buffer.alloc(904);
     pair.writeInt32LE(activeId, 76);
@@ -482,6 +578,11 @@ describe('PUMP: PumpSwap vaults after the last swap before H+1h, checked against
     expect(p.detail).toMatchObject({ level: 'vault_reserves', check: { active_id: activeId, bin_step: 20 } });
     expect(rpcCalls(h, 'getMultipleAccounts')).toHaveLength(1);
     expect((rpcCalls(h, 'getMultipleAccounts')[0]!.body as { params: [string[]] }).params[0]).toEqual([BASE_VAULT, QUOTE_VAULT, PAIR]);
+
+    // An unreadable pair account is a check error: the live PumpSwap level still stands.
+    const h2 = solanaHttp({ txs: {}, accounts: { [BASE_VAULT]: tokenAccount(PUMP_MINT, RAW(3_014_700_000)), [QUOTE_VAULT]: tokenAccount(USDC_MINT, RAW(10_530_000)) } });
+    const p2 = await livePriceOffchain(deps({ solana: solanaPriceTransport(h2, SOL_URL), rpc: ethHead({ ...feed(USDC_FEED, USDC_USD) }) }), PUMP);
+    expect(p2).toMatchObject({ usd: expect.closeTo(pumpswap * USDC_USD, 12), checkGapPct: null, detail: { check: { skipped: 'check_error' } } });
   });
 });
 

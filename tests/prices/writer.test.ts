@@ -429,6 +429,13 @@ describe('off-chain chains: the registry, and chain 1\'s feeds handed on (R4, R5
     expect(r2.errors).toEqual([{ chain: 'eip155:1', hourMs: at(HOURS[1]!), error: 'connection reset' }]);
   });
 
+  it('a method\'s missing detail reaches WriteResult.missing (stale_swap with its last_swap_age_s)', async () => {
+    PRICE_CHAIN_METHODS.hyperliquid = async (_deps, entries) => ({ prices: new Map(), missing: entries.map((e) => ({ ref: e.ref, reason: 'stale_swap', detail: { signature: 'sigOLD', last_swap_age_s: 30_000 } })) });
+    const rpc = ethChain('2026-11-11T00:00:00Z', (_n, t) => feed(USDC_USD_ETH, 1, t - 60));
+    const r = await writeChainPrices(testDb(), deps({ 'eip155:1': rpc }, '2026-11-11T00:00:00Z'), [HYPE.ref], at(HOURS[0]!), at(HOURS[1]!));
+    expect(r.missing).toEqual([{ ref: HYPE.ref, hourMs: at(HOURS[0]!), reason: 'stale_swap', detail: { signature: 'sigOLD', last_swap_age_s: 30_000 } }]);
+  });
+
   it('LIT: chain 1 reads its v4 check (an off-chain primary\'s EVM check) and hands it to the lighter method', async () => {
     const SV = '0x7ffe42c4a5deea5b0fec41c94c136cf115597227';
     const ID = '0x8366b1dde4de12c8806985fbb599d408d92d01a6faf2e478cc6bb76189cc00f1';

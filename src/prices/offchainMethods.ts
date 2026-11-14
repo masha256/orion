@@ -18,6 +18,9 @@ import type { HourPrice, PriceDeps, SolanaPriceTransport, SolanaTokenBalance, So
  */
 
 const H = MS_PER_HOUR;
+/** The start of the hour `deps.now` is in: every hour before it is closed (its candle final, its block produced). */
+const openHourMs = (deps: PriceDeps): number => Math.floor(deps.now.getTime() / H) * H;
+const isClosed = (deps: PriceDeps, hourMs: number): boolean => hourMs + H <= openHourMs(deps);
 export const HYPERLIQUID_INFO_URL = 'https://api.hyperliquid.xyz/info';
 /** Lighter's public API. Candles come from /candles (500 a call); the old /candlesticks answers 403 (measured). */
 export const LIGHTER_API = 'https://mainnet.zklighter.elliot.ai/api/v1';
@@ -148,6 +151,8 @@ const candleDetail = (m: CandleMethod, raw?: string | number): Record<string, un
  */
 const CLOSE_CACHE = new WeakMap<object, Map<string, { covered: Set<number>; closes: Closes }>>();
 async function closeAt(deps: PriceDeps, http: HttpTransport, m: CandleMethod, hourMs: number, validFromMs: number): Promise<{ close: number; raw: string | number } | null> {
+  // The candle of an hour that has not ended is still moving: never fetched, never cached, never priced.
+  if (!isClosed(deps, hourMs)) return null;
   let perDeps = CLOSE_CACHE.get(deps);
   if (!perDeps) CLOSE_CACHE.set(deps, (perDeps = new Map()));
   const key = candleKey(m);
@@ -192,27 +197,64 @@ function vaultReserves(tx: SolanaTransaction, m: Extract<PriceMethod, { kind: 's
   return { inUsdc, detail: { base_raw: baseRaw.toString(), quote_raw: quoteRaw.toString(), base_decimals: base.uiTokenAmount.decimals, quote_decimals: quote.uiTokenAmount.decimals } };
 }
 
+/** A Meteora DLMM pair's two reserve token accounts, by mint: the LbPair's own reserve_x / reserve_y fields. */
+interface DlmmReserves { token: string; usdc: string }
+
 /**
- * A Meteora DLMM swap's execution price from the pair's reserve deltas (the token accounts the pair owns): USDC per
- * token, fee included. Null for a transaction that is not a swap of the two (a liquidity change moves both one way).
+ * Decodes the LbPair account: token_x_mint @88, token_y_mint @120, reserve_x @152, reserve_y @184 (measured). The pair
+ * also owns other token accounts (airdrop spam, a second USDC account among them), so only these two are its reserves.
  */
-function dlmmExecution(tx: SolanaTransaction, pair: string, mint: string) {
+function dlmmReservesOf(a: unknown, pair: string, mint: string): DlmmReserves {
+  const data = (a as { data?: unknown } | null)?.data;
+  if (!Array.isArray(data) || typeof data[0] !== 'string' || data[1] !== 'base64') throw new Error(`solana account ${pair}: no base64 data`);
+  const buf = Buffer.from(data[0], 'base64');
+  if (buf.length < 216) throw new Error(`solana account ${pair}: ${buf.length} bytes is too short for an lb_pair`);
+  const x = base58Encode(buf.subarray(88, 120));
+  const y = base58Encode(buf.subarray(120, 152));
+  const rx = base58Encode(buf.subarray(152, 184));
+  const ry = base58Encode(buf.subarray(184, 216));
+  if (x === mint && y === USDC_MINT) return { token: rx, usdc: ry };
+  if (x === USDC_MINT && y === mint) return { token: ry, usdc: rx };
+  throw new Error(`Meteora pair ${pair} is ${x}/${y}, not ${mint}/USDC`);
+}
+
+/** LbPair reserves read in one set of deps (the writer makes one per run): one getMultipleAccounts per pair per run. */
+const DLMM_RESERVES = new WeakMap<object, Map<string, DlmmReserves>>();
+async function dlmmReserves(deps: PriceDeps, sol: SolanaPriceTransport, pair: string, mint: string): Promise<DlmmReserves> {
+  let perDeps = DLMM_RESERVES.get(deps);
+  if (!perDeps) DLMM_RESERVES.set(deps, (perDeps = new Map()));
+  const hit = perDeps.get(`${pair}|${mint}`);
+  if (hit) return hit;
+  const [account] = await sol.getMultipleAccounts([pair]);
+  const r = dlmmReservesOf(account, pair, mint);
+  perDeps.set(`${pair}|${mint}`, r);
+  return r;
+}
+
+/**
+ * A Meteora DLMM swap's execution price from the deltas of the pair's two reserve accounts (matched by account key,
+ * as the PumpSwap vaults are): USDC per token, fee included. Null for a transaction that is not a swap of the two (a
+ * liquidity change moves both one way).
+ */
+function dlmmExecution(tx: SolanaTransaction, reserves: DlmmReserves, mint: string) {
+  const keys = accountKeys(tx);
   const pre = tx.meta?.preTokenBalances ?? [];
   const post = tx.meta?.postTokenBalances ?? [];
-  const side = (want: string) => {
-    const after = post.find((b) => b.owner === pair && b.mint === want);
+  const side = (account: string, want: string) => {
+    const after = post.find((b) => keys[b.accountIndex] === account);
     if (!after) return null;
+    if (after.mint !== want) throw new Error(`Meteora reserve ${account} holds ${after.mint}, not ${want}`);
     const before = pre.find((b) => b.accountIndex === after.accountIndex);
     const a = rawOf(after);
     const b = before ? rawOf(before) : 0n;
     return a === null || b === null ? null : { delta: a - b, decimals: after.uiTokenAmount.decimals };
   };
-  const x = side(mint);
-  const y = side(USDC_MINT);
+  const x = side(reserves.token, mint);
+  const y = side(reserves.usdc, USDC_MINT);
   if (!x || !y || x.delta === 0n || y.delta === 0n || x.delta > 0n === y.delta > 0n) return null;
   const abs = (v: bigint) => (v < 0n ? -v : v);
   const inUsdc = ui(abs(y.delta), y.decimals) / ui(abs(x.delta), x.decimals);
-  return { inUsdc, detail: { d_token_raw: x.delta.toString(), d_usdc_raw: y.delta.toString() } };
+  return { inUsdc, detail: { reserve_x: reserves.token, reserve_y: reserves.usdc, d_token_raw: x.delta.toString(), d_usdc_raw: y.delta.toString() } };
 }
 
 type Found<T> = { ok: true; value: T; signature: string; blockTime: number; ageS: number } | { ok: false; reason: string; detail: Record<string, unknown> };
@@ -220,7 +262,7 @@ type Found<T> = { ok: true; value: T; signature: string; blockTime: number; ageS
 /**
  * The newest successful transaction of `address` before the seek signature (the first of the block at H+1h) that
  * `extract` accepts, paging back with `before`; refused (`stale_swap`) once the signatures reach 6 h before H+1h, and
- * `no_swap` when the history or the read budget ends first. Failed signatures are skipped unread.
+ * `no_swap` when the history ends first, `read_budget_spent` when the read budget (pages, transactions) does. Failed signatures are skipped unread.
  */
 async function lastTx<T>(sol: SolanaPriceTransport, address: string, seek: string, endTs: number, maxTx: number, extract: (tx: SolanaTransaction) => T | null): Promise<Found<T>> {
   let before = seek;
@@ -233,7 +275,7 @@ async function lastTx<T>(sol: SolanaPriceTransport, address: string, seek: strin
         return { ok: false, reason: 'stale_swap', detail: s.err === null ? { signature: s.signature, last_swap_age_s: age } : { scanned_back_s: age } };
       }
       if (s.err !== null) continue;
-      if (reads >= maxTx) return { ok: false, reason: 'no_swap', detail: { transactions_read: reads } };
+      if (reads >= maxTx) return { ok: false, reason: 'read_budget_spent', detail: { transactions_read: reads } };
       reads += 1;
       const tx = await sol.getTransaction(s.signature);
       if (!tx || (tx.meta?.err ?? null) !== null) continue;
@@ -244,10 +286,10 @@ async function lastTx<T>(sol: SolanaPriceTransport, address: string, seek: strin
       if (endTs - blockTime > MAX_SWAP_AGE_S) return { ok: false, reason: 'stale_swap', detail: { signature: s.signature, last_swap_age_s: endTs - blockTime } };
       return { ok: true, value: v, signature: s.signature, blockTime, ageS: endTs - blockTime };
     }
-    if (sigs.length < SIGNATURE_PAGE) break;
+    if (sigs.length < SIGNATURE_PAGE) return { ok: false, reason: 'no_swap', detail: { transactions_read: reads } };
     before = sigs[sigs.length - 1]!.signature;
   }
-  return { ok: false, reason: 'no_swap', detail: { transactions_read: reads } };
+  return { ok: false, reason: 'read_budget_spent', detail: { transactions_read: reads, signature_pages: MAX_SIGNATURE_PAGES } };
 }
 
 const solanaMint = (e: PriceEntry): string => {
@@ -258,7 +300,7 @@ const solanaMint = (e: PriceEntry): string => {
 
 type HourOutcome = { price: HourPrice } | { reason: string; detail?: Record<string, unknown> };
 
-async function solanaHour(sol: SolanaPriceTransport, e: PriceEntry, hourMs: number, usdc: number, checkUsdc: number | null): Promise<HourOutcome> {
+async function solanaHour(deps: PriceDeps, sol: SolanaPriceTransport, e: PriceEntry, hourMs: number, usdc: number, checkUsdc: number | null): Promise<HourOutcome> {
   const m = e.primary;
   if (m.kind !== 'solana_vaults') throw new OrionError('invalid_price_config', `${e.ref}: ${m.kind} is not a Solana primary`);
   const mint = solanaMint(e);
@@ -280,10 +322,18 @@ async function solanaHour(sol: SolanaPriceTransport, e: PriceEntry, hourMs: numb
   if (check.kind === 'meteora_dlmm') {
     if (checkUsdc === null) read = { usd: null, reason: 'quote_missing', detail: { method: check.kind } };
     else {
-      const c = await lastTx(sol, check.pair, seek, endTs, MAX_CHECK_TX, (tx) => dlmmExecution(tx, check.pair, mint));
-      read = c.ok
-        ? { usd: c.value.inUsdc * checkUsdc, detail: { method: check.kind, signature: c.signature, block_time: c.blockTime, last_swap_age_s: c.ageS, ...c.value.detail, in_usdc: c.value.inUsdc, usdc_usd: checkUsdc } }
-        : { usd: null, reason: c.reason, detail: { method: check.kind, ...c.detail } };
+      // A check that cannot be read (an RPC error, an LbPair that is not PUMP/USDC) leaves the check unread: the primary
+      // still prices and the chain goes on (a check is never the reason an hour has no price).
+      try {
+        const reserves = await dlmmReserves(deps, sol, check.pair, mint);
+        const c = await lastTx(sol, check.pair, seek, endTs, MAX_CHECK_TX, (tx) => dlmmExecution(tx, reserves, mint));
+        read = c.ok
+          ? { usd: c.value.inUsdc * checkUsdc, detail: { method: check.kind, signature: c.signature, block_time: c.blockTime, last_swap_age_s: c.ageS, ...c.value.detail, in_usdc: c.value.inUsdc, usdc_usd: checkUsdc } }
+          : { usd: null, reason: c.reason, detail: { method: check.kind, ...c.detail } };
+      } catch (err) {
+        if (err instanceof OrionError) throw err;
+        read = { usd: null, reason: 'check_error', detail: { method: check.kind, error: err instanceof Error ? err.message : String(err) } };
+      }
     }
   }
   return { price: withCheck(e, primary, read) };
@@ -322,7 +372,9 @@ export async function priceHourOffchain(
     const check = methodOf(e.check);
     const checkUsdc = usdcFor(usdcUsd, check);
     let outcome: HourOutcome;
-    if (isCandle(e.primary)) {
+    if (isCandle(e.primary) && !isClosed(deps, hourMs)) {
+      outcome = { reason: 'no_block_yet' };
+    } else if (isCandle(e.primary)) {
       const validFromMs = Date.parse(`${e.validFrom}T00:00:00Z`);
       const c = await closeAt(deps, http, e.primary, hourMs, validFromMs);
       if (!c) outcome = { reason: 'no_candle', detail: candleDetail(e.primary) };
@@ -343,7 +395,7 @@ export async function priceHourOffchain(
       }
     } else if (e.primary.kind === 'solana_vaults') {
       solana ??= countingSolana(deps.solana);
-      outcome = await solanaHour(solana.sol, e, hourMs, usdc, checkUsdc);
+      outcome = await solanaHour(deps, solana.sol, e, hourMs, usdc, checkUsdc);
     } else {
       throw new OrionError('invalid_price_config', `${e.ref}: ${e.primary.kind} is not an off-chain price method`);
     }
@@ -380,10 +432,16 @@ export async function priceRangeOffchain(
   }
   const { http, count } = counting(deps.http);
   const check = methodOf(entry.check);
-  const closes = await fetchCloses(http, m, fromHourMs, toHourMs);
-  const checkCloses = isCandle(check) ? await fetchCloses(http, check, fromHourMs, toHourMs) : null;
   const out: OffchainRangeResult = { prices: new Map(), missing: [], calls: 0 };
+  // Only closed candles: the hours from the one deps.now is in onwards are not read (their close still moves).
+  const closedTo = Math.max(fromHourMs, Math.min(toHourMs, openHourMs(deps)));
+  const closes = closedTo > fromHourMs ? await fetchCloses(http, m, fromHourMs, closedTo) : new Map() as Closes;
+  const checkCloses = !isCandle(check) ? null : closedTo > fromHourMs ? await fetchCloses(http, check, fromHourMs, closedTo) : (new Map() as Closes);
   for (let h = fromHourMs; h < toHourMs; h += H) {
+    if (h >= closedTo) {
+      out.missing.push({ hourMs: h, reason: 'no_block_yet' });
+      continue;
+    }
     const usdc = usdAt(lc(m.usd_feed), h);
     if (usdc === null) {
       out.missing.push({ hourMs: h, reason: 'quote_missing' });
@@ -500,8 +558,13 @@ export async function livePriceOffchain(deps: PriceDeps, entry: PriceEntry): Pro
     const inUsdc = ui(quote.raw, quote.decimals) / ui(base.raw, base.decimals);
     primary = { usd: inUsdc * usdc, source: methodSource(m), detail: { level: 'vault_reserves', base_raw: base.raw.toString(), quote_raw: quote.raw.toString(), in_usdc: inUsdc, usdc_usd: usdc, ...at } };
     if (check.kind === 'meteora_dlmm') {
-      const bin = dlmmActiveBin(accounts[2], check.pair, mint, entry.decimals);
-      read = checkUsdc === null ? { usd: null, reason: 'quote_missing', detail: bin.detail } : { usd: bin.inUsdc * checkUsdc, detail: { ...bin.detail, usdc_usd: checkUsdc } };
+      let bin: ReturnType<typeof dlmmActiveBin> | null = null;
+      try {
+        bin = dlmmActiveBin(accounts[2], check.pair, mint, entry.decimals);
+      } catch (err) {
+        read = { usd: null, reason: 'check_error', detail: { method: check.kind, error: err instanceof Error ? err.message : String(err) } };
+      }
+      if (bin) read = checkUsdc === null ? { usd: null, reason: 'quote_missing', detail: bin.detail } : { usd: bin.inUsdc * checkUsdc, detail: { ...bin.detail, usdc_usd: checkUsdc } };
     }
   } else {
     throw new OrionError('invalid_price_config', `${entry.ref}: ${m.kind} is not an off-chain price method`);

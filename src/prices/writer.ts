@@ -326,7 +326,8 @@ export async function writeChainPrices(
             if (!rows.has(e.ref)) rows.set(e.ref, []);
             rows.get(e.ref)!.push({ ts: new Date(h).toISOString(), priceUsd: p.usd, checkGapPct: p.checkGapPct, check: p.check, detail: p.detail });
           } else {
-            result.missing.push({ ref: e.ref, hourMs: h, reason: r.missing.find((m) => m.ref === e.ref)?.reason ?? 'not_priced' });
+            const m = r.missing.find((x) => x.ref === e.ref);
+            result.missing.push({ ref: e.ref, hourMs: h, reason: m?.reason ?? 'not_priced', ...(m?.detail !== undefined ? { detail: m.detail } : {}) });
           }
         }
       };

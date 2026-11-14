@@ -83,7 +83,8 @@ export interface PriceDeps {
 export interface WriteResult {
   written: Record<string, number>;
   skippedExisting: number;
-  missing: { ref: string; hourMs: number; reason: string }[];
+  /** Hours a ref got no row, why, and what the method read (e.g. `last_swap_age_s` of a `stale_swap`), if it said. */
+  missing: { ref: string; hourMs: number; reason: string; detail?: Record<string, unknown> }[];
   breaches: { ref: string; hourMs: number; gapPct: number; check: string }[];
   /** RPC requests per chain (multicall, getBlock, latestBlock; an off-chain method reports its own). */
   calls: { [chain: string]: number };
