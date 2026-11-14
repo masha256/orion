@@ -21,12 +21,52 @@ export interface HourPrice {
   detail: Record<string, unknown>;
 }
 
-/** Solana reads for PUMP's price methods. Interface only: Task 4 implements it (and narrows the result types). */
+/** An account as getMultipleAccounts (jsonParsed) answers it: `data` is parsed for token accounts, [base64, 'base64'] else. */
+export interface SolanaAccount {
+  owner: string;
+  data: unknown;
+}
+
+/** A getSignaturesForAddress row (newest first). `err` is null for a transaction that succeeded. */
+export interface SolanaSignature {
+  signature: string;
+  slot: number;
+  blockTime: number | null;
+  err: unknown;
+}
+
+/** A token balance in a transaction's meta (accountIndex into the static keys, then the loaded writable, then readonly). */
+export interface SolanaTokenBalance {
+  accountIndex: number;
+  mint: string;
+  owner?: string;
+  uiTokenAmount: { amount: string; decimals: number };
+}
+
+/** The parts of getTransaction (encoding json, maxSupportedTransactionVersion 1) the price methods read. */
+export interface SolanaTransaction {
+  slot: number;
+  blockTime: number | null;
+  meta: {
+    err: unknown;
+    preTokenBalances?: SolanaTokenBalance[];
+    postTokenBalances?: SolanaTokenBalance[];
+    loadedAddresses?: { writable: string[]; readonly: string[] };
+  } | null;
+  transaction: { message: { accountKeys: (string | { pubkey: string })[] } };
+}
+
+/** Solana reads for PUMP's price methods (Task 4: src/ingest/transport/solana.ts solanaPriceTransport). */
 export interface SolanaPriceTransport {
-  getMultipleAccounts(keys: string[]): Promise<unknown>;
-  slotAt(tsSec: number): Promise<number>;
-  signaturesBefore(address: string, beforeSig: string | null, limit: number): Promise<unknown>;
-  getTransaction(sig: string): Promise<unknown>;
+  getMultipleAccounts(keys: string[]): Promise<(SolanaAccount | null)[]>;
+  /** The first produced (finalized) slot whose block time is at or after `tsSec`; null when the chain has none yet. */
+  slotAt(tsSec: number): Promise<number | null>;
+  /** The first transaction signature of the block at `slot`: a time cursor for signaturesBefore (null: an empty block). */
+  blockSignature(slot: number): Promise<string | null>;
+  signaturesBefore(address: string, beforeSig: string | null, limit: number): Promise<SolanaSignature[]>;
+  getTransaction(sig: string): Promise<SolanaTransaction | null>;
+  /** JSON-RPC requests made so far (a search such as slotAt makes several); absent: each method call counts one. */
+  readonly stats?: { requests: number };
 }
 
 /** Everything the price writer reads through. `rpcFor` takes a price chain (`eip155:<id>`). */

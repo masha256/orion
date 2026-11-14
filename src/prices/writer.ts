@@ -2,11 +2,13 @@ import type { Db } from '../db/connection.js';
 import { dbHourBlocks, type HourBlockCache } from '../db/hourBlocks.js';
 import { MS_PER_HOUR, upsertPrices, upsertToken, type PriceRow } from '../db/prices.js';
 import { CHAINS } from '../ingest/transport/chains.js';
+import { DEFAULT_SOL_RPC_ENV, solanaPriceTransport } from '../ingest/transport/solana.js';
 import type { HttpTransport } from '../ingest/transport/http.js';
 import { firstBlockAtOrAfter, type BlockRef, type RpcFactory, type RpcTransport } from '../ingest/transport/rpc.js';
 import { OrionError } from '../types.js';
 import { methodSource, quoteRefOf, type PriceEntry } from './config.js';
 import { checkLabel, EVM_METHOD_KINDS, priceHourEvm, type BlockReadCache, type HourBlocks, type MethodRead } from './evmMethods.js';
+import { priceHourOffchain } from './offchainMethods.js';
 import type { HourPrice, PriceDeps, SolanaPriceTransport, WriteResult } from './types.js';
 
 /**
@@ -68,11 +70,17 @@ function evmChain(chain: string): PriceChainMethod {
   };
 }
 
-/** The price method per chain: the EVM chains here; Task 4 registers hyperliquid, lighter and solana. */
+/** An off-chain venue (offchainMethods.ts): chain 1's feed answers of the hour, and its EVM check reads (LIT's v4 pool). */
+const offchainChain: PriceChainMethod = async (deps, entries, hour, ctx) => await priceHourOffchain(deps, entries, hour.hourMs, ctx.feedUsd, ctx.checks);
+
+/** The price method per chain: the EVM chains, and the off-chain venues (Task 4). */
 export const PRICE_CHAIN_METHODS: Record<string, PriceChainMethod> = {
   'eip155:1': evmChain('eip155:1'),
   'eip155:56': evmChain('eip155:56'),
   'eip155:8453': evmChain('eip155:8453'),
+  hyperliquid: offchainChain,
+  lighter: offchainChain,
+  solana: offchainChain,
 };
 
 // ---- hour blocks -----------------------------------------------------------------------------------------------------
@@ -466,11 +474,25 @@ export const PRICE_RPC_ENV: Readonly<Record<number, string>> = { 1: 'ORION_ETH_R
 export interface PriceFactories {
   rpcFactory: RpcFactory;
   prices: ReadonlyMap<string, PriceEntry>;
-  /** Task 4's Solana reads; absent: any use refuses with no_price_transport. */
+  /** The Solana reads; absent: made over `http` from ORION_SOL_RPC_URL (no URL, or no `http`: any use refuses). */
   solana?: SolanaPriceTransport;
   /** The first-party venues' HTTP; absent: any use refuses with no_price_transport. */
   http?: HttpTransport;
   now?: Date;
+}
+
+/**
+ * PUMP's Solana reads over our own RPC, ORION_SOL_RPC_URL (Ruling R8: never a pump.fun host, never the public endpoint's
+ * fallback, which serves no deep signature history). Without the URL every read refuses with no_rpc_url.
+ */
+function solanaFrom(env: Record<string, string | undefined>, http: HttpTransport | undefined, unwired: (what: string) => () => Promise<never>): SolanaPriceTransport {
+  const url = env[DEFAULT_SOL_RPC_ENV]?.trim();
+  if (!http) return { getMultipleAccounts: unwired('Solana'), slotAt: unwired('Solana'), blockSignature: unwired('Solana'), signaturesBefore: unwired('Solana'), getTransaction: unwired('Solana') };
+  if (url) return solanaPriceTransport(http, url);
+  const refuse = async (): Promise<never> => {
+    throw new OrionError('no_rpc_url', `${DEFAULT_SOL_RPC_ENV} is not set (environment or <ORION_HOME>/.env): PUMP prices are read only through our own Solana RPC`);
+  };
+  return { getMultipleAccounts: refuse, slotAt: refuse, blockSignature: refuse, signaturesBefore: refuse, getTransaction: refuse };
 }
 
 /** PriceDeps from the environment's RPC URLs (one transport per chain, made on first use) and the given slots. */
@@ -492,7 +514,7 @@ export function makePriceDeps(env: Record<string, string | undefined>, f: PriceF
       rpcs.set(chain, rpc);
       return rpc;
     },
-    solana: f.solana ?? { getMultipleAccounts: unwired('Solana'), slotAt: unwired('Solana'), signaturesBefore: unwired('Solana'), getTransaction: unwired('Solana') },
+    solana: f.solana ?? solanaFrom(env, f.http, unwired),
     http: f.http ?? { getJson: unwired('HTTP'), postJson: unwired('HTTP') },
     now: f.now ?? new Date(),
     prices: f.prices,
