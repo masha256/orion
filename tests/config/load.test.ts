@@ -5,10 +5,11 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
-import { loadAsset, parseAssetObject, parseAssetYaml } from '../../src/config/load.js';
+import { listAssetIds, loadAsset, parseAssetObject, parseAssetYaml } from '../../src/config/load.js';
 import { registerAdapter } from '../../src/ingest/adapters/registry.js';
+import { entriesFor, loadPrices } from '../../src/prices/config.js';
 import { yieldReport } from '../../src/report/load.js';
-import { canonicalJson } from '../../src/util/canonical.js';
+import { canonicalJson, sha256 } from '../../src/util/canonical.js';
 import { MINI_ASSET_YAML, MINI_HOLDER_YAML } from '../helpers/assets.js';
 import { syntheticInput } from '../helpers/syntheticReport.js';
 
@@ -180,12 +181,13 @@ describe('adapter params validation', () => {
   it('parseAssetObject surfaces the refusal with the metric path; assets/lit.yaml still loads and keeps its hash', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(litYaml).hash).toBe('0de769beeae95c555b2db4e89ca3d7b68f705719ead7de62dd53b768cccb0cc9');
-    expect(parseAssetObject(parseYaml(litYaml)).hash).toBe('0de769beeae95c555b2db4e89ca3d7b68f705719ead7de62dd53b768cccb0cc9');
+    // Re-pinned (Phase 3 R2 Task 1): the hash input includes LIT's prices.yaml entry (passed as the prices map).
+    expect(parseAssetYaml(litYaml, loadPrices(ROOT)).hash).toBe('300863b835e7243c5238d7a0ef377d1a71ba0f977282b88460bb8919aa0d77f5');
+    expect(parseAssetObject(parseYaml(litYaml), loadPrices(ROOT)).hash).toBe('300863b835e7243c5238d7a0ef377d1a71ba0f977282b88460bb8919aa0d77f5');
     // Another valid schedule loads (and is a different config from the file's 36 monthly tranches).
-    const good = parseAssetObject(withTranches({ first: '2027-01-29', every_months: 3, count: 12 }));
+    const good = parseAssetObject(withTranches({ first: '2027-01-29', every_months: 3, count: 12 }), loadPrices(ROOT));
     expect(good.config.metrics.unlocks_next_year.source).toMatchObject({ params: { schedules: [{ tranches: { first: '2027-01-29', every_months: 3, count: 12 } }, { label: 'investors' }] } });
-    expect(good.hash).not.toBe('0de769beeae95c555b2db4e89ca3d7b68f705719ead7de62dd53b768cccb0cc9');
+    expect(good.hash).not.toBe('300863b835e7243c5238d7a0ef377d1a71ba0f977282b88460bb8919aa0d77f5');
     // A malformed one is refused with the metric path, through the object path (filing) and the YAML path (approve).
     const bad = withTranches({ first: '2027-01-29', every_months: 13, count: 36 });
     expect(() => parseAssetObject(bad)).toThrow(expect.objectContaining({ code: 'invalid_asset_config', message: expect.stringContaining('metrics.unlocks_next_year.source.params: schedules[0].tranches.every_months') }));
@@ -201,6 +203,74 @@ describe('adapter params validation', () => {
     expect(yaml(true)).toContain('test_checked');
     expect(() => parseAssetYaml(yaml(true))).not.toThrow();
     expect(() => parseAssetYaml(yaml(false))).toThrow(/metrics\.staked_supply\.cross_checks\.0\.source\.params: ok: must be true/);
+  });
+});
+
+describe('config hash and prices.yaml (Phase 3 R2 Task 1)', () => {
+  const ROOT = fileURLToPath(new URL('../..', import.meta.url));
+  const CRVUSD = 'eip155:1/0xf939e0a03fb07f59a73314e73794be0e57ac1b4e';
+  const AERO = 'eip155:8453/0x3f5bf3edac59d650d8fdf9657a71f2f904a3a4ee';
+  /** A config root holding copies of every asset YAML and the given prices.yaml text (none when null). */
+  const homeWith = (pricesText: string | null): string => {
+    const home = mkdtempSync(join(tmpdir(), 'orion-prices-hash-'));
+    mkdirSync(join(home, 'assets'));
+    for (const id of listAssetIds(ROOT)) writeFileSync(join(home, 'assets', `${id}.yaml`), readFileSync(join(ROOT, 'assets', `${id}.yaml`)));
+    if (pricesText !== null) writeFileSync(join(home, 'prices.yaml'), pricesText);
+    return home;
+  };
+  const hashes = (home: string) => Object.fromEntries(listAssetIds(home).map((id) => [id, loadAsset(home, id).hash]));
+  const moved = (a: Record<string, string>, b: Record<string, string>) => Object.keys(a).filter((id) => a[id] !== b[id]).sort();
+  const pricesText = readFileSync(join(ROOT, 'prices.yaml'), 'utf8');
+  const edited = (ref: string, edit: (e: { check: Record<string, unknown> }) => void) => {
+    const obj = parseYaml(pricesText) as Record<string, { check: Record<string, unknown> }>;
+    edit(obj[ref]!);
+    return stringifyYaml(obj);
+  };
+
+  it('the hash input is the asset config plus entriesFor sorted by ref; a root without prices.yaml hashes the config alone', () => {
+    const home = homeWith(pricesText);
+    const bare = homeWith(null);
+    try {
+      const loaded = loadAsset(home, 'ycrv');
+      const entries = entriesFor(loaded.config, loadPrices(home));
+      expect(entries.map((e) => e.ref)).toEqual([...entries.map((e) => e.ref)].sort());
+      expect(loaded.hash).toBe(sha256(canonicalJson({ config: loaded.config, prices: entries })));
+      expect(loadAsset(bare, 'ycrv').hash).toBe(sha256(canonicalJson(loaded.config)));
+      expect(loadAsset(bare, 'ycrv').hash).toBe(parseAssetYaml(readFileSync(join(ROOT, 'assets/ycrv.yaml'), 'utf8')).hash);
+      // Every asset uses at least its own ref, so every asset's hash differs from its config-only hash.
+      expect(moved(hashes(home), hashes(bare))).toEqual(listAssetIds(ROOT));
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(bare, { recursive: true, force: true });
+    }
+  });
+
+  it('changing an entry moves the hash of exactly the assets that use it: crvUSD moves crv, cvxcrv, sdcrv, ycrv; AERO only aero', () => {
+    const base = homeWith(pricesText);
+    const crvusd = homeWith(edited(CRVUSD, (e) => { e.check.tolerance_pct = 0.6; }));
+    const aero = homeWith(edited(AERO, (e) => { e.check.tolerance_pct = 2.5; }));
+    try {
+      const before = hashes(base);
+      expect(moved(before, hashes(crvusd))).toEqual(['crv', 'cvxcrv', 'sdcrv', 'ycrv']);
+      expect(moved(before, hashes(aero))).toEqual(['aero']);
+    } finally {
+      for (const h of [base, crvusd, aero]) rmSync(h, { recursive: true, force: true });
+    }
+  });
+
+  it('parseAssetObject takes the prices map: the same hash as loadAsset', () => {
+    const prices = loadPrices(ROOT);
+    expect(parseAssetObject(parseYaml(readFileSync(join(ROOT, 'assets/crv.yaml'), 'utf8')), prices).hash).toBe(loadAsset(ROOT, 'crv').hash);
+  });
+
+  it('transfer_flow share_price takes an optional underlying contract name, checked against contracts', () => {
+    const withShare = (underlying: string) => {
+      const obj = parseYaml(readFileSync(join(ROOT, 'assets/ycrv.yaml'), 'utf8')) as { metrics: Record<string, { source: { share_price?: Record<string, unknown> } }> };
+      for (const def of Object.values(obj.metrics)) if (def.source?.share_price) def.source.share_price.underlying = underlying;
+      return obj;
+    };
+    expect(() => parseAssetObject(withShare('crvusd'))).not.toThrow();
+    expect(() => parseAssetObject(withShare('nowhere'))).toThrow(/unknown contract "nowhere"/);
   });
 });
 
@@ -244,14 +314,15 @@ describe('metric watch', () => {
   });
 
   it('an asset without watch/share keeps its hash', () => {
-    const asset = (id: string) => parseAssetYaml(readFileSync(fileURLToPath(new URL(`../../assets/${id}.yaml`, import.meta.url)), 'utf8')).hash;
+    const asset = (id: string) => loadAsset(fileURLToPath(new URL('../..', import.meta.url)), id).hash;
     // Re-pinned 2026-10-26: window 90 -> 91 days on every asset (Mike); no watch/share key involved.
     // Re-pinned 2026-11-01: the valuation keys and valuation-only metrics left (Phase 1); no watch/share key involved.
     // Re-pinned 2026-11-04: income_statement v2 block added (Phase 2 Task 2); no watch/share key involved.
     // Re-pinned 2026-11-09 (aero only): the Aero contracts (spec 2026-11-09-orion-aero-supply-design.md); no watch/share key involved.
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(asset('vvv')).toBe('45ad0a3a44763cf55abccdcf6d1e2facaf49c430f222953bb00556120e9adaa2');
-    expect(asset('hype')).toBe('492438a0835419c95fa6c9a6fbe9a77c7f1c3df6cc870cea70d1325db457d98a');
-    expect(asset('aero')).toBe('3c413feb4fbdba98b9ab17c4802ea46cc4306e9e700fb8d1384fa984dde4d19b');
+    // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
+    expect(asset('vvv')).toBe('d8223609d9e3f8532e51cd8529340ea38d8264d6d4d33892eedb13e3f69cff1e');
+    expect(asset('hype')).toBe('2ec7d2cefc9ba484c8529e4c47db7b5b5a5210c7c9697df209839edd45303c37');
+    expect(asset('aero')).toBe('035327b9eec2de16fb96541b2b09dfc5a52015fd4ef6a246691e5cb8bcf6578d');
   });
 });

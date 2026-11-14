@@ -37,7 +37,7 @@ const git = (cwd: string, ...args: string[]): string =>
 function fixtureTree(): { src: string; commit: string } {
   const src = scratch('orion-pack-src-');
   for (const rel of [
-    'assets/mini.yaml', 'personas/analyst.md', 'skills/disclosure-review.md', 'schedule.yaml', 'package.json', 'package-lock.json',
+    'assets/mini.yaml', 'personas/analyst.md', 'skills/disclosure-review.md', 'schedule.yaml', 'prices.yaml', 'package.json', 'package-lock.json',
     'scripts/provision/orion-host.sh', 'scripts/provision/files/orion-remote', 'scripts/provision/test/run.sh',
     'scripts/build/copy-migrations.mjs', 'scripts/release/build.sh', 'scripts/probe-web-fetch.mjs',
     'src/cli/index.ts', 'tests/cli/x.test.ts', 'tools/import-sqlite/cli.ts', 'docs/x.md', 'README.md',
@@ -91,6 +91,7 @@ describe('release pack', () => {
       'package-lock.json',
       'package.json',
       'personas/analyst.md',
+      'prices.yaml',
       'schedule.yaml',
       'scripts/provision/files/orion-remote',
       'scripts/provision/orion-host.sh',
@@ -153,6 +154,12 @@ describe('release pack', () => {
     const r = pack(bare.src, TAG, bare.commit, scratch('orion-pack-out-'));
     expect(r.status).not.toBe(0);
     expect(r.stderr).toMatch(/dist\/cli\/index\.js/);
+    // No prices.yaml: refused (Ruling R9: a release without it would hash every asset config-only).
+    const noPrices = fixtureTree();
+    rmSync(join(noPrices.src, 'prices.yaml'));
+    const np = pack(noPrices.src, TAG, noPrices.commit, scratch('orion-pack-out-'));
+    expect(np.status).not.toBe(0);
+    expect(np.stderr).toMatch(/prices\.yaml is missing/);
   });
 
   it('build: refuses when ORION_TEST_DATABASE_URL is unset', () => {

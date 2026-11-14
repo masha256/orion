@@ -7,7 +7,7 @@ import type { ModelRequest } from '../../src/agent/model.js';
 import type { RunAgentResult } from '../../src/agent/run.js';
 import { approveProposal } from '../../src/app/proposals.js';
 import { buildProgram } from '../../src/cli/program.js';
-import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
+import { loadAsset } from '../../src/config/load.js';
 import type { Db } from '../../src/db/connection.js';
 import { insertObservation } from '../../src/db/observations.js';
 import { insertProposal } from '../../src/db/proposals.js';
@@ -33,7 +33,7 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = '2026-10-23T12:00:00.000Z';
 const TRANSCRIPT = join(ROOT, 'tests/fixtures/disclosure/lit-q3-2026-call-transcript.txt');
 const RUN_FIXTURE = join(ROOT, 'tests/fixtures/disclosure/lit-q3-run.json');
-const LIT_HASH = '0de769beeae95c555b2db4e89ca3d7b68f705719ead7de62dd53b768cccb0cc9';
+const LIT_HASH = '300863b835e7243c5238d7a0ef377d1a71ba0f977282b88460bb8919aa0d77f5';
 const SOURCE_URL = 'https://x.com/Lighter_xyz/status/2113065839352336774';
 
 // Q3 2026 as the live DB has it (spec section 2): the treasury's buys and DefiLlama's revenue, summed over 92 days.
@@ -384,6 +384,6 @@ describe('approving the config proposal on a copy of assets/lit.yaml', () => {
     expect(v.detail).toMatch(/; tranches 36 x 1mo from 2027-01-29$/);
 
     // The repo's own file is untouched.
-    expect(parseAssetYaml(readFileSync(join(ROOT, 'assets/lit.yaml'), 'utf8')).hash).toBe(LIT_HASH);
+    expect(loadAsset(ROOT, 'lit').hash).toBe(LIT_HASH);
   });
 });

@@ -1,8 +1,7 @@
-import { readFileSync } from 'node:fs';
 import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
+import { loadAsset } from '../../src/config/load.js';
 import { listActiveObservations } from '../../src/db/observations.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
@@ -75,7 +74,7 @@ const sd = loadAsset(ROOT, 'sdcrv').config.contracts;
 const CASES: Case[] = [
   {
     id: 'cvxcrv',
-    hash: '372064fcfca833e0adbb9aa562cdb955aa37092ee0de29cae510a7ed8d4a4db9',
+    hash: 'e4eed3b4b90c651da366cfc0ad51e5cca06adc7cbfad537b3b4a9beb14a1932d',
     coingecko: 'convex-crv',
     price: 0.1392,
     supply: 423_825_801n,
@@ -90,7 +89,7 @@ const CASES: Case[] = [
   },
   {
     id: 'sdcrv',
-    hash: '0ba07bec8636ce7983e3b616d0074bd7697e44b0265317bb632880f1215f43d8',
+    hash: '20de7d924c8f1f49361b08042d5dc78027d44785f4f7468172405301228486fd',
     coingecko: 'stake-dao-crv',
     price: 0.1884,
     supply: 119_049_969n,
@@ -172,7 +171,8 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/${c.id}.yaml`, 'utf8')).hash).toBe(c.hash);
+    // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
+    expect(loadAsset(ROOT, c.id).hash).toBe(c.hash);
     // Supply definitions (Mike, 2026-10-12): CoinGecko has no circulating supply for the wrappers, so it is the on-chain total;
     // No total_supply or price cross-check on either (Phase 3 R1 removed CoinGecko's total and DefiLlama's price).
     expect(config.metrics.circulating_supply?.source).toEqual(config.metrics.total_supply.source);

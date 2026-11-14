@@ -1,0 +1,181 @@
+# Token prices (Phase 3 R2, plan P1): one primary method and one check per token ref, read by the hourly price writer.
+# Keyed by token ref: eip155:<chain id>/<address, lowercased>, solana:mainnet/<mint>, hyperliquid:spot/@<index>. Asset YAMLs
+# never name methods: an asset uses the refs of the contract addresses it lists (on its ingest chain, or Solana) and the ref
+# carrying its symbol, plus their quote refs, transitively; its config hash includes those entries (src/prices/config.ts).
+#
+# Fields:
+#   chain       where the PRIMARY is read: eip155:1 | eip155:56 | eip155:8453 | solana | hyperliquid | lighter. LIT's ref is
+#               its Ethereum address, but its primary is Lighter's candle, so its chain is `lighter`.
+#   valid_from  the first hour Orion writes for this ref (00:00Z of that day); no row is written for an earlier hour.
+#               Measured by the controller (Ruling R2): every EVM ref but AERO 2025-10-13 (all reads worked at the
+#               2025-10-13T01:00Z block); AERO 2026-09-23; HYPE and LIT 2026-10-01; PUMP 2026-10-12.
+#   primary     the method whose value is stored. check: a second method compared with it each hour; tolerance_pct is the
+#               allowed gap, consecutive the hours in a row it must be exceeded before it is a breach (default 1).
+#               A `bound` check has no tolerance: its band [min_in_quote, max_in_quote] is the tolerance.
+#   quote_ref   a ref priced in this file that the method's price is multiplied by (it has no row for an hour, nor does this).
+#   usd_feed / feed   a Chainlink feed (8 decimals, latestRoundData answer and updatedAt). Feeds are not token refs. A feed
+#               is read on the chain of the ref's eip155 prefix; for the off-chain primaries (HYPE, LIT, PUMP) it is the
+#               Ethereum USDC/USD feed, which the writer reads first each hour and hands on (Ruling R5).
+#
+# Hour semantics (plan P2): a row with ts = H is the bucket [H, H+1h), read at B(H+1h), the first block at or after H+1h.
+
+# --- Ethereum ---------------------------------------------------------------------------------------------------------
+# CRV: the TriCRV EMA (CRV in crvUSD) x crvUSD; check the CRV/USD feed (24 h heartbeat, so the check, not the primary: M1).
+"eip155:1/0xd533a949740bb3306d119cc777fa900ba034cd52":
+  symbol: CRV
+  decimals: 18
+  chain: "eip155:1"
+  valid_from: "2025-10-13"
+  primary: { kind: curve_oracle, pool: "0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14", index: 1, quote_ref: "eip155:1/0xf939e0a03fb07f59a73314e73794be0e57ac1b4e" }
+  check: { kind: chainlink, feed: "0xCd627aA160A6fA45Eb793D19Ef54f5062F20f33f", tolerance_pct: 1.5 }
+
+# CVX: Curve cvxeth EMA (CVX in ETH) x ETH/USD; check the CVX/USD feed.
+"eip155:1/0x4e3fbd56cd56c3e72c1403e103b45db9da5b9d2b":
+  symbol: CVX
+  decimals: 18
+  chain: "eip155:1"
+  valid_from: "2025-10-13"
+  primary: { kind: curve_oracle, pool: "0xB576491F1E6e5E62f1d8F26062Ee822B40B0E0d4", usd_feed: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" }
+  check: { kind: chainlink, feed: "0xd962fC30A72A84cE50161031391756Bf2876Af5D", tolerance_pct: 2.5 }
+
+# SKY: the Uniswap v2 SKY/USDS cumulative TWAP x USDS; check the SKY/USD feed.
+"eip155:1/0x56072c95faa701256059aa122697b133aded9279":
+  symbol: SKY
+  decimals: 18
+  chain: "eip155:1"
+  valid_from: "2025-10-13"
+  primary: { kind: v2_twap, pool: "0x2621CC0B3F3c079c1Db0E80794AA24976F0b9e3c", flavor: uniswap, quote_ref: "eip155:1/0xdc035d45d973e3ec169d2276ddab16f1e407384f" }
+  check: { kind: chainlink, feed: "0xee10fE5E7aa92dd7b136597449c3d5813cFC5F18", tolerance_pct: 2.5 }
+
+# LINK: the LINK/USD feed; check the Uniswap v3 LINK/WETH 1 h TWAP x ETH/USD.
+"eip155:1/0x514910771af9ca656af840dff83e8264ecf986ca":
+  symbol: LINK
+  decimals: 18
+  chain: "eip155:1"
+  valid_from: "2025-10-13"
+  primary: { kind: chainlink, feed: "0x2c1d072e956AFFC0D435Cb7AC38EF18d24d9127c" }
+  check: { kind: v3_twap, pool: "0xa6Cc3C2531FdaA6Ae1A3CA84c2855806728693e8", seconds: 3600, usd_feed: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419", tolerance_pct: 2 }
+
+# UNI: the UNI/USD feed; check the Uniswap v3 UNI/WETH 1 h TWAP x ETH/USD.
+"eip155:1/0x1f9840a85d5af5bf1d1762f925bdaddc4201f984":
+  symbol: UNI
+  decimals: 18
+  chain: "eip155:1"
+  valid_from: "2025-10-13"
+  primary: { kind: chainlink, feed: "0x553303d460EE0afB37EdFf9bE42922D8FF63220e" }
+  check: { kind: v3_twap, pool: "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801", seconds: 3600, usd_feed: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419", tolerance_pct: 2 }
+
+# crvUSD: the CRVUSD/USD feed; check the Curve crvUSD/USDT EMA x USDT/USD.
+"eip155:1/0xf939e0a03fb07f59a73314e73794be0e57ac1b4e":
+  symbol: crvUSD
+  decimals: 18
+  chain: "eip155:1"
+  valid_from: "2025-10-13"
+  primary: { kind: chainlink, feed: "0xEEf0C605546958c1f899b6fB336C20671f9cD49F" }
+  check: { kind: curve_oracle, pool: "0x390f3595bCa2Df7d23783dFd126427CCeb997BF4", usd_feed: "0x3E7d1eAB13ad0104d2750B8863b489D65364e32D", tolerance_pct: 0.5 }
+
+# USDS: the USDS/USD feed; check the DAI/USD feed.
+"eip155:1/0xdc035d45d973e3ec169d2276ddab16f1e407384f":
+  symbol: USDS
+  decimals: 18
+  chain: "eip155:1"
+  valid_from: "2025-10-13"
+  primary: { kind: chainlink, feed: "0xfF30586cD0F29eD462364C7e81375FC0C71219b1" }
+  check: { kind: chainlink, feed: "0xAed0c38402a5d19df6E4c03F4E2DceD6e29c1ee9", tolerance_pct: 0.5 }
+
+# cvxCRV: the Curve cvxCRV/CRV EMA (cvxCRV in CRV) x CRV; check get_dy(1, 0, 100 cvxCRV) on the old pool (~$0.27M).
+"eip155:1/0x62b9c7356a2dc64a1969e19c23e4f579f9810aa7":
+  symbol: cvxCRV
+  decimals: 18
+  chain: "eip155:1"
+  valid_from: "2025-10-13"
+  primary: { kind: curve_oracle, pool: "0x971add32Ea87f10bD192671630be3BE8A11b8623", quote_ref: "eip155:1/0xd533a949740bb3306d119cc777fa900ba034cd52" }
+  check: { kind: curve_get_dy, pool: "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8", i: 1, j: 0, dx: 100, quote_ref: "eip155:1/0xd533a949740bb3306d119cc777fa900ba034cd52", tolerance_pct: 3, consecutive: 2 }
+
+# sdCRV: the Curve sdCRV/CRV EMA x CRV. No independent venue (the second pool holds ~$430, M2): a 0.3-1.0 CRV band.
+"eip155:1/0xd1b5651e55d4ceed36251c61c50c889b36f6abb5":
+  symbol: sdCRV
+  decimals: 18
+  chain: "eip155:1"
+  valid_from: "2025-10-13"
+  primary: { kind: curve_oracle, pool: "0xCA0253A98D16e9C1e3614caFDA19318EE69772D0", quote_ref: "eip155:1/0xd533a949740bb3306d119cc777fa900ba034cd52" }
+  check: { kind: bound, min_in_quote: 0.3, max_in_quote: 1.0, quote_ref: "eip155:1/0xd533a949740bb3306d119cc777fa900ba034cd52", label: no_independent_check }
+
+# yCRV: the Curve yCRV/CRV EMA x CRV; check get_dy(1, 0, 10 yCRV) on 0x453D... (~$6K: a thin check).
+"eip155:1/0xfcc5c47be19d06bf83eb04298b026f81069ff65b":
+  symbol: yCRV
+  decimals: 18
+  chain: "eip155:1"
+  valid_from: "2025-10-13"
+  primary: { kind: curve_oracle, pool: "0x99f5aCc8EC2Da2BC0771c32814EFF52b712de1E5", quote_ref: "eip155:1/0xd533a949740bb3306d119cc777fa900ba034cd52" }
+  check: { kind: curve_get_dy, pool: "0x453D92C7d4263201C69aACfaf589Ed14202d83a4", i: 1, j: 0, dx: 10, quote_ref: "eip155:1/0xd533a949740bb3306d119cc777fa900ba034cd52", tolerance_pct: 3, consecutive: 2 }
+
+# --- BNB Chain --------------------------------------------------------------------------------------------------------
+# CAKE: the CAKE/USD feed on BNB; check the PancakeSwap v3 CAKE/USDT 1 h TWAP x USDT/USD (BNB).
+"eip155:56/0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82":
+  symbol: CAKE
+  decimals: 18
+  chain: "eip155:56"
+  valid_from: "2025-10-13"
+  primary: { kind: chainlink, feed: "0xB6064eD41d4f67e353768aA239cA86f4F73665a1" }
+  check: { kind: v3_twap, pool: "0x7f51c8aaa6b0599abd16674e2b17fec7a9f674a1", seconds: 3600, usd_feed: "0xB97Ad0E74fa7d920791E90258A6E2085088b4320", tolerance_pct: 2 }
+
+# --- Base -------------------------------------------------------------------------------------------------------------
+# VVV: the Aerodrome v2 VVV/WETH cumulative TWAP x ETH/USD (Base); check the Uniswap v3 VVV/USDC 1 h TWAP x USDC/USD (M3).
+"eip155:8453/0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf":
+  symbol: VVV
+  decimals: 18
+  chain: "eip155:8453"
+  valid_from: "2025-10-13"
+  primary: { kind: v2_twap, pool: "0x01784ef301D79e4B2DF3a21ad9a536d4cF09A5Ce", flavor: aerodrome, usd_feed: "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70" }
+  check: { kind: v3_twap, pool: "0x67a11022b7b6ed66f81233f6c8ed6e48f7826530", seconds: 3600, usd_feed: "0x7e860098F58bBFC8648a4311b374B1D669a2bc6B", tolerance_pct: 2 }
+
+# DIEM: the Aerodrome v2 DIEM/VVV cumulative TWAP x VVV; check the Slipstream DIEM/USDC 1 h TWAP x USDC/USD.
+"eip155:8453/0xf4d97f2da56e8c3098f3a8d538db630a2606a024":
+  symbol: DIEM
+  decimals: 18
+  chain: "eip155:8453"
+  valid_from: "2025-10-13"
+  primary: { kind: v2_twap, pool: "0xbb345d35450bf9ee76f3d2ce214e8e7ac5e1071d", flavor: aerodrome, quote_ref: "eip155:8453/0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf" }
+  check: { kind: v3_twap, pool: "0xbc3231036ee1eca03e5f67fecedc640d21610823", seconds: 3600, usd_feed: "0x7e860098F58bBFC8648a4311b374B1D669a2bc6B", tolerance_pct: 2 }
+
+# AERO (aero.yaml's token): its price_pool (Aero volatile AERO/USDC) TWAP x usdc_usd_feed; check its price_check_pool
+# (Slipstream AERO/USDC, tick spacing 200) spot x the same feed.
+"eip155:8453/0x3f5bf3edac59d650d8fdf9657a71f2f904a3a4ee":
+  symbol: AERO
+  decimals: 18
+  chain: "eip155:8453"
+  valid_from: "2026-09-23"
+  primary: { kind: v2_twap, pool: "0xf634058dc94e6bf8e828e27621320c423bc8b18e", flavor: aerodrome, usd_feed: "0x7e860098F58bBFC8648a4311b374B1D669a2bc6B" }
+  check: { kind: v3_spot, pool: "0xd0acf293547457fb4fe9ee32ca93e89497626816", usd_feed: "0x7e860098F58bBFC8648a4311b374B1D669a2bc6B", tolerance_pct: 2 }
+
+# --- Off-chain primaries (x the Ethereum USDC/USD feed) ---------------------------------------------------------------
+# HYPE: Hyperliquid spot @107 (HYPE/USDC) hourly candle close (live: allMids["@107"]); check the perp HYPE candle close,
+# same venue. decimals: HYPE's HyperCore wei decimals.
+"hyperliquid:spot/@107":
+  symbol: HYPE
+  decimals: 8
+  chain: hyperliquid
+  valid_from: "2026-10-01"
+  primary: { kind: hyperliquid_candle, coin: "@107", usd_feed: "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6" }
+  check: { kind: hyperliquid_candle, coin: HYPE, usd_feed: "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6", tolerance_pct: 2, label: same_venue }
+
+# LIT: Lighter spot market 2049 (LIT/USDC) hourly candle close (live: order-book mid); check the Uniswap v4 LIT/USDC 0.3%
+# pool's getSlot0 through StateView, skipped in an hour whose in-range liquidity is 0.
+"eip155:1/0x232ce3bd40fcd6f80f3d55a522d03f25df784ee2":
+  symbol: LIT
+  decimals: 18
+  chain: lighter
+  valid_from: "2026-10-01"
+  primary: { kind: lighter_candle, market_id: 2049, usd_feed: "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6" }
+  check: { kind: v4_spot, state_view: "0x7fFE42C4a5DEeA5b0feC41C94C136Cf115597227", pool_id: "0x8366b1dde4de12c8806985fbb599d408d92d01a6faf2e478cc6bb76189cc00f1", usd_feed: "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6", tolerance_pct: 3 }
+
+# PUMP: the PumpSwap PUMP/USDC pool's vaults, USDC vault / PUMP vault (live: the accounts; history: the last swap's
+# postTokenBalances); check the Meteora DLMM PUMP/USDC (bin step 20) active bin (M9).
+"solana:mainnet/pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn":
+  symbol: PUMP
+  decimals: 6
+  chain: solana
+  valid_from: "2026-10-12"
+  primary: { kind: solana_vaults, base_vault: "8TqK4PL3x7zWR2dNinr1LMi8Uf4vTRSFE2Ev1yYW9bhC", quote_vault: "68Vdm7mQJ7RBxWioLVEUXbeTTpTtyiR1CL9vLRxmdr8t", usd_feed: "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6" }
+  check: { kind: meteora_dlmm, pair: "9SMp4yLKGtW9TnLimfVPkDARsyNSfJw43WMke4r7KoZj", usd_feed: "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6", tolerance_pct: 2 }

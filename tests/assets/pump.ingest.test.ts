@@ -1,8 +1,7 @@
-import { readFileSync } from 'node:fs';
 import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
+import { loadAsset } from '../../src/config/load.js';
 import { loadPersona } from '../../src/config/personas.js';
 import type { Db } from '../../src/db/connection.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
@@ -85,7 +84,8 @@ describe('assets/pump.yaml', () => {
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/pump.yaml`, 'utf8')).hash).toBe('4a9e1eba3c80615f6abd04c572c36c76602c803caa5e937333ecf9a23a728126');
+    // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
+    expect(loadAsset(ROOT, 'pump').hash).toBe('a616f10dacc988b44e484c79d408cc6cb45214d819853be5fd7b4cbe9a0644bf');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

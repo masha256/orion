@@ -1,9 +1,8 @@
-import { readFileSync } from 'node:fs';
 import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { budgetsFor } from '../../src/config/agentPolicy.js';
-import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
+import { loadAsset } from '../../src/config/load.js';
 import { loadSkills } from '../../src/config/personas.js';
 import { listActiveObservations } from '../../src/db/observations.js';
 import { buildPlan } from '../../src/ingest/plan.js';
@@ -86,7 +85,8 @@ describe('assets/vvv.yaml', () => {
     // review_triggers, peer_set) left (Phase 1).
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/vvv.yaml`, 'utf8')).hash).toBe('45ad0a3a44763cf55abccdcf6d1e2facaf49c430f222953bb00556120e9adaa2');
+    // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
+    expect(loadAsset(ROOT, 'vvv').hash).toBe('d8223609d9e3f8532e51cd8529340ea38d8264d6d4d33892eedb13e3f69cff1e');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

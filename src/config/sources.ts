@@ -74,10 +74,11 @@ export const SourceSchema = z.discriminatedUnion('type', [
     /**
      * When the transferred token is a vault share, convert each day's shares to the underlying token before pricing:
      * tokens × `function()` (e.g. pricePerShare, scaled by `decimals`), read at the last block of the day. The price id
-     * is then the underlying's. Optional with no default, so existing config hashes do not move.
+     * is then the underlying's. Optional with no default, so existing config hashes do not move. `underlying` names the
+     * underlying token's contract (its token ref is priced from prices.yaml); optional with no default (hashes).
      */
     share_price: z
-      .strictObject({ contract: name, function: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), decimals: z.number().int().min(0).max(36) })
+      .strictObject({ contract: name, function: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), decimals: z.number().int().min(0).max(36), underlying: name.optional() })
       .optional(),
     /**
      * Known senders that are not this flow (another product's fees, a distributor's dust): never counted, never reported
@@ -143,7 +144,7 @@ export function contractNames(s: SourceConfig): string[] {
       return [s.contract, ...(s.args ?? [])];
     case 'transfer_flow':
       return [
-        s.token, s.to, ...(s.from_allowlist ?? []), ...(s.count_from ?? []), ...(s.share_price ? [s.share_price.contract] : []),
+        s.token, s.to, ...(s.from_allowlist ?? []), ...(s.count_from ?? []), ...(s.share_price ? [s.share_price.contract, ...(s.share_price.underlying ? [s.share_price.underlying] : [])] : []),
         ...(s.from_ignore ?? []), ...(s.from_ignore_clones_of ?? []),
       ];
     default:

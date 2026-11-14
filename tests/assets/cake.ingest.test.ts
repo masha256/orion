@@ -1,8 +1,7 @@
-import { readFileSync } from 'node:fs';
 import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
+import { loadAsset } from '../../src/config/load.js';
 import { loadPersona } from '../../src/config/personas.js';
 import { listActiveObservations } from '../../src/db/observations.js';
 import { buildPlan } from '../../src/ingest/plan.js';
@@ -113,7 +112,8 @@ describe('assets/cake.yaml', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned 2026-11-10 (fix/cake-pending-burn 0ecc69e): total_supply nets the burner and MasterChef v2; CoinGecko total cross-check dropped.
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/cake.yaml`, 'utf8')).hash).toBe('5434fc561d3f70d20eb8e31be5cf41b03e691bf14a4fa1d14b845d072c4d5837');
+    // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
+    expect(loadAsset(ROOT, 'cake').hash).toBe('86b98b90382d270cdee19e8ad1e0d65dd4935e7bb857bb819bcfb751f3e1668f');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

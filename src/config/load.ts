@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { parse as parseYaml, YAMLParseError } from 'yaml';
 import { ZodError } from 'zod';
 import { findAdapter } from '../ingest/adapters/registry.js';
+import { entriesFor, loadPrices, type PriceEntry } from '../prices/config.js';
 import { OrionError } from '../types.js';
 import { canonicalJson, sha256 } from '../util/canonical.js';
 import { AssetConfigSchema, type AssetConfig } from './schema.js';
@@ -19,7 +20,12 @@ export function rawConfig(loaded: LoadedAsset): unknown {
   return loaded.raw ?? loaded.config;
 }
 
-export function parseAssetObject(obj: unknown): LoadedAsset {
+/**
+ * Parses and validates an asset object. The hash input is the parsed config plus the `prices.yaml` entries of every ref
+ * it uses (entriesFor, sorted by ref), so a price-method change moves the hash of exactly the assets that read it. With
+ * no entries (no prices map, or none of its refs) the hash is the config's alone, as before prices.yaml.
+ */
+export function parseAssetObject(obj: unknown, prices?: Map<string, PriceEntry>): LoadedAsset {
   let config: AssetConfig;
   try {
     config = AssetConfigSchema.parse(obj);
@@ -32,7 +38,8 @@ export function parseAssetObject(obj: unknown): LoadedAsset {
   }
   const paramIssues = adapterParamIssues(config);
   if (paramIssues.length > 0) throw new OrionError('invalid_asset_config', paramIssues.join('\n'));
-  return { config, hash: sha256(canonicalJson(config)), raw: obj };
+  const entries = prices ? entriesFor(config, prices) : [];
+  return { config, hash: sha256(canonicalJson(entries.length === 0 ? config : { config, prices: entries })), raw: obj };
 }
 
 /** Every adapter source (primary and cross-check) whose adapter validates its params, checked. Unknown names are left to ingest. */
@@ -49,8 +56,8 @@ function adapterParamIssues(config: AssetConfig): string[] {
   return issues;
 }
 
-export function parseAssetYaml(text: string): LoadedAsset {
-  return parseAssetObject(parseYaml(text));
+export function parseAssetYaml(text: string, prices?: Map<string, PriceEntry>): LoadedAsset {
+  return parseAssetObject(parseYaml(text), prices);
 }
 
 export function listAssetIds(home: string): string[] {
@@ -65,9 +72,10 @@ export function listAssetIds(home: string): string[] {
 export function loadAsset(home: string, id: string): LoadedAsset {
   const path = join(home, 'assets', `${id}.yaml`);
   if (!existsSync(path)) throw new OrionError('asset_not_found', `no asset config at ${path}`);
+  const prices = loadPrices(home);
   let loaded: LoadedAsset;
   try {
-    loaded = parseAssetYaml(readFileSync(path, 'utf8'));
+    loaded = parseAssetYaml(readFileSync(path, 'utf8'), prices);
   } catch (err) {
     // A syntax error is a config error like any other: named by file and line, so `asset validate` lists it.
     if (err instanceof YAMLParseError) {

@@ -4,6 +4,7 @@ import { parse as parseYaml } from 'yaml';
 import type { ReleaseInfo } from '../cli/paths.js';
 import { applyEditsToYaml, getAtPath, unproposableEdits } from '../config/edit.js';
 import { loadAsset, parseAssetYaml } from '../config/load.js';
+import { loadPrices } from '../prices/config.js';
 import { decideAnomaly, getAnomaly } from '../db/anomalies.js';
 import type { Db } from '../db/connection.js';
 import { confirmObservation, getObservationsByIds, insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
@@ -180,7 +181,8 @@ async function approveConfig(
 
   // 2 and 3. Edit the text, then validate it with the real loader before it touches the disk.
   const edited = applyEditsToYaml(original, edits);
-  const { config } = parseAssetYaml(edited);
+  // With the home's prices (Ruling R10): the same loader inputs, and so the same combined hash, as loadAsset after the write.
+  const { config } = parseAssetYaml(edited, loadPrices(configRoot));
   if (config.id !== p.assetId) throw new OrionError('invalid_asset_config', `the edit would change the asset id to "${config.id}"`);
 
   // 4. Write the file.

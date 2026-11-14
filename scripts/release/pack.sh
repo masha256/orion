@@ -4,7 +4,7 @@
 #
 # Writes <srcdir>/RELEASE ({"tag","commit","schema","built_at","node"}), then tars the release paths, and only those,
 # under a top directory <tag>/:
-#   RELEASE dist/ assets/ personas/ skills/ schedule.yaml package.json package-lock.json
+#   RELEASE dist/ assets/ personas/ skills/ schedule.yaml prices.yaml package.json package-lock.json
 #   scripts/provision/ (minus test/: the host files orion-host.sh installs from the release that ships them)
 #   tools/disclosure-watcher/ when present (minus tests/ and __pycache__/)
 # Never src/, tests/, node_modules/ (the server runs npm ci --omit=dev), tools/import-sqlite/ (dev host only), the
@@ -53,14 +53,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for f in schedule.yaml package.json package-lock.json; do
+for f in schedule.yaml prices.yaml package.json package-lock.json; do
   [[ -f $src/$f ]] || die "$src/$f is missing"
 done
 for d in dist assets personas skills scripts/provision; do
   [[ -d $src/$d ]] || die "$src/$d/ is missing"
 done
 {
-  printf '%s\n' RELEASE schedule.yaml package.json package-lock.json
+  printf '%s\n' RELEASE schedule.yaml prices.yaml package.json package-lock.json
   (cd "$src" && find dist assets personas skills \( -type f -o -type d -o -type l \) -print)
   printf 'scripts\n'
   (cd "$src" && find scripts/provision \( -path scripts/provision/test -o -name __pycache__ \) -prune -o \

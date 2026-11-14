@@ -1,8 +1,7 @@
-import { readFileSync } from 'node:fs';
 import { holderFlowMetrics } from '../../src/config/incomeStatement.js';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
+import { loadAsset } from '../../src/config/load.js';
 import { listActiveObservations } from '../../src/db/observations.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
@@ -87,7 +86,8 @@ describe('assets/ycrv.yaml', () => {
     // Re-pinned 2026-11-05: the splitter's gross by sender (yearn_gross_fees, yearn_gross_incentives) and the vote
     // incentives below the line by apportion (Phase 2 Task 7b, Mike G1).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
-    expect(parseAssetYaml(readFileSync(`${ROOT}/assets/ycrv.yaml`, 'utf8')).hash).toBe('cca3f10e921d66c7b703a202ffc401c802bb2882b34d34deb196a27984d1517d');
+    // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
+    expect(loadAsset(ROOT, 'ycrv').hash).toBe('fad46ffce87b17c118c61ff677f180f10bf08b319e2694a8634e013310f7b665');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
