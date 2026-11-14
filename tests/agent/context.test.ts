@@ -223,6 +223,9 @@ describe('the disclosure pack', () => {
       ['flow_usd.fees_core', 'lit.exchange_fees_daily'],
       ['flow_usd.fees_rh', 'lit.exchange_fees_daily'],
       ['flow_usd.rh_buyback', 'lit.exchange_fees_daily'],
+      // The price and its check (Phase 3 R2 Task 6b): the prices.yaml ref's methods.
+      ['price_usd', 'price.token'],
+      ['price_usd', 'price.token_check'],
       ['rh_revenue_share_app', 'lit.app_fee_share'],
       ['staked_tokens_reported', 'lit.staking_pool'],
       ['staking_apr', 'lit.staking_pool'],

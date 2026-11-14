@@ -3,7 +3,7 @@ import type { AssetConfig } from '../config/schema.js';
 import { isChainSource } from '../config/sources.js';
 import type { Db } from '../db/connection.js';
 import { upsertLatestLevels, type LatestLevel } from '../db/latestLevels.js';
-import { getAdapter } from '../ingest/adapters/registry.js';
+import { adapterNeedsRpc } from '../ingest/adapters/registry.js';
 import { buildPlan } from '../ingest/plan.js';
 import { MS_PER_HOUR } from '../db/prices.js';
 import { fetchAsset, priceWriterOf, type FetchDeps } from '../ingest/run.js';
@@ -80,8 +80,8 @@ export function levelMetricKeys(asset: AssetConfig): string[] {
 
 /**
  * The CoinGecko ids an asset's hourly read asks /coins/markets for (primaries and cross-checks): every coingecko source
- * still configured. Since Phase 3 R2 no flow or burn reads a CoinGecko price; `circulating_supply` stays (R3), and
- * `price_usd` until its sources move to the chain price (Task 6b).
+ * still configured. Since Phase 3 R2 no asset reads a CoinGecko price (price_usd is `price.token`, Task 6b; flows and
+ * burns read the chain prices), so these are the `circulating_supply` ids (R3) alone.
  */
 function coingeckoIds(asset: AssetConfig, metrics: string[]): string[] {
   return buildPlan(asset, { metrics })
@@ -128,7 +128,7 @@ export function withPrefetchedMarkets(http: HttpTransport, rows: Map<string, Rec
 
 function readsChain(asset: AssetConfig, metricKey: string): boolean {
   const s = asset.metrics[metricKey]?.source;
-  return s !== undefined && (isChainSource(s) || (s.type === 'adapter' && getAdapter(s.name).needsRpc));
+  return s !== undefined && (isChainSource(s) || (s.type === 'adapter' && adapterNeedsRpc(s)));
 }
 
 /** A level's rung and scrubbed locator, from the asset config (the same mapping the observation writers use). */
@@ -204,7 +204,7 @@ export async function runLevels(
       return { ...rpc, latestBlock: async () => (block = await rpc.latestBlock()) };
     };
     try {
-      const r = await fetchAsset(db, a, now, { ...deps, http, rpcFactory }, { metrics, dryRun: true });
+      const r = await fetchAsset(db, a, now, { ...deps, http, rpcFactory, priceRpcFactory: deps.priceRpcFactory ?? deps.rpcFactory }, { metrics, dryRun: true });
       const rows = toLatestLevels(a.config, r.written, now, jobId, block);
       await upsertLatestLevels(db, rows);
       result.rows.push(...rows);

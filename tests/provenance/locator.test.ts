@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadAsset, listAssetIds } from '../../src/config/load.js';
-import { adapterNames, getAdapter } from '../../src/ingest/adapters/registry.js';
+import { adapterNames, adapterNeedsRpc } from '../../src/ingest/adapters/registry.js';
 import { chainOfSource, disclosedProvenance, fetchedProvenance, locatorOfSource, scrubLocator, scrubUrl } from '../../src/provenance/locator.js';
 import { codeVersion, MAX_TX_REFS, txRefsProvenance } from '../../src/provenance/types.js';
 import { ADAPTER_SOURCE_TYPES } from '../../src/report/sourceTypes.js';
@@ -128,8 +128,10 @@ describe('provenance builders', () => {
     for (const name of adapterNames()) {
       expect(ADAPTER_SOURCE_TYPES[name], name).toBeDefined();
       // chainOfSource reads the rung, not the registry: an RPC adapter is exactly an EVM contract-state one.
-      const chain = chainOfSource(loadAsset(ROOT, 'crv').config, { type: 'adapter', name, params: {} });
-      expect(chain === 'eip155:1', name).toBe(getAdapter(name).needsRpc);
+      // A price adapter's chain and RPC need follow its ref's method (an Ethereum ref here).
+      const source = { type: 'adapter' as const, name, params: name.startsWith('price.') ? { ref: 'eip155:1/0xd533a949740bb3306d119cc777fa900ba034cd52' } : {} };
+      const chain = chainOfSource(loadAsset(ROOT, 'crv').config, source);
+      expect(chain === 'eip155:1', name).toBe(adapterNeedsRpc(source));
     }
     const ids = listAssetIds(ROOT);
     expect(ids.length).toBeGreaterThanOrEqual(13);
@@ -153,8 +155,12 @@ describe('provenance builders', () => {
     const loc = locatorOfSource(crv, flowKey, crv.metrics[flowKey].source!);
     expect(loc).toMatchObject({ event: 'Transfer(address,address,uint256)', contracts: [expect.stringMatching(/^0x/)], topics: { to: expect.stringMatching(/^0x/) } });
     expect(Object.values(loc.senders as Record<string, string>).every((a) => /^0x/i.test(a))).toBe(true);
+    // The price (Phase 3 R2 Task 6b): the price.token adapter and its ref, read on the ref's chain.
     const price = locatorOfSource(crv, 'price_usd', crv.metrics.price_usd.source!);
-    expect(price).toMatchObject({ provider: 'coingecko', endpoint: '/coins/markets', field: 'price' });
+    expect(price).toEqual({ adapter: 'price.token', params: { ref: 'eip155:1/0xd533a949740bb3306d119cc777fa900ba034cd52' } });
+    expect(chainOfSource(crv, crv.metrics.price_usd.source!)).toBe('eip155:1');
+    const circ = locatorOfSource(crv, 'circulating_supply', crv.metrics.circulating_supply.source!);
+    expect(circ).toMatchObject({ provider: 'coingecko', endpoint: '/coins/markets', field: 'circulating_supply' });
     const pump = loadAsset(ROOT, 'pump').config;
     expect(chainOfSource(pump, pump.metrics.total_supply.source!)).toBe('solana:mainnet');
     const hype = loadAsset(ROOT, 'hype').config;

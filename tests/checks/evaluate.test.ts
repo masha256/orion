@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 import { evaluateChecks, gapPct, recordChecks } from '../../src/checks/evaluate.js';
-import { resolveChecks } from '../../src/checks/schema.js';
+import { checkIssues, resolveChecks } from '../../src/checks/schema.js';
 import { loadAsset, parseAssetObject } from '../../src/config/load.js';
 import type { AssetConfig } from '../../src/config/schema.js';
 import { listAnomalies } from '../../src/db/anomalies.js';
@@ -135,21 +135,33 @@ describe('checks', () => {
     expect((await byId(link)).get('reserve_balance')).toMatchObject({ status: 'incomplete', lhs: null, rhs: null, gapPct: null });
   });
 
-  it('price: UNI price_usd vs its Chainlink contract_read within tolerance', async () => {
+  it('price: UNI price_usd (its feed) vs its prices.yaml pool check (the price.token_check cross-check) within tolerance', async () => {
     const uni = asset('uni');
+    const SRC = 'adapter:price.token_check';
     const run = async (primary: number, check: number) => {
-      const s = emptySourceOutcome('chain_levels');
-      s.crossChecks.push({ metricKey: 'price_usd', sourceId: 'chain_levels', label: 'level', primary, check, diffPct: 0, tolerancePct: 2, ok: true });
-      await insertFetchRun(db, { assetId: 'uni', startedAt: `${addDays(D, 1)}T00:45:00.000Z`, endedAt: `${addDays(D, 1)}T00:46:00.000Z`, outcome: 'ok', detail: { sources: [emptySourceOutcome('coingecko'), s] } });
+      const s = emptySourceOutcome(SRC);
+      s.crossChecks.push({ metricKey: 'price_usd', sourceId: SRC, label: 'level', primary, check, diffPct: 0, tolerancePct: 2, ok: true });
+      await insertFetchRun(db, { assetId: 'uni', startedAt: `${addDays(D, 1)}T00:45:00.000Z`, endedAt: `${addDays(D, 1)}T00:46:00.000Z`, outcome: 'ok', detail: { sources: [emptySourceOutcome('adapter:price.token'), s] } });
     };
     await run(6.0, 6.06);
     const ok = (await byId(uni)).get('price_chainlink')!;
     expect(ok).toMatchObject({ type: 'price', status: 'ok', lhs: 6.0, rhs: 6.06 });
     expect(ok.gapPct).toBeCloseTo((0.06 / 6.06) * 100, 9);
-    expect(ok.detail).toMatchObject({ against: 'chainlink_uni_usd', source: 'chain_levels', fetch_run_id: 1 });
+    expect(ok.detail).toMatchObject({ against: 'price.token_check', source: SRC, fetch_run_id: 1 });
     await db.run('TRUNCATE fetch_runs RESTART IDENTITY CASCADE');
     await run(6.0, 6.6);
     expect((await byId(uni)).get('price_chainlink')).toMatchObject({ status: 'breach', lhs: 6.0, rhs: 6.6 });
+  });
+
+  it('price: against an adapter resolves to its one adapter cross-check; the primary\'s own adapter is refused', () => {
+    const uni = asset('uni');
+    expect(resolveChecks(uni).find((c) => c.id === 'price_chainlink')).toMatchObject({ type: 'price', against: { kind: 'cross_check', contract: 'price.token_check', sourceId: 'adapter:price.token_check' } });
+    const own = structuredClone(uni);
+    own.income_statement!.checks = [{ id: 'own', type: 'price', level: 'price_usd', against: 'price.token', tolerance_pct: 2 }] as never;
+    expect(checkIssues(own).join('\n')).toMatch(/check own against "price.token" is neither a metric nor a contract \(or adapter\)/);
+    // A cross-check running the primary's own adapter is no check of it.
+    own.metrics.price_usd!.cross_checks = [{ tolerance_pct: 2, source: own.metrics.price_usd!.source! }];
+    expect(checkIssues(own).join('\n')).toMatch(/check own against "price.token" is price_usd's own primary adapter/);
   });
 
   it('revision: a restated LIT fee day breaches', async () => {

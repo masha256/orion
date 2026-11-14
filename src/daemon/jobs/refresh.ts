@@ -117,7 +117,7 @@ export function makeRefreshHandler(o: RefreshHandlerOptions = {}): JobHandler {
       const deps: FetchDeps = {
         // The chain price writer reads through the unwrapped transports: its block reads (other chains, other heads) are
         // not the fetch's block.
-        ...base, rpcFactory, dayBlocks: (chainId) => dbDayBlocks(ctx.db, chainId), priceWriter: priceWriterOf(base, loaded.prices),
+        ...base, rpcFactory, priceRpcFactory: base.priceRpcFactory ?? base.rpcFactory, dayBlocks: (chainId) => dbDayBlocks(ctx.db, chainId), priceWriter: priceWriterOf(base, loaded.prices),
       };
       let fetch: FetchResult | null = null;
       const r = await tick(ctx.db, loaded, {

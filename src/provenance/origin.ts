@@ -45,6 +45,9 @@ export const ADAPTER_ORIGINS: Readonly<Record<string, 'onchain' | 'api'>> = {
   'chain.v2_pool_twap_price': 'onchain',
   'chain.cl_pool_spot_price': 'onchain',
   'crv.emission_rate_annual': 'onchain',
+  // On the contract-state rung (an EVM or Solana method); a ref on a first-party venue is `api` by its rung.
+  'price.token': 'onchain',
+  'price.token_check': 'onchain',
   'solana.token_supply': 'onchain',
   'solana.owner_balance': 'onchain',
   'solana.supply_burn_daily': 'api',

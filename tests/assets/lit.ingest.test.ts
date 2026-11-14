@@ -14,6 +14,7 @@ import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.js';
 import { loadHolderYieldReport, type YieldReport } from '../../src/report/load.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { lighterBook, liveEvmCalls, priceRef } from '../helpers/livePrices.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { testCliContext, useTestDb } from '../helpers/db.js';
 import { statementShape } from '../helpers/assets.js';
@@ -29,7 +30,9 @@ const PRICE = 3.04;
 const DAY = 86_400_000;
 const TODAY = Date.parse('2026-10-16T00:00:00Z');
 
-const { config } = loadAsset(ROOT, 'lit');
+const { config, prices } = loadAsset(ROOT, 'lit');
+/** The fetch's loaded asset: the config and prices.yaml (price_usd reads price.token, Phase 3 R2 Task 6b). */
+const LOADED = { config, hash: 'test', prices };
 const C = config.contracts;
 const lc = (a: string) => a.toLowerCase();
 const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENESIS_TS) / BLOCK_SEC));
@@ -74,7 +77,9 @@ function world() {
   const all = trades();
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'lighter', symbol: 'lit', current_price: PRICE, market_cap: 7.6e8, circulating_supply: 250_000_000, total_supply: 1_000_000_000 }],
-    'https://mainnet.zklighter.elliot.ai/api/v1/orderBookDetails?market_id=2049': { code: 200, order_book_details: [], spot_order_book_details: [{ market_id: 2049, last_trade_price: 3.05 }] },
+    // price_usd (Phase 3 R2 Task 6b): Lighter's spot book mid (the price CoinGecko gave this test) x USDC/USD 1.0; its check
+    // is the Uniswap v4 pool on Ethereum (3.05, where the old last-trade check read).
+    ...lighterBook(2049, String(PRICE), String(PRICE)),
     'https://mainnet.zklighter.elliot.ai/api/v1/trades': (url: string) => {
       const from = Number(new URL(url).searchParams.get('cursor') ?? '0');
       return { code: 200, trades: all.slice(from, from + 100), next_cursor: from + 100 < all.length ? String(from + 100) : undefined };
@@ -105,6 +110,7 @@ function world() {
     maxLogRange: 50_000n,
     latest: BigInt(Math.floor((NOW.getTime() / 1000 - GENESIS_TS) / BLOCK_SEC)),
     calls: {
+      ...(liveEvmCalls({ [priceRef('LIT')]: { usd: 3.05 } }, { endTs: NOW.getTime() / 1000, startTs: NOW.getTime() / 1000 - 3600 }).end as Record<string, bigint>),
       // Read live on 2026-10-16.
       [callKey(C.token, 'totalSupply')]: 1_000_000_000n * E18,
       [callKey(C.token, 'decimals')]: 18n,
@@ -189,7 +195,8 @@ describe('assets/lit.yaml', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
-    expect(loadAsset(ROOT, 'lit').hash).toBe('300863b835e7243c5238d7a0ef377d1a71ba0f977282b88460bb8919aa0d77f5');
+    // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
+    expect(loadAsset(ROOT, 'lit').hash).toBe('7864c28367415b951a2c400eaf01372cc3cfde9ed933630b2f01895ee5fdb883');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -269,7 +276,7 @@ describe('assets/lit.yaml', () => {
     const pages = () => w.http.calls.filter((c) => c.url.includes('/trades?')).length;
     const first = pages();
     expect(first).toBe(12);
-    const next = await fetchAsset(w.db, { config, hash: 'test' }, new Date(NOW.getTime() + DAY), w.deps);
+    const next = await fetchAsset(w.db, LOADED, new Date(NOW.getTime() + DAY), w.deps);
     expect(pages() - first).toBe(1);
     // The re-read of the buyback day (inside the adapter's 7 days) does not report it again; the fee account did not move.
     expect(next.sources.filter((s) => s.status !== 'ok').map((s) => s.sourceId)).toEqual([]);
@@ -278,7 +285,7 @@ describe('assets/lit.yaml', () => {
 
   it('reports the buys as the payout, the unlocks as dilution, and the market cap on circulating supply', async () => {
     const w = world();
-    await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
+    await fetchAsset(w.db, LOADED, NOW, w.deps);
     const rep = (await loadHolderYieldReport(w.db, config)) as YieldReport;
     expect(rep.day).toBe('2026-10-15');
     expect(rep.marketCap).toBeCloseTo(PRICE * 250_000_000, 0);
@@ -309,7 +316,7 @@ describe('assets/lit.yaml', () => {
     const orion = (...args: string[]) => buildProgram(ctx).parseAsync(args, { from: 'user' });
     await orion('init');
     writeFileSync(join(home, 'assets', 'lit.yaml'), readFileSync(`${ROOT}/assets/lit.yaml`, 'utf8'));
-    await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
+    await fetchAsset(w.db, LOADED, NOW, w.deps);
     lines.length = 0;
     await orion('report', 'yield', 'lit', '--json');
     // D9: the object is the v2 statement; the v1 keys are gone (Task 11).

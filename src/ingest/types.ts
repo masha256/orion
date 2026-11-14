@@ -7,6 +7,8 @@ import type { BlockRef, RpcTransport } from './transport/rpc.js';
 import type { Observation } from '../db/observations.js';
 import type { Json } from '../provenance/types.js';
 import type { TokenInfo } from '../db/prices.js';
+import type { PriceEntry } from '../prices/config.js';
+import type { PriceDeps } from '../prices/types.js';
 
 /**
  * `slice`: the raw response sub-tree a value was read from (the day's chart entry, the market row's fields), as the API
@@ -114,6 +116,13 @@ export interface SourceContext {
    * rows are never read): for adapters that price from the chain writer's rows (Solana's supply drop, Phase 3 R2).
    */
   chainHourPrices?: (tokenRef: string, fromMs: number, toMs: number) => Promise<Map<number, number>>;
+  /** prices.yaml as the asset was loaded with it (LoadedAsset.prices): the `price.*` adapters look their ref up here. */
+  prices?: ReadonlyMap<string, PriceEntry>;
+  /**
+   * The price chains' transports (makePriceDeps over this run's env, RPC factory and HTTP): a `price.*` adapter reads a ref
+   * on another chain than the asset's, and the off-chain venues (and their Ethereum USD feed), through them.
+   */
+  priceDeps?: PriceDeps;
 }
 
 /**

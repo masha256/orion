@@ -42,8 +42,9 @@ export const SupplyCheckSchema = z.strictObject({
 /** The same quantity measured two ways (an API error, a contract change). */
 export const TwoPathCheckSchema = z.strictObject({ ...base, type: z.literal('two_path'), a: z.string(), b: z.string(), window_days: WindowDays.optional() });
 /**
- * A price vs an on-chain oracle or pool: `against` is a level metric, or a contract that a `contract_read` cross-check
- * of `level` reads (UNI/LINK/CAKE's Chainlink feeds: the reading each fetch stores in its run detail).
+ * A price vs an on-chain oracle or pool: `against` is a level metric, a contract that a `contract_read` cross-check of
+ * `level` reads, or the adapter an `adapter` cross-check of `level` runs (UNI/LINK/CAKE's `price.token_check`, their
+ * prices.yaml pool check since Phase 3 R2: the reading each fetch stores in its run detail).
  */
 export const PriceCheckSchema = z.strictObject({ ...base, type: z.literal('price'), level: z.string(), against: z.string() });
 /** Stored days vs the source's later reads of the last `days` days (an API restating history). */
@@ -83,6 +84,7 @@ export type ResolvedCheck = { id: string; tolerancePct: number; auto: boolean } 
   | { type: 'balance'; level: string; inflows: Term[]; outflows: Term[]; toleranceAbs: number | null }
   | { type: 'supply'; level: string; burns: Term[]; mints: Term[]; toleranceAbs: number | null }
   | { type: 'two_path'; a: Term[]; b: Term[]; windowDays: number }
+  /** `contract`: the `against` name, a contract a contract_read cross-check reads or the adapter an adapter cross-check runs. */
   | { type: 'price'; level: string; against: { kind: 'metric'; metric: string } | { kind: 'cross_check'; contract: string; sourceId: string } }
   | { type: 'revision'; metric: string; days: number }
   | { type: 'coverage'; listed: Term[]; total: Term[]; windowDays: number }
@@ -197,9 +199,11 @@ function resolveAll(asset: CheckAsset): { checks: ResolvedCheck[]; problems: str
           out.push({ ...common, type: 'price', level: c.level, against: { kind: 'metric', metric: c.against } });
           break;
         }
-        const reads = (asset.metrics[c.level]?.cross_checks ?? []).filter((x) => x.source.type === 'contract_read' && x.source.contract === c.against);
+        const reads = (asset.metrics[c.level]?.cross_checks ?? []).filter(
+          (x) => (x.source.type === 'contract_read' && x.source.contract === c.against) || (x.source.type === 'adapter' && x.source.name === c.against),
+        );
         if (reads.length !== 1) {
-          problems.push(`check ${c.id} against "${c.against}" is neither a metric nor a contract that one contract_read cross-check of ${c.level} reads`);
+          problems.push(`check ${c.id} against "${c.against}" is neither a metric nor a contract (or adapter) that one contract_read (or adapter) cross-check of ${c.level} reads`);
           break;
         }
         out.push({ ...common, type: 'price', level: c.level, against: { kind: 'cross_check', contract: c.against, sourceId: sourceId(reads[0]!.source) } });
@@ -382,8 +386,8 @@ export function checkIssues(asset: CheckAsset): string[] {
         if (c.against.kind === 'metric') {
           want(c, c.against.metric, 'level', 'against');
           sameUnit(c, [c.level, c.against.metric]);
-        } else if (d?.source?.type === 'contract_read' && d.source.contract === c.against.contract) {
-          out.push(`check ${c.id} against "${c.against.contract}" is ${c.level}'s own primary contract`);
+        } else if ((d?.source?.type === 'contract_read' && d.source.contract === c.against.contract) || (d?.source?.type === 'adapter' && d.source.name === c.against.contract)) {
+          out.push(`check ${c.id} against "${c.against.contract}" is ${c.level}'s own primary ${d.source.type === 'adapter' ? 'adapter' : 'contract'}`);
         }
         break;
       }

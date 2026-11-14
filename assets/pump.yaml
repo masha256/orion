@@ -27,10 +27,11 @@ metrics:
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: pump-fun, field: price }
+    # PUMP: the PumpSwap PUMP/USDC vault reserves x USDC/USD; check the Meteora DLMM active bin (prices.yaml;
+    # Phase 3 R2: read live at the run, no CoinGecko).
+    source: { type: adapter, name: price.token, params: { ref: "solana:mainnet/pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn" } }
     cross_checks:
-      # Jupiter's price API: priced from Solana pools (37M USD of liquidity on 2026-10-16), not DefiLlama.
-      - { tolerance_pct: 2, source: { type: http_json, url: "https://lite-api.jup.ag/price/v3?ids=pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn", path: pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn.usdPrice } }
+      - { tolerance_pct: 2, source: { type: adapter, name: price.token_check, params: { ref: "solana:mainnet/pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn" } } }
 
   # The mint's supply: 827.64B on 2026-10-16 (1T at launch; 172.4B burned). Team and investor tokens stay inside
   # (total_supply, the FDV basis on every Orion asset). No cross-check: CoinGecko's total was removed in Phase 3 R1.

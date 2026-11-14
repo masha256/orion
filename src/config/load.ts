@@ -4,6 +4,7 @@ import { parse as parseYaml, YAMLParseError } from 'yaml';
 import { ZodError } from 'zod';
 import { findAdapter } from '../ingest/adapters/registry.js';
 import { entriesFor, loadPrices, usdFlowRefs, type PriceEntry } from '../prices/config.js';
+import { notePriceVenues } from '../prices/venue.js';
 import { OrionError } from '../types.js';
 import { canonicalJson, sha256 } from '../util/canonical.js';
 import { AssetConfigSchema, type AssetConfig } from './schema.js';
@@ -41,7 +42,7 @@ export function parseAssetObject(obj: unknown, prices?: Map<string, PriceEntry>)
     }
     throw err;
   }
-  const paramIssues = adapterParamIssues(config);
+  const paramIssues = adapterParamIssues(config, prices);
   if (paramIssues.length > 0) throw new OrionError('invalid_asset_config', paramIssues.join('\n'));
   if (prices && prices.size > 0) {
     // Every usd transfer_flow is valued at its token's chain price (Phase 3 R2): the ref must be priced in prices.yaml.
@@ -50,19 +51,21 @@ export function parseAssetObject(obj: unknown, prices?: Map<string, PriceEntry>)
       throw new OrionError('invalid_asset_config', unpriced.map((u) => `metrics.${u.metricKey}.source: ${u.contract} (${u.ref}) has no entry in prices.yaml; a transfer_flow with unit usd is valued at its chain price`).join('\n'));
     }
   }
+  // The rung and chain of each price.* source come from its ref's prices.yaml method (src/prices/venue.ts).
+  if (prices) notePriceVenues(config.metrics, prices);
   const entries = prices ? entriesFor(config, prices) : [];
   return { config, hash: sha256(canonicalJson(entries.length === 0 ? config : { config, prices: entries })), raw: obj, ...(prices ? { prices } : {}) };
 }
 
 /** Every adapter source (primary and cross-check) whose adapter validates its params, checked. Unknown names are left to ingest. */
-function adapterParamIssues(config: AssetConfig): string[] {
+function adapterParamIssues(config: AssetConfig, prices: ReadonlyMap<string, PriceEntry> | undefined): string[] {
   const issues: string[] = [];
   for (const [key, def] of Object.entries(config.metrics)) {
     const sources = [{ where: `metrics.${key}.source`, source: def.source }, ...(def.cross_checks ?? []).map((c, i) => ({ where: `metrics.${key}.cross_checks.${i}.source`, source: c.source }))];
     for (const { where, source } of sources) {
       if (source?.type !== 'adapter') continue;
       const validate = findAdapter(source.name)?.validateParams;
-      if (validate) for (const e of validate(source.params)) issues.push(`${where}.params: ${e}`);
+      if (validate) for (const e of validate(source.params, prices ? { prices } : {})) issues.push(`${where}.params: ${e}`);
     }
   }
   return issues;

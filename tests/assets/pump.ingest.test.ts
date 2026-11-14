@@ -11,6 +11,8 @@ import { loadHolderYieldReport } from '../../src/report/load.js';
 import { solanaTokenRef } from '../../src/db/prices.js';
 import { seedChainPrices } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { fakeRpc } from '../helpers/fakeRpc.js';
+import { ETH_USDC_FEED, feedCalls, pumpLiveAccounts } from '../helpers/livePrices.js';
 import { useTestDb } from '../helpers/db.js';
 import { statementShape } from '../helpers/assets.js';
 import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
@@ -22,7 +24,11 @@ const NOW = new Date('2026-10-16T06:00:00.000Z');
 const DAY = 86_400_000;
 const PRICE = 0.005;
 const SOL = 'https://solana.test/v2/sol_SECRET';
-const { config } = loadAsset(ROOT, 'pump');
+const { config, prices } = loadAsset(ROOT, 'pump');
+/** The fetch's loaded asset: the config and prices.yaml (price_usd reads price.token, Phase 3 R2 Task 6b). */
+const LOADED = { config, hash: 'test', prices };
+/** price_usd (Task 6b): the PumpSwap vaults at PRICE (5M USDC / 1B PUMP), checked by the Meteora active bin (~0.1% over). */
+const PUMP_ACCOUNTS = pumpLiveAccounts({ pump: 1_000_000_000, usdc: 5_000_000, binUsdc: PRICE * 1.001 }).accounts;
 const MINT = config.contracts.token;
 /** 1B PUMP burned a day on chain; DefiLlama's history at 4M USD a day. */
 const BURN_PER_DAY = 1e9;
@@ -36,17 +42,22 @@ function world(supplyNow: number) {
   };
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'pump-fun', symbol: 'pump', current_price: PRICE, market_cap: 2.3e9, circulating_supply: 462.8e9, total_supply: supplyNow }],
-    'https://lite-api.jup.ag/price/v3': { [MINT]: { usdPrice: PRICE * 1.001 } },
     'https://api.llama.fi/summary/fees/pump?dataType=dailyHoldersRevenue': llama(HISTORY_USD),
     'https://api.llama.fi/summary/fees/pump?dataType=dailyRevenue': llama(HISTORY_USD * 2),
     [SOL]: (_u: string, body?: unknown) => {
       const b = body as { method: string; params: unknown[] };
       if (b.method === 'getTokenSupply') return { jsonrpc: '2.0', id: 1, result: { context: { slot: 1 }, value: { amount: BigInt(Math.round(supplyNow * 1e6)).toString(), decimals: 6 } } };
       if (b.method === 'getTokenAccountsByOwner') return { jsonrpc: '2.0', id: 1, result: { context: { slot: 1 }, value: [] } };
+      if (b.method === 'getMultipleAccounts') return { jsonrpc: '2.0', id: 1, result: { context: { slot: 1 }, value: (b.params[0] as string[]).map((k) => PUMP_ACCOUNTS[k] ?? null) } };
       throw new Error(`unexpected ${b.method}`);
     },
   });
-  const deps: FetchDeps = { http, rpcFactory: () => { throw new Error('PUMP must not open an EVM RPC'); }, env: { ORION_SOL_RPC_URL: SOL }, sleep: async () => undefined, now: () => NOW };
+  // PUMP's only EVM read: its price's Ethereum USDC/USD feed (at 1.0) at the Ethereum head (Ruling R5).
+  const eth = fakeRpc({ genesisTs: NOW.getTime() / 1000 - 12_000_000, latest: 1_000_000n, blockTimeSec: 12, calls: feedCalls(ETH_USDC_FEED, 1, Math.floor(NOW.getTime() / 1000) - 60) });
+  const deps: FetchDeps = {
+    http, rpcFactory: (_url, chainId) => { if (chainId !== 1) throw new Error('PUMP must not open an EVM RPC but Ethereum\'s'); return eth; },
+    env: { ORION_SOL_RPC_URL: SOL, ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW,
+  };
   return { db: testDb(), deps, http };
 }
 
@@ -90,7 +101,8 @@ describe('assets/pump.yaml', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
-    expect(loadAsset(ROOT, 'pump').hash).toBe('a616f10dacc988b44e484c79d408cc6cb45214d819853be5fd7b4cbe9a0644bf');
+    // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
+    expect(loadAsset(ROOT, 'pump').hash).toBe('9c0237adfb21bb0120a535de9ff528fa8809145a2399f63a9208bbd7169811c6');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -108,13 +120,14 @@ describe('assets/pump.yaml', () => {
     });
   });
 
-  it('plans the Solana readers, CoinGecko, the Jupiter price check, the unlocks and the revenue line, and no EVM scan', () => {
+  it('plans the Solana readers, the price and its check, CoinGecko, the unlocks and the revenue line, and no EVM scan', () => {
     const plan = buildPlan(config);
     expect(plan.needsRpc).toBe(false);
     expect(plan.flowGroups).toEqual([]);
     expect(plan.batches.map((b) => b.sourceId)).toEqual(expect.arrayContaining([
-      'coingecko', 'adapter:solana.token_supply', 'adapter:solana.supply_burn_daily', 'adapter:solana.owner_balance', 'adapter:schedule.unlocks_next_year', 'defillama:pump:dailyRevenue',
+      'adapter:price.token', 'adapter:price.token_check', 'coingecko', 'adapter:solana.token_supply', 'adapter:solana.supply_burn_daily', 'adapter:solana.owner_balance', 'adapter:schedule.unlocks_next_year', 'defillama:pump:dailyRevenue',
     ]));
+    expect(plan.batches.map((b) => b.sourceId).filter((id) => id.startsWith('http_json:'))).toEqual([]); // Jupiter's check is gone (Task 6b)
     expect(plan.derived).toEqual([]);
   });
 
@@ -147,6 +160,7 @@ describe('assets/pump.yaml', () => {
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]); // CoinGecko's total check is gone (Phase 3 R1)
     expect(w.http.calls.filter((c) => new URL(c.url).host === 'defillama-datasets.llama.fi').map((c) => c.url)).toEqual([]); // Phase 3 R1
     const rows = async (m: string) => await listActiveObservations(w.db, 'pump', m);
+    expect((await rows('price_usd')).at(-1)!.value).toBe(PRICE); // the vault reserves x USDC/USD (Task 6b), no CoinGecko
     // The last 7 completed days are on-chain: 1B PUMP a day at 0.005 = 5M USD, superseding DefiLlama's 4M.
     const last7 = (await rows('flow_usd.buyback')).filter((o) => o.periodDays === 1).slice(-7);
     expect(last7.map((o) => Math.round(o.value))).toEqual(Array(7).fill(5_000_000));
@@ -160,7 +174,7 @@ describe('assets/pump.yaml', () => {
     expect(rep.yields.dilutionLines).toEqual([{ id: 'unlocks', tokensPerYear: expect.closeTo(82.5e9, -6), yield: expect.closeTo(82.5e9 / supplyNow, 6) }]);
   });
 
-  it('never opens an EVM RPC, and works keyless on the public Solana endpoint', async () => {
+  it('reads no EVM chain for its supply, and works keyless on the public Solana endpoint', async () => {
     const w = world(827.6e9);
     const pub = fakeHttp({});
     const deps: FetchDeps = { ...w.deps, env: {}, http: { ...w.http, async postJson(url, body, headers) {
@@ -168,7 +182,7 @@ describe('assets/pump.yaml', () => {
       return w.http.postJson(SOL, body, headers);
     } } };
     void pub;
-    const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, deps, { metrics: ['total_supply'] });
+    const r = await fetchAsset(w.db, LOADED, NOW, deps, { metrics: ['total_supply'] });
     expect(r.sources.find((s) => s.sourceId === 'adapter:solana.token_supply')!.status).toBe('ok');
   });
 });

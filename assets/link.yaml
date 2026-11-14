@@ -11,7 +11,6 @@ contracts:
   token: "0x514910771AF9Ca656af840dff83E8264EcF986CA" # LINK (ERC-677/ERC-20, 1B minted, no burns)
   reserve: "0x9A709B7B69EA42D5eeb1ceBC48674C69E1569eC6" # Chainlink Reserve (RBACTimelock): 6.29M LINK on 2026-10-16
   fee_converter: "0x5680681ED3767B96914CE741a308155C7fB9171d" # Payment Abstraction: converts fees to LINK, the Reserve's only paying sender
-  chainlink_link_usd: "0x2c1d072e956AFFC0D435Cb7AC38EF18d24d9127c" # Chainlink LINK / USD, 8 decimals
   # The quarterly releases from Chainlink's non-circulating Safes land in these two wallets (2026-10-16, traced on chain):
   release_hub: "0x9b1c1752b6b6eaf62a8c491a8681b32c1f7ecde9" # EOA: forwards every release to an exchange wallet within hours (253.8M since 2022-08)
   release_rewards: "0xD50f074Ec5c7997cE1DaacB513Ec194C480878Af" # Safe: drips about 0.5M LINK a week onward (rewards); funded each quarter
@@ -22,7 +21,7 @@ external_ids:
   coingecko: chainlink
   defillama: chainlink
 
-# Every metric is fetched on chain except the price and the circulating supply (CoinGecko): no DefiLlama (Mike, 2026-10-11:
+# Every metric is fetched on chain except the circulating supply (CoinGecko): no DefiLlama (Mike, 2026-10-11:
 # the Reserve flow and the releases are all readable on Ethereum).
 metrics:
   price_usd:
@@ -30,9 +29,11 @@ metrics:
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: chainlink, field: price }
+    # LINK: the LINK/USD feed; check the Uniswap v3 LINK/WETH 1 h TWAP x ETH/USD (prices.yaml; Phase 3 R2: read
+    # live at the run, no CoinGecko).
+    source: { type: adapter, name: price.token, params: { ref: "eip155:1/0x514910771af9ca656af840dff83e8264ecf986ca" } }
     cross_checks:
-      - { tolerance_pct: 2, source: { type: contract_read, contract: chainlink_link_usd, function: latestAnswer, decimals: 8 } }
+      - { tolerance_pct: 2, source: { type: adapter, name: price.token_check, params: { ref: "eip155:1/0x514910771af9ca656af840dff83e8264ecf986ca" } } }
 
   # 1B, every token minted at launch; nothing has been burned (dead holds about 110 LINK of stray sends, not subtracted).
   # Chainlink's unreleased Safes and the Reserve stay inside (total_supply, the FDV basis on every Orion asset).
@@ -138,11 +139,11 @@ income_statement:
     - { id: reserve, of: onchain_fees, bucket: hold, haircut: 0.05, recipient_base: all, capture_rule: discretionary, note: "fees converted to LINK and held in the Chainlink Reserve" }
   dilution:
     - { id: releases, metric: released_rate, note: "quarterly releases from Chainlink's non-circulating Safes (trailing 365 days)" }
-  # Reconciliation checks (spec §5, Phase 2 Task 5): CoinGecko's price vs the Chainlink LINK/USD feed (the price
-  # cross-check's stored reading); the Reserve's day change in LINK vs the scanned buys (no outflow is expected; a fall
+  # Reconciliation checks (spec §5, Phase 2 Task 5): the price (the LINK/USD feed since Phase 3 R2) vs its prices.yaml
+  # check, the Uniswap v3 LINK/WETH pool (the price.token_check cross-check's stored reading); the Reserve's day change in LINK vs the scanned buys (no outflow is expected; a fall
   # is a withdrawal). tolerance_abs 10 LINK is a per-day allowance for the scan's per-transfer floor (ignore_below_tokens
   # 10: dust transfers under it are not counted); several such transfers in one day can exceed it and breach. LINK
   # from senders the scan does not list is not covered by the allowance: it should breach.
   checks:
-    - { id: price_chainlink, type: price, level: price_usd, against: chainlink_link_usd, tolerance_pct: 2 }
+    - { id: price_chainlink, type: price, level: price_usd, against: price.token_check, tolerance_pct: 2 }
     - { id: reserve_balance, type: balance, level: reserve_link, inflows: [ flow_tokens.reserve ], outflows: [], tolerance_pct: 1, tolerance_abs: 10 }

@@ -23,6 +23,10 @@ import { ALL_ASSETS, repoAsset, syntheticInput } from '../helpers/syntheticRepor
  *
  * Phase 3 R2 Task 5 rewrote one path only: incomeStatement.priceBasis.flows (the chain-priced basis text, no ingest gate)
  * in the 39 loader-shaped entries (<asset>/loader, /prior, /growing-loader); inputs unchanged, every other path identical.
+ *
+ * Phase 3 R2 Task 6b rewrote two paths only: incomeStatement.priceBasis.source and .sourceType in the 60 entries of the
+ * 12 assets whose price_usd reads `price.token` (market_data:coingecko -> contract_state:price.token; HYPE and LIT
+ * first_party_api:price.token); inputs unchanged, aero's 5 entries and every other path identical.
  */
 const GOLDEN = fileURLToPath(new URL('./golden/v2-report-13.json', import.meta.url));
 

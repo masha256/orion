@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseAssetYaml, type LoadedAsset } from '../../src/config/load.js';
+import { listAssetIds, loadAsset, parseAssetYaml, type LoadedAsset } from '../../src/config/load.js';
 import type { Db } from '../../src/db/connection.js';
 import { listLatestLevels, upsertLatestLevels, deleteLatestLevels } from '../../src/db/latestLevels.js';
 import { insertObservation } from '../../src/db/observations.js';
@@ -100,6 +100,24 @@ describe('batched CoinGecko', () => {
     expect(markets.map((c) => c.url)).toEqual([`${CG_MARKETS}?vs_currency=usd&ids=b-token,c-token,mini-token,peer-token`]);
     const price = (a: string, m = 'price_usd') => out.rows.find((r) => r.assetId === a && r.metricKey === m)?.value;
     expect([price('mini'), price('b'), price('c'), price('c', 'peer_price_usd')]).toEqual([10, 2, 3, 4]);
+  });
+});
+
+describe('the repo assets\' hourly read (Phase 3 R2 Task 6b)', () => {
+  it('/coins/markets is prefetched for the circulating_supply ids only: no asset names a CoinGecko price', async () => {
+    const root = fileURLToPath(new URL('../..', import.meta.url));
+    const assets = listAssetIds(root).map((id) => loadAsset(root, id));
+    const coingecko = assets.flatMap((a) => Object.values(a.config.metrics).flatMap((d) => [d.source, ...(d.cross_checks ?? []).map((c) => c.source)]))
+      .filter((s) => s?.type === 'coingecko') as { id: string; field: string }[];
+    expect(coingecko.filter((s) => s.field !== 'circulating_supply')).toEqual([]);
+    const http = fakeHttp({ 'https://api.coingecko.com/api/v3/coins/markets': [] });
+    const deps: FetchDeps = { http, rpcFactory: () => { throw new Error('no rpc in this test'); }, env: {}, sleep: async () => undefined, now: () => NOW };
+    await runLevels(testDb(), assets, deps, NOW, 1);
+    const markets = http.calls.filter((c) => c.url.includes('/coins/markets'));
+    expect(markets).toHaveLength(1);
+    const ids = new URL(markets[0]!.url).searchParams.get('ids')!.split(',');
+    expect(ids).toEqual(['chainlink', 'curve-dao-token', 'hyperliquid', 'lighter', 'pancakeswap-token', 'pump-fun', 'sky', 'uniswap', 'venice-token']);
+    expect(ids).toEqual([...new Set(coingecko.map((s) => s.id))].sort());
   });
 });
 

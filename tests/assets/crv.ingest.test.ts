@@ -9,6 +9,7 @@ import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { liveEvmCalls, priceRef } from '../helpers/livePrices.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
 import { statementShape } from '../helpers/assets.js';
@@ -23,8 +24,11 @@ const GENESIS_TS = NOW.getTime() / 1000 - 110 * 86_400 + 1;
 const LLAMA = 'https://coins.llama.fi/prices/current/ethereum:0xD533a949740bb3306d119CC777fa900bA034cd52';
 const BRIBES = 'https://llama.box/curvedex/api/bribes/stats.json';
 const E18 = 10n ** 18n;
+const LATEST_TS = GENESIS_TS + Math.floor((NOW.getTime() / 1000 - GENESIS_TS) / BLOCK_SEC) * BLOCK_SEC;
 
-const { config } = loadAsset(ROOT, 'crv');
+const { config, prices } = loadAsset(ROOT, 'crv');
+/** The fetch's loaded asset: the config and prices.yaml (price_usd reads price.token, Phase 3 R2 Task 6b). */
+const LOADED = { config, hash: 'test', prices };
 const C = config.contracts;
 /** The real feed of 2026-10-08, the per-day claims series trimmed. */
 const bribes = JSON.parse(readFileSync(`${ROOT}/tests/fixtures/crv/llama_box_bribes_stats.json`, 'utf8')) as unknown;
@@ -49,6 +53,9 @@ function world() {
     maxLogRange: 10_000n,
     latest: BigInt(Math.floor((NOW.getTime() / 1000 - GENESIS_TS) / BLOCK_SEC)),
     calls: {
+      // price_usd (Phase 3 R2 Task 6b): the TriCRV EMA 0.3933 crvUSD x crvUSD 1.0, checked by the CRV/USD feed (0.3933):
+      // the price CoinGecko gave this test before.
+      ...liveEvmCalls({ [priceRef('crvUSD')]: { usd: 1 }, [priceRef('CRV')]: { usd: 0.3933 } }, { endTs: LATEST_TS, startTs: LATEST_TS - 3600 }).end,
       // Read live on 2026-10-08 at block 26,146,581.
       [callKey(C.token, 'totalSupply')]: 2_424_321_556n * E18,
       [callKey(C.token, 'decimals')]: 18n,
@@ -90,7 +97,8 @@ describe('assets/crv.yaml', () => {
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
-    expect(loadAsset(ROOT, 'crv').hash).toBe('2cbf746088a8e39c865bfff8665b17983072832739d5911a9fe2994dab7fe288');
+    // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its check; entriesFor reads refs (R11).
+    expect(loadAsset(ROOT, 'crv').hash).toBe('9787bef1f28e0f08cd156f5f4582e8c33989a6411922d43a41e7c908e6953ca4');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -113,7 +121,8 @@ describe('assets/crv.yaml', () => {
   it('plans the source map of the spec: one transfer scan, a constant, an adapter, the bribes feed', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
-      ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
+      ['adapter:price.token', ['primary:price_usd']],
+      ['adapter:price.token_check', ['cross_check:price_usd']],
       [
         'chain_levels',
         [
@@ -122,6 +131,7 @@ describe('assets/crv.yaml', () => {
           'primary:ve_locked.convex', 'primary:ve_locked.stakedao', 'primary:ve_locked.yearn',
         ],
       ],
+      ['coingecko', ['primary:circulating_supply']],
       ['constant', ['primary:staker_emission_share']],
       ['adapter:crv.emission_rate_annual', ['primary:emission_rate_annual']],
       [`http_json:${BRIBES}`, ['primary:vote_incentive_run_rate_usd', 'cross_check:vote_incentive_run_rate_usd']],
@@ -134,7 +144,7 @@ describe('assets/crv.yaml', () => {
 
   it('fetches every metric from canned sources with the bribes cross-check in tolerance', async () => {
     const w = world();
-    const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
+    const r = await fetchAsset(w.db, LOADED, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
@@ -163,7 +173,7 @@ describe('assets/crv.yaml', () => {
     expect(await rows('revenue_run_rate_usd')).toEqual([]); // no derived run rate any more (it fed only the valuation)
 
     const checked = r.sources.flatMap((s) => s.crossChecks);
-    expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['vote_incentive_run_rate_usd', true]]);
+    expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true], ['vote_incentive_run_rate_usd', true]]);
     expect(w.http.calls.filter((c) => c.url === LLAMA).map((c) => c.url)).toEqual([]); // Phase 3 R1
     expect(w.rpc.stats.logRanges).toHaveLength(300); // three scans (fees, protocol revenue, treasury), 100 days each: the scanner commits a day at a time; a mainnet day (7,200 blocks) fits one call
     expect(w.rpc.stats.logRanges.every(([a, b]) => b - a + 1n <= 10_000n)).toBe(true);
@@ -175,7 +185,7 @@ describe('assets/crv.yaml', () => {
       const out = await w.rpc.multicall(calls, b);
       return out.map((r, i) => (calls[i].functionName === 'locked' || calls[i].functionName === 'balanceOf' ? { ok: false as const, error: 'execution reverted' } : r));
     } }) };
-    const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, failing);
+    const r = await fetchAsset(w.db, LOADED, NOW, failing);
     const chain = r.sources.find((s) => s.sourceId === 'chain_levels')!;
     // A failed reading marks its source failed (the existing rule), but the source's other readings are still written.
     expect(chain.status).toBe('failed');

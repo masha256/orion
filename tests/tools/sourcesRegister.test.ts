@@ -32,8 +32,9 @@ describe('sources register (docs/ops/sources-register.md)', () => {
   });
 
   it('a register entry no asset reads fails generation (an asset removed, or a source dropped)', () => {
-    const assets = loadAssets(root).filter((a) => a.id !== 'pump');
-    expect(() => renderRegister(assets)).toThrow(/no asset reads: .*lite-api\.jup\.ag/);
+    // HYPE is the only reader of Hyperliquid's info API (its adapters and, since Phase 3 R2, its price).
+    const assets = loadAssets(root).filter((a) => a.id !== 'hype');
+    expect(() => renderRegister(assets)).toThrow(/no asset reads: .*api\.hyperliquid\.xyz/);
   });
 
   it('RPC rows name the env var, never a URL; commercial use is known only where the repo quotes the terms', () => {

@@ -12,6 +12,7 @@ import { loadHolderYieldReport } from '../../src/report/load.js';
 import { evmTokenRef } from '../../src/db/prices.js';
 import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { liveEvmCalls, priceRef } from '../helpers/livePrices.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
 import { statementShape } from '../helpers/assets.js';
@@ -27,7 +28,14 @@ const PRICE = 0.07;
 const SUPPLY = 23_452_431_915;
 const STAKED = 17_395_600_000;
 
-const { config } = loadAsset(ROOT, 'sky');
+const { config, prices } = loadAsset(ROOT, 'sky');
+/** The fetch's loaded asset: the config and prices.yaml (price_usd reads price.token, Phase 3 R2 Task 6b). */
+const LOADED = { config, hash: 'test', prices };
+const LATEST = BigInt(Math.floor((NOW.getTime() / 1000 - GENESIS_TS) / BLOCK_SEC));
+const LATEST_TS = GENESIS_TS + Number(LATEST) * BLOCK_SEC;
+/** price_usd (Task 6b): the Uniswap v2 SKY/USDS TWAP over the hour to the run block (SKY at PRICE, USDS 1), checked by the
+ * SKY/USD feed at the same price: the price CoinGecko gave this test before. */
+const SKY_PRICE = liveEvmCalls({ [priceRef('USDS')]: { usd: 1 }, [priceRef('SKY')]: { usd: PRICE } }, { endTs: LATEST_TS, startTs: LATEST_TS - 3600 });
 const C = config.contracts;
 const lc = (a: string) => a.toLowerCase();
 const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENESIS_TS) / BLOCK_SEC));
@@ -66,8 +74,11 @@ function world() {
     genesisTs: GENESIS_TS,
     blockTimeSec: BLOCK_SEC,
     maxLogRange: 10_000n,
-    latest: BigInt(Math.floor((NOW.getTime() / 1000 - GENESIS_TS) / BLOCK_SEC)),
+    latest: LATEST,
+    // The TWAP's start: the first block at or after the run block's time less an hour.
+    callsAt: (n) => (n === LATEST - BigInt(3600 / BLOCK_SEC) ? SKY_PRICE.start : undefined),
     calls: {
+      ...SKY_PRICE.end,
       [callKey(C.token, 'totalSupply')]: BigInt(SUPPLY) * E18,
       [callKey(C.token, 'decimals')]: 18n,
       [callKey(C.usds, 'decimals')]: 18n,
@@ -111,7 +122,8 @@ describe('assets/sky.yaml', () => {
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
-    expect(loadAsset(ROOT, 'sky').hash).toBe('48c23f2592346bde8713ac8c9ecc946941a0d47961f73728840cac563efd3825');
+    // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
+    expect(loadAsset(ROOT, 'sky').hash).toBe('be03451c4a2e4e2832ffd64f3ea28b69178f62ed7707552b94b3cda2ea9e84ad');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -128,11 +140,13 @@ describe('assets/sky.yaml', () => {
     });
   });
 
-  it('plans the two holder-flow scans, the treasury scans and the chain levels (no price cross-check)', () => {
+  it('plans the two holder-flow scans, the treasury scans, the chain levels and the price with its feed check', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
-      ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
+      ['adapter:price.token', ['primary:price_usd']],
+      ['adapter:price.token_check', ['cross_check:price_usd']],
       ['chain_levels', ['primary:total_supply', 'primary:staked_supply', 'primary:splitter_burn_share']],
+      ['coingecko', ['primary:circulating_supply']],
       ['constant', ['primary:staker_emission_share', 'primary:emission_rate_annual']],
     ]);
     expect(plan.flowGroups.map((g) => [g.sourceId, g.members.map((m) => m.metricKey)])).toEqual([
@@ -150,12 +164,13 @@ describe('assets/sky.yaml', () => {
     await fetchAsset(w.db, { config, hash: 'backfill' }, NOW, w.deps, { backfillDays: 362, metrics: ['flow_tokens.rewards_staker', 'flow_tokens.rewards_usds', 'flow_tokens.buyback', 'treasury_net_payout'] });
     const r = await fetchAsset(w.db, loadAsset(ROOT, 'sky'), NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error])).toEqual([]);
-    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([]); // both checks gone (Phase 3 R1)
+    // CoinGecko's and DefiLlama's checks are gone (Phase 3 R1); the price's prices.yaml check (the SKY/USD feed) since Task 6b.
+    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
     expect(w.http.calls.filter((c) => new URL(c.url).host === 'coins.llama.fi').map((c) => c.url)).toEqual([]); // Phase 3 R1
 
     const rows = async (metric: string) => await listActiveObservations(w.db, 'sky', metric);
     const value = async (metric: string) => (await rows(metric)).at(-1)!.value;
-    expect(await value('price_usd')).toBe(PRICE);
+    expect(await value('price_usd')).toBeCloseTo(PRICE, 12); // a TWAP: the cumulative arithmetic, not a stored answer
     expect(await value('staked_supply')).toBe(STAKED);
     expect(await value('splitter_burn_share')).toBe(0.55);
 
@@ -173,7 +188,7 @@ describe('assets/sky.yaml', () => {
 
   it('reports both halves as cash to stakers, and the treasury net payout as dilution', async () => {
     const w = world();
-    await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps, { backfillDays: 362 });
+    await fetchAsset(w.db, LOADED, NOW, w.deps, { backfillDays: 362 });
     const report = await loadHolderYieldReport(w.db, config);
     const rep = report.incomeStatement!; // Task 11b: the v2 statement (v1 retired)
     expect(rep.day).toBe('2026-10-15');
@@ -192,7 +207,7 @@ describe('assets/sky.yaml', () => {
 
   it('refuses to run without the Ethereum RPC URL', async () => {
     const w = world();
-    await expect(fetchAsset(w.db, { config, hash: 'test' }, NOW, { ...w.deps, env: {} })).rejects.toMatchObject({ code: 'missing_rpc_url' });
+    await expect(fetchAsset(w.db, LOADED, NOW, { ...w.deps, env: {} })).rejects.toMatchObject({ code: 'missing_rpc_url' });
   });
 });
 

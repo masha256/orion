@@ -25,7 +25,6 @@ contracts:
   product_c: "0x292cfa2eeed03922df4501e79a51ad2c79699940"
   product_d: "0xba65cd7154105e1b1fe7aab38c7f9ccbca81283b" # a product route that sends the treasury its share monthly (funded by 0x8066…4424)
   zero: "0x0000000000000000000000000000000000000000" # mints: MasterChef v1's dev share (10 percent of each mint) goes straight to the burner
-  chainlink_cake_usd: "0xB6064eD41d4f67e353768aA239cA86f4F73665a1" # Chainlink CAKE / USD on BNB Chain, 8 decimals
 
 ingest: { chain_id: 56, rpc_url_env: ORION_BNB_RPC_URL, backfill_days: 100 }
 
@@ -42,9 +41,11 @@ metrics:
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: pancakeswap-token, field: price }
+    # CAKE: the CAKE/USD feed on BNB; check the PancakeSwap v3 CAKE/USDT 1 h TWAP x USDT/USD (prices.yaml; Phase 3
+    # R2: read live at the run, no CoinGecko).
+    source: { type: adapter, name: price.token, params: { ref: "eip155:56/0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82" } }
     cross_checks:
-      - { tolerance_pct: 2, source: { type: contract_read, contract: chainlink_cake_usd, function: latestAnswer, decimals: 8 } }
+      - { tolerance_pct: 2, source: { type: adapter, name: price.token_check, params: { ref: "eip155:56/0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82" } } }
 
   # totalSupply() less dead's, the burner's and MasterChef v2's balances: 334.57M on 2026-11-10 (dead alone: 394.43M).
   # MasterChef v1 mints its accrued emission in one harvest (2026-11-09 01:08Z: 43.79M CAKE into v2 via the SyrupBar and
@@ -140,7 +141,7 @@ income_statement:
     - { id: treasury, of: treasury_rev }
   volume: { not_measured: "gross swap fees: DefiLlama removed (Phase 3 R1); on-chain v2/v3 gross not read yet (Phase 3b)" }
   burned_tokens: [ flow_tokens.burn ]
-  # Reconciliation checks (spec §5, Phase 2 Task 5): CoinGecko's price vs the Chainlink CAKE/USD feed on BNB Chain, the
-  # reading the price cross-check already stores in each fetch run's detail.
+  # Reconciliation checks (spec §5, Phase 2 Task 5): the price (the CAKE/USD feed since Phase 3 R2) vs its prices.yaml
+  # check, the PancakeSwap v3 CAKE/USDT pool: the reading the price.token_check cross-check stores in each fetch run's detail.
   checks:
-    - { id: price_chainlink, type: price, level: price_usd, against: chainlink_cake_usd, tolerance_pct: 2 }
+    - { id: price_chainlink, type: price, level: price_usd, against: price.token_check, tolerance_pct: 2 }

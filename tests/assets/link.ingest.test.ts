@@ -11,6 +11,7 @@ import type { TransferLog } from '../../src/ingest/transport/rpc.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { liveEvmCalls, priceRef } from '../helpers/livePrices.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
 import { statementShape } from '../helpers/assets.js';
@@ -21,10 +22,14 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-10-16T10:30:00.000Z');
 const BLOCK_SEC = 12;
 const GENESIS_TS = NOW.getTime() / 1000 - 400 * 86_400 + 1;
+/** The fake chain's latest block's time (the run block every price.token read is made at). */
+const LATEST_TS = GENESIS_TS + Math.floor((NOW.getTime() / 1000 - GENESIS_TS) / BLOCK_SEC) * BLOCK_SEC;
 const E18 = 10n ** 18n;
 const PRICE = 12.5;
 
-const { config } = loadAsset(ROOT, 'link');
+const { config, prices } = loadAsset(ROOT, 'link');
+/** The fetch's loaded asset: the config and prices.yaml (price_usd reads price.token, Phase 3 R2 Task 6b). */
+const LOADED = { config, hash: 'test', prices };
 const C = config.contracts;
 const lc = (a: string) => a.toLowerCase();
 const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENESIS_TS) / BLOCK_SEC));
@@ -70,7 +75,9 @@ function world() {
       [callKey(C.token, 'totalSupply')]: 1_000_000_000n * E18,
       [callKey(C.token, 'decimals')]: 18n,
       [callKey(C.token, 'balanceOf', [C.reserve])]: 6_293_843n * E18,
-      [callKey(C.chainlink_link_usd, 'latestAnswer')]: 1_244_185_063n,
+      // price_usd (Phase 3 R2 Task 6b): the LINK/USD feed at the price CoinGecko gave this test, checked by its pool TWAP at
+      // the old Chainlink cross-check's answer.
+      ...liveEvmCalls({ [priceRef('LINK')]: { usd: PRICE, checkUsd: 12.44185063 } }, { endTs: LATEST_TS, startTs: LATEST_TS - 3600 }).end,
     },
   });
   const rpc = {
@@ -106,7 +113,8 @@ describe('assets/link.yaml', () => {
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
-    expect(loadAsset(ROOT, 'link').hash).toBe('4479e2426ded986a46408f608c935027012c27ad317571f01794743a78a64dd0');
+    // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
+    expect(loadAsset(ROOT, 'link').hash).toBe('5fc85808ea6308c8b76238e32a6a9d9819ec6ab75aba9abe1e4cbc10d5897031');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -124,11 +132,13 @@ describe('assets/link.yaml', () => {
     });
   });
 
-  it('plans the Reserve scan, the two release scans and the chain levels with the Chainlink cross-check', () => {
+  it('plans the Reserve scan, the two release scans and the chain levels, the price and its pool check', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
-      ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
-      ['chain_levels', ['cross_check:price_usd', 'primary:total_supply', 'primary:reserve_link']],
+      ['adapter:price.token', ['primary:price_usd']],
+      ['adapter:price.token_check', ['cross_check:price_usd']],
+      ['chain_levels', ['primary:total_supply', 'primary:reserve_link']],
+      ['coingecko', ['primary:circulating_supply']],
       ['constant', ['primary:staked_supply', 'primary:staker_emission_share', 'primary:emission_rate_annual']],
     ]);
     expect(plan.flowGroups.map((g) => [g.sourceId, g.members.map((m) => m.metricKey)])).toEqual([
@@ -169,7 +179,7 @@ describe('assets/link.yaml', () => {
 
   it('reports the Reserve as a hold with the 5 percent haircut, and the releases as dilution', async () => {
     const w = world();
-    await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps, { backfillDays: 370 });
+    await fetchAsset(w.db, LOADED, NOW, w.deps, { backfillDays: 370 });
     const report = await loadHolderYieldReport(w.db, config);
     const rep = report.incomeStatement!; // Task 11b: the v2 statement (v1 retired)
     expect(rep.day).toBe('2026-10-15');
@@ -187,7 +197,7 @@ describe('assets/link.yaml', () => {
 
   it('refuses to run without the Ethereum RPC URL', async () => {
     const w = world();
-    await expect(fetchAsset(w.db, { config, hash: 'test' }, NOW, { ...w.deps, env: {} })).rejects.toMatchObject({ code: 'missing_rpc_url' });
+    await expect(fetchAsset(w.db, LOADED, NOW, { ...w.deps, env: {} })).rejects.toMatchObject({ code: 'missing_rpc_url' });
   });
 });
 

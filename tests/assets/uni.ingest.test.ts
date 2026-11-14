@@ -10,6 +10,7 @@ import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { liveEvmCalls, priceRef } from '../helpers/livePrices.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
 import { statementShape } from '../helpers/assets.js';
@@ -20,9 +21,13 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-10-11T10:30:00.000Z');
 const BLOCK_SEC = 12;
 const GENESIS_TS = NOW.getTime() / 1000 - 110 * 86_400 + 1;
+/** The fake chain's latest block's time (the run block every price.token read is made at). */
+const LATEST_TS = GENESIS_TS + Math.floor((NOW.getTime() / 1000 - GENESIS_TS) / BLOCK_SEC) * BLOCK_SEC;
 const E18 = 10n ** 18n;
 
-const { config } = loadAsset(ROOT, 'uni');
+const { config, prices } = loadAsset(ROOT, 'uni');
+/** The fetch's loaded asset: the config and prices.yaml (price_usd reads price.token, Phase 3 R2 Task 6b). */
+const LOADED = { config, hash: 'test', prices };
 const C = config.contracts;
 const BRIDGE = '0x3154cf16ccdb4c6d922629664174b904d80f2c35'; // OP Mainnet's L1 bridge (L1ChugSplashProxy): L2 burns bridged back
 const SEARCHER = '0xc6208ce00b3f88c6555833ab9bbc943717dfd941'; // a mainnet Firepit searcher contract
@@ -61,7 +66,9 @@ function world() {
       [callKey(C.token, 'balanceOf', [C.timelock])]: 262_247_996n * E18,
       [callKey(C.token, 'allowance', [C.timelock, C.vesting])]: 20_000_000n * E18,
       [callKey(C.vesting, 'quarterlyVestingAmount')]: 5_000_000n * E18,
-      [callKey(C.chainlink_uni_usd, 'latestAnswer')]: 757_500_416n,
+      // price_usd (Phase 3 R2 Task 6b): the UNI/USD feed at the price CoinGecko gave this test, checked by its pool TWAP at
+      // the old Chainlink cross-check's answer.
+      ...liveEvmCalls({ [priceRef('UNI')]: { usd: PRICE, checkUsd: 7.57500416 } }, { endTs: LATEST_TS, startTs: LATEST_TS - 3600 }).end,
     },
     logs: burnLogs(),
   });
@@ -89,7 +96,8 @@ describe('assets/uni.yaml', () => {
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
-    expect(loadAsset(ROOT, 'uni').hash).toBe('7ece78194e0189ef5838de6f0db2e1683480141452e2dbd3692a45d4dfa33deb');
+    // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
+    expect(loadAsset(ROOT, 'uni').hash).toBe('5c1d9cf48fe8db9387e7dbccfecdaefcf20d02da02306b4d0734edc1f57ba706');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -107,11 +115,13 @@ describe('assets/uni.yaml', () => {
     });
   });
 
-  it('plans one any-sender scan of burns, the chain levels with the Chainlink cross-check and the constants (no fees feed)', () => {
+  it('plans one any-sender scan of burns, the chain levels, the price and its pool check and the constants (no fees feed)', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
-      ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
-      ['chain_levels', ['cross_check:price_usd', 'primary:total_supply', 'primary:labs_vest_rate', 'primary:labs_vest_approved', 'primary:treasury_uni']],
+      ['adapter:price.token', ['primary:price_usd']],
+      ['adapter:price.token_check', ['cross_check:price_usd']],
+      ['chain_levels', ['primary:total_supply', 'primary:labs_vest_rate', 'primary:labs_vest_approved', 'primary:treasury_uni']],
+      ['coingecko', ['primary:circulating_supply']],
       ['constant', ['primary:staked_supply', 'primary:staker_emission_share', 'primary:emission_rate_annual']],
     ]);
     expect(plan.flowGroups).toHaveLength(1);
@@ -152,7 +162,7 @@ describe('assets/uni.yaml', () => {
 
   it('reports the burn against the Labs vest as dilution, and volume as not measured', async () => {
     const w = world();
-    await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
+    await fetchAsset(w.db, LOADED, NOW, w.deps);
     const report = await loadHolderYieldReport(w.db, config);
     const rep = report.incomeStatement!; // Task 11b: the v2 statement (v1 retired)
     expect(rep.day).toBe('2026-10-10');
@@ -171,7 +181,7 @@ describe('assets/uni.yaml', () => {
 
   it('refuses to run without the Ethereum RPC URL', async () => {
     const w = world();
-    await expect(fetchAsset(w.db, { config, hash: 'test' }, NOW, { ...w.deps, env: {} })).rejects.toMatchObject({ code: 'missing_rpc_url' });
+    await expect(fetchAsset(w.db, LOADED, NOW, { ...w.deps, env: {} })).rejects.toMatchObject({ code: 'missing_rpc_url' });
   });
 });
 

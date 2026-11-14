@@ -7,7 +7,8 @@ import { adapterNames, getAdapter } from '../../src/ingest/adapters/registry.js'
 import type { SourceContext, SourceValue } from '../../src/ingest/types.js';
 import { methodOfSource } from '../../src/provenance/locator.js';
 import { ADAPTER_ORIGINS, originOf, SERIES_ORIGIN } from '../../src/provenance/origin.js';
-import { ADAPTER_SOURCE_TYPES } from '../../src/report/sourceTypes.js';
+import { ADAPTER_SOURCE_TYPES, sourceTypeOf } from '../../src/report/sourceTypes.js';
+import { ETH_USDC_FEED, feedCalls, hyperliquidMids, liveEvmCalls, PRICES, priceRef } from '../helpers/livePrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { ingestAsset, STAKING } from '../helpers/ingestAsset.js';
@@ -235,8 +236,16 @@ const SAMPLES: Record<string, () => Promise<SourceValue>> = {
   'vvv.burn_history_tokens': async () => {
     const url = `${VENICE}/vvv_burn_history`;
     return getAdapter('vvv.burn_history_tokens').run(sourceCtx({ http: fakeHttp({ [url]: fixture('venice_vvv_burn_history.json') }) }), { url });
-  },
+  },  // An Ethereum ref (LINK: its feed, checked by the v3 LINK/WETH TWAP): contract state, `onchain`.
+  'price.token': async () => getAdapter('price.token').run(await linkPriceCtx(), { ref: priceRef('LINK') }),
+  'price.token_check': async () => getAdapter('price.token_check').run(await linkPriceCtx(), { ref: priceRef('LINK') }),
 };
+
+async function linkPriceCtx(): Promise<SourceContext> {
+  const built = liveEvmCalls({ [priceRef('LINK')]: { usd: 12.5 } }, { endTs: NOW_TS, startTs: NOW_TS - 3600 });
+  const rpc = fakeRpc({ genesisTs: 1_792_000_000, latest: 1_000_000n, calls: built.end });
+  return sourceCtx({ asset: loadAsset(ROOT, 'link').config, rpc, block: await rpc.latestBlock(), prices: PRICES });
+}
 
 describe('the adapter origin registry (review I-1)', () => {
   const stamps = new Map<string, Stamp | null>();
@@ -253,6 +262,21 @@ describe('the adapter origin registry (review I-1)', () => {
     expect(mismatches(stamps)).toEqual([]);
     // The one contract-state adapter whose rows are `api`: its daily series goes through writeApiFlow.
     expect(stamps.get('solana.supply_burn_daily')).toBe('api');
+  });
+
+  it('a price adapter on a first-party venue (HYPE, Hyperliquid allMids) stamps api, as its rung reads back', async () => {
+    const usdc = fakeRpc({ genesisTs: 1_792_000_000, latest: 1_000_000n, calls: feedCalls(ETH_USDC_FEED, 1, NOW_TS) });
+    const priceDeps = { rpcFor: () => usdc, solana: {} as never, http: fakeHttp(hyperliquidMids({ '@107': '40', HYPE: '40.1' })), now: new Date(NOW_TS * 1000), prices: PRICES };
+    const hype = loadAsset(ROOT, 'hype').config;
+    const ctx = sourceCtx({ asset: hype, prices: PRICES, priceDeps });
+    for (const name of ['price.token', 'price.token_check']) {
+      const v = await getAdapter(name).run(ctx, { ref: priceRef('HYPE') });
+      const source = name === 'price.token' ? hype.metrics.price_usd!.source! : hype.metrics.price_usd!.cross_checks![0]!.source;
+      const sourceType = sourceTypeOf({ ...hype.metrics.price_usd!, source })!;
+      expect(sourceType).toBe('first_party_api');
+      expect(stampOf(v)).toBe(originOf({ method: 'measured', sourceType, locator: { adapter: name, params: {} }, formula: null }));
+      expect(stampOf(v)).toBe('api');
+    }
   });
 
   it('fails when an entry is flipped', () => {

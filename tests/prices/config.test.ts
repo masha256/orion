@@ -99,13 +99,33 @@ describe('prices.yaml (the committed file)', () => {
     });
   });
 
-  it('entriesFor(ycrv) is yCRV, CRV (its quote) and crvUSD (CRV\'s quote, and a ycrv contract), sorted by ref', () => {
+  it('entriesFor(ycrv) is yCRV (price.token), CRV (its quote) and crvUSD (CRV\'s quote, and a share\'s underlying), sorted by ref', () => {
     const refs = entriesFor(loadAsset(ROOT, 'ycrv').config, prices).map((e) => e.ref);
     expect(refs).toEqual([REF.CRV, REF.crvUSD, REF.yCRV].sort());
-    expect(entriesFor(loadAsset(ROOT, 'aero').config, prices).map((e) => e.ref)).toEqual([REF.AERO]);
+    // AERO's price_usd reads its own adapters (R21) and it scans no token: no ref.
+    expect(entriesFor(loadAsset(ROOT, 'aero').config, prices).map((e) => e.ref)).toEqual([]);
     expect(entriesFor(loadAsset(ROOT, 'hype').config, prices).map((e) => e.ref)).toEqual([REF.HYPE]);
     expect(entriesFor(loadAsset(ROOT, 'pump').config, prices).map((e) => e.ref)).toEqual([REF.PUMP]);
     expect(entriesFor(loadAsset(ROOT, 'vvv').config, prices).map((e) => e.ref)).toEqual([REF.VVV, REF.DIEM].sort());
+  });
+
+  it('entriesFor reads refs, never symbols or every contract (R11): price.* params, scanned tokens, share underlyings, quotes', () => {
+    const crv = loadAsset(ROOT, 'crv').config;
+    const hype = loadAsset(ROOT, 'hype').config;
+    const refsOf = (metrics: Record<string, unknown>, base = crv) => entriesFor({ ...base, metrics } as unknown as typeof crv, prices).map((e) => e.ref);
+    const adapter = (name: string, ref: string) => ({ type: 'level', source: { type: 'adapter', name, params: { ref } } });
+    // HYPE's symbol no longer pulls its ref in: without a price source it uses none (the interim symbol match is gone).
+    expect(refsOf({}, hype)).toEqual([]);
+    expect(refsOf({ p: adapter('price.token', REF.HYPE) }, hype)).toEqual([REF.HYPE]);
+    // A check-only ref counts, with its quote refs transitively (cvxCRV -> CRV -> crvUSD).
+    expect(refsOf({ c: { type: 'level', cross_checks: [{ tolerance_pct: 3, source: adapter('price.token_check', REF.cvxCRV).source }] } })).toEqual([REF.CRV, REF.crvUSD, REF.cvxCRV].sort());
+    // A contract named only in `contracts` (CRV's crvusd, its token) adds nothing; a transfer_flow's scanned token does.
+    expect(refsOf({ x: { type: 'level', source: { type: 'erc20_supply', token: 'token', subtract_balances: [] } } })).toEqual([]);
+    expect(refsOf({ f: { type: 'flow', source: { type: 'transfer_flow', token: 'crvusd', to: 'token', unit: 'tokens', from_any: true } } })).toEqual([REF.crvUSD]);
+    // A share's underlying counts (the share itself is not priced).
+    const ycrv = loadAsset(ROOT, 'ycrv').config;
+    const share = Object.values(ycrv.metrics).find((d) => d.source?.type === 'transfer_flow' && d.source.share_price?.underlying === 'crvusd')!;
+    expect(refsOf({ s: share }, ycrv)).toEqual([REF.crvUSD]);
   });
 
   it('methodSource: chain:<kind> for a chain read, first_party:<venue> for a venue API', () => {

@@ -16,7 +16,7 @@ import { INPUT_ORIGIN_KEY, originOf } from '../provenance/origin.js';
 import { responseDigest, type Json, type Provenance } from '../provenance/types.js';
 import type { SourceType } from '../report/sourceTypes.js';
 import { MS_PER_DAY, OrionError, STD_METRICS } from '../types.js';
-import { getAdapter } from './adapters/registry.js';
+import { adapterNeedsRpc } from './adapters/registry.js';
 import { checkRevenueStale, REVENUE_STALE_MOVE_PCT, type IndexPoint } from './alerts.js';
 import { DEFAULT_API_FLOW_BACKFILL_DAYS, DEFILLAMA_REVISION_DAYS, writeApiFlow } from './apiFlow.js';
 import { writePeriodicPayments } from './periodic.js';
@@ -54,6 +54,12 @@ export interface FetchDeps {
    * with (LoadedAsset.prices; none: every ref is unknown_price_ref).
    */
   priceWriter?: ChainPriceWriter;
+  /**
+   * The RPC factory the `price.*` adapters' other-chain and off-chain reads use (their Ethereum USD feed at its head).
+   * Unset: `rpcFactory`. A caller that wraps `rpcFactory` to capture the fetch's block passes the unwrapped one here,
+   * so a price read's head is never taken for the fetch's block.
+   */
+  priceRpcFactory?: RpcFactory;
 }
 
 /** FetchDeps' price writer: the injected one, else writeChainPrices bound to the run's transports and prices.yaml. */
@@ -186,11 +192,11 @@ const API_TYPES: ReadonlySet<SourceType> = new Set(['first_party_api', 'third_pa
 /** A metric whose primary source reads the chain at the run's block (chain levels, an RPC adapter). */
 function readsChainAt(def: MetricDef): boolean {
   const s = def.source;
-  return s !== undefined && (isChainSource(s) || (s.type === 'adapter' && getAdapter(s.name).needsRpc));
+  return s !== undefined && (isChainSource(s) || (s.type === 'adapter' && adapterNeedsRpc(s)));
 }
 
 function readsChain(batch: SourceBatch): boolean {
-  return batch.requests.some((r) => isChainSource(r.source) || (r.source.type === 'adapter' && getAdapter(r.source.name).needsRpc));
+  return batch.requests.some((r) => isChainSource(r.source) || (r.source.type === 'adapter' && adapterNeedsRpc(r.source)));
 }
 
 export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: FetchDeps, opts: FetchOptions = {}): Promise<FetchResult> {
@@ -237,10 +243,13 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     }
   }
   const historyDays = opts.backfillDays ?? (firstAdapterFlow ? (asset.ingest?.backfill_days ?? DEFAULT_API_FLOW_BACKFILL_DAYS) : undefined);
+  const runHttp = withRunCache(deps.http);
   const ctx: SourceContext = {
-    asset, nowIso: startedAt, http: withRunCache(deps.http), rpc, block, env: deps.env, contract: contractResolver(asset),
+    asset, nowIso: startedAt, http: runHttp, rpc, block, env: deps.env, contract: contractResolver(asset),
     observations: async (metricKey) => await listActiveObservations(db, asset.id, metricKey),
     chainHourPrices: async (tokenRef, fromMs, toMs) => await chainHourPrices(db, tokenRef, fromMs, toMs),
+    // The price.* adapters: prices.yaml and the price chains' transports (a ref off the asset's chain, the off-chain venues).
+    ...(loaded.prices ? { prices: loaded.prices, priceDeps: makePriceDeps(deps.env, { rpcFactory: deps.priceRpcFactory ?? deps.rpcFactory, prices: loaded.prices, http: runHttp, now }) } : {}),
     ...(historyDays !== undefined ? { backfillDays: historyDays } : {}),
   };
 

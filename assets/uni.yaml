@@ -9,7 +9,6 @@ contracts:
   dead: "0x000000000000000000000000000000000000dEaD" # every fee burn ends here (Firepit / L2 burns bridged back)
   timelock: "0x1a9C8182C09F50C8318d769245beA52c32BE35BC" # DAO Timelock: the treasury (262.2M UNI), the 100M one-off burn (2025-12-27)
   vesting: "0xca046a83edb78f74ae338bb5a291bf6fdac9e1d2" # UNIVesting: 5M UNI a quarter from the Timelock to Uniswap Labs
-  chainlink_uni_usd: "0x553303d460EE0afB37EdFf9bE42922D8FF63220e" # Chainlink UNI / USD, 8 decimals
 
 ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
 
@@ -25,9 +24,11 @@ metrics:
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: uniswap, field: price }
+    # UNI: the UNI/USD feed; check the Uniswap v3 UNI/WETH 1 h TWAP x ETH/USD (prices.yaml; Phase 3 R2: read live
+    # at the run, no CoinGecko).
+    source: { type: adapter, name: price.token, params: { ref: "eip155:1/0x1f9840a85d5af5bf1d1762f925bdaddc4201f984" } }
     cross_checks:
-      - { tolerance_pct: 2, source: { type: contract_read, contract: chainlink_uni_usd, function: latestAnswer, decimals: 8 } }
+      - { tolerance_pct: 2, source: { type: adapter, name: price.token_check, params: { ref: "eip155:1/0x1f9840a85d5af5bf1d1762f925bdaddc4201f984" } } }
 
   # 1e9 less the burned UNI at dead. The Timelock's treasury stays inside (Mike, 2026-10-11):
   # treasury UNI can be spent, and the burn reaches every token.
@@ -119,7 +120,7 @@ income_statement:
   burned_tokens: [ flow_tokens.burn ]
   dilution:
     - { id: labs_vest, metric: labs_vest_rate, cap_metric: labs_vest_approved, note: "Timelock to Uniswap Labs via UNIVesting" }
-  # Reconciliation checks (spec §5, Phase 2 Task 5): CoinGecko's price vs the Chainlink UNI/USD feed, the reading the
-  # price cross-check already stores in each fetch run's detail.
+  # Reconciliation checks (spec §5, Phase 2 Task 5): the price (the UNI/USD feed since Phase 3 R2) vs its prices.yaml
+  # check, the Uniswap v3 UNI/WETH pool: the reading the price.token_check cross-check stores in each fetch run's detail.
   checks:
-    - { id: price_chainlink, type: price, level: price_usd, against: chainlink_uni_usd, tolerance_pct: 2 }
+    - { id: price_chainlink, type: price, level: price_usd, against: price.token_check, tolerance_pct: 2 }

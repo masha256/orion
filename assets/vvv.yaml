@@ -31,9 +31,11 @@ metrics:
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: venice-token, field: price }
+    # VVV: the Aerodrome v2 VVV/WETH 1 h TWAP x ETH/USD; check the Uniswap v3 VVV/USDC 1 h TWAP (prices.yaml;
+    # Phase 3 R2: read live at the run, no CoinGecko).
+    source: { type: adapter, name: price.token, params: { ref: "eip155:8453/0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf" } }
     cross_checks:
-      - { tolerance_pct: 2, source: { type: http_json, url: "https://outerface.venice.ai/api/app/vvv/vvv_stats", path: price } }
+      - { tolerance_pct: 2, source: { type: adapter, name: price.token_check, params: { ref: "eip155:8453/0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf" } } }
 
   # Agent-researched, user-confirmed: revenue settles off-chain and has no API. The agent records each
   # disclosure as a provisional row; nothing reaches the signal until `orion data confirm` (the user's rule of
@@ -159,7 +161,11 @@ metrics:
     type: level
     unit: usd
     staleness_days: 7
-    source: { type: coingecko, id: diem, field: price }
+    # DIEM: the Aerodrome v2 DIEM/VVV 1 h TWAP x VVV's chain price; check the Slipstream DIEM/USDC 1 h TWAP
+    # (prices.yaml).
+    source: { type: adapter, name: price.token, params: { ref: "eip155:8453/0xf4d97f2da56e8c3098f3a8d538db630a2606a024" } }
+    cross_checks:
+      - { tolerance_pct: 2, source: { type: adapter, name: price.token_check, params: { ref: "eip155:8453/0xf4d97f2da56e8c3098f3a8d538db630a2606a024" } } }
 
   # 1 minus Venice's take on DIEM-locked stake. The contract returns a fraction scaled by 1e18 (verified 2026-09-19).
   diem_locked_yield_share:

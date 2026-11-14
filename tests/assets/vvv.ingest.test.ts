@@ -9,6 +9,7 @@ import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { liveEvmCalls, priceRef } from '../helpers/livePrices.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { fixture } from '../helpers/sourceCtx.js';
 import { useTestDb } from '../helpers/db.js';
@@ -22,7 +23,14 @@ const GENESIS_TS = NOW.getTime() / 1000 - 10 * 86_400 + 1;
 const VENICE = 'https://outerface.venice.ai/api/app/vvv';
 const E18 = 10n ** 18n;
 
-const { config } = loadAsset(ROOT, 'vvv');
+const { config, prices } = loadAsset(ROOT, 'vvv');
+/** The fetch's loaded asset: the config and prices.yaml (price_usd reads price.token, Phase 3 R2 Task 6b). */
+const LOADED = { config, hash: 'test', prices };
+const LATEST = BigInt(Math.floor((NOW.getTime() / 1000 - GENESIS_TS) / 2));
+const LATEST_TS = GENESIS_TS + Number(LATEST) * 2;
+/** price_usd and diem_price_usd (Task 6b): the Aerodrome VVV/WETH TWAP x ETH/USD and the DIEM/VVV TWAP x VVV over the hour
+ * to the run block, at the prices CoinGecko gave this test (26.03, 1941.6); their checks (the v3 USDC pools) read the same. */
+const PRICE_READS = liveEvmCalls({ [priceRef('VVV')]: { usd: 26.03 }, [priceRef('DIEM')]: { usd: 1941.6 } }, { endTs: LATEST_TS, startTs: LATEST_TS - 3600 });
 const C = config.contracts;
 const chain = fixture('chain_reads.json') as { token: Record<string, string>; staking: Record<string, string>; diem: Record<string, string> };
 
@@ -51,8 +59,11 @@ function world() {
   const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENESIS_TS) / 2));
   const rpc = fakeRpc({
     genesisTs: GENESIS_TS,
-    latest: BigInt(Math.floor((NOW.getTime() / 1000 - GENESIS_TS) / 2)),
+    latest: LATEST,
+    // The TWAPs' start: the first block at or after the run block's time less an hour (2 s blocks).
+    callsAt: (n) => (n === LATEST - 1800n ? (PRICE_READS.start as Record<string, bigint>) : undefined),
     calls: {
+      ...(PRICE_READS.end as Record<string, bigint>),
       [callKey(C.token, 'totalSupply')]: BigInt(chain.token.totalSupply),
       [callKey(C.token, 'decimals')]: 18n,
       [callKey(C.token, 'balanceOf', [C.burn_sink])]: BigInt(chain.token.balanceOf_zero_address),
@@ -91,7 +102,8 @@ describe('assets/vvv.yaml', () => {
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
-    expect(loadAsset(ROOT, 'vvv').hash).toBe('b32ee86f97fed5b53982d734a3fb214247b424d427f0195f605a19a0cfff483b');
+    // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
+    expect(loadAsset(ROOT, 'vvv').hash).toBe('b9e654a8fe835036a520c12abbefb22afdd48c129f0c2a7e92f049862072258b');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -134,6 +146,8 @@ describe('assets/vvv.yaml ingestion', () => {
   it('plans the VVV source map of the spec', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => b.sourceId).sort()).toEqual([
+      // The price and DIEM's price: prices.yaml's methods and checks (Phase 3 R2 Task 6b), no CoinGecko or Venice price.
+      'adapter:price.token', 'adapter:price.token_check',
       'adapter:vvv.burn_history_tokens', 'adapter:vvv.diem_target_supply', 'adapter:vvv.staker_emission_share', 'adapter:vvv.staker_share_from_api',
       'chain_levels', 'coingecko', // no DefiLlama (Phase 3 R1): the burn cross-check and revenue_proxy are gone
       `http_json:${VENICE}/diem_stats`, `http_json:${VENICE}/vvv_staking_yield`, `http_json:${VENICE}/vvv_stats`,
@@ -150,14 +164,14 @@ describe('assets/vvv.yaml ingestion', () => {
 
   it('fetches every sourced metric from the real captures with every cross-check in tolerance', async () => {
     const w = world();
-    const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps, { backfillDays: 2 });
+    const r = await fetchAsset(w.db, LOADED, NOW, w.deps, { backfillDays: 2 });
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error])).toEqual([]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
 
     const value = async (metric: string) => (await listActiveObservations(w.db, 'vvv', metric)).at(-1)!.value;
-    expect(await value('price_usd')).toBe(26.03);
-    expect(await value('diem_price_usd')).toBe(1941.6);
+    expect(await value('price_usd')).toBeCloseTo(26.03, 9); // TWAPs: the cumulative arithmetic, not a stored answer
+    expect(await value('diem_price_usd')).toBeCloseTo(1941.6, 6);
     expect(await value('circulating_supply')).toBeCloseTo(48058904.92603289, 4);
     expect(await value('total_supply')).toBeCloseTo(81009270.24659143, 3);
     expect(await value('staked_supply')).toBeCloseTo(33941208.98799314, 3);
@@ -172,10 +186,12 @@ describe('assets/vvv.yaml ingestion', () => {
 
     const checked = r.sources.flatMap((s) => s.crossChecks).map((c) => c.metricKey).sort();
     expect(checked).toEqual([
-      'circulating_supply', 'diem_supply', 'diem_target_supply', 'emission_rate_annual', 'locked_supply', 'price_usd',
-      'staked_supply', 'staker_emission_share', 'total_supply', // Venice's own; CoinGecko's total check is gone (Phase 3 R1)
+      'circulating_supply', 'diem_price_usd', 'diem_supply', 'diem_target_supply', 'emission_rate_annual', 'locked_supply', 'price_usd',
+      // Venice's own; CoinGecko's total check is gone (Phase 3 R1); the two prices' prices.yaml checks (Task 6b).
+      'staked_supply', 'staker_emission_share', 'total_supply',
     ]);
     expect(w.http.calls.filter((c) => /llama\.fi/.test(new URL(c.url).host)).map((c) => c.url)).toEqual([]); // Phase 3 R1
-    expect(w.rpc.stats.multicall).toBeLessThanOrEqual(4); // levels, two adapters, token decimals: never one call per read
+    // Levels, two adapters, token decimals; the prices' run-block and hour-earlier reads (VVV, then DIEM's new calls only).
+    expect(w.rpc.stats.multicall).toBeLessThanOrEqual(8); // never one call per read
   });
 });

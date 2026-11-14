@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { parse as parseYaml, YAMLParseError } from 'yaml';
 import { z } from 'zod';
 import type { AssetConfig } from '../config/schema.js';
-import { evmTokenRef, solanaTokenRef } from '../db/prices.js';
+import { evmTokenRef } from '../db/prices.js';
 import { OrionError } from '../types.js';
 
 /**
@@ -260,20 +260,26 @@ export function usdFlowRefs(asset: AssetConfig): { metricKey: string; contract: 
 }
 
 /**
- * The refs an asset uses: every contract address it names, as a token ref on its chain (its `ingest` EVM chain, or
- * Solana), plus the entry carrying its own symbol (HYPE has no address ref); then their quote refs, transitively.
- * Sorted by ref, so the config hash does not depend on file order.
+ * The refs an asset uses (Ruling R11): the `ref` of every `price.token` / `price.token_check` source (primaries and
+ * cross-checks), and the token every transfer_flow scans and every share's `share_price.underlying`, as refs on the
+ * asset's ingest chain; then their quote refs, transitively. A ref not in prices.yaml adds nothing. Sorted by ref, so
+ * the config hash does not depend on file order.
  */
-export function entriesFor(asset: AssetConfig, prices: Map<string, PriceEntry>): PriceEntry[] {
+export function entriesFor(asset: AssetConfig, prices: ReadonlyMap<string, PriceEntry>): PriceEntry[] {
   const used = new Set<string>();
-  for (const address of Object.values(asset.contracts ?? {})) {
-    const a = String(address);
-    if (asset.ingest && /^0x[0-9a-fA-F]{40}$/.test(a)) used.add(evmTokenRef(asset.ingest.chain_id, a));
-    else if (asset.chain === 'solana' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a)) used.add(solanaTokenRef(a));
+  const contractRef = (name: string | undefined) => {
+    const address = name === undefined ? undefined : asset.contracts?.[name];
+    if (asset.ingest && address !== undefined && /^0x[0-9a-fA-F]{40}$/.test(String(address))) used.add(evmTokenRef(asset.ingest.chain_id, String(address)));
+  };
+  for (const def of Object.values(asset.metrics)) {
+    for (const s of [def.source, ...(def.cross_checks ?? []).map((c) => c.source)]) {
+      if (s?.type === 'adapter' && (s.name === 'price.token' || s.name === 'price.token_check') && typeof s.params.ref === 'string') used.add(s.params.ref);
+      if (s?.type === 'transfer_flow') {
+        contractRef(s.token);
+        contractRef(s.share_price?.underlying);
+      }
+    }
   }
-  // Interim (Ruling R11), replaced in Task 6: the symbol match exists only for HYPE, which has no address ref. Task 6 reads
-  // refs from price.token/price.token_check params and transfer_flow tokens and deletes this line.
-  for (const e of prices.values()) if (e.symbol === asset.symbol) used.add(e.ref);
   const out = new Map<string, PriceEntry>();
   const visit = (ref: string) => {
     const e = prices.get(ref);

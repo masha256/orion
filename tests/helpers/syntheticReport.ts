@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseAssetYaml } from '../../src/config/load.js';
+import { loadPrices } from '../../src/prices/config.js';
 import type { AssetConfig } from '../../src/config/schema.js';
 import { addDays } from '../../src/ingest/time.js';
 import type { ReportInput, ReportLevels } from '../../src/report/holderYield.js';
@@ -30,8 +31,11 @@ const SYNTHETIC_FLOWS: Record<string, string[]> = {
   ycrv: ['flow_usd.fees', 'flow_usd.yearn_revenue', 'flow_usd.yearn_styc_fee', 'flow_usd.yearn_gross', 'flow_usd.yearn_gross_fees', 'flow_usd.yearn_gross_incentives'],
 };
 
+const REPO_PRICES = loadPrices(fileURLToPath(new URL('../..', import.meta.url)));
+
 export function repoAsset(id: string): AssetConfig {
-  return parseAssetYaml(readFileSync(fileURLToPath(new URL(`../../assets/${id}.yaml`, import.meta.url)), 'utf8')).config;
+  // With the repo's prices.yaml, as loadAsset parses it: a price.* source's rung is its ref's method's (LIT: Lighter's API).
+  return parseAssetYaml(readFileSync(fileURLToPath(new URL(`../../assets/${id}.yaml`, import.meta.url)), 'utf8'), REPO_PRICES).config;
 }
 
 /** A deterministic value in (0.4, 1.6) per (metric, day index): uneven days, so window sums and growth are not trivial. */

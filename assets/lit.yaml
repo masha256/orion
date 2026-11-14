@@ -33,9 +33,11 @@ metrics:
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: lighter, field: price }
+    # LIT: the Lighter spot order-book mid x USDC/USD; check the Uniswap v4 LIT/USDC pool (prices.yaml; Phase 3
+    # R2: read live at the run, no CoinGecko).
+    source: { type: adapter, name: price.token, params: { ref: "eip155:1/0x232ce3bd40fcd6f80f3d55a522d03f25df784ee2" } }
     cross_checks:
-      - { tolerance_pct: 2, source: { type: http_json, url: "https://mainnet.zklighter.elliot.ai/api/v1/orderBookDetails?market_id=2049", path: spot_order_book_details.0.last_trade_price } }
+      - { tolerance_pct: 3, source: { type: adapter, name: price.token_check, params: { ref: "eip155:1/0x232ce3bd40fcd6f80f3d55a522d03f25df784ee2" } } }
 
   # 1B less dead: 981.91M on 2026-10-16. The team, investor and ecosystem allocations stay inside (total_supply, the FDV
   # basis on every Orion asset): they are already minted and can be sold. No cross-check: CoinGecko's total (1B, the burns

@@ -1727,7 +1727,18 @@
   "catalysts_due": [],
   "source_failures": [],
   "document": null,
-  "adapter_params": []
+  "adapter_params": [
+   {
+    "metric": "price_usd",
+    "adapter": "price.token",
+    "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
+   },
+   {
+    "metric": "price_usd",
+    "adapter": "price.token_check",
+    "params_doc": "ref: a token ref in prices.yaml. The same read as price.token, by its prices.yaml check: the check method's USD value; for a bound check, the primary inside the band and the nearer bound (in USD) outside it."
+   }
+  ]
  },
  "crv": {
   "asset": {
@@ -2622,7 +2633,18 @@
   "catalysts_due": [],
   "source_failures": [],
   "document": null,
-  "adapter_params": []
+  "adapter_params": [
+   {
+    "metric": "price_usd",
+    "adapter": "price.token",
+    "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
+   },
+   {
+    "metric": "price_usd",
+    "adapter": "price.token_check",
+    "params_doc": "ref: a token ref in prices.yaml. The same read as price.token, by its prices.yaml check: the check method's USD value; for a bound check, the primary inside the band and the nearer bound (in USD) outside it."
+   }
+  ]
  },
  "cvxcrv": {
   "asset": {
@@ -4917,7 +4939,18 @@
   "catalysts_due": [],
   "source_failures": [],
   "document": null,
-  "adapter_params": []
+  "adapter_params": [
+   {
+    "metric": "price_usd",
+    "adapter": "price.token",
+    "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
+   },
+   {
+    "metric": "price_usd",
+    "adapter": "price.token_check",
+    "params_doc": "ref: a token ref in prices.yaml. The same read as price.token, by its prices.yaml check: the check method's USD value; for a bound check, the primary inside the band and the nearer bound (in USD) outside it."
+   }
+  ]
  },
  "hype": {
   "asset": {
@@ -5752,7 +5785,18 @@
   "catalysts_due": [],
   "source_failures": [],
   "document": null,
-  "adapter_params": []
+  "adapter_params": [
+   {
+    "metric": "price_usd",
+    "adapter": "price.token",
+    "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
+   },
+   {
+    "metric": "price_usd",
+    "adapter": "price.token_check",
+    "params_doc": "ref: a token ref in prices.yaml. The same read as price.token, by its prices.yaml check: the check method's USD value; for a bound check, the primary inside the band and the nearer bound (in USD) outside it."
+   }
+  ]
  },
  "link": {
   "asset": {
@@ -6597,7 +6641,18 @@
   "catalysts_due": [],
   "source_failures": [],
   "document": null,
-  "adapter_params": []
+  "adapter_params": [
+   {
+    "metric": "price_usd",
+    "adapter": "price.token",
+    "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
+   },
+   {
+    "metric": "price_usd",
+    "adapter": "price.token_check",
+    "params_doc": "ref: a token ref in prices.yaml. The same read as price.token, by its prices.yaml check: the check method's USD value; for a bound check, the primary inside the band and the nearer bound (in USD) outside it."
+   }
+  ]
  },
  "lit": {
   "asset": {
@@ -7504,6 +7559,16 @@
     "params_doc": "kinds: string[] (required, no duplicates; each one of maker_fee, taker_fee, transfer_fee, withdraw_fee, liquidation_fee, buyback, buyback_usdc): Lighter exchangeMetrics kinds summed per UTC day; api?: string (default https://mainnet.zklighter.elliot.ai/api/v1; the Robinhood instance is https://api.rh.lighter.xyz/api/v1); days?: 1..30 (default 7; the run's --backfill-days overrides it)"
    },
    {
+    "metric": "price_usd",
+    "adapter": "price.token",
+    "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
+   },
+   {
+    "metric": "price_usd",
+    "adapter": "price.token_check",
+    "params_doc": "ref: a token ref in prices.yaml. The same read as price.token, by its prices.yaml check: the check method's USD value; for a bound check, the primary inside the band and the nearer bound (in USD) outside it."
+   },
+   {
     "metric": "rh_revenue_share_app",
     "adapter": "lit.app_fee_share",
     "params_doc": "url?: string (default https://app.lighter.xyz/stats): the Lighter app page whose exchange-stats chunk holds the Robinhood revenue split"
@@ -8377,6 +8442,16 @@
   "source_failures": [],
   "document": null,
   "adapter_params": [
+   {
+    "metric": "price_usd",
+    "adapter": "price.token",
+    "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
+   },
+   {
+    "metric": "price_usd",
+    "adapter": "price.token_check",
+    "params_doc": "ref: a token ref in prices.yaml. The same read as price.token, by its prices.yaml check: the check method's USD value; for a bound check, the primary inside the band and the nearer bound (in USD) outside it."
+   },
    {
     "metric": "unlocks_next_year",
     "adapter": "schedule.unlocks_next_year",
@@ -10677,7 +10752,18 @@
   "catalysts_due": [],
   "source_failures": [],
   "document": null,
-  "adapter_params": []
+  "adapter_params": [
+   {
+    "metric": "price_usd",
+    "adapter": "price.token",
+    "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
+   },
+   {
+    "metric": "price_usd",
+    "adapter": "price.token_check",
+    "params_doc": "ref: a token ref in prices.yaml. The same read as price.token, by its prices.yaml check: the check method's USD value; for a bound check, the primary inside the band and the nearer bound (in USD) outside it."
+   }
+  ]
  },
  "sky": {
   "asset": {
@@ -12262,7 +12348,18 @@
   "catalysts_due": [],
   "source_failures": [],
   "document": null,
-  "adapter_params": []
+  "adapter_params": [
+   {
+    "metric": "price_usd",
+    "adapter": "price.token",
+    "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
+   },
+   {
+    "metric": "price_usd",
+    "adapter": "price.token_check",
+    "params_doc": "ref: a token ref in prices.yaml. The same read as price.token, by its prices.yaml check: the check method's USD value; for a bound check, the primary inside the band and the nearer bound (in USD) outside it."
+   }
+  ]
  },
  "uni": {
   "asset": {
@@ -13115,7 +13212,18 @@
   "catalysts_due": [],
   "source_failures": [],
   "document": null,
-  "adapter_params": []
+  "adapter_params": [
+   {
+    "metric": "price_usd",
+    "adapter": "price.token",
+    "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
+   },
+   {
+    "metric": "price_usd",
+    "adapter": "price.token_check",
+    "params_doc": "ref: a token ref in prices.yaml. The same read as price.token, by its prices.yaml check: the check method's USD value; for a bound check, the primary inside the band and the nearer bound (in USD) outside it."
+   }
+  ]
  },
  "vvv": {
   "asset": {
@@ -13996,7 +14104,28 @@
   "catalysts_due": [],
   "source_failures": [],
   "document": null,
-  "adapter_params": []
+  "adapter_params": [
+   {
+    "metric": "diem_price_usd",
+    "adapter": "price.token",
+    "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
+   },
+   {
+    "metric": "diem_price_usd",
+    "adapter": "price.token_check",
+    "params_doc": "ref: a token ref in prices.yaml. The same read as price.token, by its prices.yaml check: the check method's USD value; for a bound check, the primary inside the band and the nearer bound (in USD) outside it."
+   },
+   {
+    "metric": "price_usd",
+    "adapter": "price.token",
+    "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
+   },
+   {
+    "metric": "price_usd",
+    "adapter": "price.token_check",
+    "params_doc": "ref: a token ref in prices.yaml. The same read as price.token, by its prices.yaml check: the check method's USD value; for a bound check, the primary inside the band and the nearer bound (in USD) outside it."
+   }
+  ]
  },
  "ycrv": {
   "asset": {
@@ -14819,6 +14948,17 @@
   "catalysts_due": [],
   "source_failures": [],
   "document": null,
-  "adapter_params": []
+  "adapter_params": [
+   {
+    "metric": "price_usd",
+    "adapter": "price.token",
+    "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
+   },
+   {
+    "metric": "price_usd",
+    "adapter": "price.token_check",
+    "params_doc": "ref: a token ref in prices.yaml. The same read as price.token, by its prices.yaml check: the check method's USD value; for a bound check, the primary inside the band and the nearer bound (in USD) outside it."
+   }
+  ]
  }
 }

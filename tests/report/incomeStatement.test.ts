@@ -231,9 +231,14 @@ ${BURN}  operating_costs: [ { id: keepers, metric: flow_usd.keepers } ]
     const input = syntheticInput(asset);
     const v2 = incomeStatementV2(input);
     expect(v2.priceBasis).toEqual({
-      price: 1.7, metric: 'price_usd', sourceType: 'market_data', source: 'market_data:coingecko', day: '2026-11-02', asOf: '2026-11-03T23:59:59.999Z',
+      price: 1.7, metric: 'price_usd', sourceType: 'contract_state', source: 'contract_state:price.token', day: '2026-11-02', asOf: '2026-11-03T23:59:59.999Z',
       flows: "each flow day's USD at that day's price (the stored value)",
     });
+    // Phase 3 R2 Task 6b: the price's rung is its ref's method's: a venue's API for HYPE and LIT, the chain elsewhere.
+    const basis = (id: string) => incomeStatementV2(syntheticInput(repoAsset(id))).priceBasis;
+    expect([basis('hype'), basis('lit'), basis('pump'), basis('aero')].map((b) => b.source)).toEqual([
+      'first_party_api:price.token', 'first_party_api:price.token', 'contract_state:price.token', 'contract_state:chain.v2_pool_twap_price',
+    ]);
   });
 
   it("dilution and yields keep v1's arithmetic; checks are empty and provenance.basis is config", () => {
@@ -272,6 +277,10 @@ describe('source types and provenance', () => {
     expect(sourceTypeOf(def({ type: 'adapter', name: 'lit.exchange_fees_daily' }))).toBe('first_party_api');
     expect(sourceTypeOf(def({ type: 'adapter', name: 'solana.supply_burn_daily' }))).toBe('contract_state');
     expect(sourceTypeOf(def({ type: 'adapter', name: 'lit.unlocks_next_year' }))).toBe('third_party');
+    // A price adapter's rung is its ref's method's; without prices.yaml noted, the ref's namespace says.
+    expect(sourceTypeOf(def({ type: 'adapter', name: 'price.token', params: { ref: 'eip155:1/0xd533a949740bb3306d119cc777fa900ba034cd52' } }))).toBe('contract_state');
+    expect(sourceTypeOf(def({ type: 'adapter', name: 'price.token', params: { ref: 'hyperliquid:spot/@107' } }))).toBe('first_party_api');
+    expect(sourceTypeOf(def({ type: 'adapter', name: 'price.token_check', params: { ref: 'solana:mainnet/pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn' } }))).toBe('contract_state');
     expect(sourceTypeOf(def({ type: 'adapter', name: 'nobody.knows' }))).toBeNull();
     expect(sourceTypeOf(def({ type: 'defillama' }))).toBe('third_party');
     expect(sourceTypeOf(def({ type: 'defillama_share' }))).toBe('third_party');

@@ -1,6 +1,7 @@
 import type { AssetConfig, MetricDef } from '../config/schema.js';
 import { isChainSource, type SourceConfig } from '../config/sources.js';
 import { DEFILLAMA_API } from '../ingest/sources/defillama.js';
+import { isPriceAdapter, priceSourceVenue } from '../prices/venue.js';
 import { ADAPTER_SOURCE_TYPES, derivedInputs, sourceTypeOf, type SourceType } from '../report/sourceTypes.js';
 import { OrionError } from '../types.js';
 import { scrubLocator } from './scrub.js';
@@ -74,6 +75,8 @@ export function chainOfSource(asset: AssetConfig, s: SourceConfig): string | nul
   if (s.type !== 'adapter') return null;
   if (s.name.startsWith('solana.')) return 'solana:mainnet';
   if (s.name.startsWith('hype.')) return 'hyperliquid:core';
+  // A price adapter reads where its ref's method does (an EVM chain, Solana, HyperCore; Lighter is off chain).
+  if (isPriceAdapter(s.name)) return priceSourceVenue(s).chain;
   return ADAPTER_SOURCE_TYPES[s.name] === 'contract_state' ? evm : null;
 }
 

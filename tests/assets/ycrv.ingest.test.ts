@@ -7,6 +7,7 @@ import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { liveEvmCalls, priceRef } from '../helpers/livePrices.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
 import { statementShape } from '../helpers/assets.js';
@@ -21,7 +22,11 @@ const GENESIS_TS = NOW.getTime() / 1000 - 110 * 86_400 + 1;
 const LLAMA = 'https://coins.llama.fi/prices/current/ethereum:0xFCc5c47bE19d06BF83eB04298b026F81069ff65b';
 const E18 = 10n ** 18n;
 
-const { config } = loadAsset(ROOT, 'ycrv');
+const { config, prices } = loadAsset(ROOT, 'ycrv');
+/** The fetch's loaded asset: the config and prices.yaml (price_usd reads price.token, Phase 3 R2 Task 6b). */
+const LOADED = { config, hash: 'test', prices };
+const LATEST = BigInt(Math.floor((NOW.getTime() / 1000 - GENESIS_TS) / BLOCK_SEC));
+const LATEST_TS = GENESIS_TS + Number(LATEST) * BLOCK_SEC;
 const C = config.contracts;
 
 /** The Saturdays from 2026-07-04 to 2026-10-03, at 12:00Z: 25,000 yvcrvUSD-2 shares each (about the live weekly mean). */
@@ -42,8 +47,11 @@ function world(extraLogs: { iso: string; from: string; tokens: bigint }[] = []) 
     genesisTs: GENESIS_TS,
     blockTimeSec: BLOCK_SEC,
     maxLogRange: 10_000n,
-    latest: BigInt(Math.floor((NOW.getTime() / 1000 - GENESIS_TS) / BLOCK_SEC)),
+    latest: LATEST,
     calls: {
+      // price_usd (Phase 3 R2 Task 6b): the yCRV/CRV EMA x CRV (0.2) x crvUSD (0.9991) at the run block, at the price
+      // CoinGecko gave this test (0.18345); its get_dy check reads the same.
+      ...(liveEvmCalls({ [priceRef('crvUSD')]: { usd: 0.9991 }, [priceRef('CRV')]: { usd: 0.2 }, [priceRef('yCRV')]: { usd: 0.18345 } }, { endTs: LATEST_TS, startTs: LATEST_TS - 3600 }).end as Record<string, bigint>),
       // Read live on 2026-10-09.
       [callKey(C.token, 'totalSupply')]: 71_960_697n * E18,
       [callKey(C.token, 'decimals')]: 18n,
@@ -82,7 +90,8 @@ describe('assets/ycrv.yaml', () => {
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members (share_price.underlying on the shares).
-    expect(loadAsset(ROOT, 'ycrv').hash).toBe('7f6c53a1d47390c5038cc501129ac48de2e96de78b26801b8dd8d595f7c7892c');
+    // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
+    expect(loadAsset(ROOT, 'ycrv').hash).toBe('908f12e73f6774e284cdafa2404b33201fc9d87edcd83136e365f2afb039a9e0');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -129,7 +138,10 @@ describe('assets/ycrv.yaml', () => {
   it('plans one transfer scan of vault shares, converted at the share price', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
-      ['coingecko', ['primary:price_usd']], // no total_supply check: CoinGecko's yCRV supply is a 2022 snapshot (Mike, 2026-10-12)
+      // No total_supply check: CoinGecko's yCRV supply is a 2022 snapshot (Mike, 2026-10-12). The price is its prices.yaml
+      // method and check (Task 6b): no CoinGecko read is left.
+      ['adapter:price.token', ['primary:price_usd']],
+      ['adapter:price.token_check', ['cross_check:price_usd']],
       ['chain_levels', ['primary:total_supply', 'primary:circulating_supply', 'primary:staked_supply']], // circulating = the on-chain total
       ['constant', ['primary:staker_emission_share', 'primary:emission_rate_annual']],
     ]);
@@ -150,12 +162,12 @@ describe('assets/ycrv.yaml', () => {
 
   it('fetches every metric from canned sources', async () => {
     const w = world();
-    const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
+    const r = await fetchAsset(w.db, LOADED, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
     expect(r.anomalies).toEqual([]);
     const rows = async (metric: string) => await listActiveObservations(w.db, 'ycrv', metric);
     const value = async (metric: string) => (await rows(metric)).at(-1)!.value;
-    expect(await value('price_usd')).toBe(0.18345);
+    expect(await value('price_usd')).toBeCloseTo(0.18345, 12);
     expect(await value('total_supply')).toBe(71_960_697);
     expect(await value('staked_supply')).toBe(63_328_341);
     expect(await value('staker_emission_share')).toBe(0);
@@ -179,7 +191,8 @@ describe('assets/ycrv.yaml', () => {
       const sum = gf.get(o.observedAt)! + gi.get(o.observedAt)!;
       expect(Math.abs(sum - o.value), o.observedAt).toBeLessThanOrEqual(1e-12 * Math.max(Math.abs(o.value), Number.MIN_VALUE));
     }
-    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([]); // the DefiLlama price check is gone (Phase 3 R1)
+    // The DefiLlama price check is gone (Phase 3 R1); the price's prices.yaml check (get_dy on the second pool) since Task 6b.
+    expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
     expect(w.http.calls.filter((c) => c.url === LLAMA).map((c) => c.url)).toEqual([]); // Phase 3 R1
   });
 
@@ -197,7 +210,7 @@ describe('assets/ycrv.yaml', () => {
     const listed = ['flow_usd.yearn_gross_fees', 'flow_usd.yearn_gross_incentives'];
 
     // 1. A fetch without --metric writes every member of the scan, as before.
-    await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
+    await fetchAsset(w.db, LOADED, NOW, w.deps);
     const before = Object.fromEntries(await Promise.all(members.map(async (m) => [m, await rows(m)] as const)));
     for (const m of members) expect(before[m], m).toHaveLength(100);
     expect(before['flow_usd.yearn_gross'].filter((o) => o.value > 0).map((o) => o.observedAt)).toEqual(
@@ -206,7 +219,7 @@ describe('assets/ycrv.yaml', () => {
 
     // 2. The rollout-style backfill of the two listed metrics, 3 days, an hour later.
     const later = new Date(NOW.getTime() + 3_600_000);
-    const r = await fetchAsset(w.db, { config, hash: 'test' }, later, w.deps, { metrics: listed, backfillDays: 3 });
+    const r = await fetchAsset(w.db, LOADED, later, w.deps, { metrics: listed, backfillDays: 3 });
     expect(new Set(r.written.map((x) => x.metricKey))).toEqual(new Set(listed));
     const scan = r.sources.find((x) => x.metricsWritten.includes('flow_usd.yearn_gross_fees'))!;
     expect(scan.metricsWritten.sort()).toEqual([...listed].sort());
@@ -225,7 +238,7 @@ describe('assets/ycrv.yaml', () => {
 
     // 3. A later full fetch still writes every member (the cursor did not move past the withheld member's days).
     const full = new Date(NOW.getTime() + 7_200_000);
-    const again = await fetchAsset(w.db, { config, hash: 'test' }, full, w.deps, { backfillDays: 3 });
+    const again = await fetchAsset(w.db, LOADED, full, w.deps, { backfillDays: 3 });
     expect(members.filter((m) => again.written.filter((x) => x.metricKey === m).length === 3)).toEqual([...members]);
     // One active row per day in every member, the listed ones included: the full fetch superseded their rescanned days.
     for (const m of members) expect(await rows(m), m).toHaveLength(100);
@@ -237,6 +250,6 @@ describe('assets/ycrv.yaml', () => {
 
   it('refuses to run without the Ethereum RPC URL', async () => {
     const w = world();
-    await expect(fetchAsset(w.db, { config, hash: 'test' }, NOW, { ...w.deps, env: {} })).rejects.toMatchObject({ code: 'missing_rpc_url' });
+    await expect(fetchAsset(w.db, LOADED, NOW, { ...w.deps, env: {} })).rejects.toMatchObject({ code: 'missing_rpc_url' });
   });
 });

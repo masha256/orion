@@ -1,7 +1,8 @@
 # Token prices (Phase 3 R2, plan P1): one primary method and one check per token ref, read by the hourly price writer.
 # Keyed by token ref: eip155:<chain id>/<address, lowercased>, solana:mainnet/<mint>, hyperliquid:spot/@<index>. Asset YAMLs
-# never name methods: an asset uses the refs of the contract addresses it lists (on its ingest chain, or Solana) and the ref
-# carrying its symbol, plus their quote refs, transitively; its config hash includes those entries (src/prices/config.ts).
+# never name methods: an asset uses the refs its price.token / price.token_check sources name, and the tokens its transfer
+# flows scan (and their shares' underlyings), plus their quote refs, transitively; its config hash includes those entries
+# (entriesFor, src/prices/config.ts).
 #
 # Fields:
 #   chain       where the PRIMARY is read: eip155:1 | eip155:56 | eip155:8453 | solana | hyperliquid | lighter. LIT's ref is

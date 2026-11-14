@@ -182,12 +182,14 @@ describe('adapter params validation', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the hash input includes LIT's prices.yaml entry (passed as the prices map).
-    expect(parseAssetYaml(litYaml, loadPrices(ROOT)).hash).toBe('300863b835e7243c5238d7a0ef377d1a71ba0f977282b88460bb8919aa0d77f5');
-    expect(parseAssetObject(parseYaml(litYaml), loadPrices(ROOT)).hash).toBe('300863b835e7243c5238d7a0ef377d1a71ba0f977282b88460bb8919aa0d77f5');
+    // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
+    expect(parseAssetYaml(litYaml, loadPrices(ROOT)).hash).toBe('7864c28367415b951a2c400eaf01372cc3cfde9ed933630b2f01895ee5fdb883');
+    expect(parseAssetObject(parseYaml(litYaml), loadPrices(ROOT)).hash).toBe('7864c28367415b951a2c400eaf01372cc3cfde9ed933630b2f01895ee5fdb883');
     // Another valid schedule loads (and is a different config from the file's 36 monthly tranches).
     const good = parseAssetObject(withTranches({ first: '2027-01-29', every_months: 3, count: 12 }), loadPrices(ROOT));
     expect(good.config.metrics.unlocks_next_year.source).toMatchObject({ params: { schedules: [{ tranches: { first: '2027-01-29', every_months: 3, count: 12 } }, { label: 'investors' }] } });
-    expect(good.hash).not.toBe('300863b835e7243c5238d7a0ef377d1a71ba0f977282b88460bb8919aa0d77f5');
+    // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
+    expect(good.hash).not.toBe('7864c28367415b951a2c400eaf01372cc3cfde9ed933630b2f01895ee5fdb883');
     // A malformed one is refused with the metric path, through the object path (filing) and the YAML path (approve).
     const bad = withTranches({ first: '2027-01-29', every_months: 13, count: 36 });
     expect(() => parseAssetObject(bad)).toThrow(expect.objectContaining({ code: 'invalid_asset_config', message: expect.stringContaining('metrics.unlocks_next_year.source.params: schedules[0].tranches.every_months') }));
@@ -237,22 +239,24 @@ describe('config hash and prices.yaml (Phase 3 R2 Task 1)', () => {
       expect(loaded.hash).toBe(sha256(canonicalJson({ config: loaded.config, prices: entries })));
       expect(loadAsset(bare, 'ycrv').hash).toBe(sha256(canonicalJson(loaded.config)));
       expect(loadAsset(bare, 'ycrv').hash).toBe(parseAssetYaml(readFileSync(join(ROOT, 'assets/ycrv.yaml'), 'utf8')).hash);
-      // Every asset uses at least its own ref, so every asset's hash differs from its config-only hash.
-      expect(moved(hashes(home), hashes(bare))).toEqual(listAssetIds(ROOT));
+      // Every asset but AERO uses at least its own ref (price.token since Task 6b, R11), so its hash differs from its
+      // config-only hash. AERO keeps its own price adapters (R21) and scans no token: it names no ref.
+      expect(moved(hashes(home), hashes(bare))).toEqual(listAssetIds(ROOT).filter((id) => id !== 'aero'));
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(bare, { recursive: true, force: true });
     }
   });
 
-  it('changing an entry moves the hash of exactly the assets that use it: crvUSD moves crv, cvxcrv, sdcrv, ycrv; AERO only aero', () => {
+  it('changing an entry moves the hash of exactly the assets that use it: crvUSD moves crv, cvxcrv, sdcrv, ycrv; AERO none (R11, R21)', () => {
     const base = homeWith(pricesText);
     const crvusd = homeWith(edited(CRVUSD, (e) => { e.check.tolerance_pct = 0.6; }));
     const aero = homeWith(edited(AERO, (e) => { e.check.tolerance_pct = 2.5; }));
     try {
       const before = hashes(base);
       expect(moved(before, hashes(crvusd))).toEqual(['crv', 'cvxcrv', 'sdcrv', 'ycrv']);
-      expect(moved(before, hashes(aero))).toEqual(['aero']);
+      // AERO's price_usd reads its own adapters (R21), not price.token: its entry serves the history and level rebuild only.
+      expect(moved(before, hashes(aero))).toEqual([]);
     } finally {
       for (const h of [base, crvusd, aero]) rmSync(h, { recursive: true, force: true });
     }
@@ -338,8 +342,10 @@ describe('metric watch', () => {
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
-    expect(asset('vvv')).toBe('b32ee86f97fed5b53982d734a3fb214247b424d427f0195f605a19a0cfff483b');
-    expect(asset('hype')).toBe('2ec7d2cefc9ba484c8529e4c47db7b5b5a5210c7c9697df209839edd45303c37');
-    expect(asset('aero')).toBe('035327b9eec2de16fb96541b2b09dfc5a52015fd4ef6a246691e5cb8bcf6578d');
+    // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
+    expect(asset('vvv')).toBe('b9e654a8fe835036a520c12abbefb22afdd48c129f0c2a7e92f049862072258b');
+    expect(asset('hype')).toBe('af6d3b0124f28fd140ee7e979af22ef34ae2fcf2dad15033f6f9062b44f02d1e');
+    // Re-pinned (Phase 3 R2 Task 6b): AERO names no ref (R11: entriesFor reads price.* params and scanned tokens; its price adapters are its own, R21).
+    expect(asset('aero')).toBe('3c413feb4fbdba98b9ab17c4802ea46cc4306e9e700fb8d1384fa984dde4d19b');
   });
 });

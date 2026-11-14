@@ -21,6 +21,9 @@ import { COINGECKO_API } from '../../src/ingest/sources/coingecko.js';
 import { DEFILLAMA_API } from '../../src/ingest/sources/defillama.js';
 import { chainInfo } from '../../src/ingest/transport/chains.js';
 import { DEFAULT_SOL_RPC_ENV } from '../../src/ingest/transport/solana.js';
+import { loadPrices } from '../../src/prices/config.js';
+import type { PriceAdapterName } from '../../src/prices/venue.js';
+import { PRICE_RPC_ENV } from '../../src/prices/writer.js';
 
 export const REGISTER_PATH = 'docs/ops/sources-register.md';
 
@@ -99,7 +102,35 @@ export const ADAPTER_ENDPOINTS: Record<string, (params: AdapterParams, asset: As
   // The day's price from CoinGecko's market chart; `history` stitches DefiLlama's summary before the first supply read.
   // Priced from the stored chain prices of the mint (Phase 3 R2): no CoinGecko read.
   'solana.supply_burn_daily': (p) => [solRpc(p), ...(p.history !== undefined ? [http(DEFILLAMA_API)] : [])],
+  // The ref's prices.yaml primary / check: an EVM chain's RPC, Solana's, or the venue's API, plus the Ethereum RPC
+  // whose USDC/USD feed prices an off-chain venue (Ruling R5).
+  'price.token': (p) => priceEndpoints('price.token', p),
+  'price.token_check': (p) => priceEndpoints('price.token_check', p),
 };
+
+/** The repo's prices.yaml: the price adapters' endpoints follow their ref's method. */
+const REPO_PRICES = loadPrices(resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
+const ethRpc = (): Endpoint => ({ kind: 'rpc', chainId: 1, env: PRICE_RPC_ENV[1]! });
+function priceEndpoints(name: PriceAdapterName, p: AdapterParams): Endpoint[] {
+  const entry = REPO_PRICES.get(str(p, 'ref', ''));
+  if (entry === undefined) throw new Error(`adapter ${name}: ref ${String(p.ref)} is not in prices.yaml`);
+  const m = name === 'price.token' ? entry.primary : entry.check;
+  switch (m.kind) {
+    case 'hyperliquid_candle':
+      return [http(HYPERLIQUID_INFO), ethRpc()];
+    case 'lighter_candle':
+      return [http(LIGHTER_API), ethRpc()];
+    case 'solana_vaults':
+    case 'meteora_dlmm':
+      return [{ kind: 'solana_rpc', env: DEFAULT_SOL_RPC_ENV }, ethRpc()];
+    default: {
+      const chainId = Number(/^eip155:(\d+)\//.exec(entry.ref)![1]);
+      const env = PRICE_RPC_ENV[chainId];
+      if (env === undefined) throw new Error(`adapter ${name}: ${entry.ref} is on chain ${chainId}, which has no price RPC`);
+      return [{ kind: 'rpc', chainId, env }];
+    }
+  }
+}
 
 /**
  * What each source's terms say, keyed as `sourceKey` keys it. Commercial use is `unknown` unless the repo or the spec
@@ -112,7 +143,7 @@ export const TERMS: Record<string, Terms> = {
     terms: 'paid Basic plan: commercial licence, attribution required, no redistribution of raw data, stored data deleted if the plan lapses (roadmap rule 5)',
     until: 'the paid Basic plan is bought (roadmap rule 5: before launch)',
     checked: '2026-11-05',
-    note: 'price, price history and circulating supply only (spec §2 rung market_data); a paid key moves to pro-api.coingecko.com (COINGECKO_PLAN=pro)',
+    note: 'circulating supply only since Phase 3 R2 (prices are the prices.yaml chain and venue methods; spec §2 rung market_data); a paid key moves to pro-api.coingecko.com (COINGECKO_PLAN=pro)',
   },
   'api.llama.fi': {
     label: 'DefiLlama API', kind: 'third_party', operator: 'DefiLlama',
@@ -130,11 +161,6 @@ export const TERMS: Record<string, Terms> = {
     label: 'Blockworks Token Transparency filing', kind: 'third_party', operator: 'Blockworks',
     commercial: 'unknown',
     note: 'PUMP unlock schedule (schedule.unlocks_next_year citation): compiled by Blockworks, not the issuer (pump.fun publishes no vesting schedule); cited by hand, not read by code',
-  },
-  'lite-api.jup.ag': {
-    label: 'Jupiter price API', kind: 'third_party', operator: 'Jupiter',
-    commercial: 'unknown',
-    note: 'PUMP price cross-check only (priced from Solana pools)',
   },
   'api.hyperliquid.xyz': {
     label: 'Hyperliquid info API', kind: 'first_party_api', operator: 'Hyperliquid',

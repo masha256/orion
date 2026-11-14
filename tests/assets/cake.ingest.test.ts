@@ -11,6 +11,7 @@ import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.j
 import { loadHolderYieldReport } from '../../src/report/load.js';
 import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { liveEvmCalls, priceRef } from '../helpers/livePrices.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
 import { statementShape } from '../helpers/assets.js';
@@ -21,10 +22,14 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-10-12T12:30:00.000Z');
 const BLOCK_SEC = 0.45;
 const GENESIS_TS = NOW.getTime() / 1000 - 110 * 86_400;
+/** The fake chain's latest block's time (the run block every price.token read is made at). */
+const LATEST_TS = GENESIS_TS + Math.floor((NOW.getTime() / 1000 - GENESIS_TS) / BLOCK_SEC) * BLOCK_SEC;
 const E18 = 10n ** 18n;
 const PRICE = 2.3;
 
-const { config } = loadAsset(ROOT, 'cake');
+const { config, prices } = loadAsset(ROOT, 'cake');
+/** The fetch's loaded asset: the config and prices.yaml (price_usd reads price.token, Phase 3 R2 Task 6b). */
+const LOADED = { config, hash: 'test', prices };
 const C = config.contracts;
 const lc = (a: string) => a.toLowerCase();
 const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENESIS_TS) / BLOCK_SEC));
@@ -70,7 +75,9 @@ function world() {
       [callKey(C.token, 'balanceOf', [C.burner])]: 0n,
       [callKey(C.masterchef_v2, 'cakePerBlock', [true])]: 40_000_000n,
       [callKey(C.masterchef_v2, 'cakePerBlock', [false])]: 113_292_343_840_000_000n,
-      [callKey(C.chainlink_cake_usd, 'latestAnswer')]: 229_459_054n,
+      // price_usd (Phase 3 R2 Task 6b): the CAKE/USD feed at the price CoinGecko gave this test, checked by its pool TWAP at
+      // the old Chainlink cross-check's answer.
+      ...liveEvmCalls({ [priceRef('CAKE')]: { usd: PRICE, checkUsd: 2.29459054 } }, { endTs: LATEST_TS, startTs: LATEST_TS - 3600 }).end,
     },
   });
   const logs = logsBySink();
@@ -106,7 +113,8 @@ describe('assets/cake.yaml', () => {
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
-    expect(loadAsset(ROOT, 'cake').hash).toBe('86359b56c1c13260874797184bd4a025d0197e545c50578dd115f8013501bfcc');
+    // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
+    expect(loadAsset(ROOT, 'cake').hash).toBe('e863393a2a484f097df6815e1874fa438d343ade72d7cf1330b8fda6c88ecea1');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -160,7 +168,7 @@ describe('assets/cake.yaml', () => {
 
   it('reports the burn against emissions in tokens, and the treasury share as protocol income', async () => {
     const w = world();
-    await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
+    await fetchAsset(w.db, LOADED, NOW, w.deps);
     const report = await loadHolderYieldReport(w.db, config);
     const rep = report.incomeStatement!; // Task 11b: the v2 statement (v1 retired)
     expect(rep.day).toBe('2026-10-11');
@@ -180,6 +188,6 @@ describe('assets/cake.yaml', () => {
 
   it('refuses to run without the BNB Chain RPC URL', async () => {
     const w = world();
-    await expect(fetchAsset(w.db, { config, hash: 'test' }, NOW, { ...w.deps, env: {} })).rejects.toMatchObject({ code: 'missing_rpc_url' });
+    await expect(fetchAsset(w.db, LOADED, NOW, { ...w.deps, env: {} })).rejects.toMatchObject({ code: 'missing_rpc_url' });
   });
 });

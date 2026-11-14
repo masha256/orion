@@ -9,6 +9,8 @@ import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { addDays } from '../../src/ingest/time.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
+import { fakeRpc } from '../helpers/fakeRpc.js';
+import { ETH_USDC_FEED, feedCalls } from '../helpers/livePrices.js';
 import { useTestDb } from '../helpers/db.js';
 import { statementShape } from '../helpers/assets.js';
 
@@ -21,7 +23,9 @@ const INFO = 'https://api.hyperliquid.xyz/info';
 const LLAMA_PRICE = 'https://coins.llama.fi/prices/current/hyperliquid:0x0d01dc56dcaaca66ad901c959b4011ec';
 const recorded = (name: string): unknown => JSON.parse(readFileSync(`${ROOT}/tests/fixtures/hype/${name}.json`, 'utf8')) as unknown;
 
-const { config } = loadAsset(ROOT, 'hype');
+const { config, prices } = loadAsset(ROOT, 'hype');
+/** The fetch's loaded asset: the config and prices.yaml (price_usd reads price.token, Phase 3 R2 Task 6b). */
+const LOADED = { config, hash: 'test', prices };
 
 const SYS = '0x5000000000000000000000000000000000000000';
 const AF = '0xfefefefefefefefefefefefefefefefefefefefe';
@@ -55,6 +59,8 @@ function world(now: Date = NOW) {
     // The info API answers by request type (and, for a clearinghouse state, by address); recorded 2026-09-24 and 2026-10-02.
     [INFO]: (_url: string, body?: unknown) => {
       const { type, user, startTime } = body as { type: string; user?: string; startTime?: number };
+      // price_usd (Phase 3 R2 Task 6b): spot @107's mid (the price CoinGecko gave this test), its check the perp's.
+      if (type === 'allMids') return { '@107': '92.36', HYPE: '92.41', BTC: '1' };
       // The fund's fills: two buys a day on @107 (10 and 20 HYPE at 50), plus a sell and another pair, which do not count.
       // The API keeps about two weeks, so days before 2026-09-14 have none.
       if (type === 'userFillsByTime') {
@@ -74,7 +80,12 @@ function world(now: Date = NOW) {
       return structuredClone(reply);
     },
   });
-  const deps: FetchDeps = { http, rpcFactory: () => { throw new Error('HYPE reads no chain'); }, env: {}, sleep: async () => undefined, now: () => now };
+  // HYPE reads no chain of its own: only the price's Ethereum USDC/USD feed (at 1.0), at the Ethereum head (Ruling R5).
+  const eth = fakeRpc({ genesisTs: now.getTime() / 1000 - 12_000_000, latest: 1_000_000n, blockTimeSec: 12, calls: feedCalls(ETH_USDC_FEED, 1, Math.floor(now.getTime() / 1000) - 60) });
+  const deps: FetchDeps = {
+    http, rpcFactory: (_url, chainId) => { if (chainId !== 1) throw new Error('HYPE reads no chain'); return eth; }, env: { ORION_ETH_RPC_URL: 'http://eth.test' },
+    sleep: async () => undefined, now: () => now,
+  };
   return { db: testDb(), deps, http };
 }
 
@@ -95,7 +106,8 @@ describe('assets/hype.yaml', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
-    expect(loadAsset(ROOT, 'hype').hash).toBe('2ec7d2cefc9ba484c8529e4c47db7b5b5a5210c7c9697df209839edd45303c37');
+    // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
+    expect(loadAsset(ROOT, 'hype').hash).toBe('af6d3b0124f28fd140ee7e979af22ef34ae2fcf2dad15033f6f9062b44f02d1e');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -116,8 +128,10 @@ describe('assets/hype.yaml', () => {
   it('plans the source map of the spec: no chain, three adapters, one API-series flow, no derived level', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => [b.sourceId, b.requests.map((r) => `${r.role}:${r.metricKey}`)])).toEqual([
-      ['coingecko', ['primary:price_usd', 'primary:circulating_supply']],
+      ['adapter:price.token', ['primary:price_usd']],
+      ['adapter:price.token_check', ['cross_check:price_usd']],
       ['adapter:hype.total_supply', ['primary:total_supply']],
+      ['coingecko', ['primary:circulating_supply']],
       ['adapter:hype.staked_supply', ['primary:staked_supply']],
       ['adapter:hype.emission_rate_annual', ['primary:emission_rate_annual']],
       ['defillama:hyperliquid:dailyHoldersRevenue', ['primary:flow_usd.af_buyback']],
@@ -132,7 +146,7 @@ describe('assets/hype.yaml', () => {
 
   it('fetches every sourced metric from canned responses with the price cross-check in tolerance', async () => {
     const w = world();
-    const r = await fetchAsset(w.db, { config, hash: 'test' }, NOW, w.deps);
+    const r = await fetchAsset(w.db, LOADED, NOW, w.deps);
     expect(r.sources.filter((s) => s.status !== 'ok').map((s) => [s.sourceId, s.error, s.notes])).toEqual([]);
     expect(r.anomalies).toEqual([]);
     expect(r.outcome).toBe('ok');
@@ -151,12 +165,14 @@ describe('assets/hype.yaml', () => {
     // No derived run rate any more (it fed only the valuation).
     expect(await listActiveObservations(w.db, 'hype', 'revenue_run_rate_usd')).toEqual([]);
     const checked = r.sources.flatMap((s) => s.crossChecks);
-    expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([]); // CoinGecko's total and DefiLlama's price checks are gone (Phase 3 R1)
+    // CoinGecko's total and DefiLlama's price checks are gone (Phase 3 R1); the price's prices.yaml check (the perp) since Task 6b.
+    expect(checked.map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
     expect(w.http.calls.filter((c) => c.url === LLAMA_PRICE).map((c) => c.url)).toEqual([]); // Phase 3 R1
     // Five posts: the spot meta, one clearinghouse state per subtracted address, and the validators once (the stake and emission
     // adapters share the cached reply); plus the report-only fills, one per day of the 14.
     const posts = w.http.calls.filter((c) => c.url === INFO).map((c) => (c.body as { type: string }).type);
-    expect(posts.filter((t) => t !== 'userFillsByTime').sort()).toEqual(['spotClearinghouseState', 'spotClearinghouseState', 'spotClearinghouseState', 'spotMetaAndAssetCtxs', 'userNonFundingLedgerUpdates', 'validatorSummaries']);
+    // allMids once: price.token and price.token_check share the run's one read (Task 6b).
+    expect(posts.filter((t) => t !== 'userFillsByTime').sort()).toEqual(['allMids', 'spotClearinghouseState', 'spotClearinghouseState', 'spotClearinghouseState', 'spotMetaAndAssetCtxs', 'userNonFundingLedgerUpdates', 'validatorSummaries']);
     // The reserve yield's first period (2026-08-26 .. 09-24) is not over on 09-24: nothing stored, nothing due.
     expect(await listActiveObservations(w.db, 'hype', 'flow_usd.reserve_yield')).toEqual([]);
     expect(posts.filter((t) => t === 'userFillsByTime')).toHaveLength(14);
@@ -173,7 +189,7 @@ describe('assets/hype.yaml: the USDC reserve yield (AQAv2), read from the ledger
   const ry = async (db: ReturnType<typeof world>['db']) => await listActiveObservations(db, 'hype', 'flow_usd.reserve_yield');
   const fetchAt = async (now: Date) => {
     const w = world(now);
-    const r = await fetchAsset(w.db, { config, hash: 'test' }, now, w.deps, { metrics: ['flow_usd.reserve_yield'] });
+    const r = await fetchAsset(w.db, LOADED, now, w.deps, { metrics: ['flow_usd.reserve_yield'] });
     return { w, r };
   };
 
@@ -184,7 +200,7 @@ describe('assets/hype.yaml: the USDC reserve yield (AQAv2), read from the ledger
     // The 2-USDC sweep on the due day and the 14.58M payment the next day are one period's payment.
     expect((await ry(w.db)).map((o) => [o.observedAt, o.periodDays, o.value, o.source])).toEqual([['2026-09-25T00:00:00.000Z', 30, 14580776.6853202805, 'api']]);
     expect((await ry(w.db))[0].sourceDetail).toMatch(/covers 2026-08-26 to 2026-09-24, paid 2026-10-04T00:00:00.002Z/);
-    const again = await fetchAsset(w.db, { config, hash: 'test' }, new Date('2026-10-12T12:00:00.000Z'), w.deps, { metrics: ['flow_usd.reserve_yield'] });
+    const again = await fetchAsset(w.db, LOADED, new Date('2026-10-12T12:00:00.000Z'), w.deps, { metrics: ['flow_usd.reserve_yield'] });
     expect(again.written).toEqual([]);
     expect(await ry(w.db)).toHaveLength(1);
   });

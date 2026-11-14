@@ -48,7 +48,11 @@ metrics:
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: yearn-crv, field: price }
+    # yCRV: the Curve yCRV/CRV EMA x CRV; check get_dy on the thin second pool (prices.yaml; Phase 3 R2: read live
+    # at the run, no CoinGecko).
+    source: { type: adapter, name: price.token, params: { ref: "eip155:1/0xfcc5c47be19d06bf83eb04298b026f81069ff65b" } }
+    cross_checks:
+      - { tolerance_pct: 3, source: { type: adapter, name: price.token_check, params: { ref: "eip155:1/0xfcc5c47be19d06bf83eb04298b026f81069ff65b" } } }
 
   total_supply:
     type: level

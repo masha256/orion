@@ -2,7 +2,7 @@ import type { AssetConfig } from '../config/schema.js';
 import { isChainSource, type SourceOf } from '../config/sources.js';
 import { OrionError } from '../types.js';
 import { sha256 } from '../util/canonical.js';
-import { getAdapter } from './adapters/registry.js';
+import { adapterNeedsRpc } from './adapters/registry.js';
 import { DERIVED_NAMES } from './derived.js';
 import { sourceId } from './sourceId.js';
 import { contractResolver, type SourceRequest } from './types.js';
@@ -106,7 +106,7 @@ export function buildPlan(asset: AssetConfig, opts: { metrics?: string[] } = {})
 
   const enqueue = (request: SourceRequest) => {
     const s = request.source;
-    if (isChainSource(s) || (s.type === 'adapter' && getAdapter(s.name).needsRpc)) needsRpc = true;
+    if (isChainSource(s) || (s.type === 'adapter' && adapterNeedsRpc(s))) needsRpc = true;
     const id = sourceId(s);
     const batch = batches.get(id) ?? { sourceId: id, requests: [] };
     batch.requests.push(request);

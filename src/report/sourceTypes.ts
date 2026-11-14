@@ -1,5 +1,6 @@
 import type { MetricDef } from '../config/schema.js';
 import type { SourceConfig } from '../config/sources.js';
+import { isPriceAdapter, priceSourceVenue } from '../prices/venue.js';
 
 /**
  * The source ladder (spec 2026-10-28 §2): the rung every metric's primary source sits on. `third_party` is the label for
@@ -52,7 +53,17 @@ export const ADAPTER_SOURCE_TYPES: Readonly<Record<string, SourceType>> = {
   'vvv.diem_target_supply': 'contract_state',
   'vvv.staker_share_from_api': 'first_party_api',
   'vvv.burn_history_tokens': 'first_party_api',
+  // The price adapters' rung is their ref's method's (src/prices/venue.ts): an EVM or Solana method is contract state,
+  // a venue's candle (Hyperliquid, Lighter) first party. These are the rungs of a source with no ref noted.
+  'price.token': 'contract_state',
+  'price.token_check': 'contract_state',
 };
+
+/** An adapter source's rung: a price adapter's by its ref's method, any other adapter's by its name. */
+export function adapterSourceType(s: { type: 'adapter'; name: string; params?: Record<string, unknown> }): SourceType | null {
+  if (isPriceAdapter(s.name)) return priceSourceVenue(s).rung;
+  return ADAPTER_SOURCE_TYPES[s.name] ?? null;
+}
 
 /** Hosts of third-party aggregators reached through `http_json` (DefiLlama's coins/api hosts, Llama Airforce). */
 const THIRD_PARTY_HOST = /(^|\.)llama\.(fi|box)$/;
@@ -86,7 +97,7 @@ export function typeOfSource(s: SourceConfig, metrics?: Readonly<Record<string, 
     case 'erc20_supply':
       return 'contract_state';
     case 'adapter':
-      return ADAPTER_SOURCE_TYPES[s.name] ?? null;
+      return adapterSourceType(s);
     case 'defillama':
     case 'defillama_share':
       return 'third_party';

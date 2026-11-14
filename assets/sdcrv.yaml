@@ -44,14 +44,18 @@ external_ids:
   defillama: stakedao
 
 metrics:
-  # CoinGecko's sdCRV quote is thinner than cvxCRV's (it ran +2 to +16 percent over the sdCRV/CRV Curve pool in
-  # 2026-10). No price cross-check since Phase 3 R1 removed DefiLlama's coins price.
+  # CoinGecko's sdCRV quote was thinner than cvxCRV's (it ran +2 to +16 percent over the sdCRV/CRV Curve pool in
+  # 2026-10); since Phase 3 R2 the price is that pool's EMA, and its only check the prices.yaml band (M2).
   price_usd:
     type: level
     unit: usd
     staleness_days: 3
     critical: true
-    source: { type: coingecko, id: stake-dao-crv, field: price }
+    # sdCRV: the Curve sdCRV/CRV EMA x CRV; no independent venue, so the check is the 0.3-1.0 CRV band (tolerance
+    # 0: the band is the tolerance) (prices.yaml; Phase 3 R2: read live at the run, no CoinGecko).
+    source: { type: adapter, name: price.token, params: { ref: "eip155:1/0xd1b5651e55d4ceed36251c61c50c889b36f6abb5" } }
+    cross_checks:
+      - { tolerance_pct: 0, source: { type: adapter, name: price.token_check, params: { ref: "eip155:1/0xd1b5651e55d4ceed36251c61c50c889b36f6abb5" } } }
 
   total_supply:
     type: level
