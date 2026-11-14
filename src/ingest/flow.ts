@@ -4,16 +4,14 @@ import type { DayBlockCache } from '../db/dayBlocks.js';
 import { advanceCursor, getCursor } from '../db/fetchCursors.js';
 import { emptySourceOutcome, type FlowConflict, type SourceOutcome, type UnlistedTransfer } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
-import { coingeckoTokenRef, evmTokenRef, HOURS_PER_DAY, MS_PER_HOUR, upsertPrices, upsertToken, type TokenInfo } from '../db/prices.js';
-import { COINGECKO_PRICE_SOURCE, hourlyPriceRows } from '../prices/coingeckoHourly.js';
+import { chainPricesAt, evmTokenRef, HOURS_PER_DAY, MS_PER_HOUR, upsertToken, type ChainPriceCandidate, type TokenInfo } from '../db/prices.js';
+import type { WriteResult } from '../prices/types.js';
 import { fetchedProvenance } from '../provenance/locator.js';
 import { txRefsProvenance } from '../provenance/types.js';
 import { MS_PER_DAY, OrionError } from '../types.js';
 import type { FlowGroup, FlowMember } from './plan.js';
 import { ERC20_ABI } from './sources/chainLevels.js';
-import { coingeckoBase, coingeckoHeaders } from './sources/coingecko.js';
 import { addDays, dayStartMs, utcDay } from './time.js';
-import type { HttpTransport } from './transport/http.js';
 import { firstBlockAtOrAfter, getLogsChunked, type BlockRef, type ReceiptLog, type RpcTransport } from './transport/rpc.js';
 import type { DailyPoint, WrittenObservation } from './types.js';
 import { unitsToNumber } from './units.js';
@@ -22,73 +20,15 @@ const SECONDS_PER_DAY = 86_400;
 /** A day boundary is cached only when it is at least this much older than the scan's upper bound (reorg margin). */
 const DAY_BLOCK_MIN_AGE_SEC = 3600;
 const MAX_LISTED_UNLISTED = 50;
+/** The source a dry run's in-memory chain prices rank under (a chain source, newest write: they win their hour). */
+const CHAIN_DRY_RUN_SOURCE = 'chain:dry_run';
 
-/** `ts` is in milliseconds. */
-export interface PricePoint {
-  ts: number;
-  price: number;
-}
-
-export interface PriceSeries {
-  hourly: PricePoint[];
-  daily: PricePoint[];
-}
-
-export function parseMarketChart(body: unknown, what: string): PricePoint[] {
-  const prices = (body as { prices?: unknown } | null)?.prices;
-  if (!Array.isArray(prices) || prices.length === 0) throw new Error(`${what}: no prices in the market_chart response`);
-  const points = prices.map((entry) => {
-    const [ts, price] = Array.isArray(entry) ? (entry as unknown[]) : [];
-    if (typeof ts !== 'number' || typeof price !== 'number' || !Number.isFinite(ts) || !(price > 0) || !Number.isFinite(price)) {
-      throw new Error(`${what}: malformed market_chart point ${JSON.stringify(entry)}`);
-    }
-    return { ts, price };
-  });
-  return points.sort((a, b) => a.ts - b.ts);
-}
-
-/** A market_chart reply `parseMarketChart` accepts (the shared cache keeps only these, M-8). */
-export function isMarketChartBody(body: unknown): boolean {
-  try {
-    parseMarketChart(body, 'market_chart');
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function newestAtOrBefore(points: PricePoint[], tsMs: number): number | null {
-  let lo = 0;
-  let hi = points.length - 1;
-  let found: number | null = null;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (points[mid].ts <= tsMs) {
-      found = points[mid].price;
-      lo = mid + 1;
-    } else {
-      hi = mid - 1;
-    }
-  }
-  return found;
-}
-
-/** The newest hourly point at or before `tsMs`; failing that, the newest daily point. Never interpolated. */
-export function priceAt(series: PriceSeries, tsMs: number): number | null {
-  return newestAtOrBefore(series.hourly, tsMs) ?? newestAtOrBefore(series.daily, tsMs);
-}
-
-async function loadPrices(http: HttpTransport, env: Record<string, string | undefined>, id: string, startMs: number, nowMs: number): Promise<PriceSeries> {
-  const chart = (days: number) => `${coingeckoBase(env)}/coins/${encodeURIComponent(id)}/market_chart?vs_currency=usd&days=${days}`;
-  const hourly = parseMarketChart(await http.getJson(chart(90), coingeckoHeaders(env)), `coingecko ${id} hourly`);
-  let daily: PricePoint[] = [];
-  if (startMs < hourly[0].ts) {
-    // CoinGecko returns daily points beyond 90 days. Made only when the scan reaches back past the hourly series.
-    const days = Math.max(91, Math.ceil((nowMs - startMs) / MS_PER_DAY) + 1);
-    daily = parseMarketChart(await http.getJson(chart(days), coingeckoHeaders(env)), `coingecko ${id} daily`);
-  }
-  return { hourly, daily };
-}
+/**
+ * The chain price writer a flow scan ensures its hours with (Phase 3 R2 Task 6a): writeChainPrices bound to the run's
+ * price deps (run.ts), or a test's fake. On a dry run it computes the prices in memory and returns them in `rows`,
+ * writing nothing (Ruling R19).
+ */
+export type ChainPriceWriter = (db: Db, refs: string[], fromHourMs: number, toHourMs: number, opts?: { dryRun?: boolean; signal?: AbortSignal }) => Promise<WriteResult>;
 
 /** Milliseconds for which an observation's period [observedAt - periodDays, observedAt] overlaps [startMs, endMs). Periods that only touch overlap by 0. */
 export function overlapMs(o: { observedAt: string; periodDays: number | null }, startMs: number, endMs: number): number {
@@ -120,8 +60,8 @@ export interface FlowScanArgs {
   latest: BlockRef;
   /** The chain's day-boundary cache (N9). Read on every run; written only by a real run, and only for final boundaries. */
   dayBlocks?: DayBlockCache;
-  http: HttpTransport;
-  env: Record<string, string | undefined>;
+  /** Ensures the chain prices of the usd members' refs for the scanned hours, before the scan (no CoinGecko read). */
+  priceWriter: ChainPriceWriter;
   sleep(ms: number): Promise<void>;
   now: Date;
   backfillDays: number;
@@ -204,22 +144,20 @@ export async function readDecimals(rpc: RpcTransport, group: FlowGroup, latest: 
 }
 
 /**
- * The token a member's amounts are in (spec §4): the scanned token itself, or, for a vault share valued at its
- * pricePerShare, the underlying the price id names (`coingecko:<id>`, since the config names no underlying address).
- * Null when neither applies (a share counted in tokens: no such member today).
+ * The token a member's amounts are in (spec §4), which a usd member is priced at (its chain price, prices.yaml): the
+ * scanned token itself, or, for a vault share valued at its pricePerShare, `share_price.underlying`. Null when neither
+ * applies (a share with no underlying named: no usd member may be one, the schema refuses it).
  */
 export function memberToken(asset: AssetConfig, group: FlowGroup, m: FlowMember, decimals: number): TokenInfo | null {
-  if (m.sharePrice) {
-    if (m.priceCoingeckoId === null) return null;
-    return { tokenRef: coingeckoTokenRef(m.priceCoingeckoId), symbol: m.priceCoingeckoId, decimals: null, coingeckoId: m.priceCoingeckoId };
-  }
-  const name = Object.entries(asset.contracts ?? {}).find(([, address]) => String(address).toLowerCase() === group.token)?.[0];
-  const priced = m.priceCoingeckoId ?? group.members.find((o) => o.unit === 'usd' && !o.sharePrice && o.priceCoingeckoId !== null)?.priceCoingeckoId ?? null;
+  const address = m.sharePrice ? m.sharePrice.underlying : group.token;
+  if (address === null) return null;
+  const name = Object.entries(asset.contracts ?? {}).find(([, a]) => String(a).toLowerCase() === address)?.[0];
   return {
-    tokenRef: evmTokenRef(asset.ingest!.chain_id, group.token),
+    tokenRef: evmTokenRef(asset.ingest!.chain_id, address),
     symbol: name === undefined || name === 'token' ? asset.symbol : name,
-    decimals,
-    coingeckoId: priced,
+    // The underlying's decimals are not read here (prices.yaml and the price writer record them).
+    decimals: m.sharePrice ? null : decimals,
+    coingeckoId: null,
   };
 }
 
@@ -238,7 +176,7 @@ export interface MemberTokens {
 
 /** What one day's scan counted, before anything is written. */
 export interface DayScan {
-  /** Per member, the value its row stores (USD for unit usd, tokens otherwise); null when the scanner has no prices. */
+  /** Per member, the value its row stores (USD for unit usd: hour-bucket priced; tokens otherwise); null when the scanner has no prices. */
   values: Map<string, number> | null;
   /** Per member, in the member's token (tokens x share price for a vault share; never priced). */
   tokens: Map<string, MemberTokens>;
@@ -271,8 +209,11 @@ export interface DayScannerArgs {
   /** Write final day boundaries to `dayBlocks` (a real run only). */
   cacheDayBlocks: boolean;
   sleep(ms: number): Promise<void>;
-  /** Price series by CoinGecko id for the usd members; null: count tokens only (`values` is null). */
-  series: Map<string, PriceSeries> | null;
+  /**
+   * The hour-bucket chain prices of the usd members' refs over the scanned days (ref -> hour ms -> USD), and the ref of
+   * each usd member by metric; null: count tokens only (`values` is null).
+   */
+  prices: { byRef: Map<string, Map<number, number>>; refOf: Map<string, string> } | null;
   decimals: number;
   /** Hears every unlisted transfer as it is found, so a day that fails part-way still reports the ones it saw. */
   onUnlisted?: (t: UnlistedTransfer) => void;
@@ -280,8 +221,8 @@ export interface DayScannerArgs {
 
 /**
  * The transfer scanner's per-day count, shared by the flow writer and the token backfill so both count exactly the same
- * transfers. USD is priced per transfer at its own time (the reference method, spec §4); token amounts are summed per
- * member and per UTC hour beside it.
+ * transfers. Token amounts are summed per member and per UTC hour; a usd member's value is the sum over the day's hours
+ * of its tokens in the hour x the hour's chain price (Phase 3 R2: hour-bucket pricing, as flow_usd_chain_v prices it).
  */
 export async function openDayScanner(o: DayScannerArgs): Promise<DayScanner> {
   const { group, rpc, latest, decimals } = o;
@@ -312,7 +253,7 @@ export async function openDayScanner(o: DayScannerArgs): Promise<DayScanner> {
 
   const scanDay = async (day: string, from: BlockRef, next: BlockRef): Promise<DayScan> => {
     const startMs = dayStartMs(day);
-    const values = o.series ? new Map(group.members.map((m) => [m.metricKey, 0])) : null;
+    const values = o.prices ? new Map(group.members.map((m) => [m.metricKey, 0])) : null;
     const tokens = new Map<string, MemberTokens>(group.members.map((m) => [m.metricKey, { amount: 0, hourly: new Array<number>(HOURS_PER_DAY).fill(0) }]));
     const refs = new Map<string, string[]>(group.members.map((m) => [m.metricKey, []]));
     const senders = new Map<string, { count: number; tokens: number }>();
@@ -387,24 +328,32 @@ export async function openDayScanner(o: DayScannerArgs): Promise<DayScanner> {
         }
         for (const m of group.members) {
           if (m.countFrom !== null && !m.countFrom.includes(sender)) continue;
-          let amount = m.sharePrice ? amountTokens * (await sharePriceOf(m.sharePrice)) : amountTokens;
+          const amount = m.sharePrice ? amountTokens * (await sharePriceOf(m.sharePrice)) : amountTokens;
           const tk = tokens.get(m.metricKey)!;
           tk.amount += amount;
           tk.hourly[hour] += amount;
-          if (values) {
-            if (m.unit === 'usd') {
-              const price = priceAt(o.series!.get(m.priceCoingeckoId!)!, log.timestamp * 1000);
-              if (price === null) {
-                throw new Error(
-                  `no ${m.priceCoingeckoId} price point at or before ${new Date(log.timestamp * 1000).toISOString()}; day ${day} was not written`,
-                );
-              }
-              amount *= price;
-            }
-            values.set(m.metricKey, values.get(m.metricKey)! + amount);
-          }
           refs.get(m.metricKey)!.push(`${log.txHash}:${log.logIndex}`);
         }
+      }
+    }
+    if (values) {
+      for (const m of group.members) {
+        const tk = tokens.get(m.metricKey)!;
+        if (m.unit !== 'usd') {
+          values.set(m.metricKey, tk.amount);
+          continue;
+        }
+        const ref = o.prices!.refOf.get(m.metricKey)!;
+        const series = o.prices!.byRef.get(ref);
+        let usd = 0;
+        for (let h = 0; h < HOURS_PER_DAY; h++) {
+          if (tk.hourly[h] === 0) continue;
+          const hourMs = startMs + h * MS_PER_HOUR;
+          const price = series?.get(hourMs);
+          if (price === undefined) throw new Error(`no ${ref} price point at or before ${new Date(hourMs).toISOString()}; day ${day} was not written`);
+          usd += tk.hourly[h] * price;
+        }
+        values.set(m.metricKey, usd);
       }
     }
     return { values, tokens, refs, senders, sharePrices, counted, unlisted };
@@ -470,29 +419,33 @@ export async function scanFlowGroup(args: FlowScanArgs): Promise<FlowScanResult>
       return result;
     }
 
-    // 3. Token decimals, price series, and the tokens and prices the rows refer to.
+    // 3. Token decimals and the tokens the rows refer to; then the chain prices of the usd members' refs for every hour
+    //    of the scanned days, ensured by the writer (a dry run computes them in memory, Ruling R19) and read as
+    //    flow_usd_chain_v reads them. No CoinGecko request.
     const decimals = await readDecimals(rpc, group, latest);
-    const series = new Map<string, PriceSeries>();
+    const tokenOf = new Map(group.members.map((m) => [m.metricKey, memberToken(asset, group, m, decimals)]));
+    const refOf = new Map<string, string>();
     for (const m of group.members) {
       if (m.unit !== 'usd') continue;
-      if (m.priceCoingeckoId === null) throw new OrionError('invalid_source_config', `${m.metricKey}: a transfer_flow with unit usd needs price_coingecko_id`);
-      if (!series.has(m.priceCoingeckoId)) {
-        series.set(m.priceCoingeckoId, await loadPrices(args.http, args.env, m.priceCoingeckoId, rangeStartMs, args.now.getTime()));
+      const token = tokenOf.get(m.metricKey);
+      if (!token) throw new OrionError('invalid_source_config', `${m.metricKey}: a vault-share transfer_flow with unit usd needs share_price.underlying`);
+      refOf.set(m.metricKey, token.tokenRef);
+    }
+    const refs = [...new Set(refOf.values())].sort();
+    const byRef = new Map<string, Map<number, number>>();
+    if (refs.length > 0) {
+      const w = await args.priceWriter(db, refs, rangeStartMs, rangeEndMs, { dryRun });
+      for (const e of w.errors) outcome.notes.push(`chain prices: ${e.chain} stopped at ${new Date(e.hourMs).toISOString()}: ${e.error}`);
+      for (const ref of refs) {
+        const extra: ChainPriceCandidate[] = (w.rows?.[ref] ?? []).map((r) => ({ ts: r.ts, priceUsd: r.priceUsd, source: CHAIN_DRY_RUN_SOURCE, fetchedAt: nowIso }));
+        byRef.set(ref, await chainPricesAt(db, ref, rangeStartMs, rangeEndMs, extra));
       }
     }
-    const tokenOf = new Map(group.members.map((m) => [m.metricKey, memberToken(asset, group, m, decimals)]));
-    if (!dryRun) {
-      // Every hourly point the scan loaded goes into `prices` (spec §4): no request beyond the ones made above.
-      for (const t of uniqueTokens([...tokenOf.values()])) await upsertToken(db, t);
-      for (const [id, s] of series) {
-        const rows = hourlyPriceRows(s.hourly);
-        for (const t of uniqueTokens([...tokenOf.values()])) if (t.coingeckoId === id) await upsertPrices(db, t.tokenRef, COINGECKO_PRICE_SOURCE, rows, nowIso);
-      }
-    }
+    if (!dryRun) for (const t of uniqueTokens([...tokenOf.values()])) await upsertToken(db, t);
 
     // 4. One day at a time, oldest first. Each day commits on its own, so an interrupted backfill resumes.
     const scanner = await openDayScanner({
-      group, rpc, latest, dayBlocks: args.dayBlocks, cacheDayBlocks: !dryRun, sleep: args.sleep, series, decimals, onUnlisted: (u) => result.unlisted.push(u),
+      group, rpc, latest, dayBlocks: args.dayBlocks, cacheDayBlocks: !dryRun, sleep: args.sleep, prices: { byRef, refOf }, decimals, onUnlisted: (u) => result.unlisted.push(u),
     });
     const retired = new Set<number>();
     const wroteAny = new Set<string>();

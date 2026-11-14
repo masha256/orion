@@ -7,7 +7,7 @@ import { fetchAsset, type FetchDeps, type FetchResult } from '../../src/ingest/r
 import { addDays } from '../../src/ingest/time.js';
 import type { TransferLog } from '../../src/ingest/transport/rpc.js';
 import { fakeRpc } from '../helpers/fakeRpc.js';
-import { CG_CHART, defaultCalls, GENESIS_TS, harness, hourlyPrices, LLAMA } from '../helpers/fetchHarness.js';
+import { defaultCalls, GENESIS_TS, harness, LLAMA } from '../helpers/fetchHarness.js';
 import { POOL } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
 import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
@@ -138,7 +138,6 @@ describe('fetchAsset: flows', () => {
       const h = harness(testDb(), {
         routes: {
           [LLAMA]: { totalDataChart: [...august(llamaPerDay), [Date.parse('2026-09-01') / 1000, 1]] },
-          [CG_CHART]: hourlyPrices('2026-07-01T00:00:00Z', '2026-09-19T12:00:00Z', () => 10),
         },
       });
       const genesis = GENESIS_TS - 60 * 86_400;

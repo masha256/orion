@@ -9,6 +9,7 @@ import { addDays } from '../../src/ingest/time.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import type { TransferLog } from '../../src/ingest/transport/rpc.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
+import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
@@ -29,16 +30,6 @@ const lc = (a: string) => a.toLowerCase();
 const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENESIS_TS) / BLOCK_SEC));
 const RELEASE_SAFE = '0xa42d0a18b834f52e41beddeaa2940165db3da9a3'; // one of Chainlink's non-circulating Safes
 const STRANGER = '0x7630c870da0f44308a2676898010bed93bd89c19';
-
-/** LINK market chart: flat at 12.5 every hour (every day past 90) over the window asked for. */
-function linkChart(url: string): { prices: [number, number][] } {
-  const days = Number(new URL(url).searchParams.get('days'));
-  const end = NOW.getTime();
-  const step = days > 90 ? 86_400_000 : 3_600_000;
-  const prices: [number, number][] = [];
-  for (let t = end - days * 86_400_000; t <= end; t += step) prices.push([t, PRICE]);
-  return { prices };
-}
 
 /**
  * Into the Reserve: 100,000 LINK every Thursday from the fee converter (2026-10-15 back 15 weeks), a 5-LINK test send
@@ -68,7 +59,6 @@ const logsTo: Record<string, Omit<TransferLog, 'timestamp'>[]> = {
 function world() {
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'chainlink', symbol: 'link', current_price: PRICE, market_cap: 9.6e9, circulating_supply: 766_849_970, total_supply: 1_000_000_000 }],
-    'https://api.coingecko.com/api/v3/coins/chainlink/market_chart': linkChart,
   });
   const base = fakeRpc({
     genesisTs: GENESIS_TS,
@@ -91,7 +81,9 @@ function world() {
       return (logsTo[lc(q.to)] ?? []).filter((l) => l.blockNumber >= q.fromBlock && l.blockNumber <= q.toBlock).map((l) => ({ ...l, timestamp: base.timestampOf(l.blockNumber) }));
     },
   };
-  const deps: FetchDeps = { http, rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW };
+  const deps: FetchDeps = { http, rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW,
+    // The chain price of the flow's token, flat at PRICE (the CoinGecko chart this test served before Phase 3 R2).
+    priceWriter: fakePriceWriter(() => PRICE) };
   return { db: testDb(), deps, http, rpc };
 }
 
@@ -113,7 +105,8 @@ describe('assets/link.yaml', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
-    expect(loadAsset(ROOT, 'link').hash).toBe('de8fdaa00cc4edca64269d723b668e94512aa1fcc4862e2979dc68dc33032324');
+    // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
+    expect(loadAsset(ROOT, 'link').hash).toBe('4479e2426ded986a46408f608c935027012c27ad317571f01794743a78a64dd0');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

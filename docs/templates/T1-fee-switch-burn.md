@@ -111,7 +111,7 @@ metrics:
     cadence: daily
     staleness_days: 5
     critical: true
-    source: { type: transfer_flow, token: token, to: burn_sink, from_any: true, from_ignore: [ treasury_burner ], unit: usd, price_coingecko_id: {{coingecko_id}} }
+    source: { type: transfer_flow, token: token, to: burn_sink, from_any: true, from_ignore: [ treasury_burner ], unit: usd }
 
   flow_tokens.burn:
     type: flow

@@ -5,6 +5,7 @@ import { loadAsset } from '../../src/config/load.js';
 import { listActiveObservations } from '../../src/db/observations.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
+import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
@@ -23,16 +24,6 @@ const E18 = 10n ** 18n;
 const { config } = loadAsset(ROOT, 'ycrv');
 const C = config.contracts;
 
-/** crvUSD market chart: flat at 0.9991 every hour over the window. */
-function crvusdChart(url: string): { prices: [number, number][] } {
-  const days = Number(new URL(url).searchParams.get('days'));
-  const end = NOW.getTime();
-  const step = days > 90 ? 86_400_000 : 3_600_000;
-  const prices: [number, number][] = [];
-  for (let t = end - days * 86_400_000; t <= end; t += step) prices.push([t, 0.9991]);
-  return { prices };
-}
-
 /** The Saturdays from 2026-07-04 to 2026-10-03, at 12:00Z: 25,000 yvcrvUSD-2 shares each (about the live weekly mean). */
 function saturdays(): string[] {
   const out: string[] = [];
@@ -45,8 +36,6 @@ const PPS = 1_159_000_000_000_000_000n; // 1.159 crvUSD per share, read live 202
 function world(extraLogs: { iso: string; from: string; tokens: bigint }[] = []) {
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'yearn-crv', symbol: 'ycrv', current_price: 0.18345, market_cap: 13.2e6, circulating_supply: 71_960_697, total_supply: 71_960_697 }],
-    'https://api.coingecko.com/api/v3/coins/crvusd/market_chart': crvusdChart,
-    'https://api.coingecko.com/api/v3/coins/yearn-crv/market_chart': crvusdChart, // the st-yCRV fee scan (no fee logs here)
   });
   const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENESIS_TS) / BLOCK_SEC));
   const rpc = fakeRpc({
@@ -69,7 +58,12 @@ function world(extraLogs: { iso: string; from: string; tokens: bigint }[] = []) 
       ...extraLogs.map((l, i) => ({ blockNumber: blockAt(l.iso), logIndex: 1, txHash: `0xe${i.toString(16)}`, from: l.from, value: l.tokens * E18 })),
     ].sort((a, b) => (a.blockNumber < b.blockNumber ? -1 : a.blockNumber > b.blockNumber ? 1 : a.logIndex - b.logIndex)),
   });
-  const deps: FetchDeps = { http, rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW };
+  const deps: FetchDeps = {
+    http, rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW,
+    // Chain prices flat at 0.9991 for crvUSD and yCRV (the st-yCRV fee scan's underlying; no fee logs here), as the
+    // CoinGecko charts this test served before Phase 3 R2.
+    priceWriter: fakePriceWriter(() => 0.9991),
+  };
   return { db: testDb(), deps, http, rpc };
 }
 
@@ -87,7 +81,8 @@ describe('assets/ycrv.yaml', () => {
     // incentives below the line by apportion (Phase 2 Task 7b, Mike G1).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
-    expect(loadAsset(ROOT, 'ycrv').hash).toBe('fad46ffce87b17c118c61ff677f180f10bf08b319e2694a8634e013310f7b665');
+    // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members (share_price.underlying on the shares).
+    expect(loadAsset(ROOT, 'ycrv').hash).toBe('7f6c53a1d47390c5038cc501129ac48de2e96de78b26801b8dd8d595f7c7892c');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -139,15 +134,15 @@ describe('assets/ycrv.yaml', () => {
       ['constant', ['primary:staker_emission_share', 'primary:emission_rate_annual']],
     ]);
     expect(plan.flowGroups.map((g) => g.members)).toEqual([
-      [{ metricKey: 'flow_usd.fees', unit: 'usd', countFrom: [C.receiver.toLowerCase()], priceCoingeckoId: 'crvusd', sharePrice: { address: C.yv_crvusd.toLowerCase(), functionName: 'pricePerShare', decimals: 18 } }],
+      [{ metricKey: 'flow_usd.fees', unit: 'usd', countFrom: [C.receiver.toLowerCase()], sharePrice: { address: C.yv_crvusd.toLowerCase(), functionName: 'pricePerShare', decimals: 18, underlying: C.crvusd.toLowerCase() } }],
       // Report-only: Yearn's revenue (vault shares into its treasury vault) and the gross crvUSD into the splitter.
-      [{ metricKey: 'flow_usd.yearn_revenue', unit: 'usd', countFrom: [C.splitter.toLowerCase(), C.receiver.toLowerCase()], priceCoingeckoId: 'crvusd', sharePrice: { address: C.yv_crvusd.toLowerCase(), functionName: 'pricePerShare', decimals: 18 } }],
-      [{ metricKey: 'flow_usd.yearn_styc_fee', unit: 'usd', countFrom: [C.st_ycrv.toLowerCase()], priceCoingeckoId: 'yearn-crv', sharePrice: { address: C.st_ycrv.toLowerCase(), functionName: 'pricePerShare', decimals: 18 } }],
+      [{ metricKey: 'flow_usd.yearn_revenue', unit: 'usd', countFrom: [C.splitter.toLowerCase(), C.receiver.toLowerCase()], sharePrice: { address: C.yv_crvusd.toLowerCase(), functionName: 'pricePerShare', decimals: 18, underlying: C.crvusd.toLowerCase() } }],
+      [{ metricKey: 'flow_usd.yearn_styc_fee', unit: 'usd', countFrom: [C.st_ycrv.toLowerCase()], sharePrice: { address: C.st_ycrv.toLowerCase(), functionName: 'pricePerShare', decimals: 18, underlying: C.token.toLowerCase() } }],
       // One scan of the splitter's crvUSD: the gross and (Task 7b) the gross by sender, each counting one sender.
       [
-        { metricKey: 'flow_usd.yearn_gross', unit: 'usd', countFrom: [C.voter.toLowerCase(), C.fee_burner.toLowerCase()], priceCoingeckoId: 'crvusd', sharePrice: null },
-        { metricKey: 'flow_usd.yearn_gross_fees', unit: 'usd', countFrom: [C.voter.toLowerCase()], priceCoingeckoId: 'crvusd', sharePrice: null },
-        { metricKey: 'flow_usd.yearn_gross_incentives', unit: 'usd', countFrom: [C.fee_burner.toLowerCase()], priceCoingeckoId: 'crvusd', sharePrice: null },
+        { metricKey: 'flow_usd.yearn_gross', unit: 'usd', countFrom: [C.voter.toLowerCase(), C.fee_burner.toLowerCase()], sharePrice: null },
+        { metricKey: 'flow_usd.yearn_gross_fees', unit: 'usd', countFrom: [C.voter.toLowerCase()], sharePrice: null },
+        { metricKey: 'flow_usd.yearn_gross_incentives', unit: 'usd', countFrom: [C.fee_burner.toLowerCase()], sharePrice: null },
       ],
     ]);
     expect(plan.derived).toEqual([]);

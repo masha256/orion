@@ -82,7 +82,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     critical: true
-    source: { type: transfer_flow, token: token, to: reserve, from_allowlist: [ fee_converter ], ignore_below_tokens: 10, unit: usd, price_coingecko_id: chainlink }
+    source: { type: transfer_flow, token: token, to: reserve, from_allowlist: [ fee_converter ], ignore_below_tokens: 10, unit: usd }
 
   # The same buys in LINK: 375k to 707k a month (2026), the flow's own measure.
   flow_tokens.reserve:

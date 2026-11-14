@@ -53,7 +53,6 @@ function backfillTokenLines(r: BackfillTokensResult): string[] {
   return [
     `${r.assetId.toUpperCase()} backfill-tokens${r.dryRun ? ' (dry run: nothing was written)' : ''}: ${r.range ? `${r.range.from} to ${r.range.to}` : 'no range'}; ` +
       `${r.dryRun ? 'would fill' : 'filled'} ${r.filled} row(s), ${r.alreadyFilled} already had tokens, ${r.skipped.length} skipped, ${r.refused.length} day(s) refused`,
-    ...r.prices.map((p) => `  prices ${p.coingeckoId} (${p.tokenRefs.join(', ')}): ${p.rows} hourly row(s) in ${p.requests} request(s)${p.reachedDay ? `, from ${p.reachedDay}` : ''}${p.failures.map((f) => `; FAILED ${f}`).join('')}`),
     ...r.refused.map((x) => `  REFUSED ${x.day}: ${x.reason}`),
     ...r.skipped.map((x) => `  skipped ${x.day} ${x.metricKey}: ${x.reason}`),
     ...r.notes.map((n) => `  note: ${n}`),

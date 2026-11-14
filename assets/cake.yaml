@@ -98,7 +98,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     critical: true
-    source: { type: transfer_flow, token: token, to: burner, from_allowlist: [ converter_a, converter_b, converter_c, converter_owner, product_a, product_b, product_c ], from_ignore: [ masterchef_v2, zero ], ignore_below_tokens: 1, unit: usd, price_coingecko_id: pancakeswap-token }
+    source: { type: transfer_flow, token: token, to: burner, from_allowlist: [ converter_a, converter_b, converter_c, converter_owner, product_a, product_b, product_c ], from_ignore: [ masterchef_v2, zero ], ignore_below_tokens: 1, unit: usd }
 
   # The same burn in CAKE.
   flow_tokens.burn:
@@ -116,7 +116,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: token, to: treasury, from_allowlist: [ converter_a, converter_b, converter_c, product_a, product_b, product_c, product_d ], ignore_below_tokens: 1, unit: usd, price_coingecko_id: pancakeswap-token }
+    source: { type: transfer_flow, token: token, to: treasury, from_allowlist: [ converter_a, converter_b, converter_c, product_a, product_b, product_c, product_d ], ignore_below_tokens: 1, unit: usd }
 
 # Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
 # the holders and below_line lines):

@@ -9,7 +9,7 @@ import { scanFlowGroup } from '../../src/ingest/flow.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { backfillTokens } from '../../src/ingest/tokenBackfill.js';
 import type { TransferLog } from '../../src/ingest/transport/rpc.js';
-import { CG_CHART, harness, hourlyPrices, type Harness } from '../helpers/fetchHarness.js';
+import { harness, type Harness } from '../helpers/fetchHarness.js';
 import { callKey } from '../helpers/fakeRpc.js';
 import { INGEST_ASSET_YAML, METRICS_END, POOL, SAFE, TOKEN } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
@@ -30,21 +30,20 @@ function world(): Harness {
   const logs = [
     log('2026-09-16T10:00:00Z', POOL, 2n), log('2026-09-16T23:59:58Z', SAFE, 100n), log('2026-09-17T00:00:00Z', POOL, 3n), log('2026-09-18T07:00:00Z', SAFE, 5n),
   ];
-  const prices = hourlyPrices('2026-09-10T00:00:00Z', '2026-09-19T12:00:00Z', (t) => (t < ms('2026-09-17T00:00:00Z') ? 10 : 20));
-  return harness(testDb(), { routes: { [CG_CHART]: prices }, logs });
+  return harness(testDb(), { price: (_ref, t) => (t < ms('2026-09-17T00:00:00Z') ? 10 : 20), logs });
 }
 
 /** Rows as a release before 0005 wrote them: the scan's rows with the token columns emptied, and no prices. */
 async function preTask7(h: Harness): Promise<void> {
   const latest = await h.rpc.latestBlock();
   await scanFlowGroup({
-    db: h.db, asset: h.loaded.config, configHash: h.loaded.hash, group: buildPlan(h.loaded.config).flowGroups[0], rpc: h.rpc, latest, http: h.http, env: {},
+    db: h.db, asset: h.loaded.config, configHash: h.loaded.hash, group: buildPlan(h.loaded.config).flowGroups[0], rpc: h.rpc, latest, priceWriter: h.deps.priceWriter!,
     sleep: async () => undefined, now: h.deps.now(), backfillDays: 3, rescan: false, adopt: false, dryRun: false,
   });
   await h.db.run('UPDATE observations SET token_ref = NULL, amount = NULL, hourly_amounts = NULL');
   await h.db.run('DELETE FROM prices');
   await h.db.run('DELETE FROM tokens');
-  h.http.calls.length = 0; // the scan's own market_chart read
+  h.http.calls.length = 0;
 }
 
 /** Every observation's full row (all columns but the token ones), for a no-change proof. */
@@ -71,16 +70,14 @@ describe('backfillTokens', () => {
       ['2026-09-17', 1020, REF, 102], ['2026-09-18', 60, REF, 3], ['2026-09-19', 100, REF, 5],
     ]);
     expect(usd[0]!.hourlyAmounts!.flatMap((x, i) => (x ? [[i, x]] : []))).toEqual([[10, 2], [23, 100]]);
-    // The prices of the range came from market_chart/range (hourly windows), not from the nightly's request.
-    expect(r.prices).toMatchObject([{ coingeckoId: 'mini-token', tokenRefs: [REF], failures: [] }]);
-    expect(h.http.calls.length).toBeGreaterThan(0);
-    expect(h.http.calls.every((c) => c.url.includes('/market_chart/range?'))).toBe(true);
-    expect((await listPrices(h.db, REF)).length).toBeGreaterThan(0);
+    // No price is fetched any more (Phase 3 R2: the price part is gone; the chain writer stores prices): no HTTP, no row.
+    expect(r).not.toHaveProperty('prices');
+    expect(h.http.calls).toEqual([]);
+    expect(await listPrices(h.db, REF)).toEqual([]);
 
     // A second run fills nothing (amount IS NULL guards every update), still changes no value, and fetches nothing.
-    h.http.calls.length = 0;
     const again = await backfillTokens(h.db, h.loaded, h.deps, { days: 3 });
-    expect(again).toMatchObject({ filled: 0, alreadyFilled: 9, refused: [], skipped: [], prices: [{ coingeckoId: 'mini-token', requests: 0, rows: 0 }] });
+    expect(again).toMatchObject({ filled: 0, alreadyFilled: 9, refused: [], skipped: [] });
     expect(h.http.calls).toEqual([]);
     expect(await snapshot(h.db)).toEqual(before);
   });
@@ -127,19 +124,19 @@ describe('backfillTokens', () => {
     expect((await h.db.one<{ n: number }>('SELECT count(*) AS n FROM tokens'))!.n).toBe(0);
     expect(h.http.calls).toEqual([]);
   });
-  it('fetches one market_chart range per CoinGecko id, stores it under every token ref sharing the id, and never re-fetches stored hours', async () => {
-    // A second scanned token priced at the same CoinGecko id (two refs, one id).
+  it('two scanned tokens: each row is filled with its own token ref, and no price is fetched or stored', async () => {
+    // A second scanned token (two refs).
     const withB = INGEST_ASSET_YAML.replace(`  safe: "${SAFE}"\n`, `  safe: "${SAFE}"\n  token_b: "${TOKEN_B}"\n`).replace(
       METRICS_END,
       `  flow_usd.fees_b:
     type: flow
     unit: usd
     staleness_days: 45
-    source: { type: transfer_flow, token: token_b, to: burn_sink, from_allowlist: [pool], unit: usd, price_coingecko_id: mini-token }
+    source: { type: transfer_flow, token: token_b, to: burn_sink, from_allowlist: [pool], unit: usd }
 ${METRICS_END}`,
     );
     const h = harness(testDb(), {
-      loaded: parseAssetYaml(withB), routes: { [CG_CHART]: hourlyPrices('2026-09-10T00:00:00Z', '2026-09-19T12:00:00Z', () => 10) },
+      loaded: parseAssetYaml(withB),
       calls: { [callKey(TOKEN_B, 'decimals')]: 18n }, logs: [],
     });
     await scanAll(h);
@@ -149,20 +146,10 @@ ${METRICS_END}`,
     const r = await backfillTokens(h.db, h.loaded, h.deps, { days: 3 });
     expect(r.refused).toEqual([]);
     expect(r.filled).toBe(12);
-    expect(r.prices).toMatchObject([{ coingeckoId: 'mini-token', tokenRefs: [REF, REF_B].sort() }]);
-    const ranges = h.http.calls.filter((c) => c.url.includes('/market_chart/range?'));
-    expect(ranges.length).toBe(r.prices[0]!.requests);
-    expect(ranges.length).toBe(1); // three days: one window
-    const a = await listPrices(h.db, REF);
-    expect(a.length).toBe(72); // the 72 hours of the three days with rows to fill
-    expect((await listPrices(h.db, REF_B)).map((p) => [p.ts, p.priceUsd])).toEqual(a.map((p) => [p.ts, p.priceUsd]));
-
-    // Rows to fill again, but every hour they need is stored: no request.
-    await h.db.run('UPDATE observations SET token_ref = NULL, amount = NULL, hourly_amounts = NULL');
-    h.http.calls.length = 0;
-    const again = await backfillTokens(h.db, h.loaded, h.deps, { days: 3 });
-    expect(again).toMatchObject({ filled: 12, refused: [], prices: [{ coingeckoId: 'mini-token', requests: 0, rows: 0 }] });
+    expect((await tokensOf(h.db, 'flow_usd.fees_b')).map((t) => t.tokenRef)).toEqual([REF_B, REF_B, REF_B]);
+    expect((await tokensOf(h.db, 'flow_usd.fees')).map((t) => t.tokenRef)).toEqual([REF, REF, REF]);
     expect(h.http.calls).toEqual([]);
+    expect(await h.db.all('SELECT * FROM prices')).toEqual([]);
   });
 
   it('a transfer stamped outside its day is counted in the edge hour and noted', async () => {
@@ -285,7 +272,7 @@ async function scanAll(h: Harness): Promise<void> {
   const latest = await h.rpc.latestBlock();
   for (const group of buildPlan(h.loaded.config).flowGroups) {
     await scanFlowGroup({
-      db: h.db, asset: h.loaded.config, configHash: h.loaded.hash, group, rpc: h.rpc, latest, http: h.http, env: {},
+      db: h.db, asset: h.loaded.config, configHash: h.loaded.hash, group, rpc: h.rpc, latest, priceWriter: h.deps.priceWriter!,
       sleep: async () => undefined, now: h.deps.now(), backfillDays: 3, rescan: false, adopt: false, dryRun: false,
     });
   }

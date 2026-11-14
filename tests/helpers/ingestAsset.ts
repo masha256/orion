@@ -64,7 +64,7 @@ metrics:
     unit: usd
     staleness_days: 45
     critical: true
-    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], unit: usd, price_coingecko_id: mini-token }
+    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], unit: usd }
     cross_checks:
       - { tolerance_pct: 5, source: { type: defillama, slug: mini, data_type: dailyHoldersRevenue, compare: monthly_sum } }
   flow_tokens.fees:
@@ -76,7 +76,7 @@ metrics:
     type: flow
     unit: usd
     staleness_days: 45
-    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], count_from: [pool], unit: usd, price_coingecko_id: mini-token }
+    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], count_from: [pool], unit: usd }
 ${METRICS_END}
 `;
 

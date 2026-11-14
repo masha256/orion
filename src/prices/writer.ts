@@ -171,6 +171,11 @@ export interface WriteOptions {
   budgetMs?: number;
   /** Milliseconds now, for the budget (default Date.now). */
   clock?: () => number;
+  /**
+   * Compute the prices in memory and write nothing, neither `prices` nor `hour_blocks` (Ruling R19: a dry-run fetch). The
+   * rows a real run would write come back in `rows`; breaches are not evaluated (they read the stored rows).
+   */
+  dryRun?: boolean;
 }
 
 const isEvm = (chain: string): boolean => chain.startsWith('eip155:');
@@ -237,6 +242,7 @@ export async function writeChainPrices(
     stoppedByBudget: false,
     stoppedBySignal: false,
     errors: [],
+    ...(opts.dryRun ? { rows: {} } : {}),
   };
   if (fromHourMs === toHourMs) return result;
 
@@ -406,7 +412,9 @@ export async function writeChainPrices(
       // Commit the chain-day: its rows and the hour blocks it found, in one transaction. After an abort, nothing.
       if (aborted()) break days;
       const fresh = st.blocks?.takeFresh() ?? [];
-      if (rows.size > 0 || fresh.length > 0) {
+      if (opts.dryRun) {
+        for (const [ref, list] of rows) result.rows![ref] = [...(result.rows![ref] ?? []), ...list];
+      } else if (rows.size > 0 || fresh.length > 0) {
         await db.tx(async (t) => {
           for (const [ref, list] of rows) {
             const e = entryOf(ref);
@@ -421,6 +429,7 @@ export async function writeChainPrices(
       }
       for (const [ref, list] of rows) {
         result.written[ref] = (result.written[ref] ?? 0) + list.length;
+        if (opts.dryRun) continue;
         if (!writtenAt.has(ref)) writtenAt.set(ref, []);
         writtenAt.get(ref)!.push(...list.map((x) => Date.parse(x.ts)));
       }

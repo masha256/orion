@@ -98,7 +98,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     critical: true
-    source: { type: transfer_flow, token: token, to: reserve, from_allowlist: [ fee_converter ], ignore_below_tokens: {{dust_floor_tokens}}, unit: usd, price_coingecko_id: {{coingecko_id}} }
+    source: { type: transfer_flow, token: token, to: reserve, from_allowlist: [ fee_converter ], ignore_below_tokens: {{dust_floor_tokens}}, unit: usd }
   flow_tokens.reserve:
     type: flow
     unit: tokens

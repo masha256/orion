@@ -97,7 +97,8 @@ export const ADAPTER_ENDPOINTS: Record<string, (params: AdapterParams, asset: As
   'solana.token_supply': (p) => [solRpc(p)],
   'solana.owner_balance': (p) => [solRpc(p)],
   // The day's price from CoinGecko's market chart; `history` stitches DefiLlama's summary before the first supply read.
-  'solana.supply_burn_daily': (p) => [solRpc(p), http(COINGECKO_API), ...(p.history !== undefined ? [http(DEFILLAMA_API)] : [])],
+  // Priced from the stored chain prices of the mint (Phase 3 R2): no CoinGecko read.
+  'solana.supply_burn_daily': (p) => [solRpc(p), ...(p.history !== undefined ? [http(DEFILLAMA_API)] : [])],
 };
 
 /**
@@ -227,7 +228,8 @@ function sourceEndpoints(asset: AssetConfig, s: SourceConfig): { endpoint: Endpo
     case 'contract_read':
       return rpc(s.type);
     case 'transfer_flow':
-      return [...rpc('transfer_flow'), ...(s.price_coingecko_id !== undefined ? [{ endpoint: http(COINGECKO_API), via: 'transfer_flow pricing' }] : [])];
+      // A usd member is valued at its chain price (prices.yaml, the price writer): no HTTP read (Phase 3 R2).
+      return rpc('transfer_flow');
     case 'adapter': {
       const endpoints = ADAPTER_ENDPOINTS[s.name];
       if (endpoints === undefined) throw new Error(`asset ${asset.id}: adapter ${s.name} has no ADAPTER_ENDPOINTS entry in tools/sources-register/generate.ts`);

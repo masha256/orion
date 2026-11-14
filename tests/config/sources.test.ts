@@ -93,7 +93,7 @@ describe('declarative sources in the asset config', () => {
 
   it('allows defillama as the primary of a usd flow, and keeps the two roles apart', () => {
     const asPrimary = (source: string) =>
-      INGEST_ASSET_YAML.replace('source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], count_from: [pool], unit: usd, price_coingecko_id: mini-token }', source);
+      INGEST_ASSET_YAML.replace('source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], count_from: [pool], unit: usd }', source);
     expect(bad(asPrimary('source: { type: defillama, slug: mini, data_type: dailyHoldersRevenue }'))).toBe('');
     expect(bad(asPrimary('source: { type: defillama, slug: mini, data_type: dailyHoldersRevenue, backfill_days: 30 }'))).toBe('');
     expect(bad(asPrimary('source: { type: defillama, slug: mini, data_type: dailyHoldersRevenue, compare: monthly_sum }')))
@@ -102,7 +102,7 @@ describe('declarative sources in the asset config', () => {
       .toMatch(/flow_tokens\.fees.*needs unit usd/);
     expect(bad(INGEST_ASSET_YAML.replace('compare: monthly_sum }', '}'))).toMatch(/flow_usd\.fees\.cross_checks\.0.*needs compare: monthly_sum/);
     expect(bad(INGEST_ASSET_YAML.replace('compare: monthly_sum }', 'compare: monthly_sum, backfill_days: 5 }'))).toMatch(/cross_checks\.0.*backfill_days is for the primary role/);
-    expect(bad(INGEST_ASSET_YAML.replace('source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], unit: usd, price_coingecko_id: mini-token }', 'source: { type: defillama, slug: mini, data_type: dailyHoldersRevenue }')))
+    expect(bad(INGEST_ASSET_YAML.replace('source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], unit: usd }', 'source: { type: defillama, slug: mini, data_type: dailyHoldersRevenue }')))
       .toMatch(/flow_usd\.fees\.cross_checks\.0.*cannot be cross-checked against defillama/);
   });
 
@@ -112,9 +112,18 @@ describe('declarative sources in the asset config', () => {
       .toMatch(/revenue_run_rate_usd.*cross_checks need a primary source/);
   });
 
-  it('requires a price id for a USD flow and keeps count_from inside the allowlist', () => {
-    expect(bad(INGEST_ASSET_YAML.replace('from_allowlist: [pool, safe], unit: usd, price_coingecko_id: mini-token }\n    cross_checks', 'from_allowlist: [pool, safe], unit: usd }\n    cross_checks')))
-      .toMatch(/flow_usd\.fees.*price_coingecko_id/);
+  it('refuses the retired price_coingecko_id by name at load (Phase 3 R2: a usd flow is valued at its chain price)', () => {
+    const msg = bad(INGEST_ASSET_YAML.replace('from_allowlist: [pool, safe], unit: usd }\n    cross_checks', 'from_allowlist: [pool, safe], unit: usd, price_coingecko_id: mini-token }\n    cross_checks'));
+    expect(msg).toMatch(/^metrics\.flow_usd\.fees\.source: Unrecognized key: "price_coingecko_id"/);
+    expect(bad(INGEST_ASSET_YAML)).toBe('');
+  });
+
+  it('a vault-share usd flow needs share_price.underlying (the token its chain price is read for); count_from stays inside the allowlist', () => {
+    const share = 'share_price: { contract: staking, function: pricePerShare, decimals: 18';
+    const flow = (sp: string) => INGEST_ASSET_YAML.replace('from_allowlist: [pool, safe], unit: usd }\n    cross_checks', `from_allowlist: [pool, safe], unit: usd, ${sp} }\n    cross_checks`);
+    expect(bad(flow(`${share} }`))).toMatch(/flow_usd\.fees.*needs share_price\.underlying/);
+    expect(bad(flow(`${share}, underlying: token }`))).toBe('');
+    expect(bad(flow(`${share}, underlying: nowhere }`))).toMatch(/flow_usd\.fees.*unknown contract "nowhere"/);
     expect(bad(INGEST_ASSET_YAML.replace('count_from: [pool]', 'count_from: [staking]'))).toMatch(/count_from "staking" is not in from_allowlist/);
   });
 

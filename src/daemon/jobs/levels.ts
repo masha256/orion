@@ -4,7 +4,8 @@ import { listRegistry } from '../../db/registry.js';
 import { listWatchStates, putWatchStates } from '../../db/watchState.js';
 import { realFetchDeps } from '../../ingest/deps.js';
 import type { FetchDeps } from '../../ingest/run.js';
-import { runLevels, type LevelsResult } from '../../levels/levels.js';
+import { formatPriceBreach, runLevels, type LevelsResult } from '../../levels/levels.js';
+import { loadPrices, type PriceEntry } from '../../prices/config.js';
 import { levelWatchRule, watchTransitions } from '../../levels/watchTransitions.js';
 import { pingDeadman } from '../../notify/deadman.js';
 import { formatWatchCleared, formatWatchPost } from '../../notify/format.js';
@@ -31,6 +32,8 @@ export interface LevelsJobResult {
   /** Posts Slack did not take after its retries: kept here, and the dead-man ping is withheld. */
   undelivered: string[];
   deadman: boolean;
+  /** The chain price write after the reads: rows written, hours missing, chain errors, breaches posted (null: none ran). */
+  prices: { written: number; missing: number; errors: string[]; breaches: string[] } | null;
 }
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -39,7 +42,9 @@ const aborted: JobOutcome = { status: 'failed', result: null, error: 'aborted: t
 /**
  * The hourly `levels` job (spec 5.4): reads the level metrics of every active asset into `latest_levels`, posts a watch
  * alert when a level watch starts or stops firing (state in `watch_state`; flow watches are the nightly's), and pings
- * `ORION_DEADMAN_URL` when every asset's read ran (per-source failures included) and every post was delivered. The job
+ * `ORION_DEADMAN_URL` when every asset's read ran (per-source failures included) and every post was delivered. After the
+ * reads it writes the recent chain prices of every prices.yaml ref (runLevels) and posts each check breach as
+ * `ORION WATCH <env> price <symbol> <ts>: <gap>% vs <check>` (never an anomaly: an anomaly starts a paid triage). The job
  * fails only when every asset failed; it is never retried (`max_attempts` 1: the next hour is the retry).
  */
 export function makeLevelsHandler(o: LevelsHandlerOptions = {}): JobHandler {
@@ -58,7 +63,14 @@ export function makeLevelsHandler(o: LevelsHandlerOptions = {}): JobHandler {
       }
     }
     const deps = o.fetchDeps ? o.fetchDeps(ctx) : realFetchDeps(ctx.envVars, () => ctx.clock.now());
-    const out = await runLevels(ctx.db, loaded, deps, now, job.id, { signal: ctx.signal });
+    let prices: Map<string, PriceEntry> | null = null;
+    let pricesError: string | null = null;
+    try {
+      prices = loadPrices(ctx.paths.configRoot);
+    } catch (err) {
+      pricesError = message(err).split('\n')[0];
+    }
+    const out = await runLevels(ctx.db, loaded, deps, now, job.id, { signal: ctx.signal, ...(prices ? { prices } : {}) });
     if (ctx.signal.aborted) return aborted;
     for (const p of out.perAsset) failed.push(...p.failed.map((f) => ({ assetId: p.assetId, ...f })));
     failed.sort((a, b) => (a.assetId === b.assetId ? (a.sourceId < b.sourceId ? -1 : 1) : a.assetId < b.assetId ? -1 : 1));
@@ -87,6 +99,16 @@ export function makeLevelsHandler(o: LevelsHandlerOptions = {}): JobHandler {
       cleared.push(...clearedNow);
       posts.push(...firedNow, ...clearedNow);
     }
+    // Each price check breach the write completed, once (the writer reports a breach run once, at the hour completing it).
+    const w = out.prices;
+    const breaches = (w?.result?.breaches ?? []).map((b) => formatPriceBreach(ctx.env, prices?.get(b.ref)?.symbol ?? b.ref, b));
+    posts.push(...breaches);
+    const priceSummary: LevelsJobResult['prices'] = w === null && pricesError === null ? null : {
+      written: Object.values(w?.result?.written ?? {}).reduce((a, b) => a + b, 0),
+      missing: w?.result?.missing.length ?? 0,
+      errors: [...(pricesError !== null ? [pricesError] : []), ...(w?.error !== null && w?.error !== undefined ? [w.error] : []), ...(w?.result?.errors ?? []).map((e) => `${e.chain}: ${e.error}`)],
+      breaches,
+    };
     const undelivered: string[] = [];
     for (const text of posts) {
       if (ctx.signal.aborted) return aborted;
@@ -104,7 +126,7 @@ export function makeLevelsHandler(o: LevelsHandlerOptions = {}): JobHandler {
     const deadman = threw.size === 0 && undelivered.length === 0
       ? await pingDeadman(ctx.envVars.ORION_DEADMAN_URL, o.fetch ?? fetch, (ms) => ctx.clock.sleep(ms))
       : false;
-    const result: LevelsJobResult = { assets: total, rows: out.rows.length, failed, fired, cleared, undelivered, deadman };
+    const result: LevelsJobResult = { assets: total, rows: out.rows.length, failed, fired, cleared, undelivered, deadman, prices: priceSummary };
     if (allFailed) return { status: 'failed', result, error: `every asset failed (${total})` };
     return { status: 'done', result };
   };

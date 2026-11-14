@@ -3,7 +3,12 @@ import { parseAssetYaml, type LoadedAsset } from '../../src/config/load.js';
 import type { Db } from '../../src/db/connection.js';
 import { listLatestLevels, upsertLatestLevels, deleteLatestLevels } from '../../src/db/latestLevels.js';
 import { insertObservation } from '../../src/db/observations.js';
-import { levelMetricKeys, prefetchMarkets, runLevels, toLatestLevels, withPrefetchedMarkets } from '../../src/levels/levels.js';
+import { fileURLToPath } from 'node:url';
+import { listPrices, upsertPrices, upsertToken } from '../../src/db/prices.js';
+import {
+  formatPriceBreach, LEVELS_PRICE_HOURS, levelMetricKeys, prefetchMarkets, recentPriceHours, runLevels, toLatestLevels, withPrefetchedMarkets,
+} from '../../src/levels/levels.js';
+import { loadPrices, methodSource } from '../../src/prices/config.js';
 import type { FetchDeps } from '../../src/ingest/run.js';
 import type { RpcTransport } from '../../src/ingest/transport/rpc.js';
 import { CG_MARKETS, harness, NOW } from '../helpers/fetchHarness.js';
@@ -225,5 +230,60 @@ describe('latest_levels store', () => {
     await upsertLatestLevels(testDb(), [row, { ...row, metricKey: 'n' }, { ...row, assetId: 'b' }]);
     expect(await deleteLatestLevels(testDb(), (r) => r.assetId === 'a')).toBe(1);
     expect((await listLatestLevels(testDb())).map((r) => `${r.assetId}.${r.metricKey}`)).toEqual(['a.m', 'a.n']);
+  });
+});
+
+describe('chain prices after the level reads (Phase 3 R2 Task 6a)', () => {
+  const ROOT = fileURLToPath(new URL('../..', import.meta.url));
+  const PRICES = loadPrices(ROOT);
+  const H = 3_600_000;
+  const TO = Math.floor(NOW.getTime() / H) * H; // the top of the current hour: the last completed hour is TO - 1 h
+  const [A, B] = [...PRICES.values()].sort((x, y) => (x.ref < y.ref ? -1 : 1));
+  const two = new Map([[A!.ref, A!], [B!.ref, B!]]);
+  const seed = async (ref: string, source: string, hourMs: number) => {
+    await upsertToken(testDb(), { tokenRef: ref, symbol: 'X', decimals: 18, coingeckoId: null });
+    await upsertPrices(testDb(), ref, source, [{ ts: new Date(hourMs).toISOString(), priceUsd: 1 }], NOW.toISOString());
+  };
+
+  it('recentPriceHours: from the hour after each ref\'s newest row under its primary\'s source, at most 48 h back, to the top of the hour', async () => {
+    // Nothing stored: 48 h back.
+    expect(await recentPriceHours(testDb(), two, NOW)).toEqual({ fromHourMs: TO - LEVELS_PRICE_HOURS * H, toHourMs: TO });
+    // A up to TO - 3 h; B only under another source (a CoinGecko row is not the ref's chain row): still 48 h for B.
+    await seed(A!.ref, methodSource(A!.primary), TO - 3 * H);
+    await seed(B!.ref, 'coingecko', TO - H);
+    expect(await recentPriceHours(testDb(), two, NOW)).toEqual({ fromHourMs: TO - 48 * H, toHourMs: TO });
+    expect(await recentPriceHours(testDb(), new Map([[A!.ref, A!]]), NOW)).toEqual({ fromHourMs: TO - 2 * H, toHourMs: TO });
+    // Both up to the last completed hour: nothing to write.
+    await seed(A!.ref, methodSource(A!.primary), TO - H);
+    await seed(B!.ref, methodSource(B!.primary), TO - H);
+    expect(await recentPriceHours(testDb(), two, NOW)).toBeNull();
+    // A ref whose newest row is older than 48 h starts 48 h back (the cap), not at its newest row.
+    expect(await recentPriceHours(testDb(), new Map([[A!.ref, A!]]), new Date(NOW.getTime() + 100 * H))).toEqual({ fromHourMs: TO + 100 * H - 48 * H, toHourMs: TO + 100 * H });
+    expect(await recentPriceHours(testDb(), new Map(), NOW)).toBeNull();
+  });
+
+  it('runLevels: after the reads, one writer run over every prices.yaml ref; a writer that throws is recorded, never fails the read', async () => {
+    const h = harness(testDb());
+    const r = await runLevels(testDb(), [h.loaded], h.deps, NOW, 7, { prices: PRICES });
+    expect(r.rows.length).toBeGreaterThan(0);
+    expect(h.prices.calls).toEqual([{ refs: [...PRICES.keys()].sort(), fromHourMs: TO - 48 * H, toHourMs: TO, dryRun: false }]);
+    expect(r.prices).toMatchObject({ fromHourMs: TO - 48 * H, toHourMs: TO, error: null });
+    // The last completed hour of every ref is written.
+    for (const ref of PRICES.keys()) expect((await listPrices(testDb(), ref)).map((p) => p.ts), ref).toContain(new Date(TO - H).toISOString());
+    // No prices map (a config root without prices.yaml): no write at all.
+    const none = harness(testDb());
+    expect((await runLevels(testDb(), [none.loaded], none.deps, NOW, 8)).prices).toBeNull();
+    expect(none.prices.calls).toEqual([]);
+    const broken: FetchDeps = { ...h.deps, priceWriter: async () => Promise.reject(new Error('rpc down')) };
+    const b = await runLevels(testDb(), [h.loaded], broken, new Date(NOW.getTime() + H), 9, { prices: PRICES });
+    expect(b.prices).toMatchObject({ result: null, error: 'rpc down' });
+    expect(b.rows.length).toBeGreaterThan(0);
+  });
+
+  it('formatPriceBreach: ORION WATCH <env> price <symbol> <ts>: <gap>% vs <check>', () => {
+    expect(formatPriceBreach('prod', 'CRV', { ref: A!.ref, hourMs: TO - H, gapPct: 1.8349, check: 'chain:chainlink' }))
+      .toBe(`ORION WATCH prod price CRV ${new Date(TO - H).toISOString()}: +1.83% vs chain:chainlink`);
+    expect(formatPriceBreach('stage', 'sdCRV', { ref: A!.ref, hourMs: TO - H, gapPct: -12.5, check: 'chain:bound (no_independent_check)' }))
+      .toBe(`ORION WATCH stage price sdCRV ${new Date(TO - H).toISOString()}: -12.50% vs chain:bound (no_independent_check)`);
   });
 });

@@ -9,6 +9,8 @@ import { addDays } from '../../src/ingest/time.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import type { TransferLog } from '../../src/ingest/transport/rpc.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
+import { evmTokenRef } from '../../src/db/prices.js';
+import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
@@ -31,17 +33,6 @@ const lc = (a: string) => a.toLowerCase();
 const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENESIS_TS) / BLOCK_SEC));
 const STRANGER = '0x7630c870da0f44308a2676898010bed93bd89c19';
 const VRD = '0x675671a8756ddb69f7254afb030865388ef699ee'; // VestedRewardsDistribution: funds the SKY farm
-
-function chart(price: number) {
-  return (url: string): { prices: [number, number][] } => {
-    const days = Number(new URL(url).searchParams.get('days'));
-    const end = NOW.getTime();
-    const step = days > 90 ? 86_400_000 : 3_600_000;
-    const prices: [number, number][] = [];
-    for (let t = end - days * 86_400_000; t <= end; t += step) prices.push([t, price]);
-    return { prices };
-  };
-}
 
 type Log = Omit<TransferLog, 'timestamp'>;
 const daily = (first: string, n: number, from: string, tokens: bigint, tag: string): Log[] =>
@@ -70,8 +61,6 @@ const logsTo: Record<string, Log[]> = {
 function world() {
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'sky', symbol: 'sky', current_price: PRICE, market_cap: 1.64e9, circulating_supply: 23_428_082_223, total_supply: SUPPLY }],
-    'https://api.coingecko.com/api/v3/coins/sky/market_chart': chart(PRICE),
-    'https://api.coingecko.com/api/v3/coins/usds/market_chart': chart(1),
   });
   const base = fakeRpc({
     genesisTs: GENESIS_TS,
@@ -93,7 +82,9 @@ function world() {
       return (logsTo[`${lc(q.token)}>${lc(q.to)}`] ?? []).filter((l) => l.blockNumber >= q.fromBlock && l.blockNumber <= q.toBlock).map((l) => ({ ...l, timestamp: base.timestampOf(l.blockNumber) }));
     },
   };
-  const deps: FetchDeps = { http, rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW };
+  const deps: FetchDeps = { http, rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW,
+    // Chain prices, flat: USDS at 1 and SKY at PRICE (the CoinGecko charts this test served before Phase 3 R2).
+    priceWriter: fakePriceWriter((ref) => (ref === evmTokenRef(1, C.usds!) ? 1 : PRICE)) };
   return { db: testDb(), deps, http };
 }
 
@@ -119,7 +110,8 @@ describe('assets/sky.yaml', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
-    expect(loadAsset(ROOT, 'sky').hash).toBe('9d97775d492bb27d81d84f7558f35b724faab7a390d892899c6fb19bfd0cfa3d');
+    // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
+    expect(loadAsset(ROOT, 'sky').hash).toBe('48c23f2592346bde8713ac8c9ecc946941a0d47961f73728840cac563efd3825');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

@@ -5,6 +5,12 @@ import { listLatestLevels } from '../../src/db/latestLevels.js';
 import { setRegistryState } from '../../src/db/registry.js';
 import { INGEST_ASSET_YAML, METRICS_END } from '../helpers/ingestAsset.js';
 import { harness } from '../helpers/fetchHarness.js';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { listPrices } from '../../src/db/prices.js';
+import { loadPrices, methodSource } from '../../src/prices/config.js';
+import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { useTestDb } from '../helpers/db.js';
 import { activate, cleanupAfterAll, handlerFor, levelsContext, levelsJob, levelsWorld } from '../helpers/levelsWorld.js';
 
@@ -13,6 +19,7 @@ const worlds: { cleanup(): void }[] = [];
 cleanupAfterAll(worlds);
 
 const SLOT = '2026-09-19T12:15:00.000Z';
+const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const DEADMAN = 'https://hc.example/ping/levels';
 const asId = (id: string, yaml = INGEST_ASSET_YAML) => yaml.replace('id: mini\n', `id: ${id}\n`);
 /** Chain 1 has no keyless RPC default: with its variable unset the whole fetch throws (missing_rpc_url). */
@@ -31,7 +38,7 @@ describe('levels job', () => {
     const h = harness(testDb());
     const run = levelsContext(testDb(), w.root, SLOT, { ORION_DEADMAN_URL: DEADMAN });
     const out = await handlerFor(run, h.deps)(levelsJob(1, SLOT), run.ctx);
-    expect(out).toEqual({ status: 'done', result: { assets: 2, rows: 10, failed: [], fired: [], cleared: [], undelivered: [], deadman: true } });
+    expect(out).toEqual({ status: 'done', result: { assets: 2, rows: 10, failed: [], fired: [], cleared: [], undelivered: [], deadman: true, prices: null } });
     expect(run.pings).toEqual([DEADMAN]);
     expect((await listLatestLevels(testDb())).every((r) => r.jobId === 1)).toBe(true);
 
@@ -108,6 +115,36 @@ describe('levels job', () => {
     expect(out).toMatchObject({ status: 'failed', error: 'aborted: the lease was lost' });
     expect(run.pings).toEqual([]);
     expect(await listLatestLevels(testDb())).toEqual([]);
+  });
+
+  it('levelsJob: writes the last completed hour of every prices.yaml ref, and posts each breach the write reports once (ORION WATCH, never an anomaly)', async () => {
+    const w = await world({ mini: INGEST_ASSET_YAML }, ['mini']);
+    // The repo's prices.yaml, plus the mini token (its usd flows are valued at it: the load-time check wants its entry).
+    const mini = `"eip155:8453/0x1111111111111111111111111111111111111111":\n  symbol: MINI\n  decimals: 18\n  chain: eip155:8453\n  valid_from: "2026-09-01"\n` +
+      `  primary: { kind: chainlink, feed: "0x${'a'.repeat(40)}" }\n  check: { kind: chainlink, feed: "0x${'b'.repeat(40)}", tolerance_pct: 2 }\n`;
+    writeFileSync(join(w.root, 'prices.yaml'), `${readFileSync(join(ROOT, 'prices.yaml'), 'utf8')}\n${mini}`);
+    const prices = loadPrices(w.root);
+    expect(prices.size).toBe(loadPrices(ROOT).size + 1);
+    const crv = [...prices.values()].find((e) => e.symbol === 'CRV')!;
+    const lastHour = Date.parse('2026-09-19T11:00:00.000Z');
+    const breach = { ref: crv.ref, hourMs: lastHour, gapPct: -1.7, check: 'chain:chainlink' };
+    const h = harness(testDb());
+    const primary = (ref: string) => methodSource(prices.get(ref)!.primary); // stored as the real writer stores it
+    const writer = fakePriceWriter(() => 10, { breaches: [breach] }, primary);
+    const run = levelsContext(testDb(), w.root, '2026-09-19T12:15:00.000Z', { ORION_DEADMAN_URL: DEADMAN });
+    const out = await handlerFor(run, { ...h.deps, priceWriter: writer })(levelsJob(1, SLOT), run.ctx);
+    const post = 'ORION WATCH dev price CRV 2026-09-19T11:00:00.000Z: -1.70% vs chain:chainlink';
+    expect(out).toMatchObject({ status: 'done', result: { prices: { written: prices.size * 48, missing: 0, errors: [], breaches: [post] }, deadman: true } });
+    expect(run.posts).toEqual([post]);
+    for (const ref of prices.keys()) expect((await listPrices(testDb(), ref)).map((p) => p.ts), ref).toContain('2026-09-19T11:00:00.000Z');
+    expect(await testDb().all('SELECT id FROM anomalies')).toEqual([]);
+
+    // The next hour: only the new hour is written for every ref; no breach reported, nothing posted.
+    const next = levelsContext(testDb(), w.root, '2026-09-19T13:15:00.000Z');
+    const quiet = fakePriceWriter(() => 10, {}, primary);
+    await handlerFor(next, { ...h.deps, priceWriter: quiet })(levelsJob(2, SLOT), next.ctx);
+    expect(quiet.calls.map((c) => [new Date(c.fromHourMs).toISOString(), new Date(c.toHourMs).toISOString()])).toEqual([['2026-09-19T12:00:00.000Z', '2026-09-19T13:00:00.000Z']]);
+    expect(next.posts).toEqual([]);
   });
 
   it('levelsJob: the daemon runs the levels handler', () => {

@@ -94,7 +94,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     critical: true
-    source: { type: transfer_flow, token: crvusd, to: gauge, from_allowlist: [ accumulator ], unit: usd, price_coingecko_id: crvusd }
+    source: { type: transfer_flow, token: crvusd, to: gauge, from_allowlist: [ accumulator ], unit: usd }
 
   flow_usd.crv:
     type: flow
@@ -102,7 +102,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     critical: true
-    source: { type: transfer_flow, token: crv, to: gauge, from_allowlist: [ accumulator ], unit: usd, price_coingecko_id: curve-dao-token }
+    source: { type: transfer_flow, token: crv, to: gauge, from_allowlist: [ accumulator ], unit: usd }
 
   # Bribes arrive as sdCRV: priced at sdCRV's own price (a fall in sdCRV lowers this stream as well as the spot).
   flow_usd.bribes:
@@ -111,7 +111,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     critical: true
-    source: { type: transfer_flow, token: token, to: merkle_stash, from_allowlist: [ botmarket ], unit: usd, price_coingecko_id: stake-dao-crv }
+    source: { type: transfer_flow, token: token, to: merkle_stash, from_allowlist: [ botmarket ], unit: usd }
 
   # Report-only (monitor_only, never a driver). StakeDAO's revenue: the 16.5 percent its Accountant keeps of strategy CRV
   # (sent on to the FeeReceiver, which splits it about evenly between veSDT, the treasury and sdCRV), plus the 15 percent
@@ -124,14 +124,14 @@ metrics:
     staleness_days: 10
     monitor_only: true
     # from_ignore_clones_of: the sidecar clones (implementations above): other strategies' CRV, not the locker's.
-    source: { type: transfer_flow, token: crv, to: sd_accountant, from_allowlist: [ locker ], from_ignore_clones_of: [ sd_sidecar_impl_a, sd_sidecar_impl_b ], unit: usd, price_coingecko_id: curve-dao-token }
+    source: { type: transfer_flow, token: crv, to: sd_accountant, from_allowlist: [ locker ], from_ignore_clones_of: [ sd_sidecar_impl_a, sd_sidecar_impl_b ], unit: usd }
   flow_usd.sd_rev_crv:
     type: flow
     unit: usd
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: crv, to: sd_fee_receiver, from_allowlist: [ sd_accountant, sd_staking_v2_fee ], unit: usd, price_coingecko_id: curve-dao-token }
+    source: { type: transfer_flow, token: crv, to: sd_fee_receiver, from_allowlist: [ sd_accountant, sd_staking_v2_fee ], unit: usd }
   # The FeeReceiver splits the CRV fee three ways (91 days to 2026-10-11: veSDT 36, treasury 33, sdCRV accumulator 30
   # percent). The accumulator's part reaches sdCRV stakers (and boost delegators), so only veSDT and the treasury are
   # StakeDAO's protocol revenue (Mike, 2026-10-11). sd_rev_crv above is the whole fee, kept as a record.
@@ -141,14 +141,14 @@ metrics:
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: crv, to: sd_vesdt_recipient, from_allowlist: [ sd_fee_receiver ], unit: usd, price_coingecko_id: curve-dao-token }
+    source: { type: transfer_flow, token: crv, to: sd_vesdt_recipient, from_allowlist: [ sd_fee_receiver ], unit: usd }
   flow_usd.sd_rev_crv_treasury:
     type: flow
     unit: usd
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: crv, to: sd_treasury, from_allowlist: [ sd_fee_receiver ], unit: usd, price_coingecko_id: curve-dao-token }
+    source: { type: transfer_flow, token: crv, to: sd_treasury, from_allowlist: [ sd_fee_receiver ], unit: usd }
   # The accumulator passes part of its CRV fee to veCRV boost delegators (VeBoostDelegationMultiRewards): a cost.
   flow_usd.sd_boost_delegation:
     type: flow
@@ -156,21 +156,21 @@ metrics:
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: crv, to: sd_boost_delegation, from_allowlist: [ accumulator ], unit: usd, price_coingecko_id: curve-dao-token }
+    source: { type: transfer_flow, token: crv, to: sd_boost_delegation, from_allowlist: [ accumulator ], unit: usd }
   flow_usd.sd_rev_fees_liquidity:
     type: flow
     unit: usd
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: crvusd, to: sd_liquidity_fee, from_allowlist: [ accumulator ], unit: usd, price_coingecko_id: crvusd }
+    source: { type: transfer_flow, token: crvusd, to: sd_liquidity_fee, from_allowlist: [ accumulator ], unit: usd }
   flow_usd.sd_rev_fees_treasury:
     type: flow
     unit: usd
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: crvusd, to: sd_treasury, from_allowlist: [ accumulator ], unit: usd, price_coingecko_id: crvusd }
+    source: { type: transfer_flow, token: crvusd, to: sd_treasury, from_allowlist: [ accumulator ], unit: usd }
 
 # Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
 # the holders and below_line lines):

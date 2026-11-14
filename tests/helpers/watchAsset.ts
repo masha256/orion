@@ -17,7 +17,7 @@ export function watchAssetYaml(opts: { above?: number; changePct?: number; outsi
     staleness_days: 10
     monitor_only: true
     watch: { above: ${opts.above ?? 1000} }
-    source: { type: transfer_flow, token: token, to: treasury, from_allowlist: [pool], unit: usd, price_coingecko_id: mini-token }
+    source: { type: transfer_flow, token: token, to: treasury, from_allowlist: [pool], unit: usd }
 ${
   levels
     ? `  stats_price:

@@ -256,6 +256,17 @@ describe('approving a config proposal', () => {
     expect(readFileSync(yamlPath, 'utf8')).toBe(before);
   });
 
+  it('proposals: approving a config proposal that puts back the retired price_coingecko_id is refused by name (Phase 3 R2)', async () => {
+    const before = readFileSync(yamlPath, 'utf8');
+    const source = { type: 'transfer_flow', token: 'token', to: 'token', from_any: true, unit: 'usd', price_coingecko_id: 'mini-token' };
+    const p = await file({ kind: 'config', edits: [{ path: ['metrics', 'flow_usd.fees', 'source'], value: source }] }, [null]);
+    await expect(approve(p.id)).rejects.toThrow(expect.objectContaining({
+      code: 'invalid_asset_config', message: expect.stringContaining('metrics.flow_usd.fees.source: Unrecognized key: "price_coingecko_id"'),
+    }));
+    expect((await getProposal(w.db, p.id))!.status).toBe('pending');
+    expect(readFileSync(yamlPath, 'utf8')).toBe(before);
+  });
+
   it('restores the file when marking the proposal approved fails', async () => {
     const before = readFileSync(yamlPath, 'utf8');
     const p = await file(stalenessEdit, [7]);

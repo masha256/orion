@@ -106,7 +106,7 @@ metrics:
     cadence: daily
     staleness_days: 4
     critical: true
-    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [ programmatic_burner, buyback_burner ], unit: usd, price_coingecko_id: {{coingecko_id}} }
+    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [ programmatic_burner, buyback_burner ], unit: usd }
   flow_tokens.burn:
     type: flow
     unit: tokens
@@ -121,7 +121,7 @@ metrics:
     cadence: daily
     staleness_days: 4
     monitor_only: true
-    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [ programmatic_burner, buyback_burner ], count_from: [ programmatic_burner ], unit: usd, price_coingecko_id: {{coingecko_id}} }
+    source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [ programmatic_burner, buyback_burner ], count_from: [ programmatic_burner ], unit: usd }
   # Usage momentum, watched: a move this large with no new disclosure is reported (never an anomaly).
   usage_watch:
     type: level

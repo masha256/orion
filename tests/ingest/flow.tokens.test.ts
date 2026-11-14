@@ -9,7 +9,7 @@ import { scanFlowGroup, type FlowScanArgs } from '../../src/ingest/flow.js';
 import { writePeriodicPayments } from '../../src/ingest/periodic.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import type { TransferLog } from '../../src/ingest/transport/rpc.js';
-import { CG_CHART, harness, hourlyPrices, NOW, type Harness } from '../helpers/fetchHarness.js';
+import { harness, NOW, type Harness } from '../helpers/fetchHarness.js';
 import { POOL, SAFE, TOKEN } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
 
@@ -19,8 +19,8 @@ const testDb = useTestDb();
 const E18 = 10n ** 18n;
 const ms = (iso: string) => Date.parse(iso);
 
-/** Price 10 until 2026-09-17T00:00Z, 20 from then on (the fixture of tests/ingest/flow.test.ts). */
-const stepPrices = () => hourlyPrices('2026-09-10T00:00:00Z', '2026-09-19T12:00:00Z', (t) => (t < ms('2026-09-17T00:00:00Z') ? 10 : 20));
+/** The chain price: 10 until 2026-09-17T00:00Z, 20 from then on (the fixture of tests/ingest/flow.test.ts). */
+const stepPrice = (_ref: string, t: number) => (t < ms('2026-09-17T00:00:00Z') ? 10 : 20);
 
 /** The flow.test.ts world, plus transfers spread over several hours of the 18th. */
 function world(): Harness {
@@ -39,13 +39,13 @@ function world(): Harness {
     log('2026-09-18T06:00:00Z', POOL, 0n, 333_333_333_333_333_333n),
     log('2026-09-18T17:15:00Z', SAFE, 11n),
   ];
-  return harness(testDb(), { routes: { [CG_CHART]: stepPrices() }, logs });
+  return harness(testDb(), { price: stepPrice, logs });
 }
 
 async function argsFor(h: Harness, over: Partial<FlowScanArgs> = {}): Promise<FlowScanArgs> {
   const latest = await h.rpc.latestBlock();
   return {
-    db: h.db, asset: h.loaded.config, configHash: h.loaded.hash, group: buildPlan(h.loaded.config).flowGroups[0], rpc: h.rpc, latest, http: h.http, env: {},
+    db: h.db, asset: h.loaded.config, configHash: h.loaded.hash, group: buildPlan(h.loaded.config).flowGroups[0], rpc: h.rpc, latest, priceWriter: h.deps.priceWriter!,
     sleep: async () => undefined, now: h.deps.now(), backfillDays: 3, rescan: false, adopt: false, dryRun: false, ...over,
   };
 }
@@ -84,24 +84,24 @@ describe('transfer scan: token amounts beside value', () => {
     expect(nonZero(prog[2]!.hourlyAmounts!)).toEqual({ 5: expect.closeTo(1.123456789012345678, 12), 6: expect.closeTo(0.333333333333333333, 12) });
   });
 
-  it('the value written is unchanged (same fixture, same USD as before Task 7)', async () => {
+  it('the value written is unchanged (same fixture, same USD as before Task 7): hour buckets x the same hourly prices', async () => {
     const h = world();
     await scanFlowGroup(await argsFor(h));
-    // The per-transfer method: 16th 102 tokens at 10; 17th 3 at 20; 18th (1.1234... + 7.000...001 + 0.333... + 11) at 20.
+    // Hour buckets (Phase 3 R2): 16th 102 tokens at 10; 17th 3 at 20; 18th (1.1234... + 7.000...001 + 0.333... + 11) at 20.
     const d18 = (1 + 123_456_789_012_345_678 / 1e18) + (7 + 1 / 1e18) + 333_333_333_333_333_333 / 1e18 + 11;
     const usd = await tokensOf(h, 'flow_usd.fees');
     expect(usd.map((r) => [r.day, r.value])).toEqual([['2026-09-17', 1020], ['2026-09-18', 60], ['2026-09-19', expect.closeTo(d18 * 20, 9)]]);
     // Same sums as tests/ingest/flow.test.ts pins for this fixture (its 16th and 17th).
     expect(usd[0]!.amount).toBe(102);
     expect(usd[1]!.amount).toBe(3);
-    // Every hourly point the scan loaded is in prices (the existing market_chart read; no new request).
+    // The chain prices of every scanned hour were ensured through the price writer (no market_chart request at all).
     const prices = await listPrices(h.db, evmTokenRef(8453, TOKEN));
-    expect(prices).toHaveLength(stepPrices().prices.length);
-    expect(prices[0]).toMatchObject({ ts: '2026-09-10T00:00:00.000Z', priceUsd: 10, source: 'coingecko' });
-    expect(h.http.calls.filter((c) => c.url.includes('market_chart'))).toHaveLength(1);
+    expect(prices).toHaveLength(3 * 24);
+    expect(prices[0]).toMatchObject({ ts: '2026-09-16T00:00:00.000Z', priceUsd: 10, source: 'chain:test' });
+    expect(h.http.calls).toEqual([]);
   });
 
-  it('a dry run writes no tokens and no prices', async () => {
+  it('a dry run writes no tokens and no prices (R19: the writer computes them in memory)', async () => {
     const h = world();
     await scanFlowGroup(await argsFor(h, { dryRun: true }));
     expect(await listPrices(h.db, evmTokenRef(8453, TOKEN))).toEqual([]);

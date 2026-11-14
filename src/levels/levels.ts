@@ -5,7 +5,10 @@ import type { Db } from '../db/connection.js';
 import { upsertLatestLevels, type LatestLevel } from '../db/latestLevels.js';
 import { getAdapter } from '../ingest/adapters/registry.js';
 import { buildPlan } from '../ingest/plan.js';
-import { fetchAsset, type FetchDeps } from '../ingest/run.js';
+import { MS_PER_HOUR } from '../db/prices.js';
+import { fetchAsset, priceWriterOf, type FetchDeps } from '../ingest/run.js';
+import { methodSource, type PriceEntry } from '../prices/config.js';
+import type { WriteResult } from '../prices/types.js';
 import { coingeckoBase, coingeckoHeaders } from '../ingest/sources/coingecko.js';
 import type { HttpTransport } from '../ingest/transport/http.js';
 import type { BlockRef, RpcFactory } from '../ingest/transport/rpc.js';
@@ -20,6 +23,47 @@ export const MARKETS_BATCH = 250;
 export interface LevelsResult {
   perAsset: { assetId: string; ok: string[]; failed: { sourceId: string; error: string }[]; firings: WatchFiring[] }[];
   rows: LatestLevel[];
+  /** The chain price write after the level reads (null: no prices.yaml entry, or nothing to write this hour). */
+  prices: LevelsPriceWrite | null;
+}
+
+/** How far back the hourly job writes a ref's chain prices: the hours since its newest stored hour, at most this many. */
+export const LEVELS_PRICE_HOURS = 48;
+
+export interface LevelsPriceWrite {
+  fromHourMs: number;
+  toHourMs: number;
+  /** The writer's result; null when it threw (`error`). */
+  result: WriteResult | null;
+  error: string | null;
+}
+
+/**
+ * The hours the hourly job writes (Phase 3 R2 Task 6a): for every ref of prices.yaml, from the hour after its newest row
+ * under its primary's source, at most LEVELS_PRICE_HOURS back, up to the top of the current hour (the last completed
+ * hour is the newest a row can be written for). One writer run over the earliest such hour: hours already stored are
+ * skipped without a read. Null when every ref is up to date.
+ */
+export async function recentPriceHours(db: Db, prices: ReadonlyMap<string, PriceEntry>, now: Date): Promise<{ fromHourMs: number; toHourMs: number } | null> {
+  if (prices.size === 0) return null;
+  const toHourMs = Math.floor(now.getTime() / MS_PER_HOUR) * MS_PER_HOUR;
+  const floor = toHourMs - LEVELS_PRICE_HOURS * MS_PER_HOUR;
+  const newest = await db.all<{ token_ref: string; source: string; ts: string }>(
+    'SELECT token_ref, source, max(ts) AS ts FROM prices WHERE token_ref = ANY($1::text[]) AND ts >= $2 GROUP BY token_ref, source',
+    [[...prices.keys()], new Date(floor).toISOString()],
+  );
+  let fromHourMs = toHourMs;
+  for (const e of prices.values()) {
+    const row = newest.find((r) => r.token_ref === e.ref && r.source === methodSource(e.primary));
+    const from = row ? Math.max(floor, new Date(row.ts).getTime() + MS_PER_HOUR) : floor;
+    fromHourMs = Math.min(fromHourMs, from);
+  }
+  return fromHourMs < toHourMs ? { fromHourMs, toHourMs } : null;
+}
+
+/** `ORION WATCH <env> price <symbol> <ts>: <gap>% vs <check>`: a price check breach (plan P5; never an anomaly). */
+export function formatPriceBreach(env: string, symbol: string, b: WriteResult['breaches'][number]): string {
+  return `ORION WATCH ${env} price ${symbol} ${new Date(b.hourMs).toISOString()}: ${b.gapPct >= 0 ? '+' : ''}${b.gapPct.toFixed(2)}% vs ${b.check}`;
 }
 
 /**
@@ -34,7 +78,11 @@ export function levelMetricKeys(asset: AssetConfig): string[] {
     .sort();
 }
 
-/** The CoinGecko ids an asset's hourly read asks /coins/markets for (primaries and cross-checks). */
+/**
+ * The CoinGecko ids an asset's hourly read asks /coins/markets for (primaries and cross-checks): every coingecko source
+ * still configured. Since Phase 3 R2 no flow or burn reads a CoinGecko price; `circulating_supply` stays (R3), and
+ * `price_usd` until its sources move to the chain price (Task 6b).
+ */
 function coingeckoIds(asset: AssetConfig, metrics: string[]): string[] {
   return buildPlan(asset, { metrics })
     .batches.flatMap((b) => b.requests)
@@ -117,8 +165,12 @@ const message = (err: unknown): string => (err instanceof Error ? err.message : 
  * The hourly read (spec 5.4): each asset's level metrics through fetchAsset as a dry run, with every CoinGecko markets
  * read answered from one batched call, written to `latest_levels` only (never observations, fetch_runs or anomalies).
  * An asset whose fetch throws is listed failed (source `*`) and the others continue. `signal`: stop between assets.
+ * Then (Phase 3 R2) the chain prices of every ref in `prices` (prices.yaml) for the hours recentPriceHours names, through
+ * the writer (deps.priceWriter, else writeChainPrices); its breaches are the caller's to post.
  */
-export async function runLevels(db: Db, assets: LoadedAsset[], deps: FetchDeps, now: Date, jobId: number, opts: { signal?: AbortSignal } = {}): Promise<LevelsResult> {
+export async function runLevels(
+  db: Db, assets: LoadedAsset[], deps: FetchDeps, now: Date, jobId: number, opts: { signal?: AbortSignal; prices?: ReadonlyMap<string, PriceEntry> } = {},
+): Promise<LevelsResult> {
   const keys = new Map(assets.map((a) => [a.config.id, levelMetricKeys(a.config)]));
   const ids: string[] = [];
   for (const a of assets) {
@@ -138,7 +190,7 @@ export async function runLevels(db: Db, assets: LoadedAsset[], deps: FetchDeps, 
   }
   const http = withPrefetchedMarkets(deps.http, markets);
 
-  const result: LevelsResult = { perAsset: [], rows: [] };
+  const result: LevelsResult = { perAsset: [], rows: [], prices: null };
   for (const a of assets) {
     if (opts.signal?.aborted) break;
     const entry: LevelsResult['perAsset'][number] = { assetId: a.config.id, ok: [], failed: [], firings: [] };
@@ -162,6 +214,16 @@ export async function runLevels(db: Db, assets: LoadedAsset[], deps: FetchDeps, 
     } catch (err) {
       entry.failed = [{ sourceId: '*', error: message(err) }];
     }
+  }
+  if (opts.signal?.aborted || !opts.prices) return result;
+  const hours = await recentPriceHours(db, opts.prices, now);
+  if (hours === null) return result;
+  const write: LevelsPriceWrite = { ...hours, result: null, error: null };
+  result.prices = write;
+  try {
+    write.result = await priceWriterOf(deps, opts.prices)(db, [...opts.prices.keys()].sort(), hours.fromHourMs, hours.toHourMs, opts.signal ? { signal: opts.signal } : {});
+  } catch (err) {
+    write.error = message(err);
   }
   return result;
 }

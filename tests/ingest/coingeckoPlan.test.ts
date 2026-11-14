@@ -3,9 +3,7 @@ import { parseAssetYaml } from '../../src/config/load.js';
 import { fetchAsset } from '../../src/ingest/run.js';
 import { COINGECKO_API, coingeckoBase, coingeckoHeaders } from '../../src/ingest/sources/coingecko.js';
 import { getSourceHandler } from '../../src/ingest/sources/registry.js';
-import { isMarketChartUrl, withSharedCache } from '../../src/ingest/transport/http.js';
-import { isMarketChartBody } from '../../src/ingest/flow.js';
-import { CG_CHART, harness, NOW } from '../helpers/fetchHarness.js';
+import { harness, MINI_REF, NOW } from '../helpers/fetchHarness.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
@@ -47,12 +45,11 @@ describe('COINGECKO_PLAN', () => {
   it('coingecko: a whole fetch on the pro plan reaches only the pro host for CoinGecko', async () => {
     const proRoutes = {
       [`${PRO}/coins/markets`]: [{ id: 'mini-token', current_price: 10, market_cap: 600, circulating_supply: 60 }],
-      [`${PRO}/coins/mini-token/market_chart`]: { prices: Array.from({ length: 240 }, (_, i) => [Date.parse('2026-09-10T00:00:00Z') + i * 3_600_000, 10]) },
     };
     const h = harness(testDb(), { routes: proRoutes, env: { TEST_RPC_URL: 'http://rpc.test', COINGECKO_PLAN: 'pro', COINGECKO_API_KEY: 'k' } });
     const r = await fetchAsset(h.db, h.loaded, NOW, h.deps, { dryRun: true });
     const cg = h.http.calls.filter((c) => c.url.includes('coingecko'));
-    expect(cg.length).toBeGreaterThan(1);
+    expect(cg.length).toBe(1); // the markets read (no price chart since Phase 3 R2)
     expect(cg.every((c) => c.url.startsWith(`${PRO}/`) && c.headers['x-cg-pro-api-key'] === 'k')).toBe(true);
     expect(r.sources.find((s) => s.sourceId === 'coingecko')?.status).toBe('ok');
   });
@@ -63,61 +60,13 @@ describe('COINGECKO_PLAN', () => {
   });
 });
 
-describe('shared market_chart cache (N8)', () => {
-  it('sharedCache: two assets with the same price id fetch market_chart once', async () => {
+describe('no CoinGecko price chart (Phase 3 R2 Task 6a)', () => {
+  it('a full fetch values its transfer flows at chain prices: no market_chart request; /coins/markets only for the level ids', async () => {
     const h = harness(testDb());
-    const other = parseAssetYaml(INGEST_ASSET_YAML.replace('id: mini\n', 'id: mini2\n'));
-    const charts = () => h.http.calls.filter((c) => c.url.startsWith(CG_CHART)).length;
-
-    const cache = new Map<string, Promise<unknown>>();
-    const deps = { ...h.deps, sharedHttpCache: cache };
-    const a = await fetchAsset(h.db, h.loaded, NOW, deps);
-    expect(charts()).toBe(1);
-    const b = await fetchAsset(h.db, other, NOW, deps);
-    expect(charts()).toBe(1);
-    // Only the chart is shared: each asset reads its own markets row.
-    expect(h.http.calls.filter((c) => c.url.includes('/coins/markets')).length).toBe(2);
-    const flows = (r: typeof a) => r.written.filter((w) => w.metricKey.startsWith('flow_')).map((w) => [w.metricKey, w.observedAt, w.value]);
-    expect(flows(b)).toEqual(flows(a));
-
-    // Without the map every asset fetches its own (today's behaviour).
-    const c = await fetchAsset(h.db, parseAssetYaml(INGEST_ASSET_YAML.replace('id: mini\n', 'id: mini3\n')), NOW, h.deps);
-    expect(charts()).toBe(2);
-    expect(flows(c)).toEqual(flows(a));
-  });
-
-  it('sharedCache: only matching URLs are shared, and a failure is not kept', async () => {
-    let fail = true;
-    const inner = fakeHttp({
-      'https://x.test/chart': () => {
-        if (fail) {
-          fail = false;
-          throw new Error('boom');
-        }
-        return { ok: 1 };
-      },
-      'https://x.test/other': { other: 1 },
-    });
-    const cache = new Map<string, Promise<unknown>>();
-    const http = withSharedCache(inner, cache, (url) => url.includes('/chart'));
-    await expect(http.getJson('https://x.test/chart')).rejects.toThrow(/boom/);
-    expect(await http.getJson('https://x.test/chart')).toEqual({ ok: 1 });
-    expect(await withSharedCache(inner, cache, (url) => url.includes('/chart')).getJson('https://x.test/chart')).toEqual({ ok: 1 });
-    await http.getJson('https://x.test/other');
-    await http.getJson('https://x.test/other');
-    expect(inner.calls.map((c) => c.url)).toEqual(['https://x.test/chart', 'https://x.test/chart', 'https://x.test/other', 'https://x.test/other']);
-  });
-
-  it('shared cache (M-8): a 200 reply that fails validation (a rate-limit body) is not kept; the next asset asks again', async () => {
-    let n = 0;
-    const inner = fakeHttp({ 'https://x.test/market_chart': () => (++n === 1 ? { status: { error_code: 429, error_message: 'rate limited' } } : { prices: [[1, 2]] }) });
-    const cache = new Map<string, Promise<unknown>>();
-    const http = withSharedCache(inner, cache, isMarketChartUrl, isMarketChartBody);
-    expect(await http.getJson('https://x.test/market_chart')).toEqual({ status: { error_code: 429, error_message: 'rate limited' } });
-    expect(await http.getJson('https://x.test/market_chart')).toEqual({ prices: [[1, 2]] });
-    expect(await http.getJson('https://x.test/market_chart')).toEqual({ prices: [[1, 2]] }); // a good one is kept
-    expect(n).toBe(2);
-    expect(isMarketChartBody({ prices: [] })).toBe(false);
-    expect(isMarketChartBody({ prices: [[1, 0]] })).toBe(false);
+    const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
+    expect(r.written.filter((w) => w.metricKey === 'flow_usd.fees').length).toBeGreaterThan(0);
+    expect(h.http.calls.filter((c) => c.url.includes('market_chart'))).toEqual([]);
+    expect(h.http.calls.filter((c) => c.url.includes('coingecko')).map((c) => new URL(c.url).pathname)).toEqual(['/api/v3/coins/markets']);
+    expect(h.prices.calls.map((c) => c.refs)).toEqual([[MINI_REF]]);
   });
 });

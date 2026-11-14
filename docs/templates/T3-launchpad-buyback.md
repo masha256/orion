@@ -97,7 +97,7 @@ metrics:
     critical: true
     source: { type: constant, value: 0, note: "mint authority revoked; unlocks move tokens already in total supply" }
 
-  # The holder flow: the fall in supply per completed UTC day, priced at the day's mean CoinGecko price.
+  # The holder flow: the fall in supply per completed UTC day, priced at the mean of the day's 24 chain prices (prices.yaml).
   flow_usd.buyback:
     type: flow
     unit: usd

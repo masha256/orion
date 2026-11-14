@@ -105,7 +105,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     critical: true
-    source: { type: transfer_flow, token: stable, to: stakers_farm, from_allowlist: [ zero ], unit: usd, price_coingecko_id: {{stable_coingecko_id}} }
+    source: { type: transfer_flow, token: stable, to: stakers_farm, from_allowlist: [ zero ], unit: usd }
 
   # Surplus spent buying the token: what the pool pays the treasury.
   flow_usd.buyback:
@@ -114,7 +114,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     critical: true
-    source: { type: transfer_flow, token: token, to: treasury, from_allowlist: [ buyback_pool ], from_ignore: [ treasury_topup ], unit: usd, price_coingecko_id: {{coingecko_id}} }
+    source: { type: transfer_flow, token: token, to: treasury, from_allowlist: [ buyback_pool ], from_ignore: [ treasury_topup ], unit: usd }
 
   # The splitter's buyback share, read daily (the parameter check).
   splitter_burn_share: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: splitter, function: burn, decimals: 18 } }
@@ -160,7 +160,6 @@ stakers_farm_address: "0x38E4254bD82ED5Ee97CD1C4278FAae748d998865"
 chain_id: 1
 rpc_url_env: ORION_ETH_RPC_URL
 coingecko_id: sky
-stable_coingecko_id: usds
 emission_note: "not minted; treasury tokens paid beyond the buys are dilution"
 splitter_burn_share: 0.55
 ```

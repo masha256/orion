@@ -90,7 +90,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     critical: true
-    source: { type: transfer_flow, token: crvusd, to: wrapper, from_allowlist: [ crvusd_pool ], unit: usd, price_coingecko_id: crvusd }
+    source: { type: transfer_flow, token: crvusd, to: wrapper, from_allowlist: [ crvusd_pool ], unit: usd }
 
   flow_usd.crv:
     type: flow
@@ -98,7 +98,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     critical: true
-    source: { type: transfer_flow, token: crv, to: wrapper, from_allowlist: [ base_reward_pool ], unit: usd, price_coingecko_id: curve-dao-token }
+    source: { type: transfer_flow, token: crv, to: wrapper, from_allowlist: [ base_reward_pool ], unit: usd }
 
   flow_usd.cvx:
     type: flow
@@ -106,7 +106,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     critical: true
-    source: { type: transfer_flow, token: cvx, to: wrapper, from_allowlist: [ cvx_distribution, cvx_mint ], unit: usd, price_coingecko_id: convex-finance }
+    source: { type: transfer_flow, token: cvx, to: wrapper, from_allowlist: [ cvx_distribution, cvx_mint ], unit: usd }
 
   # Report-only (monitor_only, never a driver). Convex's revenue is the cut its Booster keeps of the CRV it earns (getters
   # read 2026-10-10, out of 10000: lockIncentive 1000 to cvxCRV stakers, stakerIncentive 450 to CVX stakers, platformFee
@@ -118,21 +118,21 @@ metrics:
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: crv, to: booster, from_allowlist: [ voter_proxy ], unit: usd, price_coingecko_id: curve-dao-token }
+    source: { type: transfer_flow, token: crv, to: booster, from_allowlist: [ voter_proxy ], unit: usd }
   flow_usd.convex_rev_cvxcrv:
     type: flow
     unit: usd
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: crv, to: base_reward_pool, from_allowlist: [ booster ], unit: usd, price_coingecko_id: curve-dao-token }
+    source: { type: transfer_flow, token: crv, to: base_reward_pool, from_allowlist: [ booster ], unit: usd }
   flow_usd.convex_rev_cvx:
     type: flow
     unit: usd
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: crv, to: cvx_reward_pool, from_allowlist: [ booster ], unit: usd, price_coingecko_id: curve-dao-token }
+    source: { type: transfer_flow, token: crv, to: cvx_reward_pool, from_allowlist: [ booster ], unit: usd }
   flow_usd.convex_rev_treasury:
     type: flow
     unit: usd
@@ -140,7 +140,7 @@ metrics:
     staleness_days: 10
     monitor_only: true
     # from_ignore: the three Convex fee forwarders (contracts above): other Convex products' fees, not Curve revenue.
-    source: { type: transfer_flow, token: crv, to: convex_treasury, from_allowlist: [ booster ], from_ignore: [ cvx_fee_fwd_1, cvx_fee_fwd_2, cvx_fee_fwd_3 ], unit: usd, price_coingecko_id: curve-dao-token }
+    source: { type: transfer_flow, token: crv, to: convex_treasury, from_allowlist: [ booster ], from_ignore: [ cvx_fee_fwd_1, cvx_fee_fwd_2, cvx_fee_fwd_3 ], unit: usd }
 
 # Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
 # the holders and below_line lines):

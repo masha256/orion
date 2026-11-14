@@ -7,6 +7,7 @@ import { loadPersona } from '../../src/config/personas.js';
 import { listActiveObservations } from '../../src/db/observations.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
+import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
@@ -28,16 +29,6 @@ const C = config.contracts;
 /** The real feed of 2026-10-08, the per-day claims series trimmed. */
 const bribes = JSON.parse(readFileSync(`${ROOT}/tests/fixtures/crv/llama_box_bribes_stats.json`, 'utf8')) as unknown;
 
-/** crvUSD market chart: flat at 0.9993 every hour over the window. */
-function crvusdChart(url: string): { prices: [number, number][] } {
-  const days = Number(new URL(url).searchParams.get('days'));
-  const end = NOW.getTime();
-  const step = days > 90 ? 86_400_000 : 3_600_000;
-  const prices: [number, number][] = [];
-  for (let t = end - days * 86_400_000; t <= end; t += step) prices.push([t, 0.9993]);
-  return { prices };
-}
-
 /** The Wednesdays from 2026-07-01 to 2026-10-07, at 18:00Z: 98,566 crvUSD each, about the 13-week mean of the live series. */
 function wednesdays(): string[] {
   const out: string[] = [];
@@ -49,7 +40,6 @@ const PAYOUT = 98_566n;
 function world() {
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'curve-dao-token', symbol: 'crv', current_price: 0.3933, market_cap: 619e6, circulating_supply: 1_574_000_000, total_supply: 2_424_321_556 }],
-    'https://api.coingecko.com/api/v3/coins/crvusd/market_chart': crvusdChart,
     [BRIBES]: bribes,
   });
   const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENESIS_TS) / BLOCK_SEC));
@@ -77,7 +67,11 @@ function world() {
     },
     logs: wednesdays().map((iso, i) => ({ blockNumber: blockAt(iso), logIndex: 0, txHash: `0x${i.toString(16)}`, from: C.fee_allocator, value: PAYOUT * E18 })),
   });
-  const deps: FetchDeps = { http, rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW };
+  const deps: FetchDeps = {
+    http, rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW,
+    // crvUSD's chain price, flat at 0.9993 (the CoinGecko chart this test served before Phase 3 R2).
+    priceWriter: fakePriceWriter(() => 0.9993),
+  };
   return { db: testDb(), deps, http, rpc };
 }
 
@@ -95,7 +89,8 @@ describe('assets/crv.yaml', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
-    expect(loadAsset(ROOT, 'crv').hash).toBe('5e797f7ca2acaac63549bc7042ea77a96e963964a6f51e680f0b3aa05475f361');
+    // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
+    expect(loadAsset(ROOT, 'crv').hash).toBe('2cbf746088a8e39c865bfff8665b17983072832739d5911a9fe2994dab7fe288');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

@@ -117,7 +117,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     critical: true
-    source: { type: transfer_flow, token: reward_vault, to: distributor, from_allowlist: [ receiver ], unit: usd, price_coingecko_id: {{fee_token_coingecko_id}}, share_price: { contract: reward_vault, function: pricePerShare, decimals: 18 } }
+    source: { type: transfer_flow, token: reward_vault, to: distributor, from_allowlist: [ receiver ], unit: usd, share_price: { contract: reward_vault, function: pricePerShare, decimals: 18, underlying: fee_token } }
 
   flow_usd.treasury:
     type: flow
@@ -125,7 +125,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: reward_vault, to: treasury, from_allowlist: [ splitter, receiver ], mint_sender: erc4626_deposit, unit: usd, price_coingecko_id: {{fee_token_coingecko_id}}, share_price: { contract: reward_vault, function: pricePerShare, decimals: 18 } }
+    source: { type: transfer_flow, token: reward_vault, to: treasury, from_allowlist: [ splitter, receiver ], mint_sender: erc4626_deposit, unit: usd, share_price: { contract: reward_vault, function: pricePerShare, decimals: 18, underlying: fee_token } }
 
   # The splitter's inflow, one scan; count_from splits it by sender (same cursor, same pricing pass).
   flow_usd.gross:
@@ -134,21 +134,21 @@ metrics:
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: fee_token, to: splitter, from_allowlist: [ voter, incentive_seller ], unit: usd, price_coingecko_id: {{fee_token_coingecko_id}} }
+    source: { type: transfer_flow, token: fee_token, to: splitter, from_allowlist: [ voter, incentive_seller ], unit: usd }
   flow_usd.gross_fees:
     type: flow
     unit: usd
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: fee_token, to: splitter, from_allowlist: [ voter, incentive_seller ], count_from: [ voter ], unit: usd, price_coingecko_id: {{fee_token_coingecko_id}} }
+    source: { type: transfer_flow, token: fee_token, to: splitter, from_allowlist: [ voter, incentive_seller ], count_from: [ voter ], unit: usd }
   flow_usd.gross_incentives:
     type: flow
     unit: usd
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: fee_token, to: splitter, from_allowlist: [ voter, incentive_seller ], count_from: [ incentive_seller ], unit: usd, price_coingecko_id: {{fee_token_coingecko_id}} }
+    source: { type: transfer_flow, token: fee_token, to: splitter, from_allowlist: [ voter, incentive_seller ], count_from: [ incentive_seller ], unit: usd }
   # needs balance_delta (Phase 3): distributor_balance_change, for a balance check on the distributor
 
 income_statement:
@@ -193,7 +193,6 @@ treasury_address: "0x044f9c86a0da637a235e83564215dc271bc0defc"
 chain_id: 1
 rpc_url_env: ORION_ETH_RPC_URL
 coingecko_id: yearn-crv
-fee_token_coingecko_id: crvusd
 ```
 
 ## Scoping checklist

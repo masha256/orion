@@ -209,6 +209,24 @@ describe('hour blocks (Review Focus 1): Base on both sides of the 0.2 s switch',
     expect((await rows(VVV.ref)).filter((x) => x.ts === iso(at(HOURS[0]!))).map((x) => x.source)).toEqual(['chain:v2_twap', 'coingecko']);
   });
 
+  it('dry run (Ruling R19): the same prices computed in memory and returned as rows; no prices or hour_blocks row is written', async () => {
+    const rpc = baseChain('2026-11-06T02:00:00Z');
+    const d = deps({ 'eip155:8453': rpc }, '2026-11-06T02:00:00Z');
+    const dry = await writeChainPrices(testDb(), d, [VVV.ref], at(HOURS[0]!), at(HOURS[5]!), { dryRun: true });
+    expect(await rows()).toEqual([]);
+    expect(await testDb().all('SELECT hour FROM hour_blocks')).toEqual([]);
+    expect(dry.written).toEqual({ [VVV.ref]: 5 });
+    expect(dry.breaches).toEqual([]);
+    const got = dry.rows![VVV.ref]!;
+    expect(got.map((x) => x.ts).sort()).toEqual(HOURS.slice(0, 5).map((h) => iso(at(h))));
+    for (const x of got) expect(x.priceUsd).toBeCloseTo(VVV_USD, 9);
+    // The real run writes exactly those prices.
+    const real = await writeChainPrices(testDb(), deps({ 'eip155:8453': baseChain('2026-11-06T02:00:00Z') }, '2026-11-06T02:00:00Z'), [VVV.ref], at(HOURS[0]!), at(HOURS[5]!));
+    expect(real.rows).toBeUndefined();
+    const stored = new Map((await rows(VVV.ref)).map((x) => [x.ts, x.price_usd]));
+    for (const x of got) expect(stored.get(x.ts)).toBe(x.priceUsd);
+  });
+
   it('budget: budgetMs 0 stops after the first chain-day (newest first); a re-run resumes with the older day', async () => {
     const rpc = baseChain('2026-11-06T02:00:00Z');
     const d = deps({ 'eip155:8453': rpc }, '2026-11-06T02:00:00Z');

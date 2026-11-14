@@ -155,7 +155,8 @@ describe('orion data backfill-tokens / compare-usd', () => {
     await orion('data', 'fetch', 'mini', '--json');
     // The fetch wrote tokens already (dual write): nothing is left to fill, and nothing is refused.
     const dry = JSON.parse(await orion('data', 'backfill-tokens', 'mini', '--days', '3', '--dry-run', '--json'));
-    expect(dry).toMatchObject({ assetId: 'mini', dryRun: true, filled: 0, alreadyFilled: 9, refused: [], skipped: [], prices: [{ rows: 0, requests: 0 }] });
+    expect(dry).toMatchObject({ assetId: 'mini', dryRun: true, filled: 0, alreadyFilled: 9, refused: [], skipped: [] });
+    expect(dry).not.toHaveProperty('prices'); // the CoinGecko price part is gone (Phase 3 R2)
     const real = JSON.parse(await orion('data', 'backfill-tokens', 'mini', '--days', '3', '--json'));
     expect(real).toMatchObject({ dryRun: false, filled: 0, alreadyFilled: 9, refused: [] });
     expect(await orion('data', 'backfill-tokens', 'mini', '--days', '3', '--metric', 'flow_usd.fees')).toMatch(/^MINI backfill-tokens: 2026-09-16 to 2026-09-18; filled 0 row\(s\), 3 already had tokens/);

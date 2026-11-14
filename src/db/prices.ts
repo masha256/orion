@@ -34,8 +34,6 @@ export const MS_PER_HOUR = 3_600_000;
 export const evmTokenRef = (chainId: number, address: string): string => `eip155:${chainId}/${address.toLowerCase()}`;
 /** The token ref of a Solana mint. */
 export const solanaTokenRef = (mint: string): string => `solana:mainnet/${mint}`;
-/** The token a vault share is valued in when the config names only its CoinGecko id (shares x pricePerShare x price). */
-export const coingeckoTokenRef = (id: string): string => `coingecko:${id}`;
 
 /** Refuses token amounts the columns must not hold: a non-finite amount, or hourly buckets that are not 24 finite numbers. */
 export function checkedTokens(t: ObservationTokens): ObservationTokens {
@@ -105,20 +103,6 @@ export async function upsertPrices(db: Db, tokenRef: string, source: string, row
   return result.rowCount;
 }
 
-/**
- * The hours (ms) in [fromMs, toMs) that already have a `source` price under EVERY one of `tokenRefs`: hours a fetch
- * need not ask for again.
- */
-export async function storedPriceHours(db: Db, tokenRefs: string[], source: string, fromMs: number, toMs: number): Promise<Set<number>> {
-  if (tokenRefs.length === 0) return new Set();
-  const rows = await db.all<{ ts: string }>(
-    `SELECT ts FROM prices WHERE token_ref = ANY($1::text[]) AND source = $2 AND ts >= $3 AND ts < $4
-     GROUP BY ts HAVING count(DISTINCT token_ref)::float8 = $5`,
-    [tokenRefs, source, new Date(fromMs).toISOString(), new Date(toMs).toISOString(), new Set(tokenRefs).size],
-  );
-  return new Set(rows.map((r) => new Date(r.ts).getTime()));
-}
-
 export interface StoredPrice {
   tokenRef: string;
   ts: string;
@@ -134,6 +118,63 @@ export async function listPrices(db: Db, tokenRef: string): Promise<StoredPrice[
     [tokenRef],
   );
   return rows.map((r) => ({ tokenRef: r.token_ref, ts: new Date(r.ts).toISOString(), priceUsd: r.price_usd, source: r.source, fetchedAt: new Date(r.fetched_at).toISOString() }));
+}
+
+/** How old a chain row may be and still price an hour (flow_usd_chain_v, plan P3): older is a gap, never a price. */
+export const CHAIN_PRICE_MAX_AGE_HOURS = 6;
+
+/** A chain/first-party price row as the readers below rank it; `ts` and `fetchedAt` ISO. */
+export interface ChainPriceCandidate {
+  ts: string;
+  priceUsd: number;
+  source: string;
+  fetchedAt: string;
+}
+
+const isChainSource = (source: string): boolean => source.startsWith('chain:') || source.startsWith('first_party:');
+
+/**
+ * The chain/first-party price of `tokenRef` at each stored hour in [fromMs, toMs), one per hour: of two rows at one ts the
+ * newest write (fetched_at) wins, then the source by name (Ruling R6, flow_usd_chain_v's order). A CoinGecko row is never
+ * read. `extra` (a dry run's in-memory rows, Ruling R19) ranks with the stored rows. Keyed by the hour in ms.
+ */
+export async function chainHourPrices(db: Db, tokenRef: string, fromMs: number, toMs: number, extra: ChainPriceCandidate[] = []): Promise<Map<number, number>> {
+  const stored = await db.all<{ ts: string; price_usd: number; source: string; fetched_at: string }>(
+    `SELECT ts, price_usd, source, fetched_at FROM prices
+     WHERE token_ref = $1 AND ts >= $2 AND ts < $3 AND (starts_with(source, 'chain:') OR starts_with(source, 'first_party:'))`,
+    [tokenRef, new Date(fromMs).toISOString(), new Date(toMs).toISOString()],
+  );
+  const all: { ms: number; price: number; source: string; fetchedMs: number }[] = [
+    ...stored.map((r) => ({ ms: new Date(r.ts).getTime(), price: r.price_usd, source: r.source, fetchedMs: new Date(r.fetched_at).getTime() })),
+    ...extra
+      .filter((r) => isChainSource(r.source))
+      .map((r) => ({ ms: Date.parse(r.ts), price: r.priceUsd, source: r.source, fetchedMs: Date.parse(r.fetchedAt) }))
+      .filter((r) => r.ms >= fromMs && r.ms < toMs),
+  ];
+  all.sort((a, b) => a.ms - b.ms || b.fetchedMs - a.fetchedMs || (a.source < b.source ? -1 : a.source > b.source ? 1 : 0));
+  const out = new Map<number, number>();
+  for (const r of all) if (!out.has(r.ms)) out.set(r.ms, r.price);
+  return out;
+}
+
+/**
+ * The price of each hour bucket [H, H+1h) for H in [fromMs, toMs) (whole hours), as flow_usd_chain_v prices it: the newest
+ * chain row at or before H, no more than CHAIN_PRICE_MAX_AGE_HOURS old. An hour with none is absent (a gap).
+ */
+export async function chainPricesAt(db: Db, tokenRef: string, fromMs: number, toMs: number, extra: ChainPriceCandidate[] = []): Promise<Map<number, number>> {
+  const lookback = CHAIN_PRICE_MAX_AGE_HOURS * MS_PER_HOUR;
+  const byHour = await chainHourPrices(db, tokenRef, fromMs - lookback, toMs, extra);
+  const out = new Map<number, number>();
+  for (let h = fromMs; h < toMs; h += MS_PER_HOUR) {
+    for (let t = h; t >= h - lookback; t -= MS_PER_HOUR) {
+      const p = byHour.get(t);
+      if (p !== undefined) {
+        out.set(h, p);
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 /** One group of compared days: legacy `value` vs the chain view's USD (hourly buckets, the daily mean, or the dollar amount). */

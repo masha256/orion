@@ -105,14 +105,14 @@ metrics:
     cadence: daily
     staleness_days: 5
     monitor_only: true
-    source: { type: transfer_flow, token: lst, to: treasury, from_allowlist: [ zero ], unit: usd, price_coingecko_id: {{lst_coingecko_id}} }
+    source: { type: transfer_flow, token: lst, to: treasury, from_allowlist: [ zero ], unit: usd }
   flow_usd.node_operator_fee:
     type: flow
     unit: usd
     cadence: daily
     staleness_days: 5
     monitor_only: true
-    source: { type: transfer_flow, token: lst, to: node_operators, from_allowlist: [ zero ], unit: usd, price_coingecko_id: {{lst_coingecko_id}} }
+    source: { type: transfer_flow, token: lst, to: node_operators, from_allowlist: [ zero ], unit: usd }
 
   # The fee split as the protocol states it, as fractions of rewards.
   treasury_fee_share: { type: level, unit: ratio, staleness_days: 7, monitor_only: true, source: { type: contract_read, contract: fee_config, function: {{treasury_fee_function}}, decimals: {{fee_decimals}} } }
@@ -153,7 +153,6 @@ fee_config_address: "0x0000000000000000000000000000000000000a05"
 chain_id: 1
 rpc_url_env: ORION_ETH_RPC_URL
 coingecko_id: dummy-staking-token
-lst_coingecko_id: dummy-lst
 staked_note: "no fee share to stakers of the protocol token"
 emission_note: "no minting"
 treasury_fee_function: treasuryFee

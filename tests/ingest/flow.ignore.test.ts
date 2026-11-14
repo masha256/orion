@@ -30,7 +30,7 @@ function withIgnore(lines: { ignore?: string[]; clones?: string[]; dust?: number
   ].filter((x) => x !== '').join(', ');
   return INGEST_ASSET_YAML
     .replace(`  safe: "${SAFE}"\n`, `  safe: "${SAFE}"\n  forwarder: "${FORWARDER}"\n  sidecar_impl: "${IMPL}"\n`)
-    .replace('source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], unit: usd,', `source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], ${extra}, unit: usd,`);
+    .replace('source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], unit: usd }', `source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], ${extra}, unit: usd }`);
 }
 
 const DAY = '2026-09-17T12:00:00Z';
@@ -142,7 +142,7 @@ const deposit = (vault: string, sender: string, owner: string, shares: bigint, l
 const withMint = (lines: { ignore?: string[]; mint?: boolean }) =>
   withIgnore({ ignore: lines.ignore })
     .replace(`  forwarder: "${FORWARDER}"\n`, `  forwarder: "${FORWARDER}"\n  converter: "${CONVERTER}"\n`)
-    .replace(', , unit: usd,', ', unit: usd,')
+    .replace(', , unit: usd }', ', unit: usd }')
     .replace('from_allowlist: [pool, safe], ', `from_allowlist: [pool, safe], ${lines.mint ? 'mint_sender: erc4626_deposit, ' : ''}`);
 
 describe('mint_sender: erc4626_deposit', () => {

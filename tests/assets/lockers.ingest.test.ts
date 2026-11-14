@@ -6,6 +6,8 @@ import { listActiveObservations } from '../../src/db/observations.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.js';
+import { evmTokenRef } from '../../src/db/prices.js';
+import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
@@ -25,16 +27,6 @@ const GENESIS_TS = NOW.getTime() / 1000 - 110 * 86_400 + 1;
 const E18 = 10n ** 18n;
 const LATEST = BigInt(Math.floor((NOW.getTime() / 1000 - GENESIS_TS) / BLOCK_SEC));
 const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENESIS_TS) / BLOCK_SEC));
-
-/** A flat market chart for a CoinGecko id. */
-const flatChart = (price: number) => (url: string) => {
-  const days = Number(new URL(url).searchParams.get('days'));
-  const end = NOW.getTime();
-  const step = days > 90 ? 86_400_000 : 3_600_000;
-  const prices: [number, number][] = [];
-  for (let t = end - days * 86_400_000; t <= end; t += step) prices.push([t, price]);
-  return { prices };
-};
 
 /** Every `everyDays` days from 2026-07-04 to 2026-10-03 at 12:00Z. */
 function payoutDays(everyDays: number): string[] {
@@ -74,7 +66,8 @@ const sd = loadAsset(ROOT, 'sdcrv').config.contracts;
 const CASES: Case[] = [
   {
     id: 'cvxcrv',
-    hash: 'e4eed3b4b90c651da366cfc0ad51e5cca06adc7cbfad537b3b4a9beb14a1932d',
+    // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
+    hash: 'f1a2f4bafa91296f3d644613d59adf1f0ccbe0bc60890e24cdc0e7e53797b7ef',
     coingecko: 'convex-crv',
     price: 0.1392,
     supply: 423_825_801n,
@@ -89,7 +82,8 @@ const CASES: Case[] = [
   },
   {
     id: 'sdcrv',
-    hash: '20de7d924c8f1f49361b08042d5dc78027d44785f4f7468172405301228486fd',
+    // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
+    hash: 'db7ef33f45e5185820b3f36b817052f983cb478d43ecf572c1e513e7ff8619b3',
     coingecko: 'stake-dao-crv',
     price: 0.1884,
     supply: 119_049_969n,
@@ -143,15 +137,20 @@ function world(c: Case) {
   };
   const logs: Record<string, Omit<TransferLog, 'timestamp'>[]> = {};
   let tx = 0;
-  for (const [token, sink, sender, every, amount, cg, price] of Object.values(c.streams)) {
-    routes[`https://api.coingecko.com/api/v3/coins/${cg}/market_chart`] = flatChart(price);
+  // Chain prices by token ref, flat per stream (the CoinGecko charts this test served before Phase 3 R2).
+  const priceOf = new Map<string, number>();
+  for (const [token, sink, sender, every, amount, , price] of Object.values(c.streams)) {
+    priceOf.set(evmTokenRef(1, token), price);
     calls[callKey(token, 'decimals')] = 18n;
     logs[`${token.toLowerCase()}>${sink.toLowerCase()}`] = payoutDays(every).map((iso) => ({ blockNumber: blockAt(iso), logIndex: 0, txHash: `0x${(tx++).toString(16)}`, from: sender, value: amount * E18 }));
   }
   const base = fakeRpc({ genesisTs: GENESIS_TS, blockTimeSec: BLOCK_SEC, maxLogRange: 10_000n, latest: LATEST, calls });
   const rpc = multiLogRpc(base, logs);
   const http = fakeHttp(routes as Parameters<typeof fakeHttp>[0]);
-  const deps: FetchDeps = { http, rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW };
+  const deps: FetchDeps = {
+    http, rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW,
+    priceWriter: fakePriceWriter((ref) => priceOf.get(ref) ?? null),
+  };
   return { db: testDb(), deps, http };
 }
 

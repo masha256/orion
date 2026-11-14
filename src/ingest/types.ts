@@ -109,6 +109,11 @@ export interface SourceContext {
   backfillDays?: number;
   /** The asset's active stored observations of one metric (oldest first): for adapters that work from earlier readings (Solana's supply drop). */
   observations?: (metricKey: string) => Promise<Observation[]>;
+  /**
+   * The stored chain/first-party price of a ref at each hour in [fromMs, toMs) that has one (exactly at the hour; CoinGecko
+   * rows are never read): for adapters that price from the chain writer's rows (Solana's supply drop, Phase 3 R2).
+   */
+  chainHourPrices?: (tokenRef: string, fromMs: number, toMs: number) => Promise<Map<number, number>>;
 }
 
 /**

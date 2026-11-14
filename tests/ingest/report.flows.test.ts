@@ -25,7 +25,7 @@ const yaml = INGEST_ASSET_YAML.replace(
     unit: usd
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: token, to: treasury, from_allowlist: [pool], unit: usd, price_coingecko_id: mini-token }
+    source: { type: transfer_flow, token: token, to: treasury, from_allowlist: [pool], unit: usd }
 ${METRICS_END}`,
 );
 const loaded = () => parseAssetYaml(yaml);

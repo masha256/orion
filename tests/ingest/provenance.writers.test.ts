@@ -13,7 +13,7 @@ import { fetchAsset } from '../../src/ingest/run.js';
 import type { TransferLog } from '../../src/ingest/transport/rpc.js';
 import { addDays } from '../../src/ingest/time.js';
 import { sha256 } from '../../src/util/canonical.js';
-import { CG_CHART, harness, hourlyPrices, NOW } from '../helpers/fetchHarness.js';
+import { harness, NOW } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML, POOL, SAFE } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
 
@@ -37,10 +37,10 @@ describe('provenance: every writer fills it', () => {
       blockNumber: at(`2026-09-17T${String(Math.floor(i / 3)).padStart(2, '0')}:${String((i % 3) * 10).padStart(2, '0')}:00Z`), logIndex: i, txHash: `0xtx${String(i).padStart(3, '0')}`,
       from: i % 2 === 0 ? POOL : SAFE, value: 1n * E18,
     }));
-    const h = harness(testDb(), { loaded, logs, routes: { [CG_CHART]: hourlyPrices('2026-09-10T00:00:00Z', '2026-09-19T12:00:00Z', () => 10) } });
+    const h = harness(testDb(), { loaded, logs });
     const r = await scanFlowGroup({
       db: h.db, asset: h.loaded.config, configHash: h.loaded.hash, group: buildPlan(h.loaded.config).flowGroups[0], rpc: h.rpc, latest: await h.rpc.latestBlock(),
-      http: h.http, env: {}, sleep: async () => undefined, now: h.deps.now(), backfillDays: 3, rescan: false, adopt: false, dryRun: false,
+      priceWriter: h.deps.priceWriter!, sleep: async () => undefined, now: h.deps.now(), backfillDays: 3, rescan: false, adopt: false, dryRun: false,
     });
     expect(r.outcome.status).toBe('ok');
     const row = (await listActiveObservations(h.db, 'mini', 'flow_usd.fees')).find((o) => o.observedAt.startsWith('2026-09-18'))!;

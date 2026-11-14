@@ -97,8 +97,7 @@ metrics:
       to: distributor
       from_allowlist: [ receiver ]
       unit: usd
-      price_coingecko_id: crvusd
-      share_price: { contract: yv_crvusd, function: pricePerShare, decimals: 18 }
+      share_price: { contract: yv_crvusd, function: pricePerShare, decimals: 18, underlying: crvusd }
 
   # Report-only (monitor_only, never a driver). Yearn's revenue on yCRV: the vault shares its treasury vault takes, 20
   # percent from the splitter and the Receiver's 10 percent performance fee, about 28 percent of what the splitter mints
@@ -120,8 +119,7 @@ metrics:
       from_ignore: [ yvycrv_fee_converter ]
       mint_sender: erc4626_deposit
       unit: usd
-      price_coingecko_id: crvusd
-      share_price: { contract: yv_crvusd, function: pricePerShare, decimals: 18 }
+      share_price: { contract: yv_crvusd, function: pricePerShare, decimals: 18, underlying: crvusd }
   # Yearn's st-yCRV performance fee (10 percent of the vault's gains), paid daily to the treasury in st-yCRV shares and
   # valued as shares x pricePerShare x yCRV. Part of Yearn's yCRV revenue (Mike, 2026-10-11): ~$30K in the 91 days to
   # 2026-10-11, ~$49K in the 91 before.
@@ -137,15 +135,14 @@ metrics:
       to: yearn_treasury
       from_allowlist: [ st_ycrv ]
       unit: usd
-      price_coingecko_id: yearn-crv
-      share_price: { contract: st_ycrv, function: pricePerShare, decimals: 18 }
+      share_price: { contract: st_ycrv, function: pricePerShare, decimals: 18, underlying: token }
   flow_usd.yearn_gross:
     type: flow
     unit: usd
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: crvusd, to: splitter, from_allowlist: [ voter, fee_burner ], unit: usd, price_coingecko_id: crvusd }
+    source: { type: transfer_flow, token: crvusd, to: splitter, from_allowlist: [ voter, fee_burner ], unit: usd }
   # Report-only: flow_usd.yearn_gross by sender (Mike G1, Phase 2 Task 7b). Fees = the veCRV fees Yearn's voter claims
   # (what users pay: revenue); incentives = the third-party vote incentives Yearn's FeeBurner auctions into crvUSD (below
   # the line, as sdCRV's bribes). Same scan as yearn_gross (same token, sink and allowlist, one cursor and one pricing pass),
@@ -157,14 +154,14 @@ metrics:
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: crvusd, to: splitter, from_allowlist: [ voter, fee_burner ], count_from: [ voter ], unit: usd, price_coingecko_id: crvusd }
+    source: { type: transfer_flow, token: crvusd, to: splitter, from_allowlist: [ voter, fee_burner ], count_from: [ voter ], unit: usd }
   flow_usd.yearn_gross_incentives:
     type: flow
     unit: usd
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: crvusd, to: splitter, from_allowlist: [ voter, fee_burner ], count_from: [ fee_burner ], unit: usd, price_coingecko_id: crvusd }
+    source: { type: transfer_flow, token: crvusd, to: splitter, from_allowlist: [ voter, fee_burner ], count_from: [ fee_burner ], unit: usd }
 
 # Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
 # the holders and below_line lines):

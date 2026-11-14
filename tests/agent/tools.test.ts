@@ -334,6 +334,14 @@ describe('propose_change', () => {
     expect(w.ledger.proposals()).toEqual([]);
   });
 
+  it('propose_change: a config edit that puts back the retired price_coingecko_id is refused at filing, by name (Phase 3 R2)', async () => {
+    const source = { type: 'transfer_flow', token: 'token', to: 'token', from_any: true, unit: 'usd', price_coingecko_id: 'mini-token' };
+    const r = await propose({ kind: 'config', edits: [{ path: ['metrics', 'flow_usd.fees', 'source'], value: source }] });
+    expect(r).toMatchObject({ isError: true, result: { refused: 'invalid_asset_config' } });
+    expect(JSON.stringify(r.result)).toContain('metrics.flow_usd.fees.source: Unrecognized key: \\"price_coingecko_id\\"');
+    expect(w.ledger.proposals()).toEqual([]);
+  });
+
   it('cannot reach its own limits or the asset id', async () => {
     expect((await propose({ kind: 'config', edits: [{ path: ['agent', 'max_step_fraction'], value: 1 }] })).result.refused).toBe('path_not_proposable');
     expect((await propose({ kind: 'config', edits: [{ path: ['agent'], value: { max_step_fraction: 1 } }] })).result.refused).toBe('path_not_proposable');

@@ -7,6 +7,7 @@ import { loadSkills } from '../../src/config/personas.js';
 import { listActiveObservations } from '../../src/db/observations.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
+import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { fixture } from '../helpers/sourceCtx.js';
@@ -42,7 +43,6 @@ function world() {
   const stats = { ...(fixture('venice_vvv_stats.json') as Record<string, unknown>), price: '26.03' };
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': fixture('cg_markets.json'),
-    'https://api.coingecko.com/api/v3/coins/venice-token/market_chart': fixture('cg_venice_30_last72.json'),
     [`${VENICE}/vvv_stats`]: stats,
     [`${VENICE}/vvv_staking_yield`]: fixture('venice_vvv_staking_yield.json'),
     [`${VENICE}/vvv_burn_history`]: fixture('venice_vvv_burn_history.json'),
@@ -69,7 +69,11 @@ function world() {
       { blockNumber: blockAt('2026-09-18T10:00:00Z'), logIndex: 0, txHash: '0xb', from: C.buyback_safe, value: 10_000n * E18 },
     ],
   });
-  const deps: FetchDeps = { http, rpcFactory: () => rpc, env: {}, sleep: async () => undefined, now: () => NOW };
+  // VVV's chain price per hour: the captured CoinGecko hourly series (points at the top of each hour), re-seeded as chain
+  // rows with identical prices so the flow values do not move (Phase 3 R2); an hour before the series has no price.
+  const series = (fixture('cg_venice_30_last72.json') as { prices: [number, number][] }).prices.filter(([t]) => t % 3_600_000 === 0);
+  const priceAt = (_ref: string, hourMs: number): number | null => [...series].reverse().find(([t]) => t <= hourMs)?.[1] ?? null;
+  const deps: FetchDeps = { http, rpcFactory: () => rpc, env: {}, sleep: async () => undefined, now: () => NOW, priceWriter: fakePriceWriter(priceAt) };
   return { db: testDb(), deps, http, rpc };
 }
 
@@ -86,7 +90,8 @@ describe('assets/vvv.yaml', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
-    expect(loadAsset(ROOT, 'vvv').hash).toBe('d8223609d9e3f8532e51cd8529340ea38d8264d6d4d33892eedb13e3f69cff1e');
+    // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
+    expect(loadAsset(ROOT, 'vvv').hash).toBe('b32ee86f97fed5b53982d734a3fb214247b424d427f0195f605a19a0cfff483b');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

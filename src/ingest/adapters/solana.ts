@@ -1,6 +1,4 @@
-import { solanaTokenRef } from '../../db/prices.js';
-import { parseMarketChart } from '../flow.js';
-import { coingeckoBase, coingeckoHeaders } from '../sources/coingecko.js';
+import { HOURS_PER_DAY, MS_PER_HOUR, solanaTokenRef } from '../../db/prices.js';
 import { ownerBalance, solanaRpcUrl, tokenSupply } from '../transport/solana.js';
 import type { SourceContext, SourceValue } from '../types.js';
 import { toFiniteNumber } from '../units.js';
@@ -78,21 +76,29 @@ export function burnsByDay(readings: SupplyReading[]): Map<string, number> {
   return out;
 }
 
-/** Mean of the price points inside each UTC day. */
-function dailyMeanPrice(points: { ts: number; price: number }[]): Map<string, number> {
-  const sum = new Map<string, { s: number; n: number }>();
-  for (const p of points) {
-    const day = new Date(p.ts).toISOString().slice(0, 10);
-    const v = sum.get(day) ?? { s: 0, n: 0 };
-    v.s += p.price;
-    v.n += 1;
-    sum.set(day, v);
+/**
+ * The mean of each UTC day's 24 hourly chain prices (`hours`: hour ms -> USD) over [fromMs, toMs); a day with fewer than
+ * 24 priced hours has none (flow_usd_chain_v's daily_mean rule: all 24 hours, or no price).
+ */
+export function dailyMeanChainPrice(hours: Map<number, number>, fromMs: number, toMs: number): Map<string, number> {
+  const out = new Map<string, number>();
+  for (let day = fromMs; day < toMs; day += MS_PER_DAY) {
+    let sum = 0;
+    let n = 0;
+    for (let h = 0; h < HOURS_PER_DAY; h++) {
+      const p = hours.get(day + h * MS_PER_HOUR);
+      if (p === undefined) break;
+      sum += p;
+      n++;
+    }
+    if (n === HOURS_PER_DAY) out.set(new Date(day).toISOString().slice(0, 10), sum / n);
   }
-  return new Map([...sum].map(([d, v]) => [d, v.s / v.n]));
+  return out;
 }
 
 /**
- * The burn flow per completed UTC day (`unit: tokens`, or `usd` at the day's mean CoinGecko price) from the fall in the
+ * The burn flow per completed UTC day (`unit: tokens`, or `usd` at the mean of the day's 24 chain prices of the mint's
+ * ref, read from `prices`: a day with fewer than 24 is not priced and gets no usd row, Phase 3 R2) from the fall in the
  * mint's supply: the stored readings of `params.supply_metric` (written by `solana.token_supply` on this mint) plus one
  * read now. Days before the first stored reading come from `params.history` (DefiLlama's daily holders revenue, Mike
  * 2026-10-16: the one-time year of history, since Solana cannot read a past supply), converted to tokens at the day's
@@ -105,8 +111,7 @@ async function supplyBurnDaily(ctx: SourceContext, params: Record<string, unknow
   const supplyMetric = text(params, 'supply_metric', '');
   if (supplyMetric === '') throw new Error('params.supply_metric (the level metric solana.token_supply writes) is required');
   if (!ctx.observations) throw new Error('this adapter reads stored supply readings; the run gave it none');
-  const priceId = text(params, 'coingecko', ctx.asset.external_ids.coingecko ?? '');
-  if (priceId === '') throw new Error('params.coingecko (or external_ids.coingecko) is required to price the burns');
+  if (!ctx.chainHourPrices) throw new Error('this adapter prices from the stored chain prices; the run gave it none');
   const days = ctx.backfillDays ?? (typeof params.days === 'number' ? params.days : 7);
 
   const now = await tokenSupply(ctx.http, rpcUrl(ctx, params), mint);
@@ -117,11 +122,8 @@ async function supplyBurnDaily(ctx: SourceContext, params: Record<string, unknow
 
   const todayStart = Math.floor(Date.parse(ctx.nowIso) / MS_PER_DAY) * MS_PER_DAY;
   const windowStart = todayStart - days * MS_PER_DAY;
-  const hourly = parseMarketChart(
-    await ctx.http.getJson(`${coingeckoBase(ctx.env)}/coins/${encodeURIComponent(priceId)}/market_chart?vs_currency=usd&days=${Math.min(365, Math.max(2, days + 1))}`, coingeckoHeaders(ctx.env)),
-    `coingecko ${priceId}`,
-  );
-  const price = dailyMeanPrice(hourly);
+  const ref = solanaTokenRef(mint);
+  const price = dailyMeanChainPrice(await ctx.chainHourPrices(ref, windowStart, todayStart), windowStart, todayStart);
 
   // The history: days that began before the first on-chain reading (the day it lands in included, so the series has no
   // gap where the two meet), from the named DefiLlama series (USD per day). Read only while such a day is in the window.
@@ -146,6 +148,7 @@ async function supplyBurnDaily(ctx: SourceContext, params: Record<string, unknow
   const points: { day: string; value: number; amount?: number }[] = [];
   let fromChain = 0;
   let fromHistory = 0;
+  let unpricedChain = 0;
   const unpriced: string[] = [];
   for (let ms = windowStart; ms < todayStart; ms += MS_PER_DAY) {
     const day = new Date(ms).toISOString().slice(0, 10);
@@ -156,6 +159,7 @@ async function supplyBurnDaily(ctx: SourceContext, params: Record<string, unknow
       else if (p !== undefined) points.push({ day, value: tokens * p, amount: tokens });
       else {
         unpriced.push(day);
+        unpricedChain++;
         continue;
       }
       fromChain++;
@@ -171,17 +175,21 @@ async function supplyBurnDaily(ctx: SourceContext, params: Record<string, unknow
     }
     fromHistory++;
   }
+  // On-chain days none of which has its 24 chain hours: the read fails (the prices are missing), it never stores nothing.
+  if (fromChain === 0 && unpricedChain > 0) {
+    throw new Error(`no on-chain day has its 24 chain prices of ${ref} (${unpriced.join(', ')}); no day was priced`);
+  }
   // Two days of readings must give a completed day: a series that stays empty means the readings stopped being stored.
   if (fromChain === 0 && Date.parse(ctx.nowIso) - firstReadingMs > 2 * MS_PER_DAY) {
     throw new Error(`no completed day from ${readings.length} supply readings since ${new Date(firstReadingMs).toISOString()}`);
   }
   const hist = fromHistory > 0 ? `; ${fromHistory} days from DefiLlama ${String(h?.slug)} ${String(h?.data_type)} (before the first on-chain reading)` : '';
-  const miss = unpriced.length > 0 ? `; no price for ${unpriced.join(', ')}` : '';
+  const miss = unpriced.length > 0 ? `; no price (fewer than 24 chain hours of ${ref}) for ${unpriced.join(', ')}` : '';
   return {
     kind: 'daily_series',
     points,
     detail: `solana supply drop of ${mint} (${unit}): ${fromChain} days from ${readings.length} getTokenSupply readings${hist}${miss}; supply now ${now.amount.toFixed(0)} at slot ${now.slot}`,
-    token: { tokenRef: solanaTokenRef(mint), symbol: text(params, 'mint', 'token') === 'token' ? ctx.asset.symbol : text(params, 'mint', 'token'), decimals: null, coingeckoId: priceId },
+    token: { tokenRef: ref, symbol: text(params, 'mint', 'token') === 'token' ? ctx.asset.symbol : text(params, 'mint', 'token'), decimals: null, coingeckoId: null },
   };
 }
 

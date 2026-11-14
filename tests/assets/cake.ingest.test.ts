@@ -9,6 +9,7 @@ import { addDays } from '../../src/ingest/time.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
+import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
@@ -27,16 +28,6 @@ const { config } = loadAsset(ROOT, 'cake');
 const C = config.contracts;
 const lc = (a: string) => a.toLowerCase();
 const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENESIS_TS) / BLOCK_SEC));
-
-/** CAKE market chart: flat at 2.3 every hour (every day past 90) over the window asked for. */
-function cakeChart(url: string): { prices: [number, number][] } {
-  const days = Number(new URL(url).searchParams.get('days'));
-  const end = NOW.getTime();
-  const step = days > 90 ? 86_400_000 : 3_600_000;
-  const prices: [number, number][] = [];
-  for (let t = end - days * 86_400_000; t <= end; t += step) prices.push([t, PRICE]);
-  return { prices };
-}
 
 /**
  * The weekly Monday burn as live: on each Monday, the converters send 550k CAKE to the burner (and 200k to the treasury),
@@ -62,7 +53,6 @@ function logsBySink(): Record<string, Omit<TransferLog, 'timestamp'>[]> {
 function world() {
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'pancakeswap-token', symbol: 'cake', current_price: PRICE, market_cap: 7.3e8, circulating_supply: 317_949_435, total_supply: 329_536_890 }],
-    'https://api.coingecko.com/api/v3/coins/pancakeswap-token/market_chart': cakeChart,
   });
   const base = fakeRpc({
     genesisTs: GENESIS_TS,
@@ -92,7 +82,9 @@ function world() {
         .map((l) => ({ ...l, timestamp: base.timestampOf(l.blockNumber) }));
     },
   };
-  const deps: FetchDeps = { http, rpcFactory: () => rpc, env: { ORION_BNB_RPC_URL: 'http://bnb.test' }, sleep: async () => undefined, now: () => NOW };
+  const deps: FetchDeps = { http, rpcFactory: () => rpc, env: { ORION_BNB_RPC_URL: 'http://bnb.test' }, sleep: async () => undefined, now: () => NOW,
+    // The chain price of the flow's token, flat at PRICE (the CoinGecko chart this test served before Phase 3 R2).
+    priceWriter: fakePriceWriter(() => PRICE) };
   return { db: testDb(), deps, http };
 }
 
@@ -113,7 +105,8 @@ describe('assets/cake.yaml', () => {
     // Re-pinned 2026-11-10 (fix/cake-pending-burn 0ecc69e): total_supply nets the burner and MasterChef v2; CoinGecko total cross-check dropped.
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
-    expect(loadAsset(ROOT, 'cake').hash).toBe('86b98b90382d270cdee19e8ad1e0d65dd4935e7bb857bb819bcfb751f3e1668f');
+    // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
+    expect(loadAsset(ROOT, 'cake').hash).toBe('86359b56c1c13260874797184bd4a025d0197e545c50578dd115f8013501bfcc');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

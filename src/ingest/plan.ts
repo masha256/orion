@@ -19,9 +19,12 @@ export interface FlowMember {
   unit: 'usd' | 'tokens';
   /** null: every counted sender (a from_any scan). */
   countFrom: string[] | null;
-  priceCoingeckoId: string | null;
-  /** Vault-share conversion read at the day's last block; null when the token is not a share. Address lowercased. */
-  sharePrice: { address: string; functionName: string; decimals: number } | null;
+  /**
+   * Vault-share conversion read at the day's last block; null when the token is not a share. `underlying`: the token the
+   * converted amounts are in (share_price.underlying; a usd member is priced at its chain price), null when not named.
+   * Addresses lowercased.
+   */
+  sharePrice: { address: string; functionName: string; decimals: number; underlying: string | null } | null;
 }
 
 /** transfer_flow metrics that share a token, a sink, and an allowlist share one log scan and one cursor. Addresses are lowercased. */
@@ -134,8 +137,12 @@ export function buildPlan(asset: AssetConfig, opts: { metrics?: string[] } = {})
         metricKey,
         unit: s.unit,
         countFrom: s.from_any ? null : (s.count_from ?? s.from_allowlist!).map(address),
-        priceCoingeckoId: s.price_coingecko_id ?? null,
-        sharePrice: s.share_price ? { address: address(s.share_price.contract), functionName: s.share_price.function, decimals: s.share_price.decimals } : null,
+        sharePrice: s.share_price
+          ? {
+            address: address(s.share_price.contract), functionName: s.share_price.function, decimals: s.share_price.decimals,
+            underlying: s.share_price.underlying === undefined ? null : address(s.share_price.underlying),
+          }
+          : null,
       });
       groups.set(scanKey, group);
     } else {

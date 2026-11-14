@@ -5,8 +5,8 @@ import { scanFlowGroup } from '../../src/ingest/flow.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import type { TransferLog } from '../../src/ingest/transport/rpc.js';
 import { callKey } from '../helpers/fakeRpc.js';
-import { CG_CHART, harness, hourlyPrices } from '../helpers/fetchHarness.js';
-import { INGEST_ASSET_YAML, POOL, STAKING } from '../helpers/ingestAsset.js';
+import { harness } from '../helpers/fetchHarness.js';
+import { INGEST_ASSET_YAML, POOL, STAKING, TOKEN } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
 
 const testDb = useTestDb();
@@ -14,10 +14,12 @@ const testDb = useTestDb();
 const E18 = 10n ** 18n;
 const ms = (iso: string) => Date.parse(iso);
 
-const PLAIN = 'source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], unit: usd, price_coingecko_id: mini-token }';
+const PLAIN = 'source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], unit: usd }';
+/** The shares are valued in `pool`'s token (share_price.underlying): its chain price, not the scanned token's. */
 const SHARES =
-  'source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], unit: usd, price_coingecko_id: mini-token, ' +
-  'share_price: { contract: staking, function: pricePerShare, decimals: 18 } }';
+  'source: { type: transfer_flow, token: token, to: burn_sink, from_allowlist: [pool, safe], unit: usd, ' +
+  'share_price: { contract: staking, function: pricePerShare, decimals: 18, underlying: pool } }';
+const POOL_REF = `eip155:8453/${POOL}`;
 
 function world(pps: bigint | Error) {
   const yaml = INGEST_ASSET_YAML.replace(PLAIN, SHARES);
@@ -32,7 +34,8 @@ function world(pps: bigint | Error) {
   return harness(testDb(), {
     loaded,
     logs,
-    routes: { [CG_CHART]: hourlyPrices('2026-09-10T00:00:00Z', '2026-09-19T12:00:00Z', () => 10) },
+    // The underlying at 10; the scanned token at 99 (fees_programmatic, a plain member of the same scan, is valued at it).
+    price: (ref) => (ref === POOL_REF ? 10 : 99),
     calls: { [callKey(STAKING, 'pricePerShare')]: pps },
   });
 }
@@ -42,15 +45,20 @@ describe('transfer_flow share_price', () => {
     const h = world(1_500_000_000_000_000_000n); // 1.5 underlying per share
     const latest = await h.rpc.latestBlock();
     const group = buildPlan(h.loaded.config).flowGroups[0];
-    expect(group.members.find((m) => m.metricKey === 'flow_usd.fees')?.sharePrice).toEqual({ address: STAKING, functionName: 'pricePerShare', decimals: 18 });
+    expect(group.members.find((m) => m.metricKey === 'flow_usd.fees')?.sharePrice).toEqual({ address: STAKING, functionName: 'pricePerShare', decimals: 18, underlying: POOL });
     const r = await scanFlowGroup({
-      db: h.db, asset: h.loaded.config, configHash: h.loaded.hash, group, rpc: h.rpc, latest, http: h.http, env: {}, sleep: async () => undefined,
+      db: h.db, asset: h.loaded.config, configHash: h.loaded.hash, group, rpc: h.rpc, latest, priceWriter: h.deps.priceWriter!, sleep: async () => undefined,
       now: h.deps.now(), backfillDays: 3, rescan: false, adopt: false, dryRun: false,
     });
     expect(r.outcome.status).toBe('ok');
     const vals = async (k: string) => (await listActiveObservations(h.db, 'mini', k)).map((o) => [o.observedAt.slice(0, 10), o.value]);
-    // 2 shares x 1.5 x 10 USD = 30; 4 x 1.5 x 10 = 60; an empty day is 0 and reads no share price.
+    // 2 shares x 1.5 x 10 USD (the underlying's chain price) = 30; 4 x 1.5 x 10 = 60; an empty day is 0 and reads no share price.
     expect(await vals('flow_usd.fees')).toEqual([['2026-09-17', 30], ['2026-09-18', 60], ['2026-09-19', 0]]);
+    // Both usd members' refs were ensured: the shares' underlying and the scanned token (fees_programmatic).
+    expect(h.prices.calls[0]!.refs).toEqual([POOL_REF, `eip155:8453/${TOKEN}`].sort());
+    // The share member's rows are in the underlying's token.
+    const tokenRow = await h.db.one<{ token_ref: string }>('SELECT token_ref FROM observations WHERE metric_key = $1 LIMIT 1', ['flow_usd.fees']);
+    expect(tokenRow!.token_ref).toBe(POOL_REF);
     expect(await vals('flow_tokens.fees')).toEqual([['2026-09-17', 2], ['2026-09-18', 4], ['2026-09-19', 0]]); // no share_price: raw shares
     const detail = JSON.parse((await listActiveObservations(h.db, 'mini', 'flow_usd.fees'))[0].sourceDetail!) as { share_price?: Record<string, number> };
     expect(detail.share_price).toEqual({ [`${STAKING}.pricePerShare`]: 1.5 });
@@ -60,7 +68,7 @@ describe('transfer_flow share_price', () => {
     const h = world(new Error('execution reverted'));
     const latest = await h.rpc.latestBlock();
     const r = await scanFlowGroup({
-      db: h.db, asset: h.loaded.config, configHash: h.loaded.hash, group: buildPlan(h.loaded.config).flowGroups[0], rpc: h.rpc, latest, http: h.http, env: {},
+      db: h.db, asset: h.loaded.config, configHash: h.loaded.hash, group: buildPlan(h.loaded.config).flowGroups[0], rpc: h.rpc, latest, priceWriter: h.deps.priceWriter!,
       sleep: async () => undefined, now: h.deps.now(), backfillDays: 3, rescan: false, adopt: false, dryRun: false,
     });
     expect(r.outcome.status).toBe('failed');

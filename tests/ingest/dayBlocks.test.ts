@@ -9,7 +9,7 @@ import { fetchAsset } from '../../src/ingest/run.js';
 import type { RpcTransport, TransferLog } from '../../src/ingest/transport/rpc.js';
 import { createViemRpc } from '../../src/ingest/transport/viemRpc.js';
 import { chainInfo, supportedChainIds } from '../../src/ingest/transport/chains.js';
-import { CG_CHART, harness, hourlyPrices, NOW, type Harness } from '../helpers/fetchHarness.js';
+import { harness, NOW, type Harness } from '../helpers/fetchHarness.js';
 import { INGEST_ASSET_YAML, POOL, SAFE } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
 
@@ -30,13 +30,13 @@ function world(over: Parameters<typeof harness>[1] = {}): Harness {
     blockNumber: at(iso), logIndex: n++, txHash: `0xtx${n}`, from, value: tokens * E18,
   });
   const logs = [log('2026-09-16T10:00:00Z', POOL, 2n), log('2026-09-17T00:00:00Z', SAFE, 3n), log('2026-09-18T20:00:00Z', POOL, 4n)];
-  return harness(testDb(), { routes: { [CG_CHART]: hourlyPrices('2026-09-10T00:00:00Z', '2026-09-19T12:00:00Z', () => 10) }, logs, ...over });
+  return harness(testDb(), { logs, ...over });
 }
 
 async function argsFor(h: Harness, over: Partial<FlowScanArgs> = {}): Promise<FlowScanArgs> {
   const loaded = over.asset ? { config: over.asset } : h.loaded;
   return {
-    db: h.db, asset: loaded.config, configHash: 'test', group: buildPlan(loaded.config).flowGroups[0], rpc: h.rpc, latest: await h.rpc.latestBlock(), http: h.http, env: {},
+    db: h.db, asset: loaded.config, configHash: 'test', group: buildPlan(loaded.config).flowGroups[0], rpc: h.rpc, latest: await h.rpc.latestBlock(), priceWriter: h.deps.priceWriter!,
     sleep: async () => undefined, now: h.deps.now(), backfillDays: 3, rescan: false, adopt: false, dryRun: false, ...over,
   };
 }

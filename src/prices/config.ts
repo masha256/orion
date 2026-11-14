@@ -241,6 +241,25 @@ export function loadPrices(rootDir: string): Map<string, PriceEntry> {
 }
 
 /**
+ * The chain-priced ref of every `unit: usd` transfer_flow of the asset (Phase 3 R2 Task 6a), by metric: the scanned
+ * token's ref on the ingest chain, or for a vault share its `share_price.underlying`'s. A metric whose ref cannot be named
+ * (no ingest block, an unknown contract, a share without an underlying) is left out: the schema refuses those first.
+ */
+export function usdFlowRefs(asset: AssetConfig): { metricKey: string; contract: string; ref: string }[] {
+  const out: { metricKey: string; contract: string; ref: string }[] = [];
+  if (!asset.ingest) return out;
+  for (const [metricKey, def] of Object.entries(asset.metrics)) {
+    const s = def.source;
+    if (s?.type !== 'transfer_flow' || s.unit !== 'usd') continue;
+    const contract = s.share_price ? s.share_price.underlying : s.token;
+    const address = contract === undefined ? undefined : asset.contracts?.[contract];
+    if (contract === undefined || address === undefined || !/^0x[0-9a-fA-F]{40}$/.test(String(address))) continue;
+    out.push({ metricKey, contract, ref: evmTokenRef(asset.ingest.chain_id, String(address)) });
+  }
+  return out;
+}
+
+/**
  * The refs an asset uses: every contract address it names, as a token ref on its chain (its `ingest` EVM chain, or
  * Solana), plus the entry carrying its own symbol (HYPE has no address ref); then their quote refs, transitively.
  * Sorted by ref, so the config hash does not depend on file order.

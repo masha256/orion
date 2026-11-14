@@ -113,14 +113,14 @@ metrics:
     cadence: daily
     staleness_days: 10
     critical: true
-    source: { type: transfer_flow, token: fee_token, to: fee_distributor, from_allowlist: [ fee_allocator ], unit: usd, price_coingecko_id: {{fee_token_coingecko_id}} }
+    source: { type: transfer_flow, token: fee_token, to: fee_distributor, from_allowlist: [ fee_allocator ], unit: usd }
   flow_usd.treasury:
     type: flow
     unit: usd
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: fee_token, to: treasury, from_allowlist: [ fee_allocator ], unit: usd, price_coingecko_id: {{fee_token_coingecko_id}} }
+    source: { type: transfer_flow, token: fee_token, to: treasury, from_allowlist: [ fee_allocator ], unit: usd }
   # The allocator's inflow: the total the sum check splits.
   flow_usd.protocol_revenue:
     type: flow
@@ -128,7 +128,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: fee_token, to: fee_allocator, from_allowlist: [ fee_source ], unit: usd, price_coingecko_id: {{fee_token_coingecko_id}} }
+    source: { type: transfer_flow, token: fee_token, to: fee_allocator, from_allowlist: [ fee_source ], unit: usd }
   # needs pool_scan (Phase 3): flow_usd.vote_incentives, voter payouts over a curated list of incentive markets, with coverage
 
 income_statement:
@@ -173,7 +173,6 @@ chain_id: 1
 rpc_url_env: ORION_ETH_RPC_URL
 coingecko_id: curve-dao-token
 emission_function: rate
-fee_token_coingecko_id: crvusd
 lp_not_measured: "swap fees to LPs and lender interest: not read yet (Phase 3)"
 ```
 

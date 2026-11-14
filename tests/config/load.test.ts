@@ -272,6 +272,22 @@ describe('config hash and prices.yaml (Phase 3 R2 Task 1)', () => {
     expect(() => parseAssetObject(withShare('crvusd'))).not.toThrow();
     expect(() => parseAssetObject(withShare('nowhere'))).toThrow(/unknown contract "nowhere"/);
   });
+
+  it('every ref a usd transfer_flow is valued at must be in prices.yaml (Task 6a): refused at load naming the metric and ref', () => {
+    const prices = loadPrices(ROOT);
+    // Every repo asset loads: each usd member's ref (the token, or a share's underlying) is priced.
+    for (const id of listAssetIds(ROOT)) expect(() => loadAsset(ROOT, id), id).not.toThrow();
+    const ycrv = () => parseYaml(readFileSync(join(ROOT, 'assets/ycrv.yaml'), 'utf8')) as { metrics: Record<string, { source: { share_price?: Record<string, unknown> } }> };
+    // yv_crvusd's shares valued in the vault token itself, which prices.yaml does not price: refused.
+    const obj = ycrv();
+    obj.metrics['flow_usd.fees']!.source.share_price!.underlying = 'yv_crvusd';
+    expect(() => parseAssetObject(obj, prices)).toThrow(
+      /^metrics\.flow_usd\.fees\.source: yv_crvusd \(eip155:1\/0xbf319ddc2edc1eb6fdf9910e39b37be221c8805f\) has no entry in prices\.yaml/,
+    );
+    // Without a prices map (or with an empty one: a root with no prices.yaml) there is nothing to check against.
+    expect(() => parseAssetObject(obj)).not.toThrow();
+    expect(() => parseAssetObject(obj, new Map())).not.toThrow();
+  });
 });
 
 describe('metric watch', () => {
@@ -321,7 +337,8 @@ describe('metric watch', () => {
     // Re-pinned 2026-11-09 (aero only): the Aero contracts (spec 2026-11-09-orion-aero-supply-design.md); no watch/share key involved.
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
-    expect(asset('vvv')).toBe('d8223609d9e3f8532e51cd8529340ea38d8264d6d4d33892eedb13e3f69cff1e');
+    // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
+    expect(asset('vvv')).toBe('b32ee86f97fed5b53982d734a3fb214247b424d427f0195f605a19a0cfff483b');
     expect(asset('hype')).toBe('2ec7d2cefc9ba484c8529e4c47db7b5b5a5210c7c9697df209839edd45303c37');
     expect(asset('aero')).toBe('035327b9eec2de16fb96541b2b09dfc5a52015fd4ef6a246691e5cb8bcf6578d');
   });

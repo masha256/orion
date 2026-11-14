@@ -2,15 +2,14 @@ import type { LoadedAsset } from '../config/load.js';
 import type { AssetConfig } from '../config/schema.js';
 import type { Db } from '../db/connection.js';
 import { fillObservationTokens, getTokensByIds, isActiveObservation, listActiveObservations, type Observation } from '../db/observations.js';
-import { MS_PER_HOUR, storedPriceHours, upsertPrices, upsertToken, USD_TOKEN, type ObservationTokens, type TokenInfo } from '../db/prices.js';
-import { COINGECKO_PRICE_SOURCE, fetchHourlyRange, hourlyPriceRows } from '../prices/coingeckoHourly.js';
+import { upsertToken, USD_TOKEN, type ObservationTokens, type TokenInfo } from '../db/prices.js';
 import { defillamaUrlOf } from '../provenance/locator.js';
 import { MS_PER_DAY, OrionError } from '../types.js';
 import { findAdapter } from './adapters/registry.js';
 import { memberToken, openDayScanner, readDecimals, scanUpperBound, uniqueTokens } from './flow.js';
 import { buildPlan, type FlowGroup, type FlowMember } from './plan.js';
 import { DEFAULT_RPC_URLS, type FetchDeps } from './run.js';
-import { addDays, dayStartMs, utcDay } from './time.js';
+import { addDays, utcDay } from './time.js';
 
 /**
  * The token backfill (Task 7, spec §4): fills `amount`, `hourly_amounts` and `token_ref` on the flow rows written before
@@ -20,9 +19,8 @@ import { addDays, dayStartMs, utcDay } from './time.js';
  * - Transfer scans are re-scanned by day with the flow writer's own day scanner. A day whose re-scanned token total
  *   differs from a stored `flow_tokens.*` twin by more than TWIN_REL_TOLERANCE is refused whole (the chain no longer
  *   says what the row says: a config change, a reorg, or a bug), and a day with no active row is skipped; both are
- *   listed. The hourly prices those days need are fetched from CoinGecko's market_chart/range once per CoinGecko id
- *   (through the run's transport, so its spacing applies), only for hours not already stored, and upserted under every
- *   token ref that shares the id.
+ *   listed. No price is fetched (Phase 3 R2): the rows' chain prices are the price writer's (`prices`), read by
+ *   flow_usd_chain_v.
  * - First-party dollar series (an adapter whose `usdNative(params)` is true: Lighter fees and buys in USDC, Hyperliquid
  *   fills and USDC payments) get token 'usd', amount = value and no hourly buckets, with no request at all (ruling
  *   R18). Only rows that series wrote are filled: a manual row, or a history row read from DefiLlama, is skipped.
@@ -39,18 +37,6 @@ export interface BackfillTokensOptions {
   onProgress?: (line: string) => void;
 }
 
-export interface BackfillPrices {
-  coingeckoId: string;
-  /** Every token ref priced at this id: the fetched rows are stored under each. */
-  tokenRefs: string[];
-  /** Hourly rows upserted per token ref (0 on a dry run, which fetches nothing, and when every hour needed was stored). */
-  rows: number;
-  /** The first day the hourly series reaches; null when no window answered (or nothing was fetched). */
-  reachedDay: string | null;
-  failures: string[];
-  requests: number;
-}
-
 export interface BackfillTokensResult {
   assetId: string;
   dryRun: boolean;
@@ -61,7 +47,6 @@ export interface BackfillTokensResult {
   alreadyFilled: number;
   skipped: { day: string; metricKey: string; reason: string }[];
   refused: { day: string; reason: string }[];
-  prices: BackfillPrices[];
   notes: string[];
 }
 
@@ -117,7 +102,7 @@ async function fillDay(
 export async function backfillTokens(db: Db, loaded: LoadedAsset, deps: FetchDeps, opts: BackfillTokensOptions = {}): Promise<BackfillTokensResult> {
   const asset = loaded.config;
   const dryRun = opts.dryRun ?? false;
-  const result: BackfillTokensResult = { assetId: asset.id, dryRun, range: null, filled: 0, alreadyFilled: 0, skipped: [], refused: [], prices: [], notes: [] };
+  const result: BackfillTokensResult = { assetId: asset.id, dryRun, range: null, filled: 0, alreadyFilled: 0, skipped: [], refused: [], notes: [] };
   const plan = buildPlan(asset);
   const flowMetrics = new Set(plan.flowGroups.flatMap((g) => g.members.map((m) => m.metricKey)));
   const usdMetrics = usdNativeMetrics(asset);
@@ -199,7 +184,6 @@ async function fillTransferScans(
   const url = deps.env[ingest.rpc_url_env] ?? DEFAULT_RPC_URLS[ingest.chain_id];
   if (!url) throw new OrionError('missing_rpc_url', `set ${ingest.rpc_url_env}: there is no default RPC URL for chain ${ingest.chain_id}`);
   const rpc = deps.rpcFactory(url, ingest.chain_id);
-  const nowIso = now.toISOString();
   const upper = await scanUpperBound(rpc, await rpc.latestBlock(), result.notes);
   const lastCompleteDay = utcDay(Math.floor(upper.timestamp / 86_400) * 86_400 * 1000 - MS_PER_DAY);
 
@@ -229,7 +213,7 @@ async function fillTransferScans(
     for (const t of await getTokensByIds(db, rows.map((r) => r.id))) tokenFill.set(t.id, t.amount);
   }
 
-  // Each group's tokens and, per day, the rows to fill (decided before any scan, so prices are fetched for those days only).
+  // Each group's tokens and, per day, the rows to fill (decided before any scan).
   const prepared: { group: FlowGroup; decimals: number; tokens: TokenInfo[]; pending: Map<string, Pending[]> }[] = [];
   for (const group of groups) {
     const decimals = await readDecimals(rpc, group, upper);
@@ -243,7 +227,7 @@ async function fillTransferScans(
         if (!row) result.skipped.push({ day, metricKey: m.metricKey, reason: 'no active row for the day' });
         else if (row.source !== 'onchain') result.skipped.push({ day, metricKey: m.metricKey, reason: `the active row #${row.id} is ${row.source}, not a transfer scan` });
         else if (tokenFill.get(row.id) !== null && tokenFill.get(row.id) !== undefined) result.alreadyFilled++;
-        else if (token === null) result.skipped.push({ day, metricKey: m.metricKey, reason: 'the member has no token (a vault share with no price id)' });
+        else if (token === null) result.skipped.push({ day, metricKey: m.metricKey, reason: 'the member has no token (a vault share with no share_price.underlying)' });
         else list.push({ m, row, token });
       }
       if (list.length > 0) pending.set(day, list);
@@ -251,26 +235,10 @@ async function fillTransferScans(
     prepared.push({ group, decimals, tokens: uniqueTokens(group.members.filter(wanted).map((m) => tokenOf.get(m.metricKey)!)), pending });
   }
 
-  // Hourly prices: one market_chart range per CoinGecko id for the whole run, only for the hours the pending days need
-  // and the store lacks, stored under every token ref priced at that id (a dry run fetches nothing).
-  const byId = new Map<string, { tokens: TokenInfo[]; days: Set<string> }>();
-  for (const p of prepared) {
-    for (const t of p.tokens) {
-      if (t.coingeckoId === null) continue;
-      const e = byId.get(t.coingeckoId) ?? { tokens: [], days: new Set<string>() };
-      if (!e.tokens.some((x) => x.tokenRef === t.tokenRef)) e.tokens.push(t);
-      byId.set(t.coingeckoId, e);
-    }
-    for (const [day, list] of p.pending) for (const { token } of list) if (token.coingeckoId !== null) byId.get(token.coingeckoId)!.days.add(day);
-  }
-  for (const [id, e] of [...byId.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    result.prices.push(await backfillPrices(db, deps, id, e.tokens, [...e.days].sort(), nowIso, dryRun));
-  }
-
   for (const { group, decimals, tokens, pending } of prepared) {
     if (!dryRun) for (const t of tokens) await upsertToken(db, t);
     const scanner = await openDayScanner({
-      group, rpc, latest: upper, ...(deps.dayBlocks ? { dayBlocks: deps.dayBlocks(ingest.chain_id) } : {}), cacheDayBlocks: !dryRun, sleep: deps.sleep, series: null, decimals,
+      group, rpc, latest: upper, ...(deps.dayBlocks ? { dayBlocks: deps.dayBlocks(ingest.chain_id) } : {}), cacheDayBlocks: !dryRun, sleep: deps.sleep, prices: null, decimals,
     });
     let unlisted = 0;
     let from = await scanner.dayStart(startDay, upper);
@@ -306,34 +274,4 @@ async function fillTransferScans(
     if (unlisted > 0) result.notes.push(`${group.sourceId}: ${unlisted} unlisted transfer(s) seen (not counted, as in the flow writer)`);
     if (scanner.edgeHours > 0) result.notes.push(`${group.sourceId}: ${scanner.edgeHours} transfer(s) stamped outside their day's hours, counted in its first or last hour`);
   }
-}
-
-async function backfillPrices(db: Db, deps: FetchDeps, id: string, tokens: TokenInfo[], days: string[], nowIso: string, dryRun: boolean): Promise<BackfillPrices> {
-  const refs = tokens.map((t) => t.tokenRef).sort();
-  const out: BackfillPrices = { coingeckoId: id, tokenRefs: refs, rows: 0, reachedDay: null, failures: [], requests: 0 };
-  if (dryRun || days.length === 0) return out;
-  // The hours the pending days need that some ref has no stored CoinGecko price for.
-  const fromMs = dayStartMs(days[0]!);
-  const toMs = dayStartMs(addDays(days[days.length - 1]!, 1));
-  const have = await storedPriceHours(db, refs, COINGECKO_PRICE_SOURCE, fromMs, toMs);
-  const missing: number[] = [];
-  for (const day of days) for (let h = dayStartMs(day); h < dayStartMs(addDays(day, 1)); h += MS_PER_HOUR) if (!have.has(h)) missing.push(h);
-  if (missing.length === 0) return out;
-  const start = Math.min(...missing);
-  const end = Math.max(...missing) + MS_PER_HOUR;
-  const r = await fetchHourlyRange(deps.http, deps.env, id, start, end);
-  out.requests = r.requests;
-  out.failures = r.failures;
-  out.reachedDay = r.reachedMs === null ? null : utcDay(r.reachedMs);
-  const rows = hourlyPriceRows(r.points).filter((p) => {
-    const ms = Date.parse(p.ts);
-    return ms >= start && ms < end;
-  });
-  if (rows.length > 0) {
-    for (const t of tokens) {
-      await upsertToken(db, t);
-      out.rows = await upsertPrices(db, t.tokenRef, COINGECKO_PRICE_SOURCE, rows, nowIso);
-    }
-  }
-  return out;
 }

@@ -8,6 +8,7 @@ import { buildPlan } from '../../src/ingest/plan.js';
 import { addDays } from '../../src/ingest/time.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
+import { fakePriceWriter } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { useTestDb } from '../helpers/db.js';
@@ -26,16 +27,6 @@ const C = config.contracts;
 const BRIDGE = '0x3154cf16ccdb4c6d922629664174b904d80f2c35'; // OP Mainnet's L1 bridge (L1ChugSplashProxy): L2 burns bridged back
 const SEARCHER = '0xc6208ce00b3f88c6555833ab9bbc943717dfd941'; // a mainnet Firepit searcher contract
 const PRICE = 7.5;
-
-/** UNI market chart: flat at 7.5 every hour (every day past 90) over the window asked for. */
-function uniChart(url: string): { prices: [number, number][] } {
-  const days = Number(new URL(url).searchParams.get('days'));
-  const end = NOW.getTime();
-  const step = days > 90 ? 86_400_000 : 3_600_000;
-  const prices: [number, number][] = [];
-  for (let t = end - days * 86_400_000; t <= end; t += step) prices.push([t, PRICE]);
-  return { prices };
-}
 
 /**
  * Burns for each of the 100 days to 2026-10-10: 48,000 UNI a day from the bridge, 16,000 from a searcher (75/25 as live),
@@ -56,7 +47,6 @@ function burnLogs() {
 function world() {
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'uniswap', symbol: 'uni', current_price: PRICE, market_cap: 4.7e9, circulating_supply: 624_978_422, total_supply: 887_216_418 }],
-    'https://api.coingecko.com/api/v3/coins/uniswap/market_chart': uniChart,
   });
   const rpc = fakeRpc({
     genesisTs: GENESIS_TS,
@@ -75,7 +65,9 @@ function world() {
     },
     logs: burnLogs(),
   });
-  const deps: FetchDeps = { http, rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW };
+  const deps: FetchDeps = { http, rpcFactory: () => rpc, env: { ORION_ETH_RPC_URL: 'http://eth.test' }, sleep: async () => undefined, now: () => NOW,
+    // The chain price of the flow's token, flat at PRICE (the CoinGecko chart this test served before Phase 3 R2).
+    priceWriter: fakePriceWriter(() => PRICE) };
   return { db: testDb(), deps, http, rpc };
 }
 
@@ -96,7 +88,8 @@ describe('assets/uni.yaml', () => {
     // Re-pinned 2026-11-04: income_statement v2 block added beside reporting (Phase 2 Task 2).
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
-    expect(loadAsset(ROOT, 'uni').hash).toBe('255b8a06512f32845fe375d2e1195086561f0847994e0bfd695ca115481cd9fa');
+    // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
+    expect(loadAsset(ROOT, 'uni').hash).toBe('7ece78194e0189ef5838de6f0db2e1683480141452e2dbd3692a45d4dfa33deb');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

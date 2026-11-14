@@ -8,6 +8,8 @@ import { insertObservation, listActiveObservations } from '../../src/db/observat
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset, type FetchDeps } from '../../src/ingest/run.js';
 import { loadHolderYieldReport } from '../../src/report/load.js';
+import { solanaTokenRef } from '../../src/db/prices.js';
+import { seedChainPrices } from '../helpers/chainPrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { useTestDb } from '../helpers/db.js';
 import { statementShape } from '../helpers/assets.js';
@@ -27,11 +29,6 @@ const BURN_PER_DAY = 1e9;
 const HISTORY_USD = 4_000_000;
 
 function world(supplyNow: number) {
-  const prices = (days: number): [number, number][] => {
-    const out: [number, number][] = [];
-    for (let t = NOW.getTime() - days * DAY; t <= NOW.getTime(); t += 3_600_000) out.push([t, PRICE]);
-    return out;
-  };
   const llama = (usd: number) => {
     const totalDataChart: [number, number][] = [];
     for (let t = NOW.getTime() - 400 * DAY; t < NOW.getTime() - (NOW.getTime() % DAY); t += DAY) totalDataChart.push([Math.floor(t / DAY) * 86_400, usd]);
@@ -39,7 +36,6 @@ function world(supplyNow: number) {
   };
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'pump-fun', symbol: 'pump', current_price: PRICE, market_cap: 2.3e9, circulating_supply: 462.8e9, total_supply: supplyNow }],
-    'https://api.coingecko.com/api/v3/coins/pump-fun/market_chart': (url: string) => ({ prices: prices(Number(new URL(url).searchParams.get('days'))) }),
     'https://lite-api.jup.ag/price/v3': { [MINT]: { usdPrice: PRICE * 1.001 } },
     'https://api.llama.fi/summary/fees/pump?dataType=dailyHoldersRevenue': llama(HISTORY_USD),
     'https://api.llama.fi/summary/fees/pump?dataType=dailyRevenue': llama(HISTORY_USD * 2),
@@ -52,6 +48,15 @@ function world(supplyNow: number) {
   });
   const deps: FetchDeps = { http, rpcFactory: () => { throw new Error('PUMP must not open an EVM RPC'); }, env: { ORION_SOL_RPC_URL: SOL }, sleep: async () => undefined, now: () => NOW };
   return { db: testDb(), deps, http };
+}
+
+/**
+ * PUMP's chain prices (the price writer's rows, Phase 3 R2): PRICE every hour of the 400 days before NOW, as the
+ * CoinGecko chart this test served before. The burn is priced at the mean of each day's 24.
+ */
+async function seedPumpPrices(db: Db): Promise<void> {
+  const top = Math.floor(NOW.getTime() / 3_600_000) * 3_600_000;
+  await seedChainPrices(db, solanaTokenRef(MINT), new Date(top - 400 * DAY).toISOString(), new Date(top).toISOString(), () => PRICE);
 }
 
 /** Daily on-chain supply readings at 06:00 for the `n` days before NOW, as solana.token_supply writes them. */
@@ -113,9 +118,10 @@ describe('assets/pump.yaml', () => {
     expect(plan.derived).toEqual([]);
   });
 
-  it('first fetch: a year of DefiLlama history converted at the day price; then on-chain days replace it as readings accrue', async () => {
+  it('first fetch: a year of DefiLlama history converted at the day\'s mean chain price; then on-chain days replace it as readings accrue', async () => {
     const supplyNow = 827.6e9;
     const w = world(supplyNow);
+    await seedPumpPrices(w.db);
     await fetchAsset(w.db, { config, hash: 'backfill' }, NOW, w.deps, { backfillDays: 362 });
     const rows = async (m: string) => await listActiveObservations(w.db, 'pump', m);
     expect((await rows('flow_usd.buyback')).filter((o) => o.periodDays === 1)).toHaveLength(362);
@@ -130,6 +136,7 @@ describe('assets/pump.yaml', () => {
   it('fetches on-chain days with no anomaly, and reports the burn and the unlocks', async () => {
     const supplyNow = 827.6e9;
     const w = world(supplyNow);
+    await seedPumpPrices(w.db);
     // The onboarding backfill eleven days ago (only the flows: its supply reading would be out of line with the seeded ones),
     // then a daily supply reading each morning since.
     await fetchAsset(w.db, { config, hash: 'backfill' }, new Date(NOW.getTime() - 11 * DAY), w.deps, { backfillDays: 362, metrics: ['flow_usd.buyback', 'flow_tokens.buyback'] });
@@ -144,6 +151,7 @@ describe('assets/pump.yaml', () => {
     const last7 = (await rows('flow_usd.buyback')).filter((o) => o.periodDays === 1).slice(-7);
     expect(last7.map((o) => Math.round(o.value))).toEqual(Array(7).fill(5_000_000));
     expect(last7.every((o) => o.source === 'api')).toBe(true);
+    expect(w.http.calls.filter((c) => c.url.includes('market_chart'))).toEqual([]); // priced from the chain rows (Phase 3 R2)
     expect((await rows('burn_wallet_a_pump')).at(-1)!.value).toBe(0);
 
     const report = await loadHolderYieldReport(w.db, config);

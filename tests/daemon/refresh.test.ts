@@ -63,14 +63,13 @@ describe('refresh job', () => {
     const h = harness(testDb());
     const stale = report({ report_error: { code: 'report_stale', message: 'holder-yield report day 2026-09-10 is 9 days behind' } });
     const seen: TickDeps[] = [];
-    const cache = new Map<string, Promise<unknown>>();
-    const out = await makeRefreshHandler({ fetchDeps: () => h.deps, tick: fakeTick({ report: stale, exitCode: 2 }, seen) })(
-      refreshJob(), { ...run.ctx, sharedHttpCache: (slot) => (slot === SLOT ? cache : new Map()) },
-    );
+    const out = await makeRefreshHandler({ fetchDeps: () => h.deps, tick: fakeTick({ report: stale, exitCode: 2 }, seen) })(refreshJob(), run.ctx);
     expect(out).toEqual({ status: 'done', result: { report: stale, fetchLines: [], alertFlags: [], levels: 0 } });
-    // The nightly's shared chart cache and the day-boundary block cache are handed to the fetch.
-    expect(seen[0]!.fetchDeps.sharedHttpCache).toBe(cache);
+    // The day-boundary block cache and the chain price writer are handed to the fetch (no shared CoinGecko chart cache:
+    // Phase 3 R2 reads no market_chart).
     expect(typeof seen[0]!.fetchDeps.dayBlocks).toBe('function');
+    expect(seen[0]!.fetchDeps.priceWriter).toBe(h.deps.priceWriter);
+    expect(Object.keys(seen[0]!.fetchDeps)).not.toContain('sharedHttpCache');
     expect(seen[0]!.home).toBe(w.root);
     expect(await getRegistryRow(testDb(), 'mini')).toMatchObject({ lastJobId: 1, lastRunAt: NOW.toISOString(), lastOutcome: 'done (report_stale)' });
     expect(run.posts).toEqual([]);

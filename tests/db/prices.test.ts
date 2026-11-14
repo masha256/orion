@@ -1,11 +1,10 @@
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { insertObservation } from '../../src/db/observations.js';
-import { compareUsd, evmTokenRef, listFlowUsd, listPrices, priceBasisOf, upsertPrices, upsertToken, USD_TOKEN } from '../../src/db/prices.js';
+import {
+  chainHourPrices, chainPricesAt, compareUsd, evmTokenRef, listFlowUsd, listPrices, priceBasisOf, upsertPrices, upsertToken, USD_TOKEN,
+} from '../../src/db/prices.js';
 import { readFileSync } from 'node:fs';
-import { parseMarketChart } from '../../src/ingest/flow.js';
-import { COINGECKO_PRICE_SOURCE, fetchHourlyRange, hourlyPriceRows } from '../../src/prices/coingeckoHourly.js';
-import { fakeHttp } from '../helpers/fakeHttp.js';
 import { useTestDb } from '../helpers/db.js';
 import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
 
@@ -34,17 +33,14 @@ const dayPrices = (day: string, price: (h: number) => number) =>
   Array.from({ length: 24 }, (_, h) => ({ ts: new Date(at(`${day}T00:00:00Z`) + h * H).toISOString(), priceUsd: price(h) }));
 
 describe('prices', () => {
-  it('prices: CoinGecko points are floored to the hour; a re-fetch is idempotent (PK)', async () => {
-    const chart = { prices: [[at('2026-11-01T10:03:12Z'), 2], [at('2026-11-01T11:02:59Z'), 3], [at('2026-11-01T11:47:00Z'), 3.5], [at('2026-11-01T12:00:00Z'), 4]] };
-    const rows = hourlyPriceRows(parseMarketChart(chart, 'x'));
-    // Floored to the top of the hour; of two points in one hour, the earlier (the hourly point, not the live one).
-    expect(rows).toEqual([
+  it('prices: a re-fetch of the same hours is idempotent (PK)', async () => {
+    const rows = [
       { ts: '2026-11-01T10:00:00.000Z', priceUsd: 2 }, { ts: '2026-11-01T11:00:00.000Z', priceUsd: 3 }, { ts: '2026-11-01T12:00:00.000Z', priceUsd: 4 },
-    ]);
+    ];
     await upsertToken(testDb(), TOKEN);
-    expect(await upsertPrices(testDb(), REF, COINGECKO_PRICE_SOURCE, rows, '2026-11-01T13:00:00Z')).toBe(3);
+    expect(await upsertPrices(testDb(), REF, 'chain:chainlink', rows, '2026-11-01T13:00:00Z')).toBe(3);
     // The same hours again (a revised price): no new row, the newer fetch wins.
-    expect(await upsertPrices(testDb(), REF, COINGECKO_PRICE_SOURCE, [{ ts: '2026-11-01T11:00:00.000Z', priceUsd: 3.1 }, ...rows.slice(2)], '2026-11-02T13:00:00Z')).toBe(2);
+    expect(await upsertPrices(testDb(), REF, 'chain:chainlink', [{ ts: '2026-11-01T11:00:00.000Z', priceUsd: 3.1 }, ...rows.slice(2)], '2026-11-02T13:00:00Z')).toBe(2);
     const stored = await listPrices(testDb(), REF);
     expect(stored.map((p) => [p.ts, p.priceUsd, p.fetchedAt])).toEqual([
       ['2026-11-01T10:00:00.000Z', 2, '2026-11-01T13:00:00.000Z'], ['2026-11-01T11:00:00.000Z', 3.1, '2026-11-02T13:00:00.000Z'], ['2026-11-01T12:00:00.000Z', 4, '2026-11-02T13:00:00.000Z'],
@@ -58,26 +54,25 @@ describe('prices', () => {
     expect(await testDb().one('SELECT symbol, decimals, coingecko_id FROM tokens WHERE token_ref = $1', [REF])).toEqual({ symbol: 'CRV', decimals: 18, coingecko_id: 'curve-dao-token' });
   });
 
-  it('fetchHourlyRange walks back in windows of at most 89 days and stops at the first failing one (the reach of the key)', async () => {
-    const now = at('2026-11-05T00:00:00Z');
-    const from = now - 200 * 86_400_000;
-    let n = 0;
-    const http = fakeHttp({
-      'https://api.coingecko.com/api/v3/coins/curve-dao-token/market_chart/range': (url: string) => {
-        n++;
-        if (n === 3) throw new Error('HTTP 401');
-        const u = new URL(url);
-        const a = Number(u.searchParams.get('from')) * 1000;
-        const b = Number(u.searchParams.get('to')) * 1000;
-        expect(b - a).toBeLessThanOrEqual(89 * 86_400_000);
-        return { prices: [[a, 1], [b, 2]] };
-      },
-    });
-    const r = await fetchHourlyRange(http, {}, 'curve-dao-token', from, now);
-    expect(r.requests).toBe(3);
-    expect(r.reachedMs).toBe(now - 178 * 86_400_000);
-    expect(r.failures).toEqual([expect.stringMatching(/2026-04-19 to 2026-05-11: HTTP 401/)]);
-    expect(r.points.map((p) => p.ts)).toEqual([...r.points.map((p) => p.ts)].sort((a, b) => a - b));
+  it('chainHourPrices / chainPricesAt read as flow_usd_chain_v does: chain rows only, newest write wins a tie, <= 6 h back (Task 6a)', async () => {
+    await upsertToken(testDb(), TOKEN);
+    await upsertPrices(testDb(), REF, 'chain:curve_oracle', [{ ts: '2026-11-01T02:00:00.000Z', priceUsd: 1 }, { ts: '2026-11-01T10:00:00.000Z', priceUsd: 2 }], '2026-11-01T12:00:00Z');
+    // A newer write of 10:00 under another chain source wins the hour (Ruling R6); a CoinGecko row is never read.
+    await upsertPrices(testDb(), REF, 'chain:chainlink', [{ ts: '2026-11-01T10:00:00.000Z', priceUsd: 2.5 }], '2026-11-01T13:00:00Z');
+    await upsertPrices(testDb(), REF, 'coingecko', [{ ts: '2026-11-01T05:00:00.000Z', priceUsd: 99 }, { ts: '2026-11-01T11:00:00.000Z', priceUsd: 99 }], '2026-11-01T14:00:00Z');
+    expect(await chainHourPrices(testDb(), REF, at('2026-11-01T00:00:00Z'), at('2026-11-02T00:00:00Z'))).toEqual(new Map([[at('2026-11-01T02:00:00Z'), 1], [at('2026-11-01T10:00:00Z'), 2.5]]));
+    const got = await chainPricesAt(testDb(), REF, at('2026-11-01T00:00:00Z'), at('2026-11-01T18:00:00Z'));
+    // 02:00 prices 02:00..08:00 (6 h); 09:00 has none; 10:00 prices 10:00..16:00; 17:00 has none.
+    const hours = (from: string, n: number) => Array.from({ length: n }, (_, i) => at(from) + i * H);
+    expect([...got.keys()]).toEqual([...hours('2026-11-01T02:00:00Z', 7), ...hours('2026-11-01T10:00:00Z', 7)]);
+    expect(got.get(at('2026-11-01T08:00:00Z'))).toBe(1);
+    expect(got.get(at('2026-11-01T16:00:00Z'))).toBe(2.5);
+    // A dry run's in-memory row ranks with the stored ones (the newest write wins its hour).
+    const dry = await chainPricesAt(testDb(), REF, at('2026-11-01T09:00:00Z'), at('2026-11-01T11:00:00Z'), [
+      { ts: '2026-11-01T09:00:00.000Z', priceUsd: 7, source: 'chain:dry_run', fetchedAt: '2026-11-01T15:00:00Z' },
+      { ts: '2026-11-01T10:00:00.000Z', priceUsd: 8, source: 'chain:dry_run', fetchedAt: '2026-11-01T15:00:00Z' },
+    ]);
+    expect(dry).toEqual(new Map([[at('2026-11-01T09:00:00Z'), 7], [at('2026-11-01T10:00:00Z'), 8]]));
   });
 });
 

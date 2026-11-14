@@ -111,7 +111,7 @@ metrics:
     cadence: daily
     staleness_days: 30
     monitor_only: true
-    source: { type: transfer_flow, token: market_token, to: collector, from_allowlist: [ zero ], unit: usd, price_coingecko_id: {{underlying_coingecko_id}} }
+    source: { type: transfer_flow, token: market_token, to: collector, from_allowlist: [ zero ], unit: usd }
 
   # The market's reserve factor, read daily (the revenue line's share_metric).
   reserve_factor:
@@ -127,7 +127,7 @@ metrics:
     cadence: daily
     staleness_days: 30
     critical: true
-    source: { type: transfer_flow, token: token, to: buyback_sink, from_allowlist: [ buyback_source ], unit: usd, price_coingecko_id: {{coingecko_id}} }
+    source: { type: transfer_flow, token: token, to: buyback_sink, from_allowlist: [ buyback_source ], unit: usd }
 
   # needs state_delta (Phase 3): flow_usd.accrued_to_treasury, accruedToTreasury x the liquidity index, per day per market
   # needs state_delta (Phase 3): flow_usd.borrow_interest, Σ debt x Δ borrow index per day (a measured gross)
@@ -168,7 +168,6 @@ chainlink_feed_address: "0x00000000000000000000000000000000000007a8"
 chain_id: 1
 rpc_url_env: ORION_ETH_RPC_URL
 coingecko_id: dummy-lending-token
-underlying_coingecko_id: usd-coin
 staked_note: "safety-module staking pays emissions, not a fee share"
 emission_note: "no minting; incentive emissions from the treasury are dilution"
 reserve_factor_function: getReserveFactor

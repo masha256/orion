@@ -69,13 +69,17 @@ export const SourceSchema = z.discriminatedUnion('type', [
     from_any: z.literal(true).optional(),
     /** Subset of the allowlist to sum. Default: all of it. Not with `from_any`. */
     count_from: z.array(name).min(1).optional(),
+    /**
+     * `usd`: each hour's tokens x the chain price of the hour (prices.yaml, keyed by the token's ref on the ingest chain:
+     * the scanned token, or a vault share's `share_price.underlying`). `price_coingecko_id` is retired (Phase 3 R2): the
+     * schema refuses it by name.
+     */
     unit: z.enum(['usd', 'tokens']),
-    price_coingecko_id: name.optional(),
     /**
      * When the transferred token is a vault share, convert each day's shares to the underlying token before pricing:
-     * tokens × `function()` (e.g. pricePerShare, scaled by `decimals`), read at the last block of the day. The price id
-     * is then the underlying's. Optional with no default, so existing config hashes do not move. `underlying` names the
-     * underlying token's contract (its token ref is priced from prices.yaml); optional with no default (hashes).
+     * tokens × `function()` (e.g. pricePerShare, scaled by `decimals`), read at the last block of the day. `underlying`
+     * names the underlying token's contract, whose prices.yaml ref prices a usd member (required for unit usd). Optional
+     * with no default, so existing config hashes do not move.
      */
     share_price: z
       .strictObject({ contract: name, function: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), decimals: z.number().int().min(0).max(36), underlying: name.optional() })
@@ -174,7 +178,9 @@ export function sourceIssues(asset: SourceBearingAsset, requiredMetrics: string[
   const checkShape = (where: string, s: SourceConfig) => {
     for (const c of contractNames(s)) if (asset.contracts[c] === undefined) issues.push(`${where}: unknown contract "${c}"`);
     if (s.type === 'transfer_flow') {
-      if (s.unit === 'usd' && s.price_coingecko_id === undefined) issues.push(`${where}: a transfer_flow with unit usd needs price_coingecko_id`);
+      if (s.unit === 'usd' && s.share_price && s.share_price.underlying === undefined) {
+        issues.push(`${where}: a vault-share transfer_flow with unit usd needs share_price.underlying (the token its chain price is read for)`);
+      }
       for (const c of s.count_from ?? []) if (!(s.from_allowlist ?? []).includes(c)) issues.push(`${where}: count_from "${c}" is not in from_allowlist`);
     }
     if (s.type === 'contract_read' && (s.returns === undefined) !== (s.pick === undefined)) {

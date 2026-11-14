@@ -77,18 +77,19 @@ const solCtx = (over: Partial<SourceContext> = {}): SourceContext => {
   const pump = loadAsset(ROOT, 'pump').config;
   const http = fakeHttp({
     [SOL_KEYED]: (_u: string, body?: unknown) => ((body as { method: string }).method === 'getTokenSupply' ? supplyReply('896000000000000000') : { jsonrpc: '2.0', id: 1, result: { context: { slot: 78 }, value: [] } }),
-    'https://api.coingecko.com/api/v3/coins/pump-fun/market_chart': (() => {
-      const prices: [number, number][] = [];
-      for (let t = Date.parse(SOL_NOW) - 30 * DAY; t <= Date.parse(SOL_NOW); t += 3_600_000) prices.push([t, 0.005]);
-      return { prices, market_caps: [], total_volumes: [] };
-    })(),
     'https://api.llama.fi/summary/fees/pump?dataType=dailyHoldersRevenue': (() => {
       const totalDataChart: [number, number][] = [];
       for (let t = Math.floor(Date.parse(SOL_NOW) / DAY) * DAY - 400 * DAY; t < Date.parse(SOL_NOW); t += DAY) totalDataChart.push([t / 1000, 1_000_000]);
       return { totalDataChart };
     })(),
   });
-  return sourceCtx({ asset: pump, nowIso: SOL_NOW, http, env: { ORION_SOL_RPC_URL: SOL_KEYED }, ...over });
+  // PUMP's stored chain prices: 0.005 every hour (the CoinGecko chart this test served before Phase 3 R2).
+  const chainHourPrices = async (_ref: string, fromMs: number, toMs: number) => {
+    const out = new Map<number, number>();
+    for (let h = fromMs; h < toMs; h += 3_600_000) out.set(h, 0.005);
+    return out;
+  };
+  return sourceCtx({ asset: pump, nowIso: SOL_NOW, http, env: { ORION_SOL_RPC_URL: SOL_KEYED }, chainHourPrices, ...over });
 };
 const supplyRow = (observedAt: string, value: number): Observation => ({
   id: 1, assetId: 'pump', metricKey: 'total_supply', observedAt, periodDays: null, value, source: 'onchain',

@@ -84,7 +84,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     critical: true
-    source: { type: transfer_flow, token: usds, to: usds_farm, from_allowlist: [ zero ], unit: usd, price_coingecko_id: usds }
+    source: { type: transfer_flow, token: usds, to: usds_farm, from_allowlist: [ zero ], unit: usd }
 
   # Holder flow 2: the SKY the flapper buys, read as SKY paid out of the pair to the Pause Proxy, at each day's SKY price
   # (55 percent of surplus). The 500M top-up from the Safe is a treasury transfer, not a buy: ignored. Any other sender
@@ -95,7 +95,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     critical: true
-    source: { type: transfer_flow, token: token, to: pause_proxy, from_allowlist: [ sky_usds_pair ], from_ignore: [ treasury_safe ], unit: usd, price_coingecko_id: sky }
+    source: { type: transfer_flow, token: token, to: pause_proxy, from_allowlist: [ sky_usds_pair ], from_ignore: [ treasury_safe ], unit: usd }
   flow_tokens.buyback:
     type: flow
     unit: tokens

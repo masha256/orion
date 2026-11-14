@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { parse as parseYaml, YAMLParseError } from 'yaml';
 import { ZodError } from 'zod';
 import { findAdapter } from '../ingest/adapters/registry.js';
-import { entriesFor, loadPrices, type PriceEntry } from '../prices/config.js';
+import { entriesFor, loadPrices, usdFlowRefs, type PriceEntry } from '../prices/config.js';
 import { OrionError } from '../types.js';
 import { canonicalJson, sha256 } from '../util/canonical.js';
 import { AssetConfigSchema, type AssetConfig } from './schema.js';
@@ -13,6 +13,11 @@ export interface LoadedAsset {
   hash: string;
   /** The object as written, before schema defaults. Absent when a caller built the LoadedAsset by hand. */
   raw?: unknown;
+  /**
+   * The prices.yaml the asset was loaded with (its config root's): the chain price writer a fetch runs reads its refs
+   * here. Absent when parsed without one (a test's hand-built asset); such a fetch needs FetchDeps.priceWriter.
+   */
+  prices?: ReadonlyMap<string, PriceEntry>;
 }
 
 /** What a config proposal's paths and filed-against values refer to: the config as written, else as parsed. */
@@ -38,8 +43,15 @@ export function parseAssetObject(obj: unknown, prices?: Map<string, PriceEntry>)
   }
   const paramIssues = adapterParamIssues(config);
   if (paramIssues.length > 0) throw new OrionError('invalid_asset_config', paramIssues.join('\n'));
+  if (prices && prices.size > 0) {
+    // Every usd transfer_flow is valued at its token's chain price (Phase 3 R2): the ref must be priced in prices.yaml.
+    const unpriced = usdFlowRefs(config).filter((u) => !prices.has(u.ref));
+    if (unpriced.length > 0) {
+      throw new OrionError('invalid_asset_config', unpriced.map((u) => `metrics.${u.metricKey}.source: ${u.contract} (${u.ref}) has no entry in prices.yaml; a transfer_flow with unit usd is valued at its chain price`).join('\n'));
+    }
+  }
   const entries = prices ? entriesFor(config, prices) : [];
-  return { config, hash: sha256(canonicalJson(entries.length === 0 ? config : { config, prices: entries })), raw: obj };
+  return { config, hash: sha256(canonicalJson(entries.length === 0 ? config : { config, prices: entries })), raw: obj, ...(prices ? { prices } : {}) };
 }
 
 /** Every adapter source (primary and cross-check) whose adapter validates its params, checked. Unknown names are left to ingest. */

@@ -9,7 +9,7 @@ import { upsertLatestLevels } from '../../db/latestLevels.js';
 import { getRegistryRow, recordRun } from '../../db/registry.js';
 import { listWatchStates, putWatchStates } from '../../db/watchState.js';
 import { realFetchDeps } from '../../ingest/deps.js';
-import type { FetchDeps, FetchResult } from '../../ingest/run.js';
+import { priceWriterOf, type FetchDeps, type FetchResult } from '../../ingest/run.js';
 import type { BlockRef, RpcFactory } from '../../ingest/transport/rpc.js';
 import { levelMetricKeys, toLatestLevels } from '../../levels/levels.js';
 import { levelWatchRule, watchTransitions } from '../../levels/watchTransitions.js';
@@ -87,7 +87,7 @@ async function keepLevels(
 
 /**
  * The nightly `refresh` job (spec 5.4): today's `tickAsset` for one active asset, with the day-boundary block cache
- * (N9) and the slot's shared market_chart cache (N8). Exit 0 or 2 is `done` (a report error such as `report_stale` is
+ * (N9). Exit 0 or 2 is `done` (a report error such as `report_stale` is
  * kept in the result: the report alerts on it); exit 1 is `failed`, retried after 10 min; `run_in_progress` is `failed`,
  * retried after 30 min. The second failure posts `ORION ALERT <env> refresh <SYM> failed twice: <code>: <message>` at
  * once. An asset that is not active when the job runs is `skipped` with its state as the reason.
@@ -115,7 +115,9 @@ export function makeRefreshHandler(o: RefreshHandlerOptions = {}): JobHandler {
         return { ...rpc, latestBlock: async () => (block = await rpc.latestBlock()) };
       };
       const deps: FetchDeps = {
-        ...base, rpcFactory, dayBlocks: (chainId) => dbDayBlocks(ctx.db, chainId), sharedHttpCache: ctx.sharedHttpCache?.(job.slot) ?? base.sharedHttpCache,
+        // The chain price writer reads through the unwrapped transports: its block reads (other chains, other heads) are
+        // not the fetch's block.
+        ...base, rpcFactory, dayBlocks: (chainId) => dbDayBlocks(ctx.db, chainId), priceWriter: priceWriterOf(base, loaded.prices),
       };
       let fetch: FetchResult | null = null;
       const r = await tick(ctx.db, loaded, {

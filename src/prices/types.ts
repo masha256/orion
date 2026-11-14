@@ -1,5 +1,6 @@
 import type { HttpTransport } from '../ingest/transport/http.js';
 import type { RpcTransport } from '../ingest/transport/rpc.js';
+import type { PriceRow } from '../db/prices.js';
 import type { PriceEntry } from './config.js';
 
 /**
@@ -95,4 +96,6 @@ export interface WriteResult {
   stoppedBySignal: boolean;
   /** A chain whose read threw (a transport failure): it is skipped for the rest of the run, which a re-run resumes. */
   errors: { chain: string; hourMs: number; error: string }[];
+  /** A dry run only (Ruling R19): the rows a real run would have written, by ref; nothing was stored. */
+  rows?: Record<string, PriceRow[]>;
 }

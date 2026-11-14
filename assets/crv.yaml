@@ -99,7 +99,7 @@ metrics:
     cadence: daily
     staleness_days: 10
     critical: true
-    source: { type: transfer_flow, token: crvusd, to: fee_distributor, from_allowlist: [ fee_allocator ], unit: usd, price_coingecko_id: crvusd }
+    source: { type: transfer_flow, token: crvusd, to: fee_distributor, from_allowlist: [ fee_allocator ], unit: usd }
 
   # Votemarket incentives committed to veCRV voters, 180 days scaled to a year (CurveDEX's feed, the one DefiLlama uses).
   # Votium (vlCVX) is excluded: it pays CVX lockers, not CRV holders. Not critical: if the feed dies the signal grades C.
@@ -122,14 +122,14 @@ metrics:
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: crvusd, to: curve_treasury, from_allowlist: [ fee_allocator ], unit: usd, price_coingecko_id: crvusd }
+    source: { type: transfer_flow, token: crvusd, to: curve_treasury, from_allowlist: [ fee_allocator ], unit: usd }
   flow_usd.protocol_revenue:
     type: flow
     unit: usd
     cadence: daily
     staleness_days: 10
     monitor_only: true
-    source: { type: transfer_flow, token: crvusd, to: fee_allocator, from_allowlist: [ hooker ], unit: usd, price_coingecko_id: crvusd }
+    source: { type: transfer_flow, token: crvusd, to: fee_allocator, from_allowlist: [ hooker ], unit: usd }
 
 # Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
 # the holders and below_line lines):

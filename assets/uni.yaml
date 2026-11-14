@@ -77,7 +77,7 @@ metrics:
     cadence: daily
     staleness_days: 5
     critical: true
-    source: { type: transfer_flow, token: token, to: dead, from_any: true, from_ignore: [ timelock ], unit: usd, price_coingecko_id: uniswap }
+    source: { type: transfer_flow, token: token, to: dead, from_any: true, from_ignore: [ timelock ], unit: usd }
 
   # The same burn in UNI: the flow's own measure, flat at about 23.6M a year while the dollar value tracked the price.
   flow_tokens.burn:

@@ -8,8 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { sourceCtx } from '../helpers/sourceCtx.js';
 
-// Shapes read live on 2026-10-16 from Alchemy's Solana RPC (getTokenSupply, getTokenAccountsByOwner jsonParsed), CoinGecko's
-// market_chart and DefiLlama's summary/fees totalDataChart.
+// Shapes read live on 2026-10-16 from Alchemy's Solana RPC (getTokenSupply, getTokenAccountsByOwner jsonParsed) and
+// DefiLlama's summary/fees totalDataChart. The burns are priced from the stored chain prices (Phase 3 R2 Task 6a).
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const MINT = 'pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn';
 const KEYED = 'https://solana-mainnet.g.alchemy.com/v2/sol_SECRETKEY';
@@ -88,12 +88,23 @@ function stored(rows: [string, number][]): Observation[] {
   }));
 }
 
-/** CoinGecko hourly prices: `p(day)` every hour from 30 days back. */
-function chart(p: (day: string) => number) {
-  const prices: [number, number][] = [];
-  for (let t = T(NOW) - 30 * DAY; t <= T(NOW); t += 3_600_000) prices.push([t, p(new Date(t).toISOString().slice(0, 10))]);
-  return { prices, market_caps: [], total_volumes: [] };
+const PUMP_REF = `solana:mainnet/${MINT}`;
+const HOUR = 3_600_000;
+/** The stored chain prices of PUMP: `p(hourMs)` at every hour from 400 days back (null: no row that hour). */
+function chainHours(p: (hourMs: number) => number | null) {
+  const asked: [string, number, number][] = [];
+  const read = async (ref: string, fromMs: number, toMs: number) => {
+    asked.push([ref, fromMs, toMs]);
+    const out = new Map<number, number>();
+    for (let h = Math.max(fromMs, T(NOW) - 400 * DAY); h < toMs; h += HOUR) {
+      const v = ref === PUMP_REF ? p(h) : null;
+      if (v !== null) out.set(h, v);
+    }
+    return out;
+  };
+  return { asked, read };
 }
+const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 /** DefiLlama dailyHoldersRevenue: `usd` every day from 400 days back (timestamps at 00:00 UTC, seconds). */
 function llama(usd: number) {
@@ -102,22 +113,23 @@ function llama(usd: number) {
   return { totalDataChart };
 }
 
-const routes = (supplyNow: number, price = (_d: string) => 0.005, history = 1_000_000) => ({
+const routes = (supplyNow: number, history = 1_000_000) => ({
   [KEYED]: supplyReply(raw(supplyNow)),
-  'https://api.coingecko.com/api/v3/coins/pump-fun/market_chart': chart(price),
   'https://api.llama.fi/summary/fees/pump?dataType=dailyHoldersRevenue': llama(history),
 });
 
 const params = (unit: 'usd' | 'tokens') => ({ mint: 'token', unit, supply_metric: 'total_supply', days: 7, history: { slug: 'pump', data_type: 'dailyHoldersRevenue' } });
 
-function burnRun(unit: 'usd' | 'tokens', obs: Observation[], supplyNow: number, extra: { backfillDays?: number; price?: (d: string) => number } = {}) {
-  const http = fakeHttp(routes(supplyNow, extra.price));
+function burnRun(unit: 'usd' | 'tokens', obs: Observation[], supplyNow: number, extra: { backfillDays?: number; price?: (hourMs: number) => number | null } = {}) {
+  const http = fakeHttp(routes(supplyNow));
+  const prices = chainHours(extra.price ?? (() => 0.005));
   const ctx = sourceCtx({
     asset: pump, nowIso: NOW, http, env: { ORION_SOL_RPC_URL: KEYED },
     observations: async (m) => (m === 'total_supply' ? obs : []),
+    chainHourPrices: prices.read,
     ...(extra.backfillDays !== undefined ? { backfillDays: extra.backfillDays } : {}),
   });
-  return { http, result: getAdapter('solana.supply_burn_daily').run(ctx, params(unit)) };
+  return { http, prices, result: getAdapter('solana.supply_burn_daily').run(ctx, params(unit)) };
 }
 
 describe('solana.supply_burn_daily', () => {
@@ -126,10 +138,12 @@ describe('solana.supply_burn_daily', () => {
     for (const a of solanaAdapters) expect(a.needsRpc).toBe(false);
   });
 
-  it('prices each on-chain day at its mean CoinGecko price and fills the days before the first reading from DefiLlama', async () => {
+  it('prices each on-chain day at the mean of its 24 chain prices, no CoinGecko request; the days before the first reading from DefiLlama', async () => {
     // Daily readings at 06:00 from 10-12: 1B PUMP burned a day. 10-12 starts before the first reading, so it is DefiLlama's.
     const obs = stored([['2026-10-12T06:00:00.000Z', 900e9], ['2026-10-13T06:00:00.000Z', 899e9], ['2026-10-14T06:00:00.000Z', 898e9], ['2026-10-15T06:00:00.000Z', 897e9]]);
-    const { result } = burnRun('usd', obs, 896e9, { price: (d) => (d === '2026-10-14' ? 0.006 : 0.005) });
+    // 10-14: hours 0-11 at 0.005 and 12-23 at 0.007, a mean of 0.006; every other hour 0.005.
+    const price = (h: number) => (dayOf(h) === '2026-10-14' ? (new Date(h).getUTCHours() < 12 ? 0.005 : 0.007) : 0.005);
+    const { result, http, prices } = burnRun('usd', obs, 896e9, { price });
     const v = await result;
     expect(v.kind).toBe('daily_series');
     if (v.kind !== 'daily_series') return;
@@ -139,9 +153,25 @@ describe('solana.supply_burn_daily', () => {
     ]);
     expect(v.detail).toContain('3 days from 5 getTokenSupply readings; 4 days from DefiLlama pump dailyHoldersRevenue');
     expect(v.detail).not.toContain('SECRETKEY');
+    expect(v.token).toEqual({ tokenRef: PUMP_REF, symbol: 'PUMP', decimals: null, coingeckoId: null });
+    // The chain prices of the window's whole days were read from `prices` for the PUMP ref; no market_chart (no CoinGecko at all).
+    expect(prices.asked).toEqual([[PUMP_REF, T('2026-10-09T00:00:00Z'), T('2026-10-16T00:00:00Z')]]);
+    expect(http.calls.filter((c) => c.url.includes('coingecko'))).toEqual([]);
   });
 
-  it('converts the DefiLlama days to tokens at the day price (unit: tokens)', async () => {
+  it('refuses a day with fewer than 24 chain prices: no USD row for it (the token row keeps it: unit tokens needs no price)', async () => {
+    const obs = stored([['2026-10-12T06:00:00.000Z', 900e9], ['2026-10-13T06:00:00.000Z', 899e9], ['2026-10-14T06:00:00.000Z', 898e9], ['2026-10-15T06:00:00.000Z', 897e9]]);
+    const gap = T('2026-10-14T17:00:00Z');
+    const v = await burnRun('usd', obs, 896e9, { price: (h) => (h === gap ? null : 0.005) }).result;
+    if (v.kind !== 'daily_series') throw new Error(v.kind);
+    expect(v.points.map((p) => p.day)).toEqual(['2026-10-09', '2026-10-10', '2026-10-11', '2026-10-12', '2026-10-13', '2026-10-15']);
+    expect(v.detail).toContain(`no price (fewer than 24 chain hours of ${PUMP_REF}) for 2026-10-14`);
+    const t = await burnRun('tokens', obs, 896e9, { price: (h) => (h === gap ? null : 0.005) }).result;
+    if (t.kind !== 'daily_series') throw new Error(t.kind);
+    expect(t.points.find((p) => p.day === '2026-10-14')).toMatchObject({ value: expect.closeTo(1e9, 0), amount: expect.closeTo(1e9, 0) });
+  });
+
+  it('converts the DefiLlama days to tokens at the day\'s mean chain price (unit: tokens)', async () => {
     const { result } = burnRun('tokens', stored([['2026-10-15T06:00:00.000Z', 897e9]]), 896e9);
     const v = await result;
     if (v.kind !== 'daily_series') throw new Error(v.kind);
@@ -165,11 +195,11 @@ describe('solana.supply_burn_daily', () => {
     expect(routine.http.calls.some((c) => c.url.includes('llama.fi'))).toBe(false);
   });
 
-  it('ignores stored readings of another mint, and fails when on-chain days exist but none can be priced', async () => {
+  it('ignores stored readings of another mint, and fails when on-chain days exist but none has its 24 chain prices', async () => {
     const obs = stored([['2026-10-12T06:00:00.000Z', 900e9]]);
     await expect(burnRun('usd', obs, 896e9).result).resolves.toMatchObject({ kind: 'daily_series' });
-    // A broken price chart fails the read rather than storing unpriced days.
-    await expect(burnRun('usd', obs, 896e9, { price: () => Number.NaN }).result).rejects.toThrow(/coingecko pump-fun: malformed/);
+    // No chain price at all: the read fails rather than storing no day.
+    await expect(burnRun('usd', obs, 896e9, { price: () => null }).result).rejects.toThrow(/no on-chain day has its 24 chain prices of solana:mainnet\/pump/);
     const foreign = stored([['2026-10-12T06:00:00.000Z', 900e9]]).map((o) => ({ ...o, sourceDetail: 'solana getTokenSupply OTHERMINT slot 1' }));
     const v = await burnRun('usd', foreign, 896e9).result;
     if (v.kind !== 'daily_series') throw new Error(v.kind);

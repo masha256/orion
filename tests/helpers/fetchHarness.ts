@@ -2,6 +2,7 @@ import type { LoadedAsset } from '../../src/config/load.js';
 import type { Db } from '../../src/db/connection.js';
 import type { FetchDeps } from '../../src/ingest/run.js';
 import type { ReceiptLog, TransferLog } from '../../src/ingest/transport/rpc.js';
+import { fakePriceWriter, type FakePriceWriter } from './chainPrices.js';
 import { fakeHttp, type FakeHttp, type Route } from './fakeHttp.js';
 import { callKey, fakeRpc, type FakeRpc } from './fakeRpc.js';
 import { ingestAsset, SINK, STAKING, TOKEN } from './ingestAsset.js';
@@ -13,24 +14,18 @@ export const GENESIS_TS = NOW.getTime() / 1000 - 10 * 86_400 + 1;
 export const LATEST = BigInt(Math.floor((NOW.getTime() / 1000 - GENESIS_TS) / 2));
 
 export const CG_MARKETS = 'https://api.coingecko.com/api/v3/coins/markets';
-export const CG_CHART = 'https://api.coingecko.com/api/v3/coins/mini-token/market_chart';
 export const STATS = 'https://api.example.test/stats';
 export const LLAMA = 'https://api.llama.fi/summary/fees/mini';
 
 const E18 = 10n ** 18n;
 
-/** One price point per hour from `fromIso` up to and including `toIso`. */
-export function hourlyPrices(fromIso: string, toIso: string, priceAt: (ms: number) => number): { prices: [number, number][] } {
-  const prices: [number, number][] = [];
-  for (let t = Date.parse(fromIso); t <= Date.parse(toIso); t += 3_600_000) prices.push([t, priceAt(t)]);
-  return { prices };
-}
+/** The mini token's ref (Base): the chain price every usd transfer_flow member of the mini asset is valued at. */
+export const MINI_REF = 'eip155:8453/0x1111111111111111111111111111111111111111';
 
 /** A healthy world: price 10 everywhere, 100 tokens of total supply, 50 staked, no emissions. */
 export function defaultRoutes(): Record<string, Route> {
   return {
     [CG_MARKETS]: [{ id: 'mini-token', current_price: 10, market_cap: 600, circulating_supply: 60 }],
-    [CG_CHART]: hourlyPrices('2026-09-10T00:00:00Z', '2026-09-19T12:00:00Z', () => 10),
     [STATS]: { price: '10.1', supply: { totalBaseUnit: (100n * E18).toString() } },
     [LLAMA]: { totalDataChart: [] },
   };
@@ -52,6 +47,8 @@ export interface Harness {
   deps: FetchDeps;
   http: FakeHttp;
   rpc: FakeRpc;
+  /** The chain price writer the fetch uses (a fake: price 10 every hour unless `price` says otherwise). */
+  prices: FakePriceWriter;
 }
 
 /** The fetch world on `db` (the test's database: see tests/helpers/db.ts). */
@@ -69,6 +66,8 @@ export function harness(
     now?: Date;
     /** Compute the RPC's latest block from this time instead of `now`, so a test can put the chain head ahead of (or behind) the fetch's `now` independently of `deps.now()`. */
     rpcNow?: Date;
+    /** The chain price of a ref at an hour (null: no price). Default: 10 for every ref and hour. */
+    price?: (ref: string, hourMs: number) => number | null;
   } = {},
 ): Harness {
   const now = over.now ?? NOW;
@@ -82,12 +81,14 @@ export function harness(
     code: over.code,
     receipts: over.receipts,
   });
+  const prices = fakePriceWriter(over.price ?? (() => 10));
   const deps: FetchDeps = {
     http,
+    priceWriter: prices,
     rpcFactory: () => rpc,
     env: over.env ?? { TEST_RPC_URL: 'http://rpc.test' },
     sleep: async () => undefined,
     now: () => new Date(now.getTime() + 5000),
   };
-  return { db, loaded: over.loaded ?? ingestAsset(), deps, http, rpc };
+  return { db, loaded: over.loaded ?? ingestAsset(), deps, http, rpc, prices };
 }

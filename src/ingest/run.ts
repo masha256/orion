@@ -1,7 +1,10 @@
 import type { LoadedAsset } from '../config/load.js';
+import type { PriceEntry } from '../prices/config.js';
 import type { MetricDef } from '../config/schema.js';
 import { isChainSource } from '../config/sources.js';
 import { findStandingAnomaly, raiseAnomaly } from '../db/anomalies.js';
+import { chainHourPrices } from '../db/prices.js';
+import { makePriceDeps, writeChainPrices } from '../prices/writer.js';
 import type { Db } from '../db/connection.js';
 import type { DayBlockCache } from '../db/dayBlocks.js';
 import { getCursor } from '../db/fetchCursors.js';
@@ -19,13 +22,13 @@ import { DEFAULT_API_FLOW_BACKFILL_DAYS, DEFILLAMA_REVISION_DAYS, writeApiFlow }
 import { writePeriodicPayments } from './periodic.js';
 import { compareLevel, compareMonthly } from './crosscheck.js';
 import { derivedFunction, type DerivedName } from './derived.js';
-import { isMarketChartBody, scanFlowGroup } from './flow.js';
+import { scanFlowGroup, type ChainPriceWriter } from './flow.js';
 import { buildPlan, hasSources, type FlowGroup, type SourceBatch } from './plan.js';
 import { sourceId } from './sourceId.js';
 import { getSourceHandler } from './sources/registry.js';
 import { addDays, monthOf, utcDay } from './time.js';
 import { CHAINS } from './transport/chains.js';
-import { isMarketChartUrl, withRunCache, withSharedCache, type HttpTransport } from './transport/http.js';
+import { withRunCache, type HttpTransport } from './transport/http.js';
 import type { BlockRef, RpcFactory, RpcTransport } from './transport/rpc.js';
 import {
   contractResolver, failed, type DailyPoint, type RaisedAnomaly, type ReadingResult, type SourceContext, type SourceRequest, type WrittenObservation,
@@ -45,8 +48,21 @@ export interface FetchDeps {
   now(): Date;
   /** The day-boundary block cache of a chain (N9). Unset: every scan searches its boundaries. */
   dayBlocks?: (chainId: number) => DayBlockCache;
-  /** Shared across fetches (the nightly keeps one per slot, N8): CoinGecko market_chart replies. Unset: per run only. */
-  sharedHttpCache?: Map<string, Promise<unknown>>;
+  /**
+   * The chain price writer a transfer scan ensures its hours with. Unset: writeChainPrices over this run's transports
+   * (makePriceDeps: the price chains' RPC URLs from `env`, `rpcFactory`, `http`) and the prices.yaml the asset was loaded
+   * with (LoadedAsset.prices; none: every ref is unknown_price_ref).
+   */
+  priceWriter?: ChainPriceWriter;
+}
+
+/** FetchDeps' price writer: the injected one, else writeChainPrices bound to the run's transports and prices.yaml. */
+export function priceWriterOf(deps: FetchDeps, prices: ReadonlyMap<string, PriceEntry> | undefined): ChainPriceWriter {
+  if (deps.priceWriter) return deps.priceWriter;
+  return async (db, refs, fromHourMs, toHourMs, opts = {}) => {
+    const priceDeps = makePriceDeps(deps.env, { rpcFactory: deps.rpcFactory, prices: prices ?? new Map(), http: deps.http, now: deps.now() });
+    return await writeChainPrices(db, priceDeps, refs, fromHourMs, toHourMs, { ...(opts.dryRun ? { dryRun: true } : {}), ...(opts.signal ? { signal: opts.signal } : {}) });
+  };
 }
 
 export interface FetchOptions {
@@ -222,8 +238,9 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   }
   const historyDays = opts.backfillDays ?? (firstAdapterFlow ? (asset.ingest?.backfill_days ?? DEFAULT_API_FLOW_BACKFILL_DAYS) : undefined);
   const ctx: SourceContext = {
-    asset, nowIso: startedAt, http: withRunCache(deps.sharedHttpCache ? withSharedCache(deps.http, deps.sharedHttpCache, isMarketChartUrl, isMarketChartBody) : deps.http), rpc, block, env: deps.env, contract: contractResolver(asset),
+    asset, nowIso: startedAt, http: withRunCache(deps.http), rpc, block, env: deps.env, contract: contractResolver(asset),
     observations: async (metricKey) => await listActiveObservations(db, asset.id, metricKey),
+    chainHourPrices: async (tokenRef, fromMs, toMs) => await chainHourPrices(db, tokenRef, fromMs, toMs),
     ...(historyDays !== undefined ? { backfillDays: historyDays } : {}),
   };
 
@@ -427,7 +444,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       continue;
     }
     const scan = await scanFlowGroup({
-      db, asset, configHash: loaded.hash, group, rpc, latest: block, http: ctx.http, env: deps.env, sleep: deps.sleep, now,
+      db, asset, configHash: loaded.hash, group, rpc, latest: block, priceWriter: priceWriterOf(deps, loaded.prices), sleep: deps.sleep, now,
       ...(deps.dayBlocks ? { dayBlocks: deps.dayBlocks(asset.ingest!.chain_id) } : {}),
       backfillDays: opts.backfillDays ?? asset.ingest!.backfill_days, rescan: opts.backfillDays !== undefined,
       adopt: opts.adopt ?? false, dryRun, onProgress: opts.onProgress,
