@@ -7,6 +7,15 @@
   in R7); D8 order R0 -> R8 as written; D9 yes; D10 yes; D11 yes (CAKE fix ships alone; Mike: "cake to stage ok").
 - R0 CAKE: tag `orion-2026.11.10.1` = `fix/cake-pending-burn` 0ecc69e on main 0f4b2fe. It is staged after AERO's
   orion-2026.11.09.1 reaches prod, so AERO's soak gate is not invalidated. Prod needs its own soak and Mike's go.
+- 2026-11-13: R0b+R1 shipped (`orion-2026.11.12.1` = main 8f50ac6, stage 11-12, prod 11-13; orphan DefiLlama series
+  purged on both). R2 scoping (`workspace/orion/phase3-r2-scoping/`) and Mike's "All recommendations" (#orion-dev):
+  every token has a chain or first-party price (all seven Ethereum tokens have Chainlink feeds; SKY's is new, so "SKY
+  via the deepest pool" is superseded as primary but kept by M1); CRV/CVX/SKY pool-primary with the feed as check;
+  sdCRV bound 0.3-1.0 CRV with no independent check; VVV via ETH/USD, DIEM via VVV; full flow history re-priced
+  (2025-10-13 on, amends D3's 183 days); PUMP's 21 chain days re-priced from PumpSwap swaps; CoinGecko price levels
+  rebuilt then purged; **D9 amended: PUMP check = Meteora DLMM PUMP/USDC, not Raydium**. Terms noted: Hyperliquid and
+  Lighter terms exclude US persons; pump.fun §21(h) bars automated access to its platform, so PUMP is read only
+  through our own Solana RPC. Plan: `docs/superpowers/plans/2026-11-13-orion-phase3-r2-price-swap.md` (M1-M10, P1-P6).
 - 2026-11-12: R0 CAKE shipped (`orion-2026.11.10.1` on prod 2026-11-11). Phase 2 closed: prod `orion-2026.11.11.1` =
   1de531d (0006 provenance NOT NULL, `observations.source` dropped, v1/`--legacy` retired). Branch rebased onto main
   763868e; Phase 3 code builds on it (no `observations.source`, no `holder_flows`/`reporting` keys, v2-only proofs).
