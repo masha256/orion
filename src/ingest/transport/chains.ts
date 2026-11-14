@@ -20,7 +20,7 @@ export interface ChainInfo {
 export const CHAINS: Readonly<Record<number, ChainInfo>> = {
   /**
    * https://mainnet.base.org caps eth_getLogs at 2,000 blocks per call (error -32614 beyond that). Blocks every 0.2 s
-   * since block ~53,556,072 (2026-11-05T17:58Z; 2 s before, measured 2026-11-06), so 2,000 blocks is 400 s and a day is
+   * since block 53,556,128 (2026-11-05T18:00:01Z; 2 s before, measured 2026-11-13), so 2,000 blocks is 400 s and a day is
    * ~216 calls. The block search interpolates on the blocks it reads, so days on either side of the change are found.
    */
   8453: { id: 8453, name: 'Base', maxLogRange: 2000n, blockTimeSec: 0.2, defaultRpcUrl: 'https://mainnet.base.org', confirmations: 9000n }, // 30 min

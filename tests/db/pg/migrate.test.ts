@@ -43,20 +43,20 @@ describe('migrate', () => {
   it('migrate: the shipped migrations apply to an empty schema (0006 only with breaking); a second run applies nothing; status is current', async () => {
     const db = await emptySchema();
     const before = await migrationStatus(db);
-    expect(before).toMatchObject({ schema: db.schema, dbAt: 0, codeRequires: 7, applied: [], changed: [], state: 'behind' });
+    expect(before).toMatchObject({ schema: db.schema, dbAt: 0, codeRequires: 8, applied: [], changed: [], state: 'behind' });
     expect(before.pending).toEqual([
       { id: 1, name: 'baseline', breaking: false }, { id: 2, name: 'daemon', breaking: false }, { id: 3, name: 'checks', breaking: false },
       { id: 4, name: 'provenance', breaking: false }, { id: 5, name: 'tokens_prices', breaking: false }, { id: 6, name: 'provenance_not_null', breaking: true },
-      { id: 7, name: 'job_params', breaking: false },
+      { id: 7, name: 'job_params', breaking: false }, { id: 8, name: 'chain_prices', breaking: false },
     ]);
 
     await expect(applyMigrations(db, {})).rejects.toMatchObject({ code: 'migration_breaking', message: expect.stringContaining('6') });
     expect((await migrationStatus(db)).dbAt).toBe(0);
-    expect(await applyMigrations(db, { breaking: true })).toEqual({ applied: [1, 2, 3, 4, 5, 6, 7] });
+    expect(await applyMigrations(db, { breaking: true })).toEqual({ applied: [1, 2, 3, 4, 5, 6, 7, 8] });
     expect(await applyMigrations(db, {})).toEqual({ applied: [] });
     const after = await migrationStatus(db);
-    const [baseline, daemon, checks, provenance, tokensPrices, notNull, jobParams] = loadMigrations();
-    expect(after).toMatchObject({ dbAt: 7, codeRequires: 7, pending: [], changed: [], state: 'current' });
+    const [baseline, daemon, checks, provenance, tokensPrices, notNull, jobParams, chainPrices] = loadMigrations();
+    expect(after).toMatchObject({ dbAt: 8, codeRequires: 8, pending: [], changed: [], state: 'current' });
     expect(after.applied).toEqual([
       { id: 1, name: 'baseline', sha256: baseline!.sha256, appliedAt: expect.stringMatching(/Z$/) },
       { id: 2, name: 'daemon', sha256: daemon!.sha256, appliedAt: expect.stringMatching(/Z$/) },
@@ -65,6 +65,7 @@ describe('migrate', () => {
       { id: 5, name: 'tokens_prices', sha256: tokensPrices!.sha256, appliedAt: expect.stringMatching(/Z$/) },
       { id: 6, name: 'provenance_not_null', sha256: notNull!.sha256, appliedAt: expect.stringMatching(/Z$/) },
       { id: 7, name: 'job_params', sha256: jobParams!.sha256, appliedAt: expect.stringMatching(/Z$/) },
+      { id: 8, name: 'chain_prices', sha256: chainPrices!.sha256, appliedAt: expect.stringMatching(/Z$/) },
     ]);
     expect((await db.one<{ n: number }>('SELECT count(*) AS n FROM observations'))?.n).toBe(0);
   });
@@ -73,7 +74,7 @@ describe('migrate', () => {
     const db = await emptySchema();
     await db.run(`DROP SCHEMA ${db.schema}`);
     expect((await migrationStatus(db)).state).toBe('behind');
-    expect(await applyMigrations(db, { breaking: true })).toEqual({ applied: [1, 2, 3, 4, 5, 6, 7] });
+    expect(await applyMigrations(db, { breaking: true })).toEqual({ applied: [1, 2, 3, 4, 5, 6, 7, 8] });
     expect((await migrationStatus(db)).state).toBe('current');
   });
 
@@ -276,6 +277,50 @@ describe('migrate', () => {
       db.run(`INSERT INTO observations (asset_id, metric_key, observed_at, value, status, fetched_at, method, source_type, locator, code_version, config_hash)
               VALUES ('crv', 'm', now(), 1, 'confirmed', now(), 'disclosed', 'disclosure', '{}', 'abc', 'h')`),
     ).rejects.toThrow(/observations_disclosure_citation/);
+  });
+
+  it('0008 (expand-only) on a populated 0007 schema: hour_blocks, three nullable prices columns; the queries of orion-2026.11.12.1 still run', async () => {
+    const db = await emptySchema();
+    const all = loadMigrations();
+    expect(all[7]).toMatchObject({ id: 8, name: 'chain_prices', breaking: false });
+    expect(all[7]!.sql).not.toMatch(/^-- breaking/m);
+    expect(await applyMigrations(db, { migrations: all.slice(0, 7), breaking: true })).toEqual({ applied: [1, 2, 3, 4, 5, 6, 7] });
+    // The statements orion-2026.11.12.1 (8f50ac6, schema 7) runs against tokens/prices (src/db/prices.ts there), verbatim.
+    const OLD_UPSERT = `INSERT INTO prices (token_ref, ts, price_usd, source, fetched_at)
+     SELECT $1, t.ts, t.p, $2, $3 FROM unnest($4::timestamptz[], $5::float8[]) AS t(ts, p)
+     ON CONFLICT (token_ref, ts, source) DO UPDATE SET price_usd = EXCLUDED.price_usd, fetched_at = EXCLUDED.fetched_at`;
+    const OLD_STORED = `SELECT ts FROM prices WHERE token_ref = ANY($1::text[]) AND source = $2 AND ts >= $3 AND ts < $4
+     GROUP BY ts HAVING count(DISTINCT token_ref)::float8 = $5`;
+    const OLD_LIST = 'SELECT token_ref, ts, price_usd, source, fetched_at FROM prices WHERE token_ref = $1 ORDER BY ts, source';
+    const REF = 'eip155:1/0xd533a949740bb3306d119cc777fa900ba034cd52';
+    await db.run("INSERT INTO tokens (token_ref, symbol, decimals, peg, coingecko_id) VALUES ($1, 'CRV', 18, NULL, 'curve-dao-token')", [REF]);
+    await db.run(OLD_UPSERT, [REF, 'coingecko', '2026-11-12T01:00:00Z', ['2026-11-12T00:00:00Z'], [0.42]]);
+    expect(await applyMigrations(db, { migrations: all.slice(0, 8) })).toEqual({ applied: [8] });
+
+    const cols = async (table: string) =>
+      await db.all<{ c: string; t: string; n: string; coll: string | null }>(
+        `SELECT column_name AS c, data_type AS t, is_nullable AS n, collation_name AS coll FROM information_schema.columns
+         WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position`,
+        [db.schema, table],
+      );
+    expect((await cols('hour_blocks')).map((x) => [x.c, x.t, x.n])).toEqual([
+      ['chain_id', 'bigint', 'NO'], ['hour', 'timestamp with time zone', 'NO'], ['block', 'bigint', 'NO'], ['block_ts', 'bigint', 'NO'],
+    ]);
+    const pk = await db.one<{ def: string }>(
+      `SELECT pg_get_constraintdef(c.oid) AS def FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname = $1 AND t.relname = 'hour_blocks' AND c.contype = 'p'`, [db.schema],
+    );
+    expect(pk?.def).toBe('PRIMARY KEY (chain_id, hour)');
+    const prices = await cols('prices');
+    expect(prices.slice(-3).map((x) => [x.c, x.t, x.n, x.coll])).toEqual([
+      ['check_gap_pct', 'double precision', 'YES', null], ['check', 'text', 'YES', 'C'], ['detail', 'jsonb', 'YES', null],
+    ]);
+    // The old row is kept with null check columns; the old release's statements all still run on schema 8.
+    expect(await db.one('SELECT price_usd, check_gap_pct, "check", detail FROM prices')).toEqual({ price_usd: 0.42, check_gap_pct: null, check: null, detail: null });
+    expect((await db.run(OLD_UPSERT, [REF, 'coingecko', '2026-11-12T02:00:00Z', ['2026-11-12T00:00:00Z', '2026-11-12T01:00:00Z'], [0.43, 0.44]])).rowCount).toBe(2);
+    expect((await db.all(OLD_STORED, [[REF], 'coingecko', '2026-11-12T00:00:00Z', '2026-11-13T00:00:00Z', 1])).length).toBe(2);
+    expect((await db.all<{ price_usd: number }>(OLD_LIST, [REF])).map((r) => r.price_usd)).toEqual([0.43, 0.44]);
+    expect((await db.one<{ n: number }>('SELECT count(*)::int AS n FROM flow_usd_v'))?.n).toBe(0);
   });
 
   it('a release-N-1 insert of every old anomaly kind still works on 0003', async () => {

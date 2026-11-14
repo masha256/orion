@@ -1,5 +1,6 @@
 import type { HttpTransport } from '../ingest/transport/http.js';
 import type { RpcTransport } from '../ingest/transport/rpc.js';
+import type { PriceEntry } from './config.js';
 
 /**
  * Shared shapes of the Phase 3 R2 price writer (Ruling R3): the EVM readers (evmMethods.ts), the off-chain readers
@@ -34,6 +35,8 @@ export interface PriceDeps {
   solana: SolanaPriceTransport;
   http: HttpTransport;
   now: Date;
+  /** prices.yaml (loadPrices): the writer's refs and their quote refs are looked up here. */
+  prices: ReadonlyMap<string, PriceEntry>;
 }
 
 /** What one writer run did (plan Task 3). */
@@ -42,7 +45,11 @@ export interface WriteResult {
   skippedExisting: number;
   missing: { ref: string; hourMs: number; reason: string }[];
   breaches: { ref: string; hourMs: number; gapPct: number; check: string }[];
+  /** RPC requests per chain (multicall, getBlock, latestBlock; an off-chain method reports its own). */
   calls: { [chain: string]: number };
+  /** The oldest hour of the oldest UTC day every chain of the run finished (null: none). */
   reachedMs: number | null;
   stoppedByBudget: boolean;
+  /** A chain whose read threw (a transport failure): it is skipped for the rest of the run, which a re-run resumes. */
+  errors: { chain: string; hourMs: number; error: string }[];
 }

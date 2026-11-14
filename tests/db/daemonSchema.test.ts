@@ -28,9 +28,9 @@ describe('0002_daemon', () => {
     const migrations = loadMigrations();
     const daemon = migrations.find((m) => m.id === 2);
     expect(daemon).toMatchObject({ name: 'daemon', breaking: false }); // expand-only
-    expect(await applyMigrations(db, { breaking: true })).toEqual({ applied: [1, 2, 3, 4, 5, 6, 7] });
+    expect(await applyMigrations(db, { breaking: true })).toEqual({ applied: [1, 2, 3, 4, 5, 6, 7, 8] });
     const rows = await db.all<{ id: number; name: string; sha256: string }>('SELECT id, name, sha256 FROM schema_migrations ORDER BY id');
-    expect(rows.map((r) => [r.id, r.name])).toEqual([[1, 'baseline'], [2, 'daemon'], [3, 'checks'], [4, 'provenance'], [5, 'tokens_prices'], [6, 'provenance_not_null'], [7, 'job_params']]);
+    expect(rows.map((r) => [r.id, r.name])).toEqual([[1, 'baseline'], [2, 'daemon'], [3, 'checks'], [4, 'provenance'], [5, 'tokens_prices'], [6, 'provenance_not_null'], [7, 'job_params'], [8, 'chain_prices']]);
     expect(rows[1]!.sha256).toBe(daemon!.sha256);
     expect(await applyMigrations(db, {})).toEqual({ applied: [] });
   });
@@ -76,7 +76,7 @@ describe('0007_job_params', () => {
     // A row the release before 0007 wrote stays as it was.
     await db.run("INSERT INTO jobs (kind, slot, run_after, priority, status, max_attempts) VALUES ('levels', $1, $1, 40, 'queued', 1)", [now]);
     await expect(db.run("INSERT INTO jobs (kind, slot, run_after, priority, status, max_attempts) VALUES ('backfill', $1, $1, 70, 'queued', 1)", [now])).rejects.toThrow(/jobs_kind_check/);
-    expect(await applyMigrations(db, {})).toEqual({ applied: [7] });
+    expect(await applyMigrations(db, { migrations: all.slice(0, 7) })).toEqual({ applied: [7] });
     const col = await db.one<{ t: string; n: string }>(
       "SELECT data_type AS t, is_nullable AS n FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'jobs' AND column_name = 'params_json'",
       [db.schema],

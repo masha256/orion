@@ -33,6 +33,8 @@ const NOT_CARRIED = [
 const DAEMON = ['asset_registry', 'asset_state_events', 'daemon_heartbeat', 'day_blocks', 'jobs', 'latest_levels', 'snapshots_out', 'watch_state'];
 /** Phase 2's tables (0003 check_results, 0005 tokens and prices): not in SQLite, not carried; checked in tests/db/pg/migrate.test.ts. */
 const PHASE2 = ['check_results', 'prices', 'tokens'];
+/** Phase 3 R2's tables (0008 hour_blocks): not in SQLite, not carried; checked in tests/db/pg/migrate.test.ts. */
+const PHASE3 = ['hour_blocks'];
 /** 0004_provenance's columns on observations: not in SQLite, never carried (the importer leaves them null). */
 const PROVENANCE_COLUMNS = [
   'method', 'source_type', 'chain', 'locator', 'block_from', 'block_to', 'tx_count', 'tx_refs', 'tx_digest', 'response_digest', 'inputs',
@@ -73,7 +75,7 @@ describe('baseline', () => {
           [config.schema],
         )
       ).map((r) => r.table_name);
-      expect(pgTables).toEqual([...CARRIED, ...DAEMON, ...PHASE2, 'schema_migrations'].sort());
+      expect(pgTables).toEqual([...CARRIED, ...DAEMON, ...PHASE2, ...PHASE3, 'schema_migrations'].sort());
       for (const t of NOT_CARRIED) expect(pgTables).not.toContain(t);
 
       for (const table of CARRIED) {

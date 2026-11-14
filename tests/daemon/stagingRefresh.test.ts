@@ -35,6 +35,7 @@ const PROD_DATA_TABLES = [
   'observations', 'fetch_runs', 'fetch_cursors', 'anomalies', 'coverage', 'agent_runs', 'agent_transcripts', 'proposals', 'journal', 'documents',
   'check_results', // 0003: computed from prod's observations, so prod's rows come with them
   'tokens', 'prices', // 0005: the tokens prod's flow rows refer to, and the hourly prices prod loaded
+  'hour_blocks', // 0008: B(H) per chain, a chain fact valid on every env, so prod's cache comes with prod's prices
 ];
 
 function scratch(prefix: string): string {
@@ -203,7 +204,7 @@ describe('stagingRefresh', () => {
 
   it('stagingRefresh: schema mismatch is refused before any restore command', async () => {
     await seedStaging(db());
-    for (const [ids, text] of [[[1], 'prod 1, staging 7'], [[1, 2, 3, 4, 5, 6, 7, 8], 'prod 8, staging 7']] as const) {
+    for (const [ids, text] of [[[1], 'prod 1, staging 8'], [[1, 2, 3, 4, 5, 6, 7, 8, 9], 'prod 9, staging 8']] as const) {
       const f = fakeRunner({ schema: db().schema, ids: [...ids] });
       const w = world();
       const out = await makeStagingRefreshHandler({ run: f.run })(job, w.ctx);

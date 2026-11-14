@@ -67,11 +67,16 @@ export interface PriceRow {
   /** ISO, the top of a UTC hour. */
   ts: string;
   priceUsd: number;
+  /** A chain/first-party row's check outcome (0008, plan P5): absent (null) on a CoinGecko row. */
+  checkGapPct?: number | null;
+  check?: string | null;
+  detail?: Record<string, unknown> | null;
 }
 
 /**
  * Upserts hourly prices of one token from one source, in one statement: a point already stored at the same (token, hour,
- * source) is replaced by the newer fetch, so a re-fetch adds no row. Returns how many rows the statement touched.
+ * source) is replaced by the newer fetch, so a re-fetch adds no row. Returns how many rows the statement touched. A
+ * chain/first-party row also stores its check's gap, label and the read's detail (0008); a row without them stores null.
  */
 export async function upsertPrices(db: Db, tokenRef: string, source: string, rows: PriceRow[], fetchedAtIso: string): Promise<number> {
   if (rows.length === 0) return 0;
@@ -82,11 +87,20 @@ export async function upsertPrices(db: Db, tokenRef: string, source: string, row
     if (hours.has(r.ts)) throw new OrionError('invalid_price', `two prices for ${tokenRef} at ${r.ts}`);
     hours.add(r.ts);
   }
+  for (const r of rows) {
+    if (r.checkGapPct !== undefined && r.checkGapPct !== null && !Number.isFinite(r.checkGapPct)) {
+      throw new OrionError('invalid_price', `check gap ${r.checkGapPct} at ${r.ts} is not a finite number`);
+    }
+  }
+  // One jsonb array of rows: a float8 travels as its shortest round-trip decimal, so it is stored exactly.
+  const payload = rows.map((r) => ({ ts: r.ts, p: r.priceUsd, gap: r.checkGapPct ?? null, chk: r.check ?? null, detail: r.detail ?? null }));
   const result = await db.run(
-    `INSERT INTO prices (token_ref, ts, price_usd, source, fetched_at)
-     SELECT $1, t.ts, t.p, $2, $3 FROM unnest($4::timestamptz[], $5::float8[]) AS t(ts, p)
-     ON CONFLICT (token_ref, ts, source) DO UPDATE SET price_usd = EXCLUDED.price_usd, fetched_at = EXCLUDED.fetched_at`,
-    [tokenRef, source, fetchedAtIso, rows.map((r) => r.ts), rows.map((r) => r.priceUsd)],
+    `INSERT INTO prices (token_ref, ts, price_usd, source, fetched_at, check_gap_pct, "check", detail)
+     SELECT $1, t.ts, t.p, $2, $3, t.gap, t.chk, t.detail
+     FROM jsonb_to_recordset($4::jsonb) AS t(ts timestamptz, p float8, gap float8, chk text, detail jsonb)
+     ON CONFLICT (token_ref, ts, source) DO UPDATE SET price_usd = EXCLUDED.price_usd, fetched_at = EXCLUDED.fetched_at,
+       check_gap_pct = EXCLUDED.check_gap_pct, "check" = EXCLUDED."check", detail = EXCLUDED.detail`,
+    [tokenRef, source, fetchedAtIso, JSON.stringify(payload)],
   );
   return result.rowCount;
 }
