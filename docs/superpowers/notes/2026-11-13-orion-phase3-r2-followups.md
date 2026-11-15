@@ -33,7 +33,7 @@ states it; "assessed here" where the ruling states none).
 - R1: no separate baseline run (8f50ac6's release build ran the full suite on identical code). Cost: a pre-existing red
   shows up in Task 1's full run and is attributed by stash-rerun.
 - R2: `valid_from` = the first hour Orion needs, not the method's birth: every EVM ref 2025-10-13 (flows from
-  2025-10-14); AERO 2026-09-23; HYPE and LIT 2026-10-01 (the M7 level rebuild needs prices from their oldest `price_usd`
+  2025-10-14); AERO 2026-09-23 (superseded by R36: 2026-10-22, its pools' first full day); HYPE and LIT 2026-10-01 (the M7 level rebuild needs prices from their oldest `price_usd`
   rows, 10-02 on); PUMP 2026-10-12 (level rows from ~10-13, burn days 10-24 on). Cost: an older report day lacks a
   price; fix by lowering `valid_from` and re-running `backfill-prices`.
 - R3: `src/prices/types.ts` holds `HourPrice`, `PriceDeps`, `SolanaPriceTransport` (interface only), `WriteResult`;
@@ -119,6 +119,19 @@ states it; "assessed here" where the ruling states none).
 - R31: `rebuild-price-levels` refuses a row whose newest price is more than 6 h older than its `observed_at - 1 h` (the
   view's staleness rule). Cost: not stated in the ruling (assessed here: a refused row blocks the market_data purge for
   that asset until Mike decides; release block step 7).
+- R36 (Task 10 finding A): AERO `valid_from` 2026-10-22. Measured on chain: token 0x3f5b…a4ee created 2026-10-16
+  15:46Z, primary pool 0xf634…b18e 2026-10-21 04:59Z (block 52884700), check pool 0xd0ac…6816 05:25Z (block
+  52885484); 2026-10-22 is the first full priced day on the prod copy (2026-09-23 gave 9,267 call_failed + 285 bad_read
+  hours, re-read every run). AERO's hash pin moved (it covers its own entry). Cost: a few early hours unpriced.
+- R37 (Task 10 finding B): the PUMP Meteora DLMM history check uses only swaps whose USDC leg is >= 10 USDC
+  (`MIN_CHECK_SWAP_USDC`); dust swaps are skipped (counted in the detail), the newest qualifying swap within the
+  existing read budget is the check, none is no reading (`no_qualifying_swap`, no gap, no breach). The PumpSwap primary
+  reads the vaults' post-swap reserves, which are the pool price at any swap size: no floor there. Cost: thin hours
+  unchecked.
+- R38 (Task 10 finding C): `data purge --source-type market_data` of `price_usd` / `diem_price_usd` refuses
+  (`purge_unreplaced_price_level`, nothing deleted, dry run too) while a targeted row has no active row of another
+  source type at its `observed_at`, except rows observed before the ref's `valid_from`: those are deleted and listed
+  (`withoutReplacement`). `rebuild-price-levels` lists them as `beforeValidFrom` (not refused). Cost: none (stricter).
 
 Review fixes that bind like rulings (findings files): the writer checks the abort inside a chain-day and commits nothing
 for an aborted day; one breach per run across midnight; a missing hour resets the consecutive count (Task 3); Meteora
@@ -244,6 +257,10 @@ Notes kept: CAKE/LINK/UNI keep the check id `price_chainlink` (continuity) thoug
 - **Rollback window.** A rollback to `orion-2026.11.12.1` is a fix-forward-within-days (deploy.md rollback note): its
   nightly and hourly `levels` write CoinGecko prices and `price_usd` rows again, and a queued prices backfill fails
   silently on it.
+- **AERO price_usd before 2026-10-22 deleted without replacement (Mike 2026-11-14: Purge).** The 25 CoinGecko
+  levels 2026-09-24..2026-10-21 (likely the pre-migration AERO) predate the token's pools (R36): no chain price exists
+  for them, so the release block's market_data purge deletes them (`withoutReplacement`, R38) and AERO's price history
+  starts 2026-10-22.
 - **Exports to keep** (with the nightly `pg_dump`, the only copies): per env `~/home/repriced/<asset>-<UTCstamp>.json`
   (reprice), `~/home/purged/prices-coingecko-<UTCstamp>.json` (purge-prices) and
   `~/home/purged/<asset>-price_usd[+1]-<UTCstamp>.json` (the market_data purges).

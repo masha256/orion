@@ -6,6 +6,7 @@ import type { LoadedAsset } from '../config/load.js';
 import { sourceTypeOf, type SourceType } from '../report/sourceTypes.js';
 import { OrionError } from '../types.js';
 import type { Db, OrionDb } from './connection.js';
+import { PRICE_LEVEL_METRICS, priceLevelRef, priceLevelValidFromMs } from './priceLevels.js';
 
 /**
  * `orion data purge` (Phase 3 plan decision P2): deletes the stored history of a retired metric (one no longer in the
@@ -15,7 +16,11 @@ import type { Db, OrionDb } from './connection.js';
  * - a configured metric without a source type (`purge_configured_metric`), or with its current source's type
  *   (`purge_live_source`): the live series is never purged;
  * - a metric with an open anomaly (`purge_open_anomaly`): its triage still needs the rows;
- * - a kept row whose `superseded_by` points at a row to delete (`purge_dangling_reference`).
+ * - a kept row whose `superseded_by` points at a row to delete (`purge_dangling_reference`);
+ * - (Ruling R38) a `market_data` purge of `price_usd` / `diem_price_usd` while a targeted row has no replacement: no
+ *   active row of another source type at its `observed_at` (`data rebuild-price-levels` writes one)
+ *   (`purge_unreplaced_price_level`). A row observed before its ref's prices.yaml `valid_from` can never be rebuilt: it
+ *   is deleted and listed per metric as `withoutReplacement` (id, day).
  *
  * Side state goes only with a metric that is gone entirely (not configured, and no row of it left after the purge):
  * its `latest_levels` and `watch_state` rows, and the `fetch_cursors` whose scan key names it alone. An API flow's
@@ -45,6 +50,11 @@ export interface PurgeMetricCount {
   latestLevels: number;
   watchState: number;
   fetchCursors: number;
+  /**
+   * A market_data price-level purge only (R38): the rows deleted with no rebuilt row at their observed_at, all observed
+   * before the ref's valid_from. Absent for every other purge.
+   */
+  withoutReplacement?: { id: number; observedAt: string; day: string }[];
 }
 
 export interface PurgeResult {
@@ -276,6 +286,9 @@ async function planPurge(db: Db, loaded: LoadedAsset, metrics: string[], sourceT
       'SELECT count(*)::bigint AS k FROM observations WHERE asset_id = $1 AND metric_key = $2 AND NOT (id = ANY($3::bigint[]))', [asset, metric, ids],
     ))?.k);
     const gone = !configured && kept === 0;
+    const withoutReplacement = sourceType === 'market_data' && (PRICE_LEVEL_METRICS as readonly string[]).includes(metric)
+      ? await unreplacedPriceLevels(db, loaded, metric, ids)
+      : undefined;
     const side = async (sql: string): Promise<number> => (gone ? n((await db.one<{ c: number }>(sql, [asset, metric]))?.c) : 0);
     plans.push({
       ids,
@@ -286,6 +299,7 @@ async function planPurge(db: Db, loaded: LoadedAsset, metrics: string[], sourceT
         latestLevels: await side('SELECT count(*)::bigint AS c FROM latest_levels WHERE asset_id = $1 AND metric_key = $2'),
         watchState: await side('SELECT count(*)::bigint AS c FROM watch_state WHERE asset_id = $1 AND metric_key = $2'),
         fetchCursors: await side(`SELECT count(*)::bigint AS c FROM fetch_cursors WHERE asset_id = $1 AND ${NAMES_METRIC}`),
+        ...(withoutReplacement !== undefined ? { withoutReplacement } : {}),
       },
     });
   }
@@ -301,6 +315,41 @@ async function planPurge(db: Db, loaded: LoadedAsset, metrics: string[], sourceT
     );
   }
   return plans;
+}
+
+/**
+ * Ruling R38: the targeted market_data rows of a price level with no active row of another source type at their
+ * observed_at. Those observed before the ref's valid_from are returned (deleted without replacement, listed); any other
+ * refuses the purge (`purge_unreplaced_price_level`), so a level is never dropped while it could still be rebuilt.
+ */
+async function unreplacedPriceLevels(db: Db, loaded: LoadedAsset, metric: string, ids: number[]): Promise<{ id: number; observedAt: string; day: string }[]> {
+  const asset = loaded.config.id;
+  const rows = await db.all<{ id: number; observed_at: string }>(
+    `SELECT o.id, o.observed_at FROM observations o
+      WHERE o.id = ANY($1::bigint[])
+        AND NOT EXISTS (SELECT 1 FROM observations r
+                         WHERE r.asset_id = $2 AND r.metric_key = $3 AND r.observed_at = o.observed_at
+                           AND r.source_type <> 'market_data' AND r.superseded_by IS NULL AND r.status <> 'rejected')
+      ORDER BY o.observed_at, o.id`,
+    [ids, asset, metric],
+  );
+  const tokenRef = priceLevelRef(loaded, metric);
+  const validFromMs = priceLevelValidFromMs(loaded, tokenRef);
+  const listed = rows.map((r) => {
+    const observedAt = new Date(r.observed_at).toISOString();
+    return { id: n(r.id), observedAt, day: observedAt.slice(0, 10) };
+  });
+  const refused = listed.filter((r) => validFromMs === null || Date.parse(r.observedAt) >= validFromMs);
+  if (refused.length > 0) {
+    const shown = refused.slice(0, 10).map((r) => `#${r.id} ${r.observedAt}`).join(', ');
+    throw new OrionError(
+      'purge_unreplaced_price_level',
+      `metric "${metric}": ${refused.length} market_data row(s) have no rebuilt row at their observed_at (${shown}${refused.length > 10 ? ', ...' : ''}) and are ` +
+        (validFromMs === null ? `not before a prices.yaml valid_from (${tokenRef ?? 'no price ref'} has no entry)` : `on or after ${tokenRef}'s valid_from`) +
+        ': run `data rebuild-price-levels` first; nothing was deleted',
+    );
+  }
+  return listed;
 }
 
 /** Every deleted row, all columns, as Postgres renders them (`to_jsonb`): what a restore would need. */

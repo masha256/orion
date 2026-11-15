@@ -9,7 +9,8 @@
 #               its Ethereum address, but its primary is Lighter's candle, so its chain is `lighter`.
 #   valid_from  the first hour Orion writes for this ref (00:00Z of that day); no row is written for an earlier hour.
 #               Measured by the controller (Ruling R2): every EVM ref but AERO 2025-10-13 (all reads worked at the
-#               2025-10-13T01:00Z block); AERO 2026-09-23; HYPE and LIT 2026-10-01; PUMP 2026-10-12.
+#               2025-10-13T01:00Z block); AERO 2026-10-22 (Ruling R36, replacing R2's 2026-09-23); HYPE and LIT
+#               2026-10-01; PUMP 2026-10-12.
 #   primary     the method whose value is stored. check: a second method compared with it each hour; tolerance_pct is the
 #               allowed gap, consecutive the hours in a row it must be exceeded before it is a breach (default 1).
 #               A `bound` check has no tolerance: its band [min_in_quote, max_in_quote] is the tolerance.
@@ -142,11 +143,17 @@
 
 # AERO (aero.yaml's token): its price_pool (Aero volatile AERO/USDC) TWAP x usdc_usd_feed; check its price_check_pool
 # (Slipstream AERO/USDC, tick spacing 200) spot x the same feed.
+# valid_from (Ruling R36, measured on chain by the controller): the token 0x3f5bf3edac59d650d8fdf9657a71f2f904a3a4ee was
+# created 2026-10-16 15:46Z, the primary pool 0xf634058dc94e6bf8e828e27621320c423bc8b18e 2026-10-21 04:59Z (block
+# 52884700), the check pool 0xd0acf293547457fb4fe9ee32ca93e89497626816 2026-10-21 05:25Z (block 52885484); 2026-10-22 is
+# the first full priced day (prod copy). Older AERO price_usd levels (CoinGecko) cannot be rebuilt: `data
+# rebuild-price-levels` lists them as beforeValidFrom and `data purge --source-type market_data` deletes them without
+# replacement (Mike 2026-11-14: "Purge").
 "eip155:8453/0x3f5bf3edac59d650d8fdf9657a71f2f904a3a4ee":
   symbol: AERO
   decimals: 18
   chain: "eip155:8453"
-  valid_from: "2026-09-23"
+  valid_from: "2026-10-22"
   primary: { kind: v2_twap, pool: "0xf634058dc94e6bf8e828e27621320c423bc8b18e", flavor: aerodrome, usd_feed: "0x7e860098F58bBFC8648a4311b374B1D669a2bc6B" }
   check: { kind: v3_spot, pool: "0xd0acf293547457fb4fe9ee32ca93e89497626816", usd_feed: "0x7e860098F58bBFC8648a4311b374B1D669a2bc6B", tolerance_pct: 2 }
 
@@ -173,6 +180,10 @@
 
 # PUMP: the PumpSwap PUMP/USDC pool's vaults, USDC vault / PUMP vault (live: the accounts; history: the last swap's
 # postTokenBalances); check the Meteora DLMM PUMP/USDC (bin step 20) active bin (M9).
+# History check (Ruling R37): the execution price of the newest Meteora swap whose USDC leg is at least 10 USDC
+# (MIN_CHECK_SWAP_USDC in src/prices/offchainMethods.ts); a smaller (dust) swap is skipped, never used, and an hour with
+# no qualifying swap within the check's read budget has no check value (no gap, no breach; the detail says why). The
+# primary needs no floor: it reads the vaults' reserves after the swap, not the swap's own price.
 "solana:mainnet/pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn":
   symbol: PUMP
   decimals: 6

@@ -149,6 +149,42 @@ describe('orion data reprice / rebuild-price-levels / purge-prices', () => {
     expect((await db().one<{ superseded_by: number | null }>('SELECT superseded_by FROM observations WHERE id = $1', [gap]))!.superseded_by).toBeNull();
   });
 
+  it('R38: rebuild lists rows before valid_from (exit 0); the market_data purge lists them, or refuses (exit 1) an unreplaced later row', async () => {
+    const h = home(); // RPX valid_from 2026-09-01
+    await seed();
+    const cg = async (observedAt: string) => (await insertObservation(db(), {
+      assetId: 'rpx', metricKey: 'price_usd', observedAt, value: 2.1, periodDays: null, fetchedAt: NOW,
+      provenance: { method: 'measured', sourceType: 'market_data', chain: null, locator: { provider: 'coingecko' }, codeVersion: 'test', configHash: 'h' },
+    })).id;
+    const old = await cg('2026-08-31T00:47:00.000Z');
+    await cg('2026-10-02T00:47:00.000Z');
+    const dry = await orion(h, 'data', 'rebuild-price-levels', 'rpx');
+    expect(dry.exit).toEqual([]);
+    expect(dry.out.split('\n')).toEqual([
+      'RPX rebuild-price-levels (dry run):',
+      `  price_usd (${REF}): 2 CoinGecko row(s), 1 to rebuild, 0 refused, 1 before valid_from (never rebuilt; data purge deletes them without replacement)`,
+      `    BEFORE VALID_FROM #${old} 2026-08-31T00:47:00.000Z`,
+      'dry run: nothing written; --yes writes the rebuilt rows',
+    ]);
+    const yes = await orion(h, 'data', 'rebuild-price-levels', 'rpx', '--yes', '--json');
+    expect(yes.exit).toEqual([]);
+    expect(JSON.parse(yes.out).perMetric[0]).toMatchObject({ rebuilt: 1, refused: [], beforeValidFrom: [{ id: old, observedAt: '2026-08-31T00:47:00.000Z' }] });
+    const pd = await orion(h, 'data', 'purge', 'rpx', '--metric', 'price_usd', '--source-type', 'market_data');
+    expect(pd.exit).toEqual([]);
+    expect(pd.out.split('\n').slice(1, 3)).toEqual([
+      expect.stringMatching(/^  price_usd \(configured\): 2 observation\(s\), 1 superseded, 2026-08-31 to 2026-10-02/),
+      `    WITHOUT REPLACEMENT #${old} 2026-08-31 (2026-08-31T00:47:00.000Z): before valid_from, deleted with no rebuilt row`,
+    ]);
+    // A later CoinGecko row with no rebuilt row: the purge refuses, exit 1, nothing deleted.
+    const gap = await cg('2026-10-10T00:47:00.000Z');
+    const refused = await orion(h, 'data', 'purge', 'rpx', '--metric', 'price_usd', '--source-type', 'market_data', '--yes', '--json');
+    expect(refused.exit).toEqual([1]);
+    const e = JSON.parse(refused.out).error;
+    expect(e.code).toBe('purge_unreplaced_price_level');
+    expect(e.message).toContain(`#${gap}`);
+    expect(await db().one('SELECT 1 FROM observations WHERE id = $1', [old])).toBeDefined();
+  });
+
   it('purge-prices: refusals under --json exit 1; the dry run lists rows; --yes deletes', async () => {
     const h = home();
     await seed();

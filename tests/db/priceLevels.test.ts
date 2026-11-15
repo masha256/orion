@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { parseAssetYaml, type LoadedAsset } from '../../src/config/load.js';
-import type { Db } from '../../src/db/connection.js';
+import type { Db, OrionDb } from '../../src/db/connection.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { rebuildPriceLevels } from '../../src/db/priceLevels.js';
 import { upsertPrices, upsertToken } from '../../src/db/prices.js';
+import type { PriceEntry } from '../../src/prices/config.js';
 import { purgeMetrics } from '../../src/db/purge.js';
 import { latestLevel } from '../../src/observations/select.js';
 import { useTestDb } from '../helpers/db.js';
@@ -68,9 +69,11 @@ metrics:
   emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400 }
 `;
 
-const load = (yaml: string): LoadedAsset => {
+const load = (yaml: string, validFrom?: Record<string, string>): LoadedAsset => {
   const { config, hash } = parseAssetYaml(yaml);
-  return { config, hash };
+  if (validFrom === undefined) return { config, hash };
+  // Only validFrom is read by the rebuild and the purge (Ruling R38).
+  return { config, hash, prices: new Map(Object.entries(validFrom).map(([ref, v]) => [ref, { ref, validFrom: v } as PriceEntry])) };
 };
 
 const dirs: string[] = [];
@@ -129,9 +132,9 @@ describe('rebuildPriceLevels', () => {
     const dry = await rebuildPriceLevels(d, load(LVL_YAML), { yes: false, now: NOW });
     expect(dry.applied).toBe(false);
     expect(dry.perMetric).toEqual([
-      { metric: 'diem_price_usd', tokenRef: DIEM_REF, rows: 1, rebuilt: 1, refused: [] },
+      { metric: 'diem_price_usd', tokenRef: DIEM_REF, rows: 1, rebuilt: 1, beforeValidFrom: [], refused: [] },
       {
-        metric: 'price_usd', tokenRef: TOKEN_REF, rows: 3, rebuilt: 2,
+        metric: 'price_usd', tokenRef: TOKEN_REF, rows: 3, rebuilt: 2, beforeValidFrom: [],
         refused: [{ id: c, observedAt: '2026-10-05T00:47:00.000Z', reason: `no chain/first-party price of ${TOKEN_REF} in the 6 h to 2026-10-04T23:47:00.000Z` }],
       },
     ]);
@@ -198,7 +201,7 @@ describe('rebuildPriceLevels', () => {
     await seedHourly(d, TOKEN_REF, '2026-10-01T00:00:00Z', 24, 'chain:aerodrome_v2_twap', () => 0.5);
     await seedMarket(d, 'aer', 'price_usd', '2026-10-01T12:00:00.000Z', 0.55);
     const r = await rebuildPriceLevels(d, load(AERO_YAML), { yes: true, now: NOW });
-    expect(r.perMetric).toEqual([{ metric: 'price_usd', tokenRef: TOKEN_REF, rows: 1, rebuilt: 1, refused: [] }]);
+    expect(r.perMetric).toEqual([{ metric: 'price_usd', tokenRef: TOKEN_REF, rows: 1, rebuilt: 1, beforeValidFrom: [], refused: [] }]);
 
     await seedHourly(d, HYPE_REF, '2026-10-01T00:00:00Z', 24, 'first_party:hyperliquid', () => 40);
     await seedMarket(d, 'hyp', 'price_usd', '2026-10-01T12:00:00.000Z', 41);
@@ -225,5 +228,93 @@ describe('rebuildPriceLevels', () => {
       await held!.release();
     }
     expect(await obsCount()).toBe(before);
+  });
+});
+
+describe('Ruling R38: no price level is purged without a replacement, except before its ref\'s valid_from', () => {
+  const VF = { [TOKEN_REF]: '2026-10-03', [DIEM_REF]: '2025-10-13' };
+  const purge = async (d: OrionDb, loaded: LoadedAsset, apply: boolean) =>
+    await purgeMetrics(d, loaded, { metrics: ['price_usd'], sourceType: 'market_data', apply, exportDir: join(scratch(), 'purged'), now: NOW });
+
+  it('rebuild lists rows observed before valid_from as beforeValidFrom (not refused); a row on valid_from with no price is refused', async () => {
+    const d = db();
+    // Chain prices from valid_from (10-03 00:00) for 48 h.
+    await seedHourly(d, TOKEN_REF, '2026-10-03T00:00:00Z', 48, 'chain:v2_twap', () => 2);
+    const old1 = await seedMarket(d, 'lvl', 'price_usd', '2026-10-01T00:47:00.000Z', 1.1);
+    const old2 = await seedMarket(d, 'lvl', 'price_usd', '2026-10-02T23:59:00.000Z', 1.2);
+    const onDay = await seedMarket(d, 'lvl', 'price_usd', '2026-10-03T00:30:00.000Z', 1.3); // needs ts <= 10-02 23:30: none
+    await seedMarket(d, 'lvl', 'price_usd', '2026-10-03T12:00:00.000Z', 1.4);
+    const dry = await rebuildPriceLevels(d, load(LVL_YAML, VF), { yes: false, now: NOW });
+    expect(dry.perMetric.find((m) => m.metric === 'price_usd')).toEqual({
+      metric: 'price_usd', tokenRef: TOKEN_REF, rows: 4, rebuilt: 1,
+      beforeValidFrom: [{ id: old1, observedAt: '2026-10-01T00:47:00.000Z' }, { id: old2, observedAt: '2026-10-02T23:59:00.000Z' }],
+      refused: [{ id: onDay, observedAt: '2026-10-03T00:30:00.000Z', reason: `no chain/first-party price of ${TOKEN_REF} in the 6 h to 2026-10-02T23:30:00.000Z` }],
+    });
+    const yes = await rebuildPriceLevels(d, load(LVL_YAML, VF), { yes: true, now: NOW });
+    expect(yes.perMetric.find((m) => m.metric === 'price_usd')!.beforeValidFrom).toHaveLength(2);
+    // The beforeValidFrom rows stay active CoinGecko rows (nothing replaces them).
+    const active = await d.all<{ id: number }>("SELECT id FROM observations WHERE source_type = 'market_data' AND superseded_by IS NULL ORDER BY id");
+    expect(active.map((r) => Number(r.id))).toEqual([old1, old2, onDay]);
+    // Without a prices map there is no valid_from: the old rows are refused, as before.
+    const bare = await rebuildPriceLevels(d, load(LVL_YAML), { yes: false, now: NOW });
+    expect(bare.perMetric.find((m) => m.metric === 'price_usd')!.refused.map((x) => x.id)).toEqual([old1, old2, onDay]);
+  });
+
+  it('purge --source-type market_data refuses (deletes nothing, dry run too) while a row on or after valid_from has no rebuilt row', async () => {
+    const d = db();
+    await seedHourly(d, TOKEN_REF, '2026-10-03T00:00:00Z', 48, 'chain:v2_twap', () => 2);
+    await seedMarket(d, 'lvl', 'price_usd', '2026-10-01T00:47:00.000Z', 1.1);
+    const onDay = await seedMarket(d, 'lvl', 'price_usd', '2026-10-03T00:30:00.000Z', 1.3);
+    await seedMarket(d, 'lvl', 'price_usd', '2026-10-03T12:00:00.000Z', 1.4);
+    await rebuildPriceLevels(d, load(LVL_YAML, VF), { yes: true, now: NOW });
+    const before = await obsCount();
+    for (const apply of [false, true]) {
+      let err: { code?: string; message?: string } = {};
+      try {
+        await purge(d, load(LVL_YAML, VF), apply);
+      } catch (e) {
+        err = e as typeof err;
+      }
+      expect(err.code).toBe('purge_unreplaced_price_level');
+      expect(err.message).toContain(`#${onDay} 2026-10-03T00:30:00.000Z`);
+      expect(await obsCount()).toBe(before);
+    }
+    // A superseded CoinGecko row with no rebuilt row at its observed_at (a later CoinGecko read replaced it) refuses too.
+    const d2 = await seedMarket(d, 'lvl', 'price_usd', '2026-10-04T05:00:00.000Z', 1.5);
+    await seedMarket(d, 'lvl', 'price_usd', '2026-10-04T05:00:00.000Z', 1.6); // supersedes d2, itself unreplaced
+    await d.run('DELETE FROM observations WHERE id = $1', [onDay]);
+    expect(await errCode(purge(d, load(LVL_YAML, VF), false))).toBe('purge_unreplaced_price_level');
+    expect(d2).toBeGreaterThan(0);
+  });
+
+  it('rows before valid_from are deleted without replacement and listed (ids, days); every other row has its rebuilt twin', async () => {
+    const d = db();
+    await seedHourly(d, TOKEN_REF, '2026-10-03T00:00:00Z', 48, 'chain:v2_twap', () => 2);
+    const old1 = await seedMarket(d, 'lvl', 'price_usd', '2026-10-01T00:47:00.000Z', 1.1);
+    const old2 = await seedMarket(d, 'lvl', 'price_usd', '2026-10-02T23:59:00.000Z', 1.2);
+    await seedMarket(d, 'lvl', 'price_usd', '2026-10-03T12:00:00.000Z', 1.4);
+    await seedMarket(d, 'lvl', 'price_usd', '2026-10-04T12:00:00.000Z', 1.5);
+    await rebuildPriceLevels(d, load(LVL_YAML, VF), { yes: true, now: NOW });
+    const withoutReplacement = [{ id: old1, observedAt: '2026-10-01T00:47:00.000Z', day: '2026-10-01' }, { id: old2, observedAt: '2026-10-02T23:59:00.000Z', day: '2026-10-02' }];
+    const dry = await purge(d, load(LVL_YAML, VF), false);
+    expect(dry.perMetric).toMatchObject([{ metric: 'price_usd', observations: 4, superseded: 2, withoutReplacement }]);
+    const yes = await purge(d, load(LVL_YAML, VF), true);
+    expect(yes.perMetric).toMatchObject([{ metric: 'price_usd', observations: 4, withoutReplacement }]);
+    expect(await d.one("SELECT 1 FROM observations WHERE source_type = 'market_data'")).toBeUndefined();
+    expect((await listActiveObservations(d, 'lvl', 'price_usd')).map((o) => o.observedAt)).toEqual(['2026-10-03T12:00:00.000Z', '2026-10-04T12:00:00.000Z']);
+  });
+
+  it('without a prices map (no valid_from) a row with no replacement refuses; a fully rebuilt metric lists none; other source types are untouched', async () => {
+    const d = db();
+    await seedHourly(d, TOKEN_REF, '2026-10-03T00:00:00Z', 48, 'chain:v2_twap', () => 2);
+    await seedMarket(d, 'lvl', 'price_usd', '2026-10-01T00:47:00.000Z', 1.1);
+    expect(await errCode(purge(d, load(LVL_YAML), false))).toBe('purge_unreplaced_price_level');
+    await d.run("DELETE FROM observations WHERE observed_at < '2026-10-03'");
+    await seedMarket(d, 'lvl', 'price_usd', '2026-10-03T12:00:00.000Z', 1.4);
+    await rebuildPriceLevels(d, load(LVL_YAML), { yes: true, now: NOW });
+    expect((await purge(d, load(LVL_YAML), false)).perMetric[0]!.withoutReplacement).toEqual([]);
+    // A third_party purge of a price metric is not a price-level purge: no withoutReplacement, no refusal.
+    const tp = await purgeMetrics(d, load(LVL_YAML), { metrics: ['price_usd'], sourceType: 'third_party', apply: false, exportDir: join(scratch(), 'purged'), now: NOW });
+    expect(tp.perMetric[0]).not.toHaveProperty('withoutReplacement');
   });
 });

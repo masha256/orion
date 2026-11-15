@@ -67,10 +67,14 @@ function backfillTokenLines(r: BackfillTokensResult): string[] {
 function purgeLines(r: PurgeResult, sourceType: string | undefined, exportDir: string): string[] {
   return [
     `${r.asset.toUpperCase()} purge${r.applied ? '' : ' (dry run)'}, ${sourceType === undefined ? 'all source types' : `source type ${sourceType}`}:`,
-    ...r.perMetric.map((m) =>
+    ...r.perMetric.flatMap((m) => [
       `  ${m.metric} (${m.configured ? 'configured' : 'not configured'}): ${m.observations} observation(s), ${m.superseded} superseded, ` +
         `${m.firstDay === null ? 'no rows' : `${m.firstDay} to ${m.lastDay}`}, value sum ${m.valueSum}; ` +
-        `latest_levels ${m.latestLevels}, watch_state ${m.watchState}, fetch_cursors ${m.fetchCursors}`),
+        `latest_levels ${m.latestLevels}, watch_state ${m.watchState}, fetch_cursors ${m.fetchCursors}` +
+        // A market_data price-level purge (Ruling R38): the rows before valid_from it deletes with no rebuilt row.
+        (m.withoutReplacement !== undefined ? `; ${m.withoutReplacement.length} without replacement` : ''),
+      ...(m.withoutReplacement ?? []).map((x) => `    WITHOUT REPLACEMENT #${x.id} ${x.day} (${x.observedAt}): before valid_from, deleted with no rebuilt row`),
+    ]),
     !r.applied
       ? `dry run: nothing deleted; --yes deletes and exports to ${exportDir}`
       : r.exportFile === null
@@ -106,8 +110,10 @@ function rebuildLines(r: RebuildResult): string[] {
     `${r.asset.toUpperCase()} rebuild-price-levels${r.applied ? '' : ' (dry run)'}:`,
     ...(r.perMetric.length === 0 ? ['  no price_usd or diem_price_usd metric'] : []),
     ...r.perMetric.flatMap((m) => [
-      `  ${m.metric} (${m.tokenRef ?? 'no price ref'}): ${m.rows} CoinGecko row(s), ${m.rebuilt} ${r.applied ? 'rebuilt' : 'to rebuild'}, ${m.refused.length} refused`,
+      `  ${m.metric} (${m.tokenRef ?? 'no price ref'}): ${m.rows} CoinGecko row(s), ${m.rebuilt} ${r.applied ? 'rebuilt' : 'to rebuild'}, ${m.refused.length} refused` +
+        (m.beforeValidFrom.length > 0 ? `, ${m.beforeValidFrom.length} before valid_from (never rebuilt; data purge deletes them without replacement)` : ''),
       ...m.refused.map((x) => `    REFUSED #${x.id} ${x.observedAt}: ${x.reason}`),
+      ...m.beforeValidFrom.map((x) => `    BEFORE VALID_FROM #${x.id} ${x.observedAt}`),
     ]),
     r.applied ? `wrote ${r.days} day(s); the CoinGecko rows are superseded (data purge --source-type market_data deletes them)` : 'dry run: nothing written; --yes writes the rebuilt rows',
   ];

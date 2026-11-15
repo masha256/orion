@@ -8,6 +8,7 @@ import {
   LIGHTER_API,
   livePriceOffchain,
   MAX_SWAP_AGE_S,
+  MIN_CHECK_SWAP_USDC,
   priceHourOffchain,
   priceRangeOffchain,
   USDC_MINT,
@@ -536,6 +537,58 @@ describe('PUMP: PumpSwap vaults after the last swap before H+1h, checked against
     const h = solanaHttp(world({ [PAIR]: [dlmmAfter, addLiq] }));
     const r = await priceHourOffchain(deps({ solana: solanaPriceTransport(h, SOL_URL) }), [PUMP], H, FEEDS);
     expect(r.prices.get(PUMP.ref)).toMatchObject({ checkGapPct: null, detail: { check: { skipped: 'no_swap' } } });
+  });
+
+  // Ruling R37 (Task 10 proof: d_usdc_raw 2..12 swaps gave check gaps up to 284,448%, 8 false breaches in 13 months).
+  // A dust swap: 12 raw USDC (0.000012 USDC) for 1 raw PUMP = 12 USDC per PUMP, a +342,000% "gap".
+  const dust = (sig: string, ts: number, dUsdcRaw = 12n) => dlmmTx(sig, slotAtT(ts), -1n, dUsdcRaw);
+
+  it('R37: the Meteora check skips swaps whose USDC leg is under 10 USDC and takes the newest one of at least 10', async () => {
+    expect(MIN_CHECK_SWAP_USDC).toBe(10);
+    // Newest first: a dust swap, a 9.999999 USDC swap (under the floor), then the 317 USDC swap.
+    const under = dlmmTx('dlmmUNDER', slotAtT(END - 60), -RAW(9.999999 / 0.0040), RAW(9.999999));
+    const h = solanaHttp(world({ [PAIR]: [dlmmAfter, dust('dlmmDUST', END - 5), under, dlmmSwap] }));
+    const r = await priceHourOffchain(deps({ solana: solanaPriceTransport(h, SOL_URL) }), [PUMP], H, FEEDS);
+    const p = r.prices.get(PUMP.ref)!;
+    expect(p.checkGapPct).toBeCloseTo(((0.0035093 - 0.0035042) / 0.0035042) * 100, 4); // +0.146%, not +342,000%
+    expect(p.detail.check).toMatchObject({ signature: 'dlmmSWAP', d_usdc_raw: RAW(317).toString(), dust_swaps_skipped: 2, min_swap_usdc: 10 });
+    // Exactly 10 USDC qualifies.
+    const ten = dlmmTx('dlmmTEN', slotAtT(END - 30), -RAW(10 / 0.0035), RAW(10));
+    const h2 = solanaHttp(world({ [PAIR]: [dust('dlmmDUST', END - 5), ten, dlmmSwap] }));
+    const p2 = (await priceHourOffchain(deps({ solana: solanaPriceTransport(h2, SOL_URL) }), [PUMP], H, FEEDS)).prices.get(PUMP.ref)!;
+    expect(p2.detail.check).toMatchObject({ signature: 'dlmmTEN', in_usdc: expect.closeTo(0.0035, 9), dust_swaps_skipped: 1 });
+    // No dust read: the detail carries no dust note (the existing rows' shape).
+    const h3 = solanaHttp(world());
+    const p3 = (await priceHourOffchain(deps({ solana: solanaPriceTransport(h3, SOL_URL) }), [PUMP], H, FEEDS)).prices.get(PUMP.ref)!;
+    expect(p3.detail.check).not.toHaveProperty('dust_swaps_skipped');
+  });
+
+  it('R37: only dust swaps in reach (history ends, or the read budget is spent): no check value, no gap, never the dust swap', async () => {
+    const h = solanaHttp(world({ [PAIR]: [dlmmAfter, dust('dlmmD1', END - 5), dust('dlmmD2', END - 50, 2n), addLiq] }));
+    const r = await priceHourOffchain(deps({ solana: solanaPriceTransport(h, SOL_URL) }), [PUMP], H, FEEDS);
+    expect(r.missing).toEqual([]);
+    const p = r.prices.get(PUMP.ref)!;
+    expect(p.usd).toBeCloseTo(0.0035042 * USDC_USD, 12); // the primary still prices
+    expect(p.checkGapPct).toBeNull();
+    expect(p.detail.check).toEqual({ method: 'meteora_dlmm', skipped: 'no_qualifying_swap', scan_end: 'no_swap', transactions_read: 3, dust_swaps_skipped: 2, min_swap_usdc: 10 });
+    // Six dust swaps spend the check's read budget (6) before the 317 USDC swap: no reading, never a fallback to dust.
+    const dusts = Array.from({ length: 6 }, (_, i) => dust(`dlmmD${i}`, END - 5 - i));
+    const h2 = solanaHttp(world({ [PAIR]: [...dusts, dlmmSwap] }));
+    const p2 = (await priceHourOffchain(deps({ solana: solanaPriceTransport(h2, SOL_URL) }), [PUMP], H, FEEDS)).prices.get(PUMP.ref)!;
+    expect(p2.checkGapPct).toBeNull();
+    expect(p2.detail.check).toMatchObject({ skipped: 'no_qualifying_swap', scan_end: 'read_budget_spent', transactions_read: 6, dust_swaps_skipped: 6 });
+  });
+
+  it('R37: the PumpSwap primary needs no floor: a dust swap leaves the vault reserves, which are the price', async () => {
+    // The newest successful vault tx moved 12 raw USDC; its postTokenBalances are still the pool's reserves.
+    const tiny: FakeTx = {
+      ...goodPump, signature: 'pumpTINY', slot: slotAtT(END - 3),
+      pre: [bal(2, PUMP_MINT, POOL, RAW(3_005_000_000) + 3_425n), bal(3, USDC_MINT, POOL, RAW(3_005_000_000 * 0.0035042) - 12n)],
+    };
+    const h = solanaHttp(world({ [QUOTE_VAULT]: [afterHour, tiny, goodPump] }));
+    const p = (await priceHourOffchain(deps({ solana: solanaPriceTransport(h, SOL_URL) }), [PUMP], H, FEEDS)).prices.get(PUMP.ref)!;
+    expect(p.detail.signature).toBe('pumpTINY');
+    expect(p.usd).toBeCloseTo(0.0035042 * USDC_USD, 12);
   });
 
   it('an hour past the finalized head has no row yet (no_block_yet); a missing USDC/USD value is quote_missing', async () => {

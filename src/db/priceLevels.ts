@@ -20,6 +20,11 @@ import { CHAIN_PRICE_MAX_AGE_HOURS, evmTokenRef, MS_PER_HOUR } from './prices.js
  * method (contract state on chain, first-party API for a venue's candle), locator `{ from: 'prices', token_ref, ts,
  * source }`. The ref: the metric's `price.token` ref, else (AERO) the EVM address of the contract its price adapter
  * names as `token`. A dry run by default; `yes` writes under the asset's run lock, one transaction per asset-day.
+ *
+ * Ruling R38: a row observed before its ref's prices.yaml `valid_from` (00:00Z of that day) can never be rebuilt (no
+ * price is written for an earlier hour): it is listed as `beforeValidFrom`, not refused, and left as it is; `data purge
+ * --source-type market_data` deletes it without a replacement and lists it (`withoutReplacement`). Without the ref's
+ * prices.yaml entry (a hand-built asset) there is no valid_from, and such a row is refused as before.
  */
 
 export const PRICE_LEVEL_METRICS = ['price_usd', 'diem_price_usd'] as const;
@@ -36,6 +41,8 @@ export interface RebuildMetric {
   /** Active market_data rows of the metric. */
   rows: number;
   rebuilt: number;
+  /** Rows observed before the ref's valid_from (R38): never rebuilt, never refused; the market_data purge deletes them. */
+  beforeValidFrom: { id: number; observedAt: string }[];
   refused: RebuildRefusal[];
 }
 
@@ -75,6 +82,12 @@ export function priceLevelRef(loaded: LoadedAsset, metric: string): string | nul
   return null;
 }
 
+/** 00:00Z of the ref's prices.yaml `valid_from` (Ruling R38), or null without an entry. */
+export function priceLevelValidFromMs(loaded: LoadedAsset, tokenRef: string | null): number | null {
+  const vf = tokenRef === null ? undefined : loaded.prices?.get(tokenRef)?.validFrom;
+  return vf === undefined ? null : Date.parse(`${vf}T00:00:00.000Z`);
+}
+
 /** The method kind behind a `prices.source` label (`chain:<kind>`, `first_party:<venue>`). */
 function kindOfSource(source: string): string {
   if (source === 'first_party:hyperliquid') return 'hyperliquid_candle';
@@ -94,9 +107,14 @@ async function planRebuild(db: Db, loaded: LoadedAsset): Promise<{ perMetric: Re
          AND superseded_by IS NULL AND status <> 'rejected' ORDER BY observed_at, id`,
       [asset, metric],
     );
-    const m: RebuildMetric = { metric, tokenRef, rows: rows.length, rebuilt: 0, refused: [] };
+    const m: RebuildMetric = { metric, tokenRef, rows: rows.length, rebuilt: 0, beforeValidFrom: [], refused: [] };
+    const validFromMs = priceLevelValidFromMs(loaded, tokenRef);
     for (const r of rows) {
       const observedAt = new Date(r.observed_at).toISOString();
+      if (validFromMs !== null && Date.parse(observedAt) < validFromMs) {
+        m.beforeValidFrom.push({ id: Number(r.id), observedAt });
+        continue;
+      }
       if (tokenRef === null) {
         m.refused.push({ id: Number(r.id), observedAt, reason: `metrics.${metric} has no price ref (a price.token source, or a price adapter naming its token)` });
         continue;

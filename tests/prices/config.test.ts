@@ -58,8 +58,9 @@ describe('prices.yaml (the committed file)', () => {
     expect(quoteRefOf(prices.get(REF.DIEM)!.primary)).toBe(REF.VVV);
   });
 
-  it('valid_from is the first hour Orion writes: 2025-10-13 for the EVM refs, AERO, HYPE, LIT, PUMP later (Ruling R2)', () => {
-    const later: Record<string, string> = { [REF.AERO]: '2026-09-23', [REF.HYPE]: '2026-10-01', [REF.LIT]: '2026-10-01', [REF.PUMP]: '2026-10-12' };
+  it('valid_from is the first hour Orion writes: 2025-10-13 for the EVM refs, AERO, HYPE, LIT, PUMP later (Rulings R2, R36)', () => {
+    // R36: AERO's token and pools exist from 2026-10-21 05:25Z (check pool); 2026-10-22 is its first full priced day.
+    const later: Record<string, string> = { [REF.AERO]: '2026-10-22', [REF.HYPE]: '2026-10-01', [REF.LIT]: '2026-10-01', [REF.PUMP]: '2026-10-12' };
     for (const e of prices.values()) expect(e.validFrom, e.ref).toBe(later[e.ref] ?? '2025-10-13');
   });
 

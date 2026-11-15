@@ -821,8 +821,11 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
    Per `market_data` `price_usd` / `diem_price_usd` row, a new row at the same `observed_at` from the newest chain or
    first-party price at or before `observed_at - 1 h`. A row with no such price within 6 h is refused (ruling R31) and
    listed: any refused row (a non-zero exit, or a `STOP` line) is a stop for Mike, on stage too, before any `--yes`
-   here and before step 8 (the purge would leave that day without a price level). Paste the per-metric lines into the
-   thread.
+   here and before step 8 (the purge would refuse it anyway, ruling R38). A row observed before its ref's prices.yaml
+   `valid_from` is listed as `beforeValidFrom`, never rebuilt and not refused (exit 0). **Expected (Task 10):** AERO
+   `price_usd` 20 rebuilt + 25 `beforeValidFrom` (2026-09-24..2026-10-21; AERO's pools exist from 2026-10-21, ruling
+   R36); every other asset 0 `beforeValidFrom`. Any other `beforeValidFrom` or refused row: stop. Paste the per-metric
+   lines into the thread.
 
    **Stop here. Prod: only on Mike's go.** Then per asset, stopping at the first non-zero exit, and compare the counts:
    ```
@@ -859,8 +862,12 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
      ssh orion-<env> data purge $a --metrics $m --source-type market_data > ~/r2-<env>/dry/purge-$a.json || echo "STOP: $a purge dry run exit $?"
    done
    ```
-   Paste the per-metric `observations` counts. A refusal (an open anomaly, a kept row referencing a purged one): stop
-   and bring it to Mike. An asset with no CoinGecko price row reports nothing to purge.
+   Paste the per-metric `observations` counts. The purge refuses (non-zero exit, `error` in the JSON, nothing deleted)
+   a targeted row with no rebuilt row at its `observed_at` (`purge_unreplaced_price_level`, ruling R38), except a row
+   observed before its ref's `valid_from`: that one is deleted and listed per metric as `withoutReplacement` (ids,
+   days). **Expected (Task 10):** 25 `withoutReplacement` for AERO only (2026-09-24..2026-10-21; Mike 2026-11-14:
+   "Purge"), none elsewhere. Any other `withoutReplacement` or any refusal (unreplaced row, open anomaly, a kept row
+   referencing a purged one): stop and bring it to Mike. An asset with no CoinGecko price row reports nothing to purge.
 
    **Stop here. Prod: only on Mike's go.** Then per asset, stopping at the first non-zero exit, and compare the counts:
    ```

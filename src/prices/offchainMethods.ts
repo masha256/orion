@@ -37,6 +37,13 @@ const MAX_SIGNATURE_PAGES = 10;
 /** Successful transactions fetched before giving up: the primary's vault, the check's pair (scoping: none in 6). */
 const MAX_PRIMARY_TX = 8;
 const MAX_CHECK_TX = 6;
+/**
+ * Ruling R37: the Meteora DLMM history check uses only swaps whose USDC leg is at least this many USDC. A smaller (dust)
+ * swap's execution price is noise (the Task 10 proof: 0.000002-0.000012 USDC swaps gave gaps up to 284,448%), so it is
+ * skipped and the check takes the newest qualifying swap within MAX_CHECK_TX reads, else has no reading. The PumpSwap
+ * primary needs no floor: it reads the vaults' reserves after the swap, which are the pool's price at any swap size.
+ */
+export const MIN_CHECK_SWAP_USDC = 10;
 
 // ---- shared ----------------------------------------------------------------------------------------------------------
 
@@ -253,7 +260,9 @@ function dlmmExecution(tx: SolanaTransaction, reserves: DlmmReserves, mint: stri
   const y = side(reserves.usdc, USDC_MINT);
   if (!x || !y || x.delta === 0n || y.delta === 0n || x.delta > 0n === y.delta > 0n) return null;
   const abs = (v: bigint) => (v < 0n ? -v : v);
-  const inUsdc = ui(abs(y.delta), y.decimals) / ui(abs(x.delta), x.decimals);
+  const usdcLeg = ui(abs(y.delta), y.decimals);
+  if (usdcLeg < MIN_CHECK_SWAP_USDC) return { dust: true as const };
+  const inUsdc = usdcLeg / ui(abs(x.delta), x.decimals);
   return { inUsdc, detail: { reserve_x: reserves.token, reserve_y: reserves.usdc, d_token_raw: x.delta.toString(), d_usdc_raw: y.delta.toString() } };
 }
 
@@ -326,10 +335,22 @@ async function solanaHour(deps: PriceDeps, sol: SolanaPriceTransport, e: PriceEn
       // still prices and the chain goes on (a check is never the reason an hour has no price).
       try {
         const reserves = await dlmmReserves(deps, sol, check.pair, mint);
-        const c = await lastTx(sol, check.pair, seek, endTs, MAX_CHECK_TX, (tx) => dlmmExecution(tx, reserves, mint));
+        // R37: a dust swap is skipped (counted, never used); none at or above the floor in reach is no reading.
+        let dust = 0;
+        const c = await lastTx(sol, check.pair, seek, endTs, MAX_CHECK_TX, (tx) => {
+          const e = dlmmExecution(tx, reserves, mint);
+          if (e !== null && 'dust' in e) {
+            dust += 1;
+            return null;
+          }
+          return e;
+        });
+        const dustNote = dust > 0 ? { dust_swaps_skipped: dust, min_swap_usdc: MIN_CHECK_SWAP_USDC } : {};
         read = c.ok
-          ? { usd: c.value.inUsdc * checkUsdc, detail: { method: check.kind, signature: c.signature, block_time: c.blockTime, last_swap_age_s: c.ageS, ...c.value.detail, in_usdc: c.value.inUsdc, usdc_usd: checkUsdc } }
-          : { usd: null, reason: c.reason, detail: { method: check.kind, ...c.detail } };
+          ? { usd: c.value.inUsdc * checkUsdc, detail: { method: check.kind, signature: c.signature, block_time: c.blockTime, last_swap_age_s: c.ageS, ...c.value.detail, in_usdc: c.value.inUsdc, usdc_usd: checkUsdc, ...dustNote } }
+          : dust > 0
+            ? { usd: null, reason: 'no_qualifying_swap', detail: { method: check.kind, scan_end: c.reason, ...c.detail, ...dustNote } }
+            : { usd: null, reason: c.reason, detail: { method: check.kind, ...c.detail } };
       } catch (err) {
         if (err instanceof OrionError) throw err;
         read = { usd: null, reason: 'check_error', detail: { method: check.kind, error: err instanceof Error ? err.message : String(err) } };

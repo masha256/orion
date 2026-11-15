@@ -358,7 +358,8 @@ describe('metric watch', () => {
     expect(asset('hype')).toBe('74c59b28b4d619a0915ab4cf5cbe5f335849b8503c2a180bfaaef3bdbbf80c4a');
     // Re-pinned (Phase 3 R2 Task 6b): AERO names no ref (R11: entriesFor reads price.* params and scanned tokens; its price adapters are its own, R21).
     // Re-pinned (Phase 3 R2 Task 6 fix wave, E): entriesFor includes the asset's own token's prices.yaml entry (AERO's again).
-    expect(asset('aero')).toBe('035327b9eec2de16fb96541b2b09dfc5a52015fd4ef6a246691e5cb8bcf6578d');
+    // Re-pinned (Phase 3 R2 Task 10 fix wave, A/R36): AERO's prices.yaml entry valid_from 2026-09-23 -> 2026-10-22.
+    expect(asset('aero')).toBe('80c3237360149048239438b53bcf8dd58c9e484aba794eff2f109215c4c9c8a7');
   });
 });
 
