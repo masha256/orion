@@ -471,6 +471,16 @@ cadence) change no plan text and are listed there only.
   source type at the same `observed_at` counts as the replacement. P6's estimate (~50k calls) is superseded by the
   proof's measurement: 148,736 calls, 3 h 02 m wall (deploy.md R2 prerequisite 1). The release gate's allowlist is
   `tools/phase3-proof/r2-allowlist.json`, built from the signed proof (Mike 2026-11-15).
+- **R41-R42 (Task 10, the release gate's allowlist)** (amend Task 10's "2x the measured move" bounds): R41 every bound
+  is max(2x the proof's measured move, a class floor): single-instant price-derived fields 2x the asset's 90-day
+  hourly-gap p99 rounded up to 0.5% (10% where no pair was measured), USD flow aggregates 2%, growth abs 0.05 / 0.2
+  (`.change` / `.annualized`) and rel 2% (`.current` / `.prior`), PEG and multiples 25%; every USD-derived path of these
+  classes has an entry, non-USD fields none, AERO exact except price-derived fields. R42 AERO multiples/PEG take the
+  10% price class, perToken flow fields the 2% flow class, perToken dilution the price class; `checks.*`,
+  `disclosedGrowth`, `payoutRatio`, provenance methods and yCRV mix/unreconciled keep 2x-proof or no entry (fail
+  closed). Costs in the followups note. The release block's pre-check `sql-ro` commands are quoted for orion-remote's
+  re-split (`ssh orion-prod "sql-ro \"select ...\""`, pinned in `scripts/provision/test/test_orion_remote.py`), and its
+  step 7/8b checks exit 1 on `STOP`.
 
 ## Self-review notes
 - Spec §3.1 methods: Task 1 table + Tasks 2/4; checks never from the same pool (CAKE/LINK/UNI moved to pools, M10).

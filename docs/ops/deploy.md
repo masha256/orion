@@ -338,8 +338,12 @@ with nothing else in it. `db backfill-provenance` is gone with it (nothing can b
 1. **Pre-deploy check, on each env right before its switch** (all three must be 0; any other count: stop, the
    migration would fail on the first null and nothing would change; remedies below):
    ```
-   ssh orion-prod sql-ro "select (select count(*) from observations where method is null or source_type is null or locator is null or code_version is null or config_hash is null) as obs_null, (select count(*) from observations where source_type = 'disclosure' and citation_url is null and code_version <> 'pre-v2') as disclosure_uncited, (select count(*) from latest_levels where source_type is null or locator is null) as levels_null"
+   ssh orion-prod "sql-ro \"select (select count(*) from observations where method is null or source_type is null or locator is null or code_version is null or config_hash is null) as obs_null, (select count(*) from observations where source_type = 'disclosure' and citation_url is null and code_version <> 'pre-v2') as disclosure_uncited, (select count(*) from latest_levels where source_type is null or locator is null) as levels_null\""
    ```
+   The whole remote command is one double-quoted word with the query in escaped quotes inside it: ssh joins its
+   arguments with spaces and orion-remote re-splits that string (shlex), so `ssh orion-prod sql-ro "select ..."` arrives
+   as many words and is refused (exit 64, `sql-ro takes exactly one argument`). Pinned in
+   `scripts/provision/test/test_orion_remote.py` (`DocumentedSqlRoTests`).
    Staging has no `sql-ro` verb: as the env user (`sudo -iu orion-stage`), `o db query-ro "<the same select>"`.
    Remedies, then run the check again:
    - `obs_null` or `disclosure_uncited` > 0: every writer since release 2 sets these, so a writer still omits one. Find
@@ -667,13 +671,13 @@ stage/prod ssh commands above.
 **Prerequisites (once, before the staging deploy):**
 
 1. **Task 10 is signed.** The proof on a prod copy (plan Task 10) is done and Mike has signed its per-asset table; the
-   release tag carries `tools/phase3-proof/r2-allowlist.json` (the table's bounds) and the measured backfill call count
-   and wall time. No tag before the sign-off. Signed: Mike 2026-11-15. Measured on the prod copy (one pass, 18 runs of
-   10 min back to back, 0 errors, 202 check breaches): 148,736 RPC calls (Ethereum 44,169, BNB 58,038, Base 37,477,
-   Solana 9,034, Hyperliquid 12, Lighter 6) in 10,940 s (3 h 02 m) wall. These supersede the plan's P6 estimate (~50k
-   calls). That pass still read AERO from 2026-09-23 (9,552 failed or bad hours before its pools existed, ruling R36),
-   so a backfill from AERO's 2026-10-22 makes somewhat fewer Base calls. On an env it takes longer than 3 h: each 10-min
-   run defers to the hourly `levels` job and around the nightly (step 3).
+   release tag carries `tools/phase3-proof/r2-allowlist.json` (bounds = max(2x the signed proof, R41 floors)) and the
+   measured backfill call count and wall time. No tag before the sign-off. Signed: Mike 2026-11-15. Measured on the prod
+   copy (one pass, 18 runs of 10 min back to back, 0 errors, 202 check breaches): 148,736 RPC calls (Ethereum 44,169,
+   BNB 58,038, Base 37,477, Solana 9,034, Hyperliquid 12, Lighter 6) in 10,940 s (3 h 02 m) wall. These supersede the
+   plan's P6 estimate (~50k calls). That pass still read AERO from 2026-09-23 (9,552 failed or bad hours before its
+   pools existed, ruling R36), so a backfill from AERO's 2026-10-22 makes somewhat fewer Base calls. On an env it takes
+   longer than 3 h: each 10-min run defers to the hourly `levels` job and around the nightly (step 3).
 2. **Mike re-runs `orion-host.sh`** from a fixed snapshot of `scripts/provision/` at the release sha, exactly as in the
    R1 release step 1 above (the snapshot commands, the same flags, paste back the SELF-CHECK): R2's orion-remote adds
    `job run-now backfill-prices`, `data reprice`, `data rebuild-price-levels` and `data purge-prices`. Check:
@@ -821,22 +825,24 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
    read-only): the purge in step 8b refuses a rejected CoinGecko price row on or after its ref's `valid_from`, and
    neither the rebuild (it reads active rows only) nor any `--yes` can clear it:
    ```
-   ssh orion-prod sql-ro "select asset_id, metric_key, count(*) filter (where status = 'rejected') as rejected, count(*) as total from observations where source_type = 'market_data' and metric_key in ('price_usd', 'diem_price_usd') group by asset_id, metric_key order by asset_id, metric_key"
+   ssh orion-prod "sql-ro \"select asset_id, metric_key, count(*) filter (where status = 'rejected') as rejected, count(*) as total from observations where source_type = 'market_data' and metric_key in ('price_usd', 'diem_price_usd') group by asset_id, metric_key order by asset_id, metric_key\""
    ```
    (stage: `sudo -iu orion-stage`, then `o db query-ro "<the same select>"`, as in "Phase 2 tail: release with
    0006"). **Expected:**
-   `rejected` 0 on every row (Task 10's prod copy: 0 on every asset). Any `rejected` > 0: stop and ask Mike; do not
-   run the rebuild. Then the dry runs, all 13 (exit 3 = a row was refused):
+   `rejected` 0 on every row (Task 10's prod copy: 0 on every asset). Any `rejected` > 0: stop and ask Mike; do not run
+   the rebuild. If the pre-check itself errors (a non-zero exit or an `error` JSON): stop, do not run the rebuild, and
+   paste the command and its full output into the thread. Then the dry runs, all 13 (exit 3 = a row was refused):
    ```
    for a in $A; do
      ssh orion-<env> data rebuild-price-levels $a > ~/r2-<env>/dry/rebuild-$a.json; rc=$?
      [ $rc -eq 0 ] || echo "STOP: $a rebuild dry run exit $rc"
    done
-   for a in $A; do python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); a=sys.argv[2]; pm=r["perMetric"]; bad=[m["metric"] for m in pm if m["refused"]]; bvf=sum(len(m["beforeValidFrom"]) for m in pm); want=25 if a=="aero" else 0; print(a, " ".join("%s rows=%d rebuild=%d refused=%d beforeValidFrom=%d" % (m["metric"], m["rows"], m["rebuilt"], len(m["refused"]), len(m["beforeValidFrom"])) for m in pm), "STOP: refused in "+",".join(bad) if bad else ("STOP: beforeValidFrom %d, expected %d" % (bvf, want) if bvf != want else "ok"))' ~/r2-<env>/dry/rebuild-$a.json $a; done
+   for a in $A; do python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); a=sys.argv[2]; pm=r["perMetric"]; bad=[m["metric"] for m in pm if m["refused"]]; bvf=sum(len(m["beforeValidFrom"]) for m in pm); want=25 if a=="aero" else 0; s="STOP: refused in "+",".join(bad) if bad else ("STOP: beforeValidFrom %d, expected %d" % (bvf, want) if bvf != want else "ok"); print(a, " ".join("%s rows=%d rebuild=%d refused=%d beforeValidFrom=%d" % (m["metric"], m["rows"], m["rebuilt"], len(m["refused"]), len(m["beforeValidFrom"])) for m in pm), s); sys.exit(s != "ok")' ~/r2-<env>/dry/rebuild-$a.json $a || break; done
    ```
    Per `market_data` `price_usd` / `diem_price_usd` row, a new row at the same `observed_at` from the newest chain or
    first-party price at or before `observed_at - 1 h`. A row with no such price within 6 h is refused (ruling R31) and
-   listed: any refused row (a non-zero exit, or a `STOP` line) is a stop for Mike, on stage too, before any `--yes`
+   listed: any refused row (a non-zero exit, or a `STOP` line; every step 7/8b check exits 1 on `STOP` and its loop
+   stops at that asset) is a stop for Mike, on stage too, before any `--yes`
    here and before step 8 (the purge would refuse it anyway, ruling R38). A row observed before its ref's prices.yaml
    `valid_from` is listed as `beforeValidFrom`, never rebuilt and not refused (exit 0). **Expected (Task 10):** AERO
    `price_usd` 20 rebuilt + 25 `beforeValidFrom` (2026-09-24..2026-10-21; AERO's pools exist from 2026-10-21, ruling
@@ -848,7 +854,7 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
    for a in $A; do
      ssh orion-<env> data rebuild-price-levels $a --yes > ~/r2-<env>/yes/rebuild-$a.json || { echo "STOP: $a exit $?"; break; }
    done
-   for a in $A; do python3 -c 'import json,sys; d,y=(json.load(open(f)) for f in sys.argv[1:3]); c=lambda r: [(m["metric"], m["rebuilt"]) for m in r["perMetric"]]; print(sys.argv[3], "ok" if c(d)==c(y) else "STOP: dry %s != yes %s" % (c(d), c(y)))' ~/r2-<env>/dry/rebuild-$a.json ~/r2-<env>/yes/rebuild-$a.json $a; done
+   for a in $A; do python3 -c 'import json,sys; d,y=(json.load(open(f)) for f in sys.argv[1:3]); c=lambda r: [(m["metric"], m["rebuilt"]) for m in r["perMetric"]]; s="ok" if c(d)==c(y) else "STOP: dry %s != yes %s" % (c(d), c(y)); print(sys.argv[3], s); sys.exit(s != "ok")' ~/r2-<env>/dry/rebuild-$a.json ~/r2-<env>/yes/rebuild-$a.json $a || break; done
    ```
    The `--yes` counts (`rebuilt`) must equal the dry run's; it deletes nothing.
 8. **Purge the CoinGecko prices, then the CoinGecko price levels: each a dry run, then `--yes`.**
@@ -877,7 +883,7 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
      m=price_usd; [ $a = vvv ] && m=price_usd,diem_price_usd
      ssh orion-<env> data purge $a --metrics $m --source-type market_data > ~/r2-<env>/dry/purge-$a.json || echo "STOP: $a purge dry run exit $?"
    done
-   for a in $A; do python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); a=sys.argv[2]; pm=r.get("perMetric", []); wr=sum(len(m.get("withoutReplacement", [])) for m in pm); want=25 if a=="aero" else 0; print(a, " ".join("%s observations=%d withoutReplacement=%d" % (m["metric"], m["observations"], len(m.get("withoutReplacement", []))) for m in pm), "STOP: error "+json.dumps(r["error"]) if "error" in r else ("STOP: withoutReplacement %d, expected %d" % (wr, want) if wr != want else "ok"))' ~/r2-<env>/dry/purge-$a.json $a; done
+   for a in $A; do python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); a=sys.argv[2]; pm=r.get("perMetric", []); wr=sum(len(m.get("withoutReplacement", [])) for m in pm); want=25 if a=="aero" else 0; s="STOP: error "+json.dumps(r["error"]) if "error" in r else ("STOP: withoutReplacement %d, expected %d" % (wr, want) if wr != want else "ok"); print(a, " ".join("%s observations=%d withoutReplacement=%d" % (m["metric"], m["observations"], len(m.get("withoutReplacement", []))) for m in pm), s); sys.exit(s != "ok")' ~/r2-<env>/dry/purge-$a.json $a || break; done
    ```
    Paste the per-metric lines. The purge refuses (non-zero exit, `error` in the JSON, nothing deleted)
    a targeted row with no rebuilt row at its `observed_at` (`purge_unreplaced_price_level`, ruling R38), except a row
@@ -892,7 +898,7 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
      m=price_usd; [ $a = vvv ] && m=price_usd,diem_price_usd
      ssh orion-<env> data purge $a --metrics $m --source-type market_data --yes > ~/r2-<env>/yes/purge-$a.json || { echo "STOP: $a exit $?"; break; }
    done
-   for a in $A; do python3 -c 'import json,sys; d,y=(json.load(open(f)) for f in sys.argv[1:3]); c=lambda r: [(m["metric"], m["observations"]) for m in r["perMetric"]]; print(sys.argv[3], "ok" if c(d)==c(y) else "STOP: dry %s != yes %s" % (c(d), c(y)))' ~/r2-<env>/dry/purge-$a.json ~/r2-<env>/yes/purge-$a.json $a; done
+   for a in $A; do python3 -c 'import json,sys; d,y=(json.load(open(f)) for f in sys.argv[1:3]); c=lambda r: [(m["metric"], m["observations"]) for m in r["perMetric"]]; s="ok" if c(d)==c(y) else "STOP: dry %s != yes %s" % (c(d), c(y)); print(sys.argv[3], s); sys.exit(s != "ok")' ~/r2-<env>/dry/purge-$a.json ~/r2-<env>/yes/purge-$a.json $a || break; done
    ```
    Each `--yes` writes `~/home/purged/<asset>-price_usd[+1]-<UTCstamp>.json`: keep them all. Each deleted count must
    equal its dry run's.

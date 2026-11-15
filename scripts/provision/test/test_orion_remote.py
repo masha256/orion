@@ -1183,6 +1183,48 @@ os.execv({psql!r}, [{psql!r}, '-d', {url!r}] + out)
         self.assertEqual(len(self.calls()), n, 'a refused query ran something')
 
 
+DEPLOY_MD = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(HERE))), 'docs', 'ops', 'deploy.md')
+
+
+class DocumentedSqlRoTests(RemoteCase):
+    """R2 close review I1: every `ssh orion-prod ... sql-ro ...` line in docs/ops/deploy.md must reach v_sql_ro as ONE
+    argument equal to its SQL. The local shell is modelled with shlex (POSIX), ssh joins the remaining words with single
+    spaces into SSH_ORIGINAL_COMMAND, and orion-remote re-splits that (split_command)."""
+
+    def setUp(self):
+        super().setUp()
+        self.release(TAG, current=True)
+
+    @staticmethod
+    def documented():
+        with open(DEPLOY_MD) as f:
+            return [line.strip() for line in f if line.strip().startswith('ssh orion-prod') and 'sql-ro' in line]
+
+    @staticmethod
+    def as_ssh_delivers(line):
+        argv = shlex.split(line)  # what the operator's shell hands to ssh
+        assert argv[:2] == ['ssh', 'orion-prod'], argv
+        return ' '.join(argv[2:])  # ssh's join: the remote sees one string
+
+    def test_every_documented_sql_ro_reaches_v_sql_ro_as_one_argument(self):
+        lines = self.documented()
+        self.assertGreaterEqual(len(lines), 2, 'expected the 0006 pre-check and the R39 pre-check')
+        self.assertTrue(any('rejected' in l and 'order by asset_id, metric_key' in l for l in lines),
+                        'R39 pre-check missing')
+        for line in lines:
+            sql = line[line.index('select '):].rstrip('"\\\'')  # the SQL text, whatever quoting surrounds it
+            rc, out, err = self.remote(self.as_ssh_delivers(line))
+            self.assertEqual(rc, 0, f'{line}: {err}')
+            self.assertEqual(self.node_argv()[-1], ['db', 'query-ro', '--role', 'orion_prod_ro', '--json', '--', sql])
+
+    def test_the_unquoted_form_is_refused(self):
+        # The pre-fix form: the local quotes are gone after ssh's join, so the query arrives as many words (exit 64).
+        line = "ssh orion-prod sql-ro \"select count(*) from observations where status = 'rejected'\""
+        rc, _out, err = self.remote(self.as_ssh_delivers(line))
+        self.assertEqual(rc, 64)
+        self.assertIn('sql-ro takes exactly one argument', err)
+
+
 class StaticTests(unittest.TestCase):
     def test_split_refuses_nul_and_bare_control_characters(self):
         # sshd cannot pass a NUL through the environment; the check still holds when one is handed in.

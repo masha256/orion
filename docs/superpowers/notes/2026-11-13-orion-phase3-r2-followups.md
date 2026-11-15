@@ -10,15 +10,15 @@ its findings files.
 
 ## Open items for Mike
 
-- **Task 10 sign-off.** Signed: Mike 2026-11-15 (#orion-dev "Signed off", the proof's `C2/headline.txt`). The proof
-  on a prod copy (old `orion-2026.11.12.1` vs the branch, release block steps 3-8 on the copy, both growth windows)
-  gave the per-asset table, the backfill's real call count and wall time (148,736 calls, 3 h 02 m; deploy.md R2
-  prerequisite 1), 0 refused rows, and 202 check breaches in the first pass (0 for PUMP after R37). The table's bounds
-  are `tools/phase3-proof/r2-allowlist.json` (2x the measured move per path; README.md). The dry-run facts held: zero
-  `coingecko:*` refs other than `coingecko:crvusd` and `coingecko:yearn-crv`; PUMP 28 repriced / 363 skipped as
-  `defillama_history` (the plan's estimate was about 21 / 369, R29). The Task 5 carry (`tools/phase2-proof/compare.py`
-  and the R1 allowlist vs the new `priceBasis.flows` text) is left as is: those are the Phase 2 / R1 gates; the R2 gate
-  uses `r2-allowlist.json`, which pins that text.
+- **Task 10 sign-off.** Signed: Mike 2026-11-15 (#orion-dev "Signed off", the proof's `C2/headline.txt`). The proof on a
+  prod copy (old `orion-2026.11.12.1` vs the branch, release block steps 3-8 on the copy, both growth windows) gave the
+  per-asset table, the backfill's real call count and wall time (148,736 calls, 3 h 02 m; deploy.md R2 prerequisite 1),
+  0 refused rows, and 202 check breaches in the first pass (0 for PUMP after R37). The table's bounds are
+  `tools/phase3-proof/r2-allowlist.json` (per path, max(2x the measured move, the R41 class floor); README.md). The
+  dry-run facts held: zero `coingecko:*` refs other than `coingecko:crvusd` and `coingecko:yearn-crv`; PUMP 28 repriced
+  / 363 skipped as `defillama_history` (the plan's estimate was about 21 / 369, R29). The Task 5 carry
+  (`tools/phase2-proof/compare.py` and the R1 allowlist vs the new `priceBasis.flows` text) is left as is: those are the
+  Phase 2 / R1 gates; the R2 gate uses `r2-allowlist.json`, which pins that text.
 - **HYPE's check is the same venue.** HYPE's primary is the Hyperliquid spot `@107` candle and its check the Hyperliquid
   perp `HYPE` candle (labelled `same_venue`): a venue-wide fault moves both. Mike to decide whether a second venue is
   needed.
@@ -147,6 +147,21 @@ states it; "assessed here" where the ruling states none).
 - R40: any active, non-rejected row of another source type at the same `observed_at` counts as the replacement in the
   market_data purge (the reviewer's call: supersession uses the same exact instant). Cost: the provenance of a level,
   no level lost.
+- R41 (Task 10 allowlist fix round): `r2-allowlist.json` bounds = max(fitted 2x proof, class floor). (a) Single-instant
+  price-derived fields (price, marketCap, fdv, perToken.*, dilution USD, yields.*): rel floor = 2x the asset's
+  price-token 90-day hourly-gap p99, rounded up to 0.5% (no CoinGecko pair measured: HYPE, LIT, PUMP, AERO, DIEM, cvxCRV
+  get 10%). (b) USD flow aggregates (revenue, costOfRevenue, grossProfit, holders, protocol, operatingCosts, holderFlow,
+  belowLine, volume USD and their lines, perToken.revenue etc.): rel floor 2%. (c) Growth `.change` / `.annualized` abs
+  floor 0.05 / 0.2; `.current` / `.prior` rel floor 2%. (d) PEG and multiples: rel 25%. Every USD-derived path of
+  these classes gets an entry whether or not it moved in the proof; non-USD fields (token amounts, supply, grades,
+  counts, text other than price basis) still have none; AERO stays exact except class (a). The floors widen bounds past
+  the signed table (e.g. CAKE price 0.53% fitted, bound 6%); Mike was told the floors in #orion-dev on 2026-11-15
+  before de9c888 (no objection). Cost: a genuine regression under its floor passes step 10 (still visible in the saved
+  before/after, which go to Mike).
+- R42 (R41 round judgement calls, accepted): AERO multiples/PEG as class (a) 10% (flows exact, price-only moves);
+  perToken flow fields class (b), perToken dilution class (a); `checks.*`, `disclosedGrowth`, `payoutRatio`,
+  provenance methods and yCRV mix/unreconciled keep 2x-proof or no entry (fail closed). Cost: a release-day stop on a
+  ratio path, reviewed by Mike from the saved before/after.
 
 Review fixes that bind like rulings (findings files): the writer checks the abort inside a chain-day and commits nothing
 for an aborted day; one breach per run across midnight; a missing hour resets the consecutive count (Task 3); Meteora
