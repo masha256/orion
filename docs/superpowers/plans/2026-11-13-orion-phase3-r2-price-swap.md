@@ -397,7 +397,8 @@ two differ, this section wins. Every ruling with its cost if wrong: the followup
 cadence) change no plan text and are listed there only.
 
 - **R2 `valid_from`** (amends "The price table", HYPE/LIT "candle reach", and Task 1 Step 2): the first hour Orion
-  needs, not the method's birth. Every EVM ref 2025-10-13; AERO 2026-09-23; HYPE and LIT 2026-10-01; PUMP 2026-10-12.
+  needs, not the method's birth. Every EVM ref 2025-10-13; AERO 2026-10-22 (R36; R2 had 2026-09-23, before AERO's
+  pools existed); HYPE and LIT 2026-10-01; PUMP 2026-10-12.
 - **R3, R4, R15, R16 interfaces** (amend Tasks 2-4 "Interfaces"): `HourPrice`, `PriceDeps`, `SolanaPriceTransport` and
   `WriteResult` live in `src/prices/types.ts`; the writer dispatches through `PRICE_CHAIN_METHODS` (per chain); a method
   returns `{prices, missing, feedUsd?, checks?, calls?}`, not a bare `Map`; `PriceDeps.prices` and
@@ -459,6 +460,17 @@ cadence) change no plan text and are listed there only.
   refused (dry run and `--yes`, as `data reprice`), so the block's steps 7-8 stop on it; every dry run and its `--yes`
   are separate blocks with the prod go before each `--yes`; purge-prices output is saved and its counts compared; a
   merge-to-main and tag prerequisite.
+- **R36-R40 (Task 10, the proof on the prod copy)** (amend R2, Task 4's Meteora check, Task 8's market_data purge, Task
+  9's release block and P6): R36 AERO `valid_from` 2026-10-22 (its pools were created 2026-10-21). R37 the PUMP
+  Meteora DLMM check uses only swaps with a USDC leg >= 10 USDC (`MIN_CHECK_SWAP_USDC`), else no reading; the PumpSwap
+  primary needs no floor (vault reserves after the swap). R38 `data purge --source-type market_data` of a price level
+  refuses a row with no rebuilt row at its `observed_at` (`purge_unreplaced_price_level`), except rows before the ref's
+  `valid_from` (deleted, listed as `withoutReplacement`; the rebuild lists them as `beforeValidFrom`): AERO 25
+  (Mike 2026-11-14: "Purge"). R39 a rejected CoinGecko price row is handled in the runbook, not code: release block step
+  7 counts them per asset with `sql-ro` first (expected 0; > 0 = stop). R40 any active, non-rejected row of another
+  source type at the same `observed_at` counts as the replacement. P6's estimate (~50k calls) is superseded by the
+  proof's measurement: 148,736 calls, 3 h 02 m wall (deploy.md R2 prerequisite 1). The release gate's allowlist is
+  `tools/phase3-proof/r2-allowlist.json`, built from the signed proof (Mike 2026-11-15).
 
 ## Self-review notes
 - Spec §3.1 methods: Task 1 table + Tasks 2/4; checks never from the same pool (CAKE/LINK/UNI moved to pools, M10).

@@ -10,12 +10,15 @@ its findings files.
 
 ## Open items for Mike
 
-- **Task 10 sign-off.** The proof on a prod copy (old `orion-2026.11.12.1` vs the branch, release block steps 3-8 on the
-  copy, both growth windows) gives the per-asset table, the backfill's real call count and wall time, the refused rows
-  (if any) and the breaches. His sign-off writes `tools/phase3-proof/r2-allowlist.json`; no tag before it. The table
-  also confirms the expected dry-run facts: zero `coingecko:*` refs other than `coingecko:crvusd` and
-  `coingecko:yearn-crv`, and PUMP about 21 repriced / about 369 skipped as `defillama_history` (R29). Task 10 also has
-  to move `tools/phase2-proof/compare.py` and the R1 allowlist past the new `priceBasis.flows` text (Task 5 carry).
+- **Task 10 sign-off.** Signed: Mike 2026-11-15 (#orion-dev "Signed off", the proof's `C2/headline.txt`). The proof
+  on a prod copy (old `orion-2026.11.12.1` vs the branch, release block steps 3-8 on the copy, both growth windows)
+  gave the per-asset table, the backfill's real call count and wall time (148,736 calls, 3 h 02 m; deploy.md R2
+  prerequisite 1), 0 refused rows, and 202 check breaches in the first pass (0 for PUMP after R37). The table's bounds
+  are `tools/phase3-proof/r2-allowlist.json` (2x the measured move per path; README.md). The dry-run facts held: zero
+  `coingecko:*` refs other than `coingecko:crvusd` and `coingecko:yearn-crv`; PUMP 28 repriced / 363 skipped as
+  `defillama_history` (the plan's estimate was about 21 / 369, R29). The Task 5 carry (`tools/phase2-proof/compare.py`
+  and the R1 allowlist vs the new `priceBasis.flows` text) is left as is: those are the Phase 2 / R1 gates; the R2 gate
+  uses `r2-allowlist.json`, which pins that text.
 - **HYPE's check is the same venue.** HYPE's primary is the Hyperliquid spot `@107` candle and its check the Hyperliquid
   perp `HYPE` candle (labelled `same_venue`): a venue-wide fault moves both. Mike to decide whether a second venue is
   needed.
@@ -132,6 +135,18 @@ states it; "assessed here" where the ruling states none).
   (`purge_unreplaced_price_level`, nothing deleted, dry run too) while a targeted row has no active row of another
   source type at its `observed_at`, except rows observed before the ref's `valid_from`: those are deleted and listed
   (`withoutReplacement`). `rebuild-price-levels` lists them as `beforeValidFrom` (not refused). Cost: none (stricter).
+- R34 (R32(b) as built): dev/test roots check the CoinGecko price refusal only when prices.yaml has entries; release,
+  stage and prod always have entries, so the check always runs live. Cost: none live.
+- R35: there is no `staging_refresh` pause (orion-remote has `job run-now` only; an asset pause is per asset): the R2
+  block says finish prod's steps 6-8 before Sunday 10:30 UTC, or let the refresh run and redo steps 3-8 on stage.
+  Cost: none (docs).
+- R39 (Task 10 fix-wave review I1): a rejected CoinGecko price row on/after `valid_from` would refuse the market_data
+  purge with no in-tool remedy; handled in the runbook, not code: release block step 7 first counts rejected
+  `market_data` `price_usd` / `diem_price_usd` rows per asset with `sql-ro` (expected 0, the prod copy had 0; > 0 =
+  stop and ask Mike). Cost: a release-day stop, no data loss.
+- R40: any active, non-rejected row of another source type at the same `observed_at` counts as the replacement in the
+  market_data purge (the reviewer's call: supersession uses the same exact instant). Cost: the provenance of a level,
+  no level lost.
 
 Review fixes that bind like rulings (findings files): the writer checks the abort inside a chain-day and commits nothing
 for an aborted day; one breach per run across midnight; a missing hour resets the consecutive count (Task 3); Meteora
@@ -237,6 +252,17 @@ Notes kept: CAKE/LINK/UNI keep the check id `price_chainlink` (continuity) thoug
 - M3: the hourly `levels` writer does not take `job:prices`, so during step 3 it and the prices backfill can both
   report the same recent hour's breach (harmless upserts; WATCH noise only)
 - M4 (staging_refresh timing gaps after prod reaches schema 8) — documented in deploy.md's R2 block, item 5
+
+### Task 10 (fix-wave review)
+- the market_data purge treats any active non-rejected row of another source type at the same `observed_at` as a
+  replacement, so a hand-entered row counts (R40: accepted)
+- M1 deploy.md step 3 / plan R2 still said AERO 2026-09-23 — fixed (2026-10-22) in the closing commit
+- M2 steps 7 / 8b did not print `beforeValidFrom` / `withoutReplacement` — fixed: both print per metric and stop
+  unless AERO = 25 and every other asset = 0
+- M3 `offchainMethods.ts` shadowed `e` in `solanaHour` — fixed (renamed)
+- M4 an empty assertion in `tests/db/priceLevels.test.ts` — fixed (asserts the refused instant is in the message)
+- M5 `tests/push/gitPublisher.test.ts` times out under the full run's load (passes alone): the load-sensitive list
+  lives only in the gitignored SDD rules file, so nothing in the repo changes
 
 ## Carried to later releases
 

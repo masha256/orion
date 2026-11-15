@@ -641,6 +641,50 @@ class FlatdiffTest(unittest.TestCase):
             self.assertIn("10-12 tranche", lit_entries[g]["reason"], g)
             self.assertIn("2027-01-28", lit_entries[g]["reason"], g)
 
+    # --- the R2 allowlist (Task 10 proof, signed 2026-11-15) ----------------------------------------------------------
+
+    def test_the_committed_r2_allowlist_parses_and_has_no_todo(self):
+        entries = flatdiff.load_allowlist(HERE / "r2-allowlist.json")
+        thirteen = ["aero", "cake", "crv", "cvxcrv", "hype", "link", "lit", "pump", "sdcrv", "sky", "uni", "vvv", "ycrv"]
+        self.assertEqual(sorted(entries), sorted(["*"] + thirteen))
+        for a, es in entries.items():
+            for e in es:
+                self.assertFalse(e.get("todo", False), (a, e["glob"]))
+                self.assertNotIn("*", e["glob"], (a, e["glob"]))  # exact paths only
+                bounds = [k for k in ("rel", "abs") if k in e]
+                pinned = "old" in e and "new" in e
+                self.assertTrue(len(bounds) == 1 or (pinned and not bounds), (a, e["glob"]))  # one bound, or a text pin
+                if bounds:
+                    self.assertGreater(e[bounds[0]], 0, (a, e["glob"]))
+        # AERO's one difference is the shared priceBasis.flows text, pinned under `*`.
+        self.assertEqual(entries["aero"], [])
+        self.assertEqual([e["glob"] for e in entries["*"]], ["incomeStatement.priceBasis.flows"])
+        # Token amounts, supply, grades and non-USD fields get no entry.
+        forbidden = ("incomeStatement.dilution.tokensPerYear", "incomeStatement.dilution.releases[id=unlocks].tokensPerYear",
+                     "incomeStatement.dilution.supply.netPerYear", "incomeStatement.dilution.pct", "circulatingSupply", "grade",
+                     "incomeStatement.grades.overall", "windowDays")
+        for a, es in entries.items():
+            for e in es:
+                for p in forbidden:
+                    self.assertFalse(flatdiff.glob_match(e["glob"], p), (a, e["glob"], p))
+                self.assertNotRegex(e["glob"], r"(?i)supply|grade|tokensPerYear|amount", (a, e["glob"]))
+
+    def test_the_committed_r2_allowlist_holds_a_price_move_within_its_bound_only(self):
+        allow = (HERE / "r2-allowlist.json").read_text()
+        rel = {e["glob"]: e for e in flatdiff.load_allowlist(HERE / "r2-allowlist.json")["vvv"]}["price"]["rel"]
+        old = report("vvv")
+        within, beyond = json.loads(json.dumps(old)), json.loads(json.dumps(old))
+        within["price"] = old["price"] * (1 + rel * 0.9)
+        beyond["price"] = old["price"] * (1 + rel * 1.1)
+        self.assertEqual(self.run_cli(old, within, allow, asset="vvv")[0], 0)
+        code, res, _ = self.run_cli(old, beyond, allow, asset="vvv")
+        self.assertEqual((code, res["unallowed"]), (1, ["price"]))
+        # AERO: a price move has no entry at all.
+        aero = report("aero")
+        moved = json.loads(json.dumps(aero))
+        moved["price"] = aero["price"] * 1.0001
+        self.assertEqual(self.run_cli(aero, moved, allow, asset="aero")[0], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

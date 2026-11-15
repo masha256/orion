@@ -338,12 +338,12 @@ async function solanaHour(deps: PriceDeps, sol: SolanaPriceTransport, e: PriceEn
         // R37: a dust swap is skipped (counted, never used); none at or above the floor in reach is no reading.
         let dust = 0;
         const c = await lastTx(sol, check.pair, seek, endTs, MAX_CHECK_TX, (tx) => {
-          const e = dlmmExecution(tx, reserves, mint);
-          if (e !== null && 'dust' in e) {
+          const exec = dlmmExecution(tx, reserves, mint);
+          if (exec !== null && 'dust' in exec) {
             dust += 1;
             return null;
           }
-          return e;
+          return exec;
         });
         const dustNote = dust > 0 ? { dust_swaps_skipped: dust, min_swap_usdc: MIN_CHECK_SWAP_USDC } : {};
         read = c.ok

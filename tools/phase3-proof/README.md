@@ -10,6 +10,7 @@ fetches, the runs, the purge and backfill rehearsals) are the controller's; this
 | `flatdiff.py <old.json> <new.json> --allow <allowlist.json> --asset <a> [--json]` | Flattens both reports to `path -> scalar` and lists every differing path (`added`, `removed`, `changed`, old -> new) as ALLOWED or NOT ALLOWED, then warnings for allowlist entries that matched nothing and for `todo` placeholders. Exit 0 iff every differing path is allowed, 1 otherwise, 2 on bad input. |
 | `test_flatdiff.py` | Unit tests: `python3 -m unittest tools/phase3-proof/test_flatdiff.py` |
 | `r1-allowlist.json` | The R1 allowlist (brief Step 2). |
+| `r2-allowlist.json` | The R2 (price swap) allowlist, from the Task 10 proof Mike signed 2026-11-15 (below). |
 
 ## Paths
 
@@ -89,6 +90,27 @@ holders.burn.cross_checks"`, `provenance.sources[2]` old `"third_party:api.llama
 asset showed no provenance / flags / checks diff and has no entry there. No `todo` placeholder remains. AERO has no entry (its report
 must be `cmp`-identical); revenue, cost of revenue, holder flow and grades get none beyond the R21 dilution-derived
 fields.
+
+`r2-allowlist.json` (Phase 3 R2, used by docs/ops/deploy.md "Phase 3 R2 release" step 10 for D and D-91): built from
+the Task 10 proof on the prod copy, old release `orion-2026.11.12.1` before any chain price vs this branch after the
+prices backfill, `data reprice`, `data rebuild-price-levels` and both purges, report days 2026-11-13 and 2026-08-14
+(13 assets x 2 = 26 reports; signed table: the proof's `C2/headline.txt`). flatdiff exits 0 on all 26 pairs.
+- Numbers: one exact-path entry per asset for every numeric path that differed, `rel` = 2x the measured max |rel| over
+  both days (rounded up to 3 significant figures). `growth.change`, `growth.annualized`, `yields.pegTrailing` and
+  `unreconciled.*` use `abs` = 2x the measured max |abs| instead, since their base can be near or cross zero (LINK's
+  D-91 holder-flow growth changes sign). Five float-noise paths (measured rel <= 3.4e-16: CRV/SDCRV/SKY/UNI
+  `provenance.methods.measured`, CRV `ratios.payoutRatio`) are floored at rel 1e-12. Largest bounds: rel 0.157 (CAKE
+  `protocol.growth.prior` and its treasury lines, the D-91 prior window's -12% Feb-Mar CAKE chain-vs-CoinGecko gap),
+  rel 0.153 (PUMP `yields.netShareholder`, net = holder flow - dilution); abs 1.3 (VVV holder-flow / burn
+  `growth.annualized`), abs 1.01 (UNI).
+- Text: `*` pins `incomeStatement.priceBasis.flows` (same old/new on all 13); per asset `priceBasis.source` /
+  `sourceType` (market_data:coingecko -> contract_state / first_party_api `price.token`) and each line's `priceBasis`
+  (`mixed` -> `hourly`; PUMP `legacy` -> `mixed`) are value-pinned to the proof's values.
+- No entry for token amounts, supply, grades or any non-USD field (none differed). AERO has no entry of its own: its
+  only difference was the shared `priceBasis.flows` text. No `todo` placeholder.
+- The bounds are the proof's two days. The release compares the env's own default day `d` and `d` - 91: a path that
+  did not differ in the proof, or a gap more than twice the proof's on that day, fails closed (exit 1): stop and bring
+  it to Mike (deploy.md step 10), never widen a bound on the spot.
 
 ## Run (controller)
 

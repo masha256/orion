@@ -283,8 +283,14 @@ describe('Ruling R38: no price level is purged without a replacement, except bef
     const d2 = await seedMarket(d, 'lvl', 'price_usd', '2026-10-04T05:00:00.000Z', 1.5);
     await seedMarket(d, 'lvl', 'price_usd', '2026-10-04T05:00:00.000Z', 1.6); // supersedes d2, itself unreplaced
     await d.run('DELETE FROM observations WHERE id = $1', [onDay]);
-    expect(await errCode(purge(d, load(LVL_YAML, VF), false))).toBe('purge_unreplaced_price_level');
-    expect(d2).toBeGreaterThan(0);
+    let err2: { code?: string; message?: string } = {};
+    try {
+      await purge(d, load(LVL_YAML, VF), false);
+    } catch (e) {
+      err2 = e as typeof err2;
+    }
+    expect(err2.code).toBe('purge_unreplaced_price_level');
+    expect(err2.message).toContain(`#${d2} 2026-10-04T05:00:00.000Z`); // the superseded row itself is named
   });
 
   it('rows before valid_from are deleted without replacement and listed (ids, days); every other row has its rebuilt twin', async () => {

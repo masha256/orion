@@ -668,7 +668,12 @@ stage/prod ssh commands above.
 
 1. **Task 10 is signed.** The proof on a prod copy (plan Task 10) is done and Mike has signed its per-asset table; the
    release tag carries `tools/phase3-proof/r2-allowlist.json` (the table's bounds) and the measured backfill call count
-   and wall time. No tag before the sign-off.
+   and wall time. No tag before the sign-off. Signed: Mike 2026-11-15. Measured on the prod copy (one pass, 18 runs of
+   10 min back to back, 0 errors, 202 check breaches): 148,736 RPC calls (Ethereum 44,169, BNB 58,038, Base 37,477,
+   Solana 9,034, Hyperliquid 12, Lighter 6) in 10,940 s (3 h 02 m) wall. These supersede the plan's P6 estimate (~50k
+   calls). That pass still read AERO from 2026-09-23 (9,552 failed or bad hours before its pools existed, ruling R36),
+   so a backfill from AERO's 2026-10-22 makes somewhat fewer Base calls. On an env it takes longer than 3 h: each 10-min
+   run defers to the hourly `levels` job and around the nightly (step 3).
 2. **Mike re-runs `orion-host.sh`** from a fixed snapshot of `scripts/provision/` at the release sha, exactly as in the
    R1 release step 1 above (the snapshot commands, the same flags, paste back the SELF-CHECK): R2's orion-remote adds
    `job run-now backfill-prices`, `data reprice`, `data rebuild-price-levels` and `data purge-prices`. Check:
@@ -692,10 +697,11 @@ stage/prod ssh commands above.
    Two gaps the schema check does not cover: (i) once prod is on schema 8, a Sunday `staging_refresh` that runs before
    prod's steps 6-8 are done copies prod's un-repriced state (CoinGecko `prices` rows, CoinGecko-priced flow `value`s and
    `price_usd` rows) onto stage, and stage's soak baseline is gone: finish prod's steps 6-8 before Sunday 10:30 UTC, or
-   pause `staging_refresh` for that Sunday, or accept it and re-run steps 3-8 on stage; (ii) a prod rollback to
-   `orion-2026.11.12.1` keeps schema 8, so the next `staging_refresh` no longer refuses and copies the CoinGecko rows the
-   old release writes again onto stage: after a prod rollback, pause the refresh (or expect it) until prod has rolled
-   forward and finished its block.
+   let the refresh run and redo steps 3-8 on stage afterwards. There is no way to pause `staging_refresh` (orion-remote
+   has `job run-now` only; an asset pause is per asset, ruling R35); (ii) a prod rollback to `orion-2026.11.12.1` keeps
+   schema 8, so the next `staging_refresh` no longer refuses and copies the CoinGecko rows the old release writes again
+   onto stage: after a prod rollback, expect that Sunday's refresh to do so, and redo steps 3-8 on stage once prod has
+   rolled forward and finished its block.
 
 **Timing.** Deploy outside the env's nightly window, the slot -4 h to +2 h (stage nightly 02:45 UTC: deploy 04:45-22:45
 UTC; prod 00:45 UTC: deploy 02:45-20:45 UTC), and queue the prices backfill right after the switch (step 3). The job
@@ -748,8 +754,9 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
    ssh orion-<env> jobs --since <iso of the switch>       # repeat until the backfill job is `done`
    ```
    No `--to`: today (UTC), frozen and stored at enqueue (at most 550 days, checked at enqueue only, ruling R27); every
-   `prices.yaml` ref, each from its own `valid_from` (ruling R2: the EVM refs 2025-10-13, AERO 2026-09-23, HYPE and LIT
-   2026-10-01, PUMP 2026-10-12). It runs under the `job:prices` lock in 10-min runs, each deferring to now at priority 70
+   `prices.yaml` ref, each from its own `valid_from` (ruling R2: the EVM refs 2025-10-13, AERO 2026-10-22 (ruling R36:
+   its pools exist from 2026-10-21), HYPE and LIT 2026-10-01, PUMP 2026-10-12). It runs under the `job:prices` lock in
+   10-min runs, each deferring to now at priority 70
    so the hourly `levels` job runs between them (ruling R28); a lost lease re-queues it (op prices has 3 attempts) and it
    resumes from `prices`, never rewriting a committed chain-day. The done line, `ORION BACKFILL <env> prices done in
    <time> (2025-10-13..<to>, <n> runs): <SYM> <rows> rows, ...; oldest hour <iso>; missing <reason n, ...>; calls
@@ -793,7 +800,8 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
      daily mean, no twin amount) is a stop for Mike, on stage too: the refused rows keep their CoinGecko value.
    - **Remaps:** the only `coingecko:*` refs anywhere are `coingecko:crvusd` and `coingecko:yearn-crv` (the
      `remapped` entries, to the crvUSD and yCRV address refs); any other `coingecko:*` ref: stop.
-   - **PUMP:** about 21 rows repriced and about 369 skipped as `defillama_history` (ruling R29; the DefiLlama-era days
+   - **PUMP:** Task 10's prod copy: 28 rows repriced and 363 skipped as `defillama_history` (the plan's estimate was
+     about 21 / 369; ruling R29; the DefiLlama-era days
      wait for R6). Skipped reasons elsewhere are by design (`usd_native`, `third_party`, `disclosed`, `periodic`),
      never a silent keep: compare the counts with Task 10's.
 
@@ -809,14 +817,22 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
    day under the asset lock, and recomputes the derived rates over the repriced days (ruling R30). Its counts must equal
    the dry run's. A dry run afterwards shows 0 `repriced` (all `unchanged`): a second `--yes` writes nothing, and a
    rerun after an interrupted `--yes` finishes the derived rates too.
-7. **Rebuild the CoinGecko price levels: dry runs, then `--yes`.** Dry runs first, all 13 (exit 3 = a row was
-   refused):
+7. **Rebuild the CoinGecko price levels: dry runs, then `--yes`.** First the rejected-row pre-check (ruling R39,
+   read-only): the purge in step 8b refuses a rejected CoinGecko price row on or after its ref's `valid_from`, and
+   neither the rebuild (it reads active rows only) nor any `--yes` can clear it:
+   ```
+   ssh orion-prod sql-ro "select asset_id, metric_key, count(*) filter (where status = 'rejected') as rejected, count(*) as total from observations where source_type = 'market_data' and metric_key in ('price_usd', 'diem_price_usd') group by asset_id, metric_key order by asset_id, metric_key"
+   ```
+   (stage: `sudo -iu orion-stage`, then `o db query-ro "<the same select>"`, as in "Phase 2 tail: release with
+   0006"). **Expected:**
+   `rejected` 0 on every row (Task 10's prod copy: 0 on every asset). Any `rejected` > 0: stop and ask Mike; do not
+   run the rebuild. Then the dry runs, all 13 (exit 3 = a row was refused):
    ```
    for a in $A; do
      ssh orion-<env> data rebuild-price-levels $a > ~/r2-<env>/dry/rebuild-$a.json; rc=$?
      [ $rc -eq 0 ] || echo "STOP: $a rebuild dry run exit $rc"
    done
-   for a in $A; do python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); bad=[m["metric"] for m in r["perMetric"] if m["refused"]]; print(sys.argv[2], " ".join("%s rows=%d rebuild=%d refused=%d" % (m["metric"], m["rows"], m["rebuilt"], len(m["refused"])) for m in r["perMetric"]), "STOP: refused in "+",".join(bad) if bad else "ok")' ~/r2-<env>/dry/rebuild-$a.json $a; done
+   for a in $A; do python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); a=sys.argv[2]; pm=r["perMetric"]; bad=[m["metric"] for m in pm if m["refused"]]; bvf=sum(len(m["beforeValidFrom"]) for m in pm); want=25 if a=="aero" else 0; print(a, " ".join("%s rows=%d rebuild=%d refused=%d beforeValidFrom=%d" % (m["metric"], m["rows"], m["rebuilt"], len(m["refused"]), len(m["beforeValidFrom"])) for m in pm), "STOP: refused in "+",".join(bad) if bad else ("STOP: beforeValidFrom %d, expected %d" % (bvf, want) if bvf != want else "ok"))' ~/r2-<env>/dry/rebuild-$a.json $a; done
    ```
    Per `market_data` `price_usd` / `diem_price_usd` row, a new row at the same `observed_at` from the newest chain or
    first-party price at or before `observed_at - 1 h`. A row with no such price within 6 h is refused (ruling R31) and
@@ -861,8 +877,9 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
      m=price_usd; [ $a = vvv ] && m=price_usd,diem_price_usd
      ssh orion-<env> data purge $a --metrics $m --source-type market_data > ~/r2-<env>/dry/purge-$a.json || echo "STOP: $a purge dry run exit $?"
    done
+   for a in $A; do python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); a=sys.argv[2]; pm=r.get("perMetric", []); wr=sum(len(m.get("withoutReplacement", [])) for m in pm); want=25 if a=="aero" else 0; print(a, " ".join("%s observations=%d withoutReplacement=%d" % (m["metric"], m["observations"], len(m.get("withoutReplacement", []))) for m in pm), "STOP: error "+json.dumps(r["error"]) if "error" in r else ("STOP: withoutReplacement %d, expected %d" % (wr, want) if wr != want else "ok"))' ~/r2-<env>/dry/purge-$a.json $a; done
    ```
-   Paste the per-metric `observations` counts. The purge refuses (non-zero exit, `error` in the JSON, nothing deleted)
+   Paste the per-metric lines. The purge refuses (non-zero exit, `error` in the JSON, nothing deleted)
    a targeted row with no rebuilt row at its `observed_at` (`purge_unreplaced_price_level`, ruling R38), except a row
    observed before its ref's `valid_from`: that one is deleted and listed per metric as `withoutReplacement` (ids,
    days). **Expected (Task 10):** 25 `withoutReplacement` for AERO only (2026-09-24..2026-10-21; Mike 2026-11-14:
