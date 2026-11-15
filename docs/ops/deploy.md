@@ -910,8 +910,9 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
         --allow tools/phase3-proof/r2-allowlist.json --asset $a || echo "STOP: $f flatdiff exit $?"
     done; done
     ```
-    Every report must exit 0: USD figures move only within the signed bounds (the chain-vs-CoinGecko gap and the hour
-    bucket method gap), the price-basis / provenance text moves as listed, and token amounts, supply, grades and every
+    Every report must exit 0: USD figures move only within the bounds (each = max(2x the signed proof's measured
+    move, ruling R41's class floor from the measured 90-day hourly chain-vs-CoinGecko gaps); README `r2-allowlist.json`),
+    the price-basis / provenance text moves as listed, and token amounts, supply, grades and every
     non-USD field are unchanged. Exit 1 (an unallowed path) or 2 (bad input): stop, paste the output, bring both files
     (and `mid/`, to tell the switch and backfill from steps 6-8) to Mike; on stage: no prod deploy.
 

@@ -653,11 +653,14 @@ class FlatdiffTest(unittest.TestCase):
                 self.assertNotIn("*", e["glob"], (a, e["glob"]))  # exact paths only
                 bounds = [k for k in ("rel", "abs") if k in e]
                 pinned = "old" in e and "new" in e
-                self.assertTrue(len(bounds) == 1 or (pinned and not bounds), (a, e["glob"]))  # one bound, or a text pin
-                if bounds:
-                    self.assertGreater(e[bounds[0]], 0, (a, e["glob"]))
-        # AERO's one difference is the shared priceBasis.flows text, pinned under `*`.
-        self.assertEqual(entries["aero"], [])
+                self.assertTrue(bounds or pinned, (a, e["glob"]))  # a bound (R41: a floor and a fitted bound of the other kind may sit together), or a text pin
+                self.assertFalse(bounds and pinned, (a, e["glob"]))
+                for k in bounds:
+                    self.assertGreater(e[k], 0, (a, e["glob"]))
+        # AERO (R41): class (a) price-derived entries only, no flow / growth / text entry of its own.
+        for e in entries["aero"]:
+            self.assertIn("R41 class (a)", e["reason"], e["glob"])
+            self.assertNotRegex(e["glob"], r"\.(annualized|gross|net|growth|windowSum|fromRevenue|fromBelowLine)\b|perToken\.(revenue|grossProfit)|holderFlow\.(total|byBucket\.\w+$)", e["glob"])
         self.assertEqual([e["glob"] for e in entries["*"]], ["incomeStatement.priceBasis.flows"])
         # Token amounts, supply, grades and non-USD fields get no entry.
         forbidden = ("incomeStatement.dilution.tokensPerYear", "incomeStatement.dilution.releases[id=unlocks].tokensPerYear",
@@ -679,11 +682,111 @@ class FlatdiffTest(unittest.TestCase):
         self.assertEqual(self.run_cli(old, within, allow, asset="vvv")[0], 0)
         code, res, _ = self.run_cli(old, beyond, allow, asset="vvv")
         self.assertEqual((code, res["unallowed"]), (1, ["price"]))
-        # AERO: a price move has no entry at all.
+        # AERO: a price move within its (a) floor 0.10 passes; a revenue move (its flows are exact) does not.
         aero = report("aero")
         moved = json.loads(json.dumps(aero))
-        moved["price"] = aero["price"] * 1.0001
-        self.assertEqual(self.run_cli(aero, moved, allow, asset="aero")[0], 1)
+        moved["price"] = aero["price"] * 1.05
+        self.assertEqual(self.run_cli(aero, moved, allow, asset="aero")[0], 0)
+        moved["incomeStatement"]["revenue"]["annualized"] *= 1.0001
+        code, res, _ = self.run_cli(aero, moved, allow, asset="aero")
+        self.assertEqual((code, res["unallowed"]), (1, ["incomeStatement.revenue.annualized"]))
+
+    # --- R41: bounds floored by the measured 90-day hourly price gaps --------------------------------------------------
+
+    R41_A = {"cake": 0.06, "crv": 0.06, "link": 0.055, "sky": 0.035, "uni": 0.075, "vvv": 0.07, "sdcrv": 0.07, "ycrv": 0.10,
+             "hype": 0.10, "lit": 0.10, "pump": 0.10, "aero": 0.10, "cvxcrv": 0.10}
+
+    def golden_report(self, asset):
+        golden = json.loads((HERE.parent.parent / "tests" / "report" / "golden" / "v2-report-13.json").read_text())
+        return json.loads(golden[f"{asset}/stored"]["report"])
+
+    def test_the_committed_r2_allowlist_floors_every_class_bound(self):
+        entries = flatdiff.load_allowlist(HERE / "r2-allowlist.json")
+        S = "incomeStatement."
+        for a, floor in self.R41_A.items():
+            es = {e["glob"]: e for e in entries[a]}
+            for p in ("price", "marketCap", "fdv", S + "priceBasis.price", S + "yields.shareholder"):
+                self.assertGreaterEqual(es[p]["rel"], floor, (a, p))
+                self.assertIn("R41 class (a)", es[p]["reason"], (a, p))
+            for g, e in es.items():
+                r = e["reason"]
+                if g.endswith(".growth.change"):
+                    self.assertGreaterEqual(e["abs"], 0.05, (a, g))
+                elif g.endswith(".growth.annualized"):
+                    self.assertGreaterEqual(e["abs"], 0.2, (a, g))
+                elif g.endswith((".growth.current", ".growth.prior")):
+                    self.assertGreaterEqual(e["rel"], 0.02, (a, g))
+                elif "R41 class (b)" in r:
+                    self.assertGreaterEqual(e["rel"], 0.02, (a, g))
+                elif "R41 class (d)" in r:
+                    self.assertGreaterEqual(e["rel"], 0.25, (a, g))
+                elif "R41 class (a)" in r:
+                    self.assertGreaterEqual(e["rel"], floor, (a, g))
+                if r.startswith("R41 class"):
+                    self.assertIn("floor", r, (a, g))
+        # Class paths that did not move in the proof have entries too (R41: whether or not it moved).
+        cake = {e["glob"]: e for e in entries["cake"]}
+        unmoved = [g for g, e in cake.items() if "fitted: none" in e["reason"]]
+        self.assertTrue(unmoved)
+        for g in unmoved:
+            self.assertRegex(cake[g]["reason"], r"^R41 class \([abcd]\)", g)
+
+    def test_the_committed_r2_allowlist_refuses_token_supply_and_grade_changes_on_a_real_report(self):
+        allow = (HERE / "r2-allowlist.json").read_text()
+        S = "incomeStatement"
+
+        def at(r, path):
+            obj = r
+            for k in path[:-1]:
+                obj = obj[k] if not isinstance(k, tuple) else next(x for x in obj if x["id"] == k[1])
+            return obj, path[-1]
+
+        for a in self.R41_A:
+            old = self.golden_report(a)
+            probes = [(S, "dilution", "tokensPerYear"), (S, "dilution", "emissionsPerYear"), (S, "dilution", "pct"),
+                      (S, "dilution", "supply", "addedPerYear"), (S, "dilution", "supply", "burnedPerYear"),
+                      (S, "perToken", "totalSupply"), (S, "perToken", "circulatingSupply"), (S, "yields", "dilution"),
+                      ("windowDays",)]
+            for line in old[S]["revenue"]["lines"]:
+                probes.append((S, "revenue", "lines", ("id", line["id"]), "method"))
+            for line in old[S].get("holders", {}).get("lines", []):
+                probes.append((S, "holders", "lines", ("id", line["id"]), "method"))
+            for c in old[S].get("checks", []):
+                probes.append((S, "checks", ("id", c["id"]), "status"))
+            n = 0
+            for path in probes:
+                new = json.loads(json.dumps(old))
+                try:
+                    obj, k = at(new, path)
+                except (KeyError, StopIteration, TypeError):
+                    continue
+                if not isinstance(obj, dict):
+                    continue  # e.g. dilution.supply is null on this asset
+                v = obj.get(k)
+                if flatdiff.is_num(v) and v:
+                    obj[k] = v * 1.0001  # a 0.01% token / supply / count change, far inside any USD floor
+                elif isinstance(v, str):
+                    obj[k] = v + "_x"  # a grade / method / status change
+                else:
+                    continue
+                n += 1
+                code, res, _ = self.run_cli(old, new, allow, asset=a)
+                self.assertEqual(code, 1, (a, path))
+                self.assertEqual(len(res["unallowed"]), 1, (a, path, res["unallowed"]))
+            self.assertGreaterEqual(n, 5, a)
+
+    def test_the_committed_r2_allowlist_holds_cake_price_to_its_floor(self):
+        allow = (HERE / "r2-allowlist.json").read_text()
+        old = self.golden_report("cake")
+        floor = self.R41_A["cake"]
+        for sign in (1, -1):
+            for d, want in ((floor + 0.001, 1), (floor - 0.001, 0)):
+                new = json.loads(json.dumps(old))
+                new["price"] = old["price"] * (1 + sign * d)
+                code, res, _ = self.run_cli(old, new, allow, asset="cake")
+                self.assertEqual(code, want, (sign, d, res["unallowed"]))
+                if want:
+                    self.assertEqual(res["unallowed"], ["price"])
 
 
 if __name__ == "__main__":

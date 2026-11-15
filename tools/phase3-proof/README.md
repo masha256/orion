@@ -95,22 +95,38 @@ fields.
 the Task 10 proof on the prod copy, old release `orion-2026.11.12.1` before any chain price vs this branch after the
 prices backfill, `data reprice`, `data rebuild-price-levels` and both purges, report days 2026-11-13 and 2026-08-14
 (13 assets x 2 = 26 reports; signed table: the proof's `C2/headline.txt`). flatdiff exits 0 on all 26 pairs.
-- Numbers: one exact-path entry per asset for every numeric path that differed, `rel` = 2x the measured max |rel| over
-  both days (rounded up to 3 significant figures). `growth.change`, `growth.annualized`, `yields.pegTrailing` and
-  `unreconciled.*` use `abs` = 2x the measured max |abs| instead, since their base can be near or cross zero (LINK's
-  D-91 holder-flow growth changes sign). Five float-noise paths (measured rel <= 3.4e-16: CRV/SDCRV/SKY/UNI
-  `provenance.methods.measured`, CRV `ratios.payoutRatio`) are floored at rel 1e-12. Largest bounds: rel 0.157 (CAKE
-  `protocol.growth.prior` and its treasury lines, the D-91 prior window's -12% Feb-Mar CAKE chain-vs-CoinGecko gap),
-  rel 0.153 (PUMP `yields.netShareholder`, net = holder flow - dilution); abs 1.3 (VVV holder-flow / burn
-  `growth.annualized`), abs 1.01 (UNI).
+- Bounds (ruling R41): every bound = max(the fitted bound, the class floor). The fitted bound is 2x the measured max
+  |rel| over both days (rounded up to 3 significant figures; `growth.change`, `growth.annualized`, `yields.pegTrailing`
+  and `unreconciled.*` use `abs` = 2x the measured max |abs|, since their base can be near or cross zero; five
+  float-noise paths, measured rel <= 3.4e-16, floored at rel 1e-12). The class floors come from the measured 90-day
+  hourly |chain/CoinGecko - 1| p99 on the copy (the proof's `gap-90d.txt`):
+  - (a) single-instant price-derived (`price`, `marketCap`, `fdv`, `priceBasis.price`, `perToken` dilution and
+    `netOfDilution`, `holderFlow.netOfDilution`, `yields.*`, line / bucket `yield`): rel = 2x the asset's price-token
+    p99 rounded up to 0.5%: CAKE 0.06, CRV 0.06, LINK 0.055, SKY 0.035, UNI 0.075, VVV 0.07, SDCRV 0.07, YCRV 0.10;
+    0.10 where no CoinGecko pair was measured (HYPE, LIT, PUMP, AERO, CVXCRV).
+  - (b) USD flow aggregates (`revenue`, `costOfRevenue`, `grossProfit`, `holders`, `protocol`, `operatingCosts`,
+    `holderFlow`, `belowLine`, `volume`, their lines and buckets: `annualized`, `gross`, `net`, `fromRevenue`,
+    `fromBelowLine`, `windowSum`, `apportion.bySum` / `totalSum`, ...; the `perToken` flows; `unreconciled.annualized`):
+    rel 0.02.
+  - (c) growth: `.change` abs 0.05, `.annualized` abs 0.2, `.current` / `.prior` rel 0.02.
+  - (d) `yields.pegTrailing`, `yields.multiple`, `multiples.*`: rel 0.25. Where the fitted bound is the other kind
+    (`pegTrailing` abs, YCRV `unreconciled.annualized` abs) the entry keeps both (either holds).
+  Each class entry is an exact path, one for every path of its class present in the asset's proof reports (old or
+  new, either day), whether or not it moved there; each reason names the class, the floor and its source. Fitted
+  entries outside the classes keep their 2x proof bound (`ratios.payoutRatio`, `provenance.methods.*`,
+  `apportion.mix`, `unreconciled.pct`). Largest bounds: (a) rel 0.153 (PUMP `yields.netShareholder`, fitted); (b) rel
+  0.022 (SDCRV bribes line, fitted); (c) rel 0.157 (CAKE `protocol.growth.prior` and treasury lines, fitted), abs 1.3
+  (VVV burn `growth.annualized`, fitted); (d) rel 0.25 (floor).
 - Text: `*` pins `incomeStatement.priceBasis.flows` (same old/new on all 13); per asset `priceBasis.source` /
   `sourceType` (market_data:coingecko -> contract_state / first_party_api `price.token`) and each line's `priceBasis`
   (`mixed` -> `hourly`; PUMP `legacy` -> `mixed`) are value-pinned to the proof's values.
-- No entry for token amounts, supply, grades or any non-USD field (none differed). AERO has no entry of its own: its
-  only difference was the shared `priceBasis.flows` text. No `todo` placeholder.
-- The bounds are the proof's two days. The release compares the env's own default day `d` and `d` - 91: a path that
-  did not differ in the proof, or a gap more than twice the proof's on that day, fails closed (exit 1): stop and bring
-  it to Mike (deploy.md step 10), never widen a bound on the spot.
+- No entry for token amounts, supply, grades, counts or any non-USD field (`dilution.*`, `yields.dilution`,
+  `yields.dilutionLines`, line `share` / `haircut`; none differed). AERO gets class (a) entries only (25 paths: its
+  flows are not repriced in R2, so revenue, holder flow and growth stay exact; its `multiples.*` and `yields.*` are
+  mcap over exact flows and take the (a) floor 0.10). No `todo` placeholder.
+- The release compares the env's own default day `d` and `d` - 91. A move beyond a floor, a path absent from the
+  proof's reports (a new line id), or a ratio outside the classes moving beyond its 2x proof bound fails closed (exit
+  1): stop and bring it to Mike (deploy.md step 10), never widen a bound on the spot.
 
 ## Run (controller)
 
