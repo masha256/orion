@@ -358,7 +358,9 @@ with nothing else in it. `db backfill-provenance` is gone with it (nothing can b
    arguments with spaces and orion-remote re-splits that string (shlex), so `ssh orion-prod sql-ro "select ..."` arrives
    as many words and is refused (exit 64, `sql-ro takes exactly one argument`). Pinned in
    `scripts/provision/test/test_orion_remote.py` (`DocumentedSqlRoTests`).
-   Staging has no `sql-ro` verb: as the env user (`sudo -iu orion-stage`), `o db query-ro "<the same select>"`.
+   Staging: `ssh orion-stage sql-ro ...`, the same command, once Mike has re-run `orion-host.sh` from a provisioning
+   snapshot that has `orion_stage_ro` (RET-41; the stage verb signs in as `orion_stage_ro`); before that, as the env user
+   (`sudo -iu orion-stage`), `o db query-ro "<the same select>"`.
    Remedies, then run the check again:
    - `obs_null` or `disclosure_uncited` > 0: every writer since release 2 sets these, so a writer still omits one. Find
      it (the rows' `fetched_at` and `metric_key` name the run) and fix it in a release before this one.
@@ -855,8 +857,13 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
    ```
    ssh orion-prod "sql-ro \"select asset_id, metric_key, count(*) filter (where status = 'rejected') as rejected, count(*) as total from observations where source_type = 'market_data' and metric_key in ('price_usd', 'diem_price_usd') group by asset_id, metric_key order by asset_id, metric_key\""
    ```
-   (stage: `sudo -iu orion-stage`, then `o db query-ro "<the same select>"`, as in "Phase 2 tail: release with
-   0006"). **Expected:**
+   Stage, once `orion-host.sh` has been re-run with `orion_stage_ro` (RET-41; on an older orion-remote it exits 64
+   `sql-ro is prod-only`), the same over the stage key:
+   ```
+   ssh orion-stage "sql-ro \"select asset_id, metric_key, count(*) filter (where status = 'rejected') as rejected, count(*) as total from observations where source_type = 'market_data' and metric_key in ('price_usd', 'diem_price_usd') group by asset_id, metric_key order by asset_id, metric_key\""
+   ```
+   (before that re-run: `sudo -iu orion-stage`, then `o db query-ro "<the same select>"`, as in "Phase 2 tail: release
+   with 0006"; Raymond has no sudo on venus, so that form needs Mike). **Expected:**
    `rejected` 0 on every row (Task 10's prod copy: 0 on every asset). Any `rejected` > 0: stop and ask Mike; do not run
    the rebuild. If the pre-check itself errors (a non-zero exit or an `error` JSON): stop, do not run the rebuild, and
    paste the command and its full output into the thread. Then the dry runs, all 13 (exit 3 = a row was refused):

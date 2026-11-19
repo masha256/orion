@@ -50,7 +50,7 @@ undrains and restarts the daemon, logs `recovered ...` to deploys.log and prints
   job run-now backfill-prices --from <YYYY-MM-DD> [--to <YYYY-MM-DD>] [--refs <r1,r2,...>]
                                   queues a prices backfill job (resumable; Orion checks the refs against prices.yaml,
                                   no --to: today at enqueue; from <= to <= today, at most 550 days); at most 40 refs, each REF_RE
-  job run-now <kind> [asset] [--slot <iso>] | sql-ro <query> (prod: orion db query-ro as orion_prod_ro, never psql) | refresh-staging (stage) | reconcile --allow-retire [--yes]
+  job run-now <kind> [asset] [--slot <iso>] | sql-ro <query> (orion db query-ro as orion_<env>_ro, never psql) | refresh-staging (stage) | reconcile --allow-retire [--yes]
   refresh-staging --stdin <sha256> (stage) a pg_dump -Fc dump on stdin (8 GB cap) -> ~/home/incoming/staging-refresh.dump
                                   (600), sha256 checked; the daemon's staging_refresh job restores it, then it is removed
   load-prod --stdin <sha256>      (prod) the cutover's one-time initial load: the same upload, to
@@ -686,10 +686,10 @@ def single_statement(query):
 
 
 def v_sql_ro(env, args):
-    """One read-only statement through `orion db query-ro` (node + pg as orion_prod_ro, READ ONLY, 30 s), never psql:
-    psql's -c, -f and stdin all run backslash meta-commands (\\! is a shell), C-1."""
-    if env.name != 'prod':
-        raise Refused('sql-ro is prod-only: staging has no read-only role')
+    """One read-only statement through `orion db query-ro` (node + pg as the env's own read-only role orion_<env>_ro:
+    orion_prod_ro on prod, orion_stage_ro on stage (RET-41); READ ONLY, 30 s), never psql: psql's -c, -f and stdin all
+    run backslash meta-commands (\\! is a shell), C-1. Each role reaches only its own env's database (host-roles.sql,
+    pg_hba/pg_ident of orion-host.sh)."""
     if len(args) != 1:
         raise Refused("sql-ro takes exactly one argument, the query (quote it: sql-ro 'select ...')")
     query = args[0]

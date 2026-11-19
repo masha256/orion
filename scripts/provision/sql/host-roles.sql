@@ -6,14 +6,17 @@
 -- ensure: role orion_prod (LOGIN; no superuser/createdb/createrole/replication/bypassrls, no password: peer only)
 -- ensure: role orion_stage (LOGIN; same attributes)
 -- ensure: role orion_prod_ro (LOGIN; same attributes; default_transaction_read_only = on, statement_timeout = 30s)
--- ensure: no membership between orion_prod, orion_stage and orion_prod_ro (so SET ROLE across envs is refused)
+-- ensure: role orion_stage_ro (LOGIN; same attributes and settings as orion_prod_ro; RET-41: stage's sql-ro)
+-- ensure: no membership between orion_prod, orion_stage, orion_prod_ro and orion_stage_ro (SET ROLE is refused)
 -- ensure: database orion_prod owned by orion_prod
 -- ensure: database orion_stage owned by orion_stage
 -- ensure: REVOKE CONNECT, TEMPORARY ON DATABASE orion_prod, orion_stage FROM PUBLIC
 -- ensure: GRANT CONNECT ON DATABASE orion_prod TO orion_prod_ro
+-- ensure: GRANT CONNECT ON DATABASE orion_stage TO orion_stage_ro
 -- ensure: schema orion in orion_prod owned by orion_prod
 -- ensure: schema orion in orion_stage owned by orion_stage
 -- ensure: orion_prod_ro: USAGE on schema orion, SELECT on all its tables, default SELECT on tables orion_prod creates
+-- ensure: orion_stage_ro: USAGE on schema orion, SELECT on all its tables, default SELECT on tables orion_stage creates
 
 \set QUIET on
 
@@ -63,6 +66,21 @@ SELECT NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'orion_prod_ro') AS ne
   \endif
 \endif
 
+-- role orion_stage_ro: staging's twin of orion_prod_ro (RET-41), for orion-remote sql-ro on stage
+SELECT NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'orion_stage_ro') AS need \gset
+\if :need
+  \echo 'do: create role orion_stage_ro LOGIN'
+  CREATE ROLE orion_stage_ro LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+\else
+  SELECT NOT EXISTS (SELECT 1 FROM pg_authid WHERE rolname = 'orion_stage_ro' AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls AND rolpassword IS NULL) AS need \gset
+  \if :need
+    \echo 'do: reset role orion_stage_ro to LOGIN only (no superuser/createdb/createrole/replication/bypassrls/password)'
+    ALTER ROLE orion_stage_ro LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD NULL;
+  \else
+    \echo 'ok: role orion_stage_ro'
+  \endif
+\endif
+
 -- ---------------------------------------------------------------- read-only role settings (spec §9.3)
 SELECT NOT EXISTS (
   SELECT 1 FROM pg_db_role_setting
@@ -84,6 +102,28 @@ SELECT NOT EXISTS (
   ALTER ROLE orion_prod_ro SET statement_timeout = '30s';
 \else
   \echo 'ok: orion_prod_ro statement_timeout=30s'
+\endif
+
+SELECT NOT EXISTS (
+  SELECT 1 FROM pg_db_role_setting
+  WHERE setdatabase = 0 AND setrole = 'orion_stage_ro'::regrole AND 'default_transaction_read_only=on' = ANY (setconfig)
+) AS need \gset
+\if :need
+  \echo 'do: alter role orion_stage_ro set default_transaction_read_only=on'
+  ALTER ROLE orion_stage_ro SET default_transaction_read_only = on;
+\else
+  \echo 'ok: orion_stage_ro default_transaction_read_only=on'
+\endif
+
+SELECT NOT EXISTS (
+  SELECT 1 FROM pg_db_role_setting
+  WHERE setdatabase = 0 AND setrole = 'orion_stage_ro'::regrole AND 'statement_timeout=30s' = ANY (setconfig)
+) AS need \gset
+\if :need
+  \echo 'do: alter role orion_stage_ro set statement_timeout=30s'
+  ALTER ROLE orion_stage_ro SET statement_timeout = '30s';
+\else
+  \echo 'ok: orion_stage_ro statement_timeout=30s'
 \endif
 
 -- ---------------------------------------------------------------- no cross-env membership (SET ROLE is refused)
@@ -151,6 +191,72 @@ SELECT EXISTS (
   REVOKE orion_prod_ro FROM orion_stage;
 \else
   \echo 'ok: orion_stage is not a member of orion_prod_ro'
+\endif
+
+SELECT EXISTS (
+  SELECT 1 FROM pg_auth_members m
+  WHERE m.roleid = 'orion_prod'::regrole AND m.member = 'orion_stage_ro'::regrole
+) AS need \gset
+\if :need
+  \echo 'do: revoke orion_prod from orion_stage_ro'
+  REVOKE orion_prod FROM orion_stage_ro;
+\else
+  \echo 'ok: orion_stage_ro is not a member of orion_prod'
+\endif
+
+SELECT EXISTS (
+  SELECT 1 FROM pg_auth_members m
+  WHERE m.roleid = 'orion_stage'::regrole AND m.member = 'orion_stage_ro'::regrole
+) AS need \gset
+\if :need
+  \echo 'do: revoke orion_stage from orion_stage_ro'
+  REVOKE orion_stage FROM orion_stage_ro;
+\else
+  \echo 'ok: orion_stage_ro is not a member of orion_stage'
+\endif
+
+SELECT EXISTS (
+  SELECT 1 FROM pg_auth_members m
+  WHERE m.roleid = 'orion_prod_ro'::regrole AND m.member = 'orion_stage_ro'::regrole
+) AS need \gset
+\if :need
+  \echo 'do: revoke orion_prod_ro from orion_stage_ro'
+  REVOKE orion_prod_ro FROM orion_stage_ro;
+\else
+  \echo 'ok: orion_stage_ro is not a member of orion_prod_ro'
+\endif
+
+SELECT EXISTS (
+  SELECT 1 FROM pg_auth_members m
+  WHERE m.roleid = 'orion_stage_ro'::regrole AND m.member = 'orion_prod'::regrole
+) AS need \gset
+\if :need
+  \echo 'do: revoke orion_stage_ro from orion_prod'
+  REVOKE orion_stage_ro FROM orion_prod;
+\else
+  \echo 'ok: orion_prod is not a member of orion_stage_ro'
+\endif
+
+SELECT EXISTS (
+  SELECT 1 FROM pg_auth_members m
+  WHERE m.roleid = 'orion_stage_ro'::regrole AND m.member = 'orion_stage'::regrole
+) AS need \gset
+\if :need
+  \echo 'do: revoke orion_stage_ro from orion_stage'
+  REVOKE orion_stage_ro FROM orion_stage;
+\else
+  \echo 'ok: orion_stage is not a member of orion_stage_ro'
+\endif
+
+SELECT EXISTS (
+  SELECT 1 FROM pg_auth_members m
+  WHERE m.roleid = 'orion_stage_ro'::regrole AND m.member = 'orion_prod_ro'::regrole
+) AS need \gset
+\if :need
+  \echo 'do: revoke orion_stage_ro from orion_prod_ro'
+  REVOKE orion_stage_ro FROM orion_prod_ro;
+\else
+  \echo 'ok: orion_prod_ro is not a member of orion_stage_ro'
 \endif
 
 -- ---------------------------------------------------------------- databases
@@ -222,6 +328,18 @@ SELECT NOT EXISTS (
   \echo 'ok: orion_prod_ro has connect on database orion_prod'
 \endif
 
+-- orion_stage_ro may connect to orion_stage (and, with PUBLIC revoked, to nothing else of Orion's)
+SELECT NOT EXISTS (
+  SELECT 1 FROM pg_database d, aclexplode(d.datacl) a
+  WHERE d.datname = 'orion_stage' AND a.grantee = 'orion_stage_ro'::regrole AND a.privilege_type = 'CONNECT'
+) AS need \gset
+\if :need
+  \echo 'do: grant connect on database orion_stage to orion_stage_ro'
+  GRANT CONNECT ON DATABASE orion_stage TO orion_stage_ro;
+\else
+  \echo 'ok: orion_stage_ro has connect on database orion_stage'
+\endif
+
 -- ---------------------------------------------------------------- schemas
 -- schema orion in orion_prod
 \connect orion_prod
@@ -286,6 +404,39 @@ SELECT NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'orion') AS need \
   \else
     \echo 'ok: schema orion in orion_stage owned by orion_stage'
   \endif
+\endif
+
+-- orion_stage_ro: read-only diagnostics on staging (orion-remote sql-ro, RET-41). The default privileges cover every
+-- table orion_stage creates later: migrations, and staging_refresh's pg_restore --clean --role=orion_stage, which drops
+-- and re-creates the tables of schema orion (never the schema itself, so these grants on it stay).
+SELECT NOT has_schema_privilege('orion_stage_ro', 'orion', 'USAGE') AS need \gset
+\if :need
+  \echo 'do: grant usage on schema orion to orion_stage_ro'
+  GRANT USAGE ON SCHEMA orion TO orion_stage_ro;
+\else
+  \echo 'ok: orion_stage_ro has usage on schema orion'
+\endif
+
+SELECT count(*) > 0 AS need FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'orion' AND c.relkind IN ('r', 'v', 'm', 'p', 'f')
+    AND NOT has_table_privilege('orion_stage_ro', c.oid, 'SELECT') \gset
+\if :need
+  \echo 'do: grant select on all tables in schema orion to orion_stage_ro'
+  GRANT SELECT ON ALL TABLES IN SCHEMA orion TO orion_stage_ro;
+\else
+  \echo 'ok: orion_stage_ro has select on every table in schema orion'
+\endif
+
+SELECT NOT EXISTS (
+  SELECT 1 FROM pg_default_acl d, aclexplode(d.defaclacl) a
+  WHERE d.defaclrole = 'orion_stage'::regrole AND d.defaclnamespace = 'orion'::regnamespace AND d.defaclobjtype = 'r'
+    AND a.grantee = 'orion_stage_ro'::regrole AND a.privilege_type = 'SELECT'
+) AS need \gset
+\if :need
+  \echo 'do: alter default privileges for role orion_stage in schema orion grant select on tables to orion_stage_ro'
+  ALTER DEFAULT PRIVILEGES FOR ROLE orion_stage IN SCHEMA orion GRANT SELECT ON TABLES TO orion_stage_ro;
+\else
+  \echo 'ok: default privileges: orion_stage_ro gets select on new orion_stage tables in schema orion'
 \endif
 
 \connect postgres

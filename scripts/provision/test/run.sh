@@ -199,15 +199,19 @@ for re in \
   "shared_buffers = 2GB" \
   "listen_addresses = ''" \
   '^ *\+ *local +orion_prod +orion_prod,orion_prod_ro +peer +map=prod$' \
-  '^ *\+ *local +orion_stage +orion_stage +peer +map=stage$' \
+  '^ *\+ *local +orion_stage +orion_stage,orion_stage_ro +peer +map=stage$' \
   '^ *\+ *local +all +postgres +peer$' \
   '^ *\+ *local +all +all +reject$' \
   '^ *\+ *prod +orion-prod +orion_prod$' \
   '^ *\+ *prod +orion-prod +orion_prod_ro$' \
   '^ *\+ *stage +orion-stage +orion_stage$' \
+  '^ *\+ *stage +orion-stage +orion_stage_ro$' \
   'ensure role orion_prod ' \
   'ensure role orion_stage ' \
   'ensure role orion_prod_ro ' \
+  'ensure role orion_stage_ro ' \
+  'ensure GRANT CONNECT ON DATABASE orion_stage TO orion_stage_ro' \
+  'ensure orion_stage_ro: USAGE on schema orion' \
   'ensure database orion_prod ' \
   'ensure database orion_stage ' \
   'REVOKE CONNECT.*FROM PUBLIC' \
@@ -223,6 +227,10 @@ for re in \
   'SKIP: .*orion-stage -> orion_prod' \
   'SKIP: SET ROLE orion_prod as orion_stage is refused' \
   'SKIP: orion_prod_ro cannot write' \
+  'SKIP: orion_stage_ro connects \(read-only session\)' \
+  'SKIP: orion_stage_ro cannot write' \
+  'SKIP: orion-prod -> orion_stage as orion_stage_ro is refused \(peer map\)' \
+  'SKIP: orion-stage -> orion_prod as orion_stage_ro is refused' \
   'SKIP: pgbackrest check'; do
   expect host "$re"
 done

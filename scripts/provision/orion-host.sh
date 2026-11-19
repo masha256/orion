@@ -434,11 +434,11 @@ EOF
 backup_once "$PG_ETC/pg_hba.conf"
 write_file "$PG_ETC/pg_hba.conf" 640 postgres:postgres <<'EOF'
 # Written by scripts/provision/orion-host.sh (Orion, spec §9.3). Local socket only; first match wins.
-# TYPE  DATABASE     USER                      METHOD
-local   orion_prod   orion_prod,orion_prod_ro  peer map=prod
-local   orion_stage  orion_stage               peer map=stage
-local   all          postgres                  peer
-local   all          all                       reject
+# TYPE  DATABASE     USER                        METHOD
+local   orion_prod   orion_prod,orion_prod_ro    peer map=prod
+local   orion_stage  orion_stage,orion_stage_ro  peer map=stage
+local   all          postgres                    peer
+local   all          all                         reject
 EOF
 ((CHANGED)) && PG_RELOAD_NEEDED=1
 
@@ -449,6 +449,7 @@ write_file "$PG_ETC/pg_ident.conf" 640 postgres:postgres <<'EOF'
 prod       orion-prod       orion_prod
 prod       orion-prod       orion_prod_ro
 stage      orion-stage      orion_stage
+stage      orion-stage      orion_stage_ro
 EOF
 ((CHANGED)) && PG_RELOAD_NEEDED=1
 
@@ -601,7 +602,7 @@ check_unit_verify() { user_ctl "$1" systemd-analyze --user verify "/home/$1/.con
 check_unit_enabled() { [[ $(user_ctl "$1" systemctl --user is-enabled "$DAEMON_UNIT") == enabled ]]; }
 check_in_group() { [[ " $(id -nG "$1") " == *" $2 "* ]]; }
 check_known_hosts() { cmp -s "/home/$1/.ssh/known_hosts" "$here/files/github-known-hosts"; }
-check_ro_reads() { [[ $(q orion-prod orion_prod_ro orion_prod 'show default_transaction_read_only') == on ]]; }
+check_ro_reads() { [[ $(q "orion-$1" "orion_$1_ro" "orion_$1" 'show default_transaction_read_only') == on ]]; }
 selfcheck "postgresql-$PG_MAJOR is the PGDG build" check_pgdg
 selfcheck "listen_addresses is empty (socket only)" check_eq '' psql_as_postgres 'show listen_addresses'
 selfcheck "timezone is UTC" check_eq UTC psql_as_postgres 'show timezone'
@@ -640,8 +641,12 @@ selfcheck "orion_stage has no CONNECT on orion_prod (PUBLIC revoked)" check_eq f
 selfcheck "orion_prod has no CONNECT on orion_stage (PUBLIC revoked)" check_eq f psql_as_postgres \
   "select has_database_privilege('orion_prod', 'orion_stage', 'CONNECT')"
 selfcheck "SET ROLE orion_prod as orion_stage is refused" expect_fail q orion-stage orion_stage orion_stage 'set role orion_prod'
-selfcheck "orion_prod_ro connects (read-only session)" check_ro_reads
+selfcheck "orion_prod_ro connects (read-only session)" check_ro_reads prod
 selfcheck "orion_prod_ro cannot write" expect_fail q orion-prod orion_prod_ro orion_prod 'create table orion.selfcheck_ro_write (x int)'
+selfcheck "orion_stage_ro connects (read-only session)" check_ro_reads stage
+selfcheck "orion_stage_ro cannot write" expect_fail q orion-stage orion_stage_ro orion_stage 'create table orion.selfcheck_ro_write (x int)'
+selfcheck "orion-prod -> orion_stage as orion_stage_ro is refused (peer map)" expect_fail q orion-prod orion_stage_ro orion_stage 'select 1'
+selfcheck "orion-stage -> orion_prod as orion_stage_ro is refused" expect_fail q orion-stage orion_stage_ro orion_prod 'select 1'
 if [[ " ${ENVS[*]} " == *" prod "* && " ${ENVS[*]} " == *" stage "* ]]; then
   for k in SLACK_WEBHOOK_URL ORION_PUBLISH; do # M-5: hashed, never printed
     selfcheck "prod and stage $k differ" env_values_differ /home/orion-prod/shared/.env /home/orion-stage/shared/.env "$k"

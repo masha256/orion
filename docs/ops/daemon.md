@@ -141,7 +141,7 @@ job run-now <kind> [asset] [--slot <iso>]   # enqueues; nightly_report needs --s
 refresh-staging          # stage only: job run-now staging_refresh
 refresh-staging --stdin <sha256> < dump   # stage only: restore an uploaded pg_dump -Fc dump (below); waits for the job
 load-prod --stdin <sha256> < dump         # prod only, once: the cutover's initial load into an empty prod (deploy.md)
-sql-ro "<one SELECT>"    # prod only: orion db query-ro as orion_prod_ro (read-only, 30 s, one statement, no backslash)
+sql-ro "<one SELECT>"    # orion db query-ro as orion_<env>_ro (read-only, 30 s, one statement, no backslash); stage from RET-41's orion-host.sh re-run
 ```
 
 `daemon.log` lines are `<ISO> <text>`: `queued job <id> <kind> [asset] slot <iso>`, `job <id> <kind> started (attempt

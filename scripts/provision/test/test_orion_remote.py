@@ -305,10 +305,10 @@ class InjectionTests(RemoteCase):
         self.assertIn("orion-remote: 'bogus' is not an allowed verb", err)
         rc, _out, err = self.remote('ack 7')
         self.assertIn('note required', err)
-        # sql-ro is prod-only.
-        rc, _out, err = self.remote("sql-ro 'select 1'", user='orion-stage')
+        # sql-ro on stage (orion_stage_ro, RET-41) keeps every refusal: a second statement never runs.
+        rc, _out, err = self.remote("sql-ro 'select 1; select 2'", user='orion-stage')
         self.assertEqual(rc, 64)
-        self.assertIn('sql-ro is prod-only: staging has no read-only role', err)
+        self.assertIn('sql-ro runs exactly one statement', err)
         self.assertEqual(self.calls('psql'), [])
         self.assertFalse(os.path.exists(self.marker), 'caller text reached a shell')
 
@@ -733,6 +733,24 @@ class VerbTests(RemoteCase):
         rc, out, _err = self.remote('dev-queue 2')
         self.assertEqual((rc, out), (0, '- a\n- b\n'))
         self.assertEqual(self.calls('node'), [])
+
+    def test_sql_ro_on_stage_signs_in_as_orion_stage_ro(self):
+        # RET-41: stage has its own read-only role, so the R39-style pre-checks run over the deploy key on both envs.
+        rc, out, err = self.remote("sql-ro 'select 1'", user='orion-stage')
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(json.loads(out)['rowCount'], 1)
+        self.assertEqual(self.node_argv()[-1], ['db', 'query-ro', '--role', 'orion_stage_ro', '--json', '--', 'select 1'])
+        self.assertEqual(self.calls('psql'), [])
+        n = len(self.calls())
+        for q in ("'select 1; select 2'", "'\\! id'", "'select 1;'", "'select 1' 'select 2'", ''):
+            rc, _out, err = self.remote(f'sql-ro {q}'.strip(), user='orion-stage')
+            self.assertEqual(rc, 64, q)
+        self.assertEqual(len(self.calls()), n, 'a refused query ran something')
+
+    def test_sql_ro_role_is_the_callers_env_never_the_other(self):
+        for user, role in (('orion-prod', 'orion_prod_ro'), ('orion-stage', 'orion_stage_ro')):
+            self.assertEqual(self.remote("sql-ro 'select 1'", user=user)[0], 0, user)
+            self.assertEqual(self.node_argv()[-1][3], role, user)
 
     def test_sql_ro_prod_only_and_capped(self):
         rc, out, _err = self.remote("sql-ro 'select 1'")
@@ -1198,12 +1216,13 @@ class DocumentedSqlRoTests(RemoteCase):
     @staticmethod
     def documented():
         with open(DEPLOY_MD) as f:
-            return [line.strip() for line in f if line.strip().startswith('ssh orion-prod') and 'sql-ro' in line]
+            return [line.strip() for line in f
+                    if line.strip().startswith(('ssh orion-prod', 'ssh orion-stage')) and 'sql-ro' in line]
 
     @staticmethod
     def as_ssh_delivers(line):
         argv = shlex.split(line)  # what the operator's shell hands to ssh
-        assert argv[:2] == ['ssh', 'orion-prod'], argv
+        assert argv[0] == 'ssh' and argv[1] in ('orion-prod', 'orion-stage'), argv
         return ' '.join(argv[2:])  # ssh's join: the remote sees one string
 
     def test_every_documented_sql_ro_reaches_v_sql_ro_as_one_argument(self):
@@ -1213,9 +1232,11 @@ class DocumentedSqlRoTests(RemoteCase):
                         'R39 pre-check missing')
         for line in lines:
             sql = line[line.index('select '):].rstrip('"\\\'')  # the SQL text, whatever quoting surrounds it
-            rc, out, err = self.remote(self.as_ssh_delivers(line))
+            user = line.split()[1]
+            rc, out, err = self.remote(self.as_ssh_delivers(line), user=user)
             self.assertEqual(rc, 0, f'{line}: {err}')
-            self.assertEqual(self.node_argv()[-1], ['db', 'query-ro', '--role', 'orion_prod_ro', '--json', '--', sql])
+            role = user.replace('-', '_') + '_ro'
+            self.assertEqual(self.node_argv()[-1], ['db', 'query-ro', '--role', role, '--json', '--', sql])
 
     def test_the_unquoted_form_is_refused(self):
         # The pre-fix form: the local quotes are gone after ssh's join, so the query arrives as many words (exit 64).

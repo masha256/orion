@@ -258,6 +258,32 @@ sudo ./orion-host.sh --hostname venus --pg-datadir /home/postgres/18/main \
 Deploys then go from the dev host with `scripts/release/deploy.sh <stage|prod> <tag>` (staging before cutover:
 `--branch <name>`; prod needs a staging soak or `--no-soak`; `--rollback`).
 
+## 4b. RET-41: staging's read-only role (re-run, same flags)
+
+Before this, `orion-remote sql-ro` was prod-only (`staging has no read-only role`), so a read-only pre-check on stage
+(e.g. deploy.md R2 step 7's R39 rejected-row count) needed Mike's `sudo -iu orion-stage`. The re-run gives staging the
+twin of `orion_prod_ro` (design and the rejected options: `docs/superpowers/notes/2026-11-19-orion-stage-sql-ro-design.md`).
+Re-run from a fixed snapshot of `scripts/provision/` at a commit that has it (deploy.md "Phase 3 R1 release" step 1
+shows how to make the snapshot), with the same flags as the section 4 re-run (add `--enable-backups` if backups are
+on; the dump recipient is already stored). Nothing needs a release or a daemon restart: `orion db query-ro --role`
+exists since 1.5c.
+
+What changes (first run prints these as `do:` lines; a second run prints only `ok:`):
+- `pg_hba.conf`: `local orion_stage orion_stage,orion_stage_ro peer map=stage` (was `orion_stage` only); `pg_ident.conf`:
+  `stage orion-stage orion_stage_ro`. Postgres is reloaded (not restarted).
+- `host-roles.sql`: role `orion_stage_ro` (LOGIN only, no password: peer; `default_transaction_read_only = on`,
+  `statement_timeout = 30s`, exactly like `orion_prod_ro`); no membership among the four Orion roles (12 pairs);
+  `CONNECT` on `orion_stage` only; in `orion_stage`, `USAGE` on schema `orion`, `SELECT` on all its tables and views,
+  and default `SELECT` on every table `orion_stage` creates later (migrations, and `staging_refresh`'s
+  `pg_restore --clean --role=orion_stage`, which re-creates the tables but never the schema).
+- `/usr/local/bin/orion-remote`: `sql-ro` runs on both envs, as `orion_<env>_ro` (it already passed that role name;
+  only the prod-only refusal goes). Every other refusal (one argument, no backslash, one statement, 1 MB cap) stays.
+
+New self-check lines: `orion_stage_ro connects (read-only session)`, `orion_stage_ro cannot write`, `orion-prod ->
+orion_stage as orion_stage_ro is refused (peer map)`, `orion-stage -> orion_prod as orion_stage_ro is refused`. Then,
+from uranus: `ssh orion-stage "sql-ro \"select current_user, current_setting('transaction_read_only') as ro\""` must
+print `orion_stage_ro` / `on` (the old orion-remote exits 64 `sql-ro is prod-only`).
+
 ## 5. Later
 
 - Re-running either script at any time is safe; on a configured box it prints only `ok:` lines (plus `pubkey:`, notes
