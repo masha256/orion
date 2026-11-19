@@ -237,6 +237,20 @@ ssh orion-stage reconcile --allow-retire          # prints the diff, changes not
 ssh orion-stage reconcile --allow-retire --yes    # applies it; the daemon then starts on its next restart (30 s)
 ```
 
+## 7. Writing a per-env release block
+
+A release with one-time data steps (backfills, reprices, rebuilds, purges) gets its own section below with a numbered
+per-env block. Rules learned from the blocks so far:
+
+- **List the expected pre-remap artifacts.** When a step remaps references (token refs, source ids, metric keys), every
+  read-only check that runs BEFORE that step sees the old references and can report rows as unpriced, missing or
+  unmatched though nothing is wrong. For each such check the block names, before it runs: the asset and metric, which
+  references cause it, the counts measured on the proof copy (and on stage, for prod's block), the step that clears it,
+  and a re-check after that step that must show 0. The check's own command exempts exactly those metrics (printing
+  their counts) and still stops on anything else; the re-check has no exemption. Example: R2 step 5, where yCRV's
+  `flow_usd.fees` / `yearn_revenue` / `yearn_styc_fee` are unpriced until step 6 remaps `coingecko:crvusd` /
+  `coingecko:yearn-crv` (stage stopped on it because the block did not list it).
+
 ## Phase 2 release (migrations 0003-0005)
 
 The first release after the cutover that carries Phase 2 (`feat/data-strategy`, rebased onto `main`): migrations
@@ -781,14 +795,28 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
 5. **Chain coverage of the stored flows** (read-only; `compare-usd` reads `flow_usd_chain_v`):
    ```
    for a in $A; do ssh orion-<env> data compare-usd $a --days 400 > ~/r2-<env>/dry/compare-usd-$a.json; done
-   for a in $A; do python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); bad=[m["metric"] for m in r if m["unpriced"]>0]; print(sys.argv[2], "STOP: unpriced in "+",".join(bad) if bad else "ok")' ~/r2-<env>/dry/compare-usd-$a.json $a; done
+   for a in $A; do python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); a=sys.argv[2]; pre={"flow_usd.fees","flow_usd.yearn_revenue","flow_usd.yearn_styc_fee"} if a=="ycrv" else set(); bad=[m["metric"] for m in r if m["unpriced"]>0 and m["metric"] not in pre]; exp=["%s=%d" % (m["metric"], m["unpriced"]) for m in r if m["metric"] in pre]; print(a, "STOP: unpriced in "+",".join(bad) if bad else "ok", "(expected pre-remap: "+" ".join(exp)+")" if exp else "")' ~/r2-<env>/dry/compare-usd-$a.json $a; done
    ```
+   **Expected before step 6 (pre-remap artifact): yCRV `flow_usd.fees`, `flow_usd.yearn_revenue` and
+   `flow_usd.yearn_styc_fee` report `unpriced` > 0.** Those rows still carry the `coingecko:crvusd` /
+   `coingecko:yearn-crv` token refs, which `prices.yaml` has no chain method for, until step 6's reprice remaps them to
+   the crvUSD and yCRV address refs (its `remapped` entries); the view finds no chain price for a `coingecko:*` ref.
+   Measured: Task 10's prod copy 52 / 88 / 308, stage 54 / 90 / 310 (2026-11-17), prod 54 / 90 / 311 (2026-11-19);
+   the counts move with each env's data, so they are not pinned. The check above prints them as `expected pre-remap`
+   and does not stop on them; it stops on any other metric or asset. Their gate is the re-check after step 6.
+   **After step 6's `--yes` loop, re-run the coverage check with no exemption; every asset, yCRV included, must show 0
+   unpriced** (a remap that missed a row: stop):
+   ```
+   for a in $A; do ssh orion-<env> data compare-usd $a --days 400 > ~/r2-<env>/yes/compare-usd-$a.json || { echo "STOP: $a exit $?"; break; }; done
+   for a in $A; do python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); bad=["%s=%d" % (m["metric"], m["unpriced"]) for m in r if m["unpriced"]>0]; print(sys.argv[2], "STOP: unpriced after reprice: "+" ".join(bad) if bad else "ok"); sys.exit(bool(bad))' ~/r2-<env>/yes/compare-usd-$a.json $a || break; done
+   ```
+   (Stage and prod: 0 unpriced on all 13 after step 6.)
    `--days 400` is orion-remote's cap (`--days <1..400>`); it reaches the first flow day (2025-10-14) only while the
    block runs on or before about 2026-11-18. Later, the days older than 400 are not checked here: for them the gate is
    step 6's reprice dry run, whose `refused` list (exit 3) names every row with an hour without a chain price.
-   Every metric must have `unpriced` (`legacy_unpriced`: a row with hourly token amounts and an hour without a chain
-   price) 0; otherwise stop (the backfill left a gap: re-queue it for that ref with `--refs`, or bring it to Mike). The
-   gap columns (`gapPct`, `p50DayGapPct`, `p90DayGapPct`) are the chain-vs-CoinGecko move per metric; paste them beside
+   Every other metric must have `unpriced` (`legacy_unpriced`: a row with hourly token amounts and an hour without a
+   chain price) 0; otherwise stop (the backfill left a gap: re-queue it for that ref with `--refs`, or bring it to
+   Mike). The gap columns (`gapPct`, `p50DayGapPct`, `p90DayGapPct`) are the chain-vs-CoinGecko move per metric; paste them beside
    Task 10's table.
 6. **Re-price the stored flows: dry runs, then `--yes` per asset.** Dry runs first, all 13 (exit 3 = a row was
    refused):
@@ -819,7 +847,7 @@ asset: its default day `d` (step 0) and `d` minus 91 days (the prior growth wind
    Each `--yes` writes every row it touches to `~/home/repriced/<asset>-<UTCstamp>.json` on that env first (with the
    nightly `pg_dump`, the only copy of the old values: keep them), then rewrites `value` in place, one transaction per
    day under the asset lock, and recomputes the derived rates over the repriced days (ruling R30). Its counts must equal
-   the dry run's. A dry run afterwards shows 0 `repriced` (all `unchanged`): a second `--yes` writes nothing, and a
+   the dry run's. Then run step 5's re-check (no exemption): 0 `unpriced` on all 13, yCRV included. A dry run afterwards shows 0 `repriced` (all `unchanged`): a second `--yes` writes nothing, and a
    rerun after an interrupted `--yes` finishes the derived rates too.
 7. **Rebuild the CoinGecko price levels: dry runs, then `--yes`.** First the rejected-row pre-check (ruling R39,
    read-only): the purge in step 8b refuses a rejected CoinGecko price row on or after its ref's `valid_from`, and
