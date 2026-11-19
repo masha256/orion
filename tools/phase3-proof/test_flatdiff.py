@@ -788,6 +788,73 @@ class FlatdiffTest(unittest.TestCase):
                 if want:
                     self.assertEqual(res["unallowed"], ["price"])
 
+    # --- R43: Mike's 2026-11-17 acceptances from stage step 10 (r2-allowlist-r43.json) ---------------------------------
+
+    R43_SKY_GROWTH = [
+        f"incomeStatement.{sec}.lines[id={line}].growth.{k}"
+        for sec, line in (("holderFlow", "stakers"), ("holders", "stakers"), ("revenue", "surplus_usds"))
+        for k in ("change", "annualized")
+    ]
+    R43_CHANGED = sorted(
+        [("cake", "incomeStatement.provenance.methods.measured"), ("link", "incomeStatement.provenance.methods.measured"),
+         ("pump", "incomeStatement.ratios.payoutRatio")] + [("sky", g) for g in R43_SKY_GROWTH])
+
+    def test_the_r43_addendum_is_r2_plus_exactly_nine_accepted_paths(self):
+        r2 = flatdiff.load_allowlist(HERE / "r2-allowlist.json")
+        r43 = flatdiff.load_allowlist(HERE / "r2-allowlist-r43.json")
+        self.assertEqual(sorted(r43), sorted(r2))
+        changed = []
+        for a in r43:
+            old = {e["glob"]: e for e in r2[a]}
+            new = {e["glob"]: e for e in r43[a]}
+            self.assertEqual(len(new), len(r43[a]), a)  # no glob listed twice
+            self.assertLessEqual(set(old), set(new), a)  # nothing of R2's dropped
+            for g, e in new.items():
+                self.assertFalse(e.get("todo", False), (a, g))
+                if old.get(g) != e:
+                    changed.append((a, g))
+                    self.assertIn("R43 (Mike 2026-11-17", e["reason"], (a, g))
+        self.assertEqual(sorted(changed), self.R43_CHANGED)
+        # The SKY growth entries keep their R41 abs floor and add rel 0.1% (either holds), nothing else.
+        for g in self.R43_SKY_GROWTH:
+            old = {e["glob"]: e for e in r2["sky"]}[g]
+            new = {e["glob"]: e for e in r43["sky"]}[g]
+            self.assertEqual((new["abs"], new["rel"]), (old["abs"], 0.001), g)
+        bounds = {(a, g): {k: e[k] for k in ("rel", "abs") if k in e} for a in ("cake", "link", "pump")
+                  for g, e in {e["glob"]: e for e in r43[a]}.items() if (a, g) in self.R43_CHANGED}
+        self.assertEqual(bounds, {("cake", "incomeStatement.provenance.methods.measured"): {"abs": 1e-12},
+                                  ("link", "incomeStatement.provenance.methods.measured"): {"abs": 1e-12},
+                                  ("pump", "incomeStatement.ratios.payoutRatio"): {"rel": 0.001}})
+
+    def run_both(self, asset, old, new):
+        """(exit with r2-allowlist.json, exit with r2-allowlist-r43.json) for one before/after pair."""
+        return tuple(self.run_cli(old, new, (HERE / f).read_text(), asset=asset)[0]
+                     for f in ("r2-allowlist.json", "r2-allowlist-r43.json"))
+
+    def test_r43_sky_growth_on_a_tiny_prior_holds_by_rel_where_the_abs_floor_fails(self):
+        # Stage step 10: prior $24.3k vs current $7.05M = a ~289x change; a 0.02% reprice of that moves .change by ~0.058,
+        # over the R41 abs floor 0.05, though nothing but the price basis moved. The rel 0.1% alternative holds it.
+        def sky(change, annualized):
+            return {"asset": "sky", "incomeStatement": {"revenue": {"lines": [
+                {"id": "surplus_usds", "growth": {"current": 7.05e6, "prior": 24.3e3, "change": change, "annualized": annualized}}]}}}
+        old = sky(289.0, 1.2e10)
+        self.assertEqual(self.run_both("sky", old, sky(289.0 * 1.0002, 1.2e10 * 1.0002)), (1, 0))
+        self.assertEqual(self.run_both("sky", old, sky(289.0 * 1.002, 1.2e10)), (1, 1))  # 0.2% > rel 0.1% and > abs 0.05
+        self.assertEqual(self.run_both("sky", old, sky(289.04, 1.2e10)), (0, 0))  # the abs floor still holds alone
+
+    def test_r43_cake_link_measured_share_float_noise_only(self):
+        for a in ("cake", "link"):
+            def rep(v):
+                return {"asset": a, "incomeStatement": {"provenance": {"methods": {"measured": v}}}}
+            self.assertEqual(self.run_both(a, rep(1), rep(1.0000000000000002)), (1, 0), a)
+            self.assertEqual(self.run_both(a, rep(1), rep(0.999)), (1, 1), a)
+
+    def test_r43_pump_payout_ratio_within_rel_0_1_pct(self):
+        def rep(v):
+            return {"asset": "pump", "incomeStatement": {"ratios": {"payoutRatio": v}}}
+        self.assertEqual(self.run_both("pump", rep(0.5), rep(0.5 * (1 - 0.0001))), (1, 0))  # stage: -0.01%
+        self.assertEqual(self.run_both("pump", rep(0.5), rep(0.5 * (1 - 0.0011))), (1, 1))
+
 
 if __name__ == "__main__":
     unittest.main()

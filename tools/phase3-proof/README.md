@@ -11,6 +11,8 @@ fetches, the runs, the purge and backfill rehearsals) are the controller's; this
 | `test_flatdiff.py` | Unit tests: `python3 -m unittest tools/phase3-proof/test_flatdiff.py` |
 | `r1-allowlist.json` | The R1 allowlist (brief Step 2). |
 | `r2-allowlist.json` | The R2 (price swap) allowlist, from the Task 10 proof Mike signed 2026-11-15 (below). |
+| `r2-allowlist-r43.json` | `r2-allowlist.json` plus Mike's R43 acceptances (2026-11-17, stage step 10): the allowlist prod's step 10 ran with (below). |
+| `r2-prod-6to10.sh` | Reference only: the one script prod's R2 steps 6 (`--yes`) to 10 ran as, under Mike's conditional pre-approval (2026-11-18), stopping at the first deviation (below). |
 
 ## Paths
 
@@ -126,7 +128,35 @@ prices backfill, `data reprice`, `data rebuild-price-levels` and both purges, re
   mcap over exact flows and take the (a) floor 0.10). No `todo` placeholder.
 - The release compares the env's own default day `d` and `d` - 91. A move beyond a floor, a path absent from the
   proof's reports (a new line id), or a ratio outside the classes moving beyond its 2x proof bound fails closed (exit
-  1): stop and bring it to Mike (deploy.md step 10), never widen a bound on the spot.
+  1: stop and bring it to Mike (deploy.md step 10), never widen a bound on the spot.
+
+`r2-allowlist-r43.json` (ruling R43, Mike 2026-11-17 "Accepted"; prod's step 10 ran with it: 26/26 exit 0): every
+entry of `r2-allowlist.json` at `orion-2026.11.15.1` unchanged, plus the 9 paths stage's step 10 stopped on (22/26
+passed with `r2-allowlist.json`). Each changed entry's reason starts its R43 part with `R43 (Mike 2026-11-17`;
+`test_flatdiff.py` pins that exactly these 9 differ from `r2-allowlist.json`:
+- CAKE, LINK `incomeStatement.provenance.methods.measured`: abs 1e-12. Float rounding of a share that sums to 1
+  (`1` <-> `1.0000000000000002`); the R2 proof never showed it, so it had no entry.
+- PUMP `incomeStatement.ratios.payoutRatio`: rel 0.001. It follows PUMP's -0.04% flow reprice; stage moved -0.01%
+  (0.45993 -> 0.45988). The proof showed no move there, so (R42: no class for ratios) it had no entry.
+- SKY `growth.change` / `growth.annualized` of `holderFlow.lines[id=stakers]`, `holders.lines[id=stakers]` and
+  `revenue.lines[id=surplus_usds]` (6 paths): the R41 abs floor kept, rel 0.001 added (either holds). The prior window
+  is tiny (prior $24.3k vs current $7.05M, a ~289x change), so a 0.018% reprice moved `.change` 289.284 -> 289.336
+  (abs 0.052 > the 0.05 floor) and `.annualized` (~7.56e9) far past its abs 0.2.
+
+**Lesson (for every later allowlist): an abs floor on a growth figure needs a rel alternative when the prior period
+is tiny.** `change` = current / prior - 1 and `annualized` compound it, so a tiny prior makes both huge, and the same
+small relative reprice that the class floors were built for becomes a large absolute move. Give each `growth.change` /
+`growth.annualized` class entry both bounds: the abs floor (it holds where the base is near or crosses zero, as R41
+intended) and a rel alternative (R43: rel 0.1%, ~5x the measured 0.018-0.02%), since an entry holds when either
+does. Before signing an allowlist, check the proof reports for any line whose prior window is under ~1% of its
+current.
+
+`r2-prod-6to10.sh` is kept as the worked example of the runbook rule "put pre-approved `--yes` steps and their
+condition checks into ONE script that exits at the first deviation" (each separate call can raise its own approval
+prompt). It is a record, not runnable as is: it sources the session file `$TMPDIR/r2prod.sh` (defines `A`, `day`,
+`d91` and `PR`, as in deploy.md R2 step 0), writes under `~/r2-prod/`, reads the addendum from Raymond's workspace and
+runs flatdiff from the release worktree `.worktrees/rel-r2-prod` (removed after the release). Its yCRV `compare-usd`
+re-check after step 6 is the one deploy.md step 5 now documents.
 
 ## Run (controller)
 
