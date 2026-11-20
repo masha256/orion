@@ -325,6 +325,45 @@ describe('solana.supply_less_owners', () => {
     expect(bad.http.calls).toEqual([]);
   });
 
+  // Ruling R4/R10: PUMP's N5 check, the six subtracted owners' balance as a monitor-only level (watch change_pct 1).
+  it('solana.owners_balance is the same owners\' sum alone: 418,261,858,182.10, one finalized read each, never a pump.fun host', async () => {
+    expect(adapterNames()).toContain('solana.owners_balance');
+    expect(getAdapter('solana.owners_balance').needsRpc).toBe(false);
+    expect(ADAPTER_SOURCE_TYPES['solana.owners_balance']).toBe('contract_state');
+    expect(ADAPTER_ORIGINS['solana.owners_balance']).toBe('onchain');
+    const params = { mint: 'token', owners: SUB.subtract };
+    const run = (p: Record<string, unknown>, over: Parameters<typeof rpc>[0] = {}, env: Record<string, string> = { ORION_SOL_RPC_URL: KEYED }) => {
+      const http = fakeHttp({ [KEYED]: rpc(over), [PUBLIC_SOL_RPC_URL]: rpc(over), 'https://frontend-api-v3.pump.fun': rpc(over) });
+      const ctx = sourceCtx({ asset: pump, nowIso: NOW, http, env, contract: (n) => OWNERS[n] ?? (() => { throw new Error(`no contract ${n}`); })() });
+      return { http, result: getAdapter('solana.owners_balance').run(ctx, p) };
+    };
+    const { http, result } = run(params);
+    const v = await result;
+    expect(v).toMatchObject({ kind: 'level', source: 'onchain', observedAt: NOW });
+    expect(v.kind === 'level' && v.value).toBeCloseTo(418_261_858_182.1, 2);
+    expect(v.detail).toBe(
+      `solana owners' balance of ${MINT}: ` +
+        `token_custodian ${OWNERS.token_custodian} 229261858182.1 at slot 380000101, dormant_a ${OWNERS.dormant_a} 80000000000 at slot 380000101, ` +
+        `dormant_b ${OWNERS.dormant_b} 35000000000 at slot 380000101, dormant_c ${OWNERS.dormant_c} 25000000000 at slot 380000101, ` +
+        `dormant_d ${OWNERS.dormant_d} 25000000000 at slot 380000101, dormant_e ${OWNERS.dormant_e} 24000000000 at slot 380000101`,
+    );
+    expect(http.calls.map((c) => (c.body as { method: string }).method)).toEqual(Array(6).fill('getTokenAccountsByOwner'));
+    expect(new Set(http.calls.map((c) => new URL(c.url).host))).toEqual(new Set(['solana-mainnet.g.alchemy.com']));
+    // An owner with no account is 0; all empty is 0 (a monitor-only tokens level may read 0).
+    const none = await run({ mint: 'token', owners: ['empty_owner'] }).result;
+    expect(none.kind === 'level' && none.value).toBe(0);
+    await expect(run(params, { fail: 'getTokenAccountsByOwner' }).result).rejects.toThrow(/solana getTokenAccountsByOwner at https:\/\/solana-mainnet\.g\.alchemy\.com/);
+    const bad = run(params, {}, { ORION_SOL_RPC_URL: 'https://frontend-api-v3.pump.fun/rpc' });
+    await expect(bad.result).rejects.toThrow(/pump\.fun/);
+    expect(bad.http.calls).toEqual([]);
+    const validate = getAdapter('solana.owners_balance').validateParams!;
+    expect(validate(params)).toEqual([]);
+    expect(validate({ ...params, subtract: ['x'] })).toEqual(['unknown param "subtract"']);
+    expect(validate({ mint: 'token', owners: [] })).not.toEqual([]);
+    expect(validate({ mint: 'token', owners: ['dormant_a', 'dormant_a'] })).not.toEqual([]);
+    expect(validate({ owners: ['dormant_a'] })).not.toEqual([]);
+  });
+
   it('validates its params: mint and subtract contract names, rpc_url_env an env var name, nothing else', () => {
     const v = getAdapter('solana.supply_less_owners').validateParams!;
     expect(v(SUB)).toEqual([]);

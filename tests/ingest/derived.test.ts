@@ -3,7 +3,9 @@ import { parseAssetYaml } from '../../src/config/load.js';
 import { getProvenanceByIds, insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { getAdapter, registerAdapter, type AdapterDef } from '../../src/ingest/adapters/registry.js';
 import { checkRevenueStale } from '../../src/ingest/alerts.js';
-import { burnMomentum, DERIVED_NAMES, flowAnnualized } from '../../src/ingest/derived.js';
+import { burnMomentum, DERIVED_NAMES, flowAnnualized, levelGapPct } from '../../src/ingest/derived.js';
+import { callKey } from '../helpers/fakeRpc.js';
+import { STAKING, TOKEN } from '../helpers/ingestAsset.js';
 import { buildPlan } from '../../src/ingest/plan.js';
 import { fetchAsset } from '../../src/ingest/run.js';
 import { addDays } from '../../src/ingest/time.js';
@@ -47,7 +49,86 @@ describe('flowAnnualized', () => {
     expect(flowAnnualized(gapped, 2)).toEqual([{ day: '2026-09-02', value: 5475 }, { day: '2026-09-05', value: 16425 }]);
   });
   it('is a registered derived name', () => {
-    expect(DERIVED_NAMES).toEqual(['burn_momentum', 'flow_annualized']);
+    expect(DERIVED_NAMES).toEqual(['burn_momentum', 'flow_annualized', 'level_gap_pct']);
+  });
+});
+
+// Phase 3 R3 (Ruling R3): the N5 WATCH checks, a level against a first-party level of the same run, in percent.
+describe('level_gap_pct', () => {
+  const GAP = (params: string, extra = '') =>
+    INGEST_ASSET_YAML.replace(
+      '  staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }',
+      '  staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }\n' +
+        `  supply_gap: { type: level, unit: pct, staleness_days: 3, monitor_only: true, source: { type: derived, name: level_gap_pct, params: ${params} }${extra} }`,
+    );
+  const OK = GAP('{ a: circulating_supply, b: total_supply }', ', watch: { outside: [ -50, 0 ] }');
+  const refusal = (yaml: string): string => {
+    try {
+      parseAssetYaml(yaml);
+    } catch (err) {
+      return `${(err as OrionError).code}: ${(err as Error).message}`;
+    }
+    return '';
+  };
+
+  it('is (a / b - 1) x 100, and none when b is 0', () => {
+    expect(levelGapPct(60, 100)).toBeCloseTo(-40, 12);
+    expect(levelGapPct(1_582_336_065, 1_588_069_374)).toBeCloseTo(-0.361, 3); // CRV: ours less the treasury vs Curve's
+    expect(levelGapPct(766_849_970.42, 766_849_970.42)).toBe(0);
+    expect(levelGapPct(5, 0)).toBeNull();
+  });
+
+  it('loads with { a, b } two level metrics read this run, on a monitor-only level', () => {
+    expect(OK).not.toBe(INGEST_ASSET_YAML);
+    expect(refusal(OK)).toBe('');
+    expect(parseAssetYaml(OK).config.metrics.supply_gap.source).toEqual({ type: 'derived', name: 'level_gap_pct', params: { a: 'circulating_supply', b: 'total_supply' } });
+  });
+
+  it('refuses unknown keys, a or b not a level metric of the asset, the same metric twice, and a gap that is not a monitor-only level', () => {
+    expect(refusal(GAP('{ a: circulating_supply, b: total_supply, days: 3 }'))).toMatch(/^invalid_asset_config: .*metrics\.supply_gap: level_gap_pct takes only "a" and "b", not "days"/);
+    expect(refusal(GAP('{ a: circulating_supply }'))).toMatch(/metrics\.supply_gap: level_gap_pct "b" must name a level metric/);
+    expect(refusal(GAP('{ a: circulating_supply, b: nope }'))).toMatch(/level_gap_pct "b": unknown metric "nope"/);
+    expect(refusal(GAP('{ a: flow_usd.fees, b: total_supply }'))).toMatch(/level_gap_pct "a": "flow_usd.fees" is a flow metric, not a level/);
+    expect(refusal(GAP('{ a: revenue_run_rate_usd, b: total_supply }'))).toMatch(/level_gap_pct "a": "revenue_run_rate_usd" must be read this run/);
+    expect(refusal(GAP('{ a: supply_gap, b: total_supply }'))).toMatch(/level_gap_pct "a" cannot be the gap metric itself/);
+    expect(refusal(GAP('{ a: total_supply, b: total_supply }'))).toMatch(/level_gap_pct "a" and "b" must be different metrics/);
+    expect(refusal(GAP('{ a: circulating_supply, b: total_supply }').replace('unit: pct, staleness_days: 3, monitor_only: true,', 'unit: pct, staleness_days: 3,'))).toMatch(/level_gap_pct is a check: the metric must be monitor_only/);
+    // The other derived kinds keep their params (no load-time rule added for them).
+    expect(refusal(GAP('{ a: circulating_supply, b: total_supply }').replace('name: level_gap_pct', 'name: burn_momentum'))).toBe('');
+  });
+
+  it('writes the gap from this run\'s two readings, derived provenance with both inputs, and the outside watch fires off the band', async () => {
+    const h = harness(testDb(), { loaded: parseAssetYaml(OK) });
+    const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
+    expect(r.sources.find((s) => s.sourceId === 'derived:level_gap_pct')).toMatchObject({ status: 'ok', metricsWritten: ['supply_gap'] });
+    const rows = await listActiveObservations(h.db, 'mini', 'supply_gap');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].value).toBeCloseTo(-40, 12); // coingecko 60 vs the chain's 150 - 50
+    expect(rows[0]).toMatchObject({ periodDays: null, sourceDetail: 'derived level_gap_pct(circulating_supply 60 / total_supply 100)' });
+    // One input is an API reading: the row says so (R10.7) and reads back as api.
+    expect(rows[0].source).toBe('api');
+    const [p] = await getProvenanceByIds(h.db, [rows[0].id]);
+    expect(p).toMatchObject({ method: 'derived', sourceType: 'derived', formula: 'level_gap_pct@1' });
+    expect(p.locator).toEqual({ metrics: ['circulating_supply', 'total_supply'], params: { a: 'circulating_supply', b: 'total_supply' }, input_origin: 'api' });
+    expect(r.watch).toEqual([]);
+    const tight = parseAssetYaml(OK.replace('outside: [ -50, 0 ]', 'outside: [ -1.5, 0.5 ]'));
+    const again = await fetchAsset(h.db, tight, NOW, h.deps);
+    expect(again.watch).toEqual([expect.objectContaining({ metric: 'supply_gap', rule: 'outside' })]);
+    expect(again.watch[0].value).toBeCloseTo(-40, 12);
+  });
+
+  it('writes nothing (a note, no failure) when either side has no reading this run, and fails on a zero b', async () => {
+    const h = harness(testDb(), { loaded: parseAssetYaml(OK), calls: { [callKey(TOKEN, 'totalSupply')]: new Error('execution reverted') } });
+    const r = await fetchAsset(h.db, h.loaded, NOW, h.deps);
+    expect(r.sources.find((s) => s.sourceId === 'derived:level_gap_pct')).toMatchObject({ status: 'ok', metricsWritten: [], notes: ['supply_gap: skipped, total_supply gave no reading this run'] });
+    expect(await listActiveObservations(h.db, 'mini', 'supply_gap')).toEqual([]);
+    // A monitor-only tokens level may read 0 (validateReading): the gap over it is refused, never Infinity.
+    const HELD = '  staking_held: { type: level, unit: tokens, staleness_days: 3, monitor_only: true, source: { type: contract_read, contract: staking, function: totalSupply, decimals: 18 } }\n';
+    const withHeld = GAP('{ a: circulating_supply, b: staking_held }').replace('  supply_gap:', `${HELD}  supply_gap:`);
+    const zero = harness(testDb(), { loaded: parseAssetYaml(withHeld), calls: { [callKey(STAKING, 'totalSupply')]: 0n } });
+    const z = await fetchAsset(zero.db, zero.loaded, NOW, zero.deps);
+    expect(z.sources.find((s) => s.sourceId === 'derived:level_gap_pct')).toMatchObject({ status: 'failed', error: 'supply_gap: level_gap_pct: staking_held is 0; no gap' });
+    expect(await listActiveObservations(zero.db, 'mini', 'supply_gap')).toEqual([]);
   });
 });
 

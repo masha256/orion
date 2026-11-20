@@ -22,7 +22,7 @@ import { checkRevenueStale, REVENUE_STALE_MOVE_PCT, type IndexPoint } from './al
 import { DEFAULT_API_FLOW_BACKFILL_DAYS, DEFILLAMA_REVISION_DAYS, writeApiFlow } from './apiFlow.js';
 import { writePeriodicPayments } from './periodic.js';
 import { compareLevel, compareMonthly } from './crosscheck.js';
-import { derivedFunction, type DerivedName } from './derived.js';
+import { derivedFunction, levelGapPct, type DerivedName } from './derived.js';
 import { CHAIN_DRY_RUN_SOURCE, scanFlowGroup, type ChainPriceWriter } from './flow.js';
 import { buildPlan, hasSources, type FlowGroup, type SourceBatch } from './plan.js';
 import { sourceId } from './sourceId.js';
@@ -565,6 +565,42 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     if (r.source.type !== 'derived') continue;
     const outcome = outcomeOf(sourceId(r.source));
     const name = r.source.name as DerivedName; // buildPlan refused any other name
+    if (name === 'level_gap_pct') {
+      // Phase 3 R3 (Ruling R3): (a / b - 1) x 100 from this run's readings of two levels (params checked at load), at
+      // the later of their two times, written every run like a level read (so an outside watch fires while it stays out).
+      // A side with no reading this run writes nothing: its own source says why.
+      const a = String(r.source.params.a);
+      const b = String(r.source.params.b);
+      const latest = (m: string) => written.filter((w) => w.metricKey === m).sort((x, y) => Date.parse(x.observedAt) - Date.parse(y.observedAt)).at(-1);
+      const wa = latest(a);
+      const wb = latest(b);
+      const missing = wa === undefined ? a : wb === undefined ? b : null;
+      if (missing !== null || wa === undefined || wb === undefined) {
+        outcome.notes.push(`${r.metricKey}: skipped, ${missing} gave no reading this run`);
+        continue;
+      }
+      const value = levelGapPct(wa.value, wb.value);
+      if (value === null) {
+        markFailed(outcome, `${r.metricKey}: level_gap_pct: ${b} is 0; no gap`);
+        continue;
+      }
+      const observedAt = new Date(Math.max(Date.parse(wa.observedAt), Date.parse(wb.observedAt))).toISOString();
+      const stamp: 'onchain' | 'api' = wa.source === 'api' || wb.source === 'api' ? 'api' : 'onchain';
+      const prov = fetchedProvenance(loaded, r.metricKey, {
+        formula: 'level_gap_pct@1',
+        inputs: [{ metric: a, at: new Date(wa.observedAt).toISOString(), value: wa.value }, { metric: b, at: new Date(wb.observedAt).toISOString(), value: wb.value }],
+      });
+      const observationId = dryRun
+        ? null
+        : (await insertObservation(db, {
+            assetId: asset.id, metricKey: r.metricKey, observedAt, value, fetchedAt: startedAt,
+            sourceDetail: `derived level_gap_pct(${a} ${wa.value} / ${b} ${wb.value})`,
+            provenance: stamp === 'api' ? { ...prov, locator: { ...prov.locator, [INPUT_ORIGIN_KEY]: 'api' } } : prov,
+          })).id;
+      written.push({ metricKey: r.metricKey, value, observedAt, periodDays: null, source: stamp, observationId });
+      outcome.metricsWritten.push(r.metricKey);
+      continue;
+    }
     // `metric` names one flow; `metrics` (flow_annualized only) names several, summed day by day: an asset paid in
     // several reward streams, each its own holder flow, has their sum as its revenue. A day counts only when every
     // listed flow has it, so a stream that lags never shows up as a drop in the total.
@@ -653,6 +689,10 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   const metricsOfSource = new Map<string, string[]>();
   for (const b of plan.batches) metricsOfSource.set(b.sourceId, [...(metricsOfSource.get(b.sourceId) ?? []), ...b.requests.map((r) => r.metricKey)]);
   for (const g of plan.flowGroups) metricsOfSource.set(g.sourceId, [...(metricsOfSource.get(g.sourceId) ?? []), ...g.members.map((m) => m.metricKey)]);
+  for (const r of plan.derived) {
+    const id = sourceId(r.source);
+    metricsOfSource.set(id, [...(metricsOfSource.get(id) ?? []), r.metricKey]);
+  }
   const monitorOnly = (id: string) => {
     const keys = metricsOfSource.get(id) ?? [];
     return keys.length > 0 && keys.every((k) => asset.metrics[k]?.monitor_only === true);

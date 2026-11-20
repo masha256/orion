@@ -32,7 +32,7 @@ const PROD: Shape[] = [
   ['erc20_supply', contract({ contracts: ['0xabc'], call: 'totalSupply()', args: [], subtract_balances: { dead: '0xdead' } }), 'onchain'],
   ...[
     'aero.emission_rate_annual', 'aero.staker_emission_share', 'cake.emission_rate_annual', 'chain.counter_rate', 'chain.v2_pool_twap_price', 'chain.view_sum',
-    'crv.emission_rate_annual', 'solana.owner_balance', 'solana.supply_less_owners', 'solana.token_supply', 'vvv.diem_target_supply', 'vvv.staker_emission_share',
+    'crv.emission_rate_annual', 'solana.owner_balance', 'solana.owners_balance', 'solana.supply_less_owners', 'solana.token_supply', 'vvv.diem_target_supply', 'vvv.staker_emission_share',
   ].map((n): Shape => [n, adapter(n), 'onchain']),
   // measured, every other rung on prod.
   ['first_party_api', { method: 'measured', sourceType: 'first_party_api', locator: { adapter: 'hype.fund_buys_daily', params: {} }, formula: null }, 'api'],

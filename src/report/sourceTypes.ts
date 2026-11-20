@@ -50,6 +50,7 @@ export const ADAPTER_SOURCE_TYPES: Readonly<Record<string, SourceType>> = {
   'solana.token_supply': 'contract_state',
   'solana.owner_balance': 'contract_state',
   'solana.supply_less_owners': 'contract_state',
+  'solana.owners_balance': 'contract_state',
   'solana.supply_burn_daily': 'contract_state',
   'vvv.staker_emission_share': 'contract_state',
   'vvv.diem_target_supply': 'contract_state',
@@ -78,11 +79,11 @@ const hostOf = (url: string): string => {
   }
 };
 
-/** The flow or level metrics a `derived` source reads (`metric`, `metrics`, `minus`). */
+/** The flow or level metrics a `derived` source reads (`metric`, `metrics`, `minus`; level_gap_pct's `a` and `b`). */
 export function derivedInputs(s: Extract<SourceConfig, { type: 'derived' }>): string[] {
   const p = (s.params ?? {}) as Record<string, unknown>;
   const names = (x: unknown): string[] => (typeof x === 'string' ? [x] : Array.isArray(x) ? x.filter((m): m is string => typeof m === 'string') : []);
-  return [...names(p.metric), ...names(p.metrics), ...names(p.minus)];
+  return [...names(p.metric), ...names(p.metrics), ...names(p.minus), ...names(p.a), ...names(p.b)];
 }
 
 /**

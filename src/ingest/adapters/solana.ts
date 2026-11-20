@@ -39,13 +39,45 @@ async function ownerBalanceLevel(ctx: SourceContext, params: Record<string, unkn
 const PUMP_FUN_HOST = /(^|\.)pump\.fun$/i;
 const isName = (x: unknown): x is string => typeof x === 'string' && /^[a-z0-9_]+$/.test(x);
 
-function validateSupplyLessOwners(p: Record<string, unknown>): string[] {
-  const out = Object.keys(p).filter((k) => !['mint', 'subtract', 'rpc_url_env'].includes(k)).map((k) => `unknown param "${k}"`);
+function ownersIssues(p: Record<string, unknown>, list: 'subtract' | 'owners'): string[] {
+  const out = Object.keys(p).filter((k) => !['mint', list, 'rpc_url_env'].includes(k)).map((k) => `unknown param "${k}"`);
   if (!isName(p.mint)) out.push('mint must be a contract name');
-  if (!Array.isArray(p.subtract) || p.subtract.length === 0 || !p.subtract.every(isName)) out.push('subtract must be a non-empty list of contract names (owners, not token accounts)');
-  else if (new Set(p.subtract).size !== p.subtract.length) out.push('subtract must not name an owner twice');
+  const names = p[list];
+  if (!Array.isArray(names) || names.length === 0 || !names.every(isName)) out.push(`${list} must be a non-empty list of contract names (owners, not token accounts)`);
+  else if (new Set(names).size !== names.length) out.push(`${list} must not name an owner twice`);
   if (p.rpc_url_env !== undefined && !(typeof p.rpc_url_env === 'string' && /^[A-Z][A-Z0-9_]*$/.test(p.rpc_url_env))) out.push('rpc_url_env must be an environment variable name');
   return out;
+}
+
+const validateSupplyLessOwners = (p: Record<string, unknown>): string[] => ownersIssues(p, 'subtract');
+const validateOwnersBalance = (p: Record<string, unknown>): string[] => ownersIssues(p, 'owners');
+
+/** The RPC URL for an owners read, refused (before any request) on a pump.fun host (R8). */
+function ownRpcUrl(ctx: SourceContext, params: Record<string, unknown>): string {
+  const url = rpcUrl(ctx, params);
+  let host = '';
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    throw new Error('the Solana RPC URL is not a URL');
+  }
+  if (PUMP_FUN_HOST.test(host)) throw new Error(`${host}: PUMP is read only through our own Solana RPC, never a pump.fun host (R8)`);
+  return url;
+}
+
+/** Every named owner's balance of the mint (all of each owner's token accounts), one finalized read each: the sum and a part per owner. */
+async function ownersHeld(ctx: SourceContext, url: string, mint: string, list: unknown, param: string): Promise<{ held: number; parts: string[] }> {
+  if (!Array.isArray(list) || !list.every((n) => typeof n === 'string')) throw new Error(`params.${param} must be a list of contract names (owners)`);
+  const names = list as string[];
+  const owners = names.map((n) => ctx.contract(n)); // an unknown name is a configuration error and propagates
+  let held = 0;
+  const parts: string[] = [];
+  for (const [i, name] of names.entries()) {
+    const b = await ownerBalance(ctx.http, url, owners[i], mint);
+    held += b.amount;
+    parts.push(`${name} ${owners[i]} ${b.amount} at slot ${b.slot}`);
+  }
+  return { held, parts };
 }
 
 /**
@@ -58,26 +90,26 @@ async function supplyLessOwners(ctx: SourceContext, params: Record<string, unkno
   const mint = ctx.contract(text(params, 'mint', 'token'));
   if (!Array.isArray(params.subtract) || !params.subtract.every((n) => typeof n === 'string')) throw new Error('params.subtract must be a list of contract names (owners)');
   const names = params.subtract as string[];
-  const owners = names.map((n) => ctx.contract(n)); // an unknown name is a configuration error and propagates
-  const url = rpcUrl(ctx, params);
-  let host = '';
-  try {
-    host = new URL(url).hostname;
-  } catch {
-    throw new Error('the Solana RPC URL is not a URL');
-  }
-  if (PUMP_FUN_HOST.test(host)) throw new Error(`${host}: PUMP is read only through our own Solana RPC, never a pump.fun host (R8)`);
+  names.forEach((n) => ctx.contract(n)); // an unknown name is a configuration error, before any request
+  const url = ownRpcUrl(ctx, params);
   const supply = await tokenSupply(ctx.http, url, mint);
-  let held = 0;
-  const parts: string[] = [];
-  for (const [i, name] of names.entries()) {
-    const b = await ownerBalance(ctx.http, url, owners[i], mint);
-    held += b.amount;
-    parts.push(`${name} ${owners[i]} ${b.amount} at slot ${b.slot}`);
-  }
+  const { held, parts } = await ownersHeld(ctx, url, mint, names, 'subtract');
   const value = supply.amount - held;
   if (!(value > 0)) throw new Error(`supply less owners ${value} is not positive (supply ${supply.amount}, owners ${held})`);
   return { kind: 'level', value, observedAt: ctx.nowIso, source: 'onchain', detail: `solana getTokenSupply ${mint} ${supply.amount} at slot ${supply.slot} less ${held}: ${parts.join(', ')}` };
+}
+
+/**
+ * The named owners' balance of the mint, summed (Phase 3 R3, Ruling R4): what solana.supply_less_owners subtracts, as a
+ * monitor-only level, so a move out of the custodian or a dormant vault (what would invalidate decision N1d) is watched.
+ * Same reads and the same R8 rule as supply_less_owners; 0 when no owner holds any.
+ */
+async function ownersBalance(ctx: SourceContext, params: Record<string, unknown>): Promise<SourceValue> {
+  const mint = ctx.contract(text(params, 'mint', 'token'));
+  if (Array.isArray(params.owners)) params.owners.forEach((n) => typeof n === 'string' && ctx.contract(n));
+  const url = ownRpcUrl(ctx, params);
+  const { held, parts } = await ownersHeld(ctx, url, mint, params.owners, 'owners');
+  return { kind: 'level', value: held, observedAt: ctx.nowIso, source: 'onchain', detail: `solana owners' balance of ${mint}: ${parts.join(', ')}` };
 }
 
 export interface SupplyReading {
@@ -247,6 +279,13 @@ export const solanaAdapters: AdapterDef[] = [
     paramsDoc: 'mint: contract name, subtract: contract names of owners (not token accounts), rpc_url_env? (ORION_SOL_RPC_URL). getTokenSupply of the mint less each owner\'s balance over all its token accounts (getTokenAccountsByOwner), finalized, at fetch time; refused when not positive.',
     validateParams: validateSupplyLessOwners,
     run: supplyLessOwners,
+  },
+  {
+    name: 'solana.owners_balance',
+    needsRpc: false,
+    paramsDoc: 'mint: contract name, owners: contract names of owners (not token accounts), rpc_url_env? (ORION_SOL_RPC_URL). The sum of each owner\'s balance of the mint over all its token accounts (getTokenAccountsByOwner), finalized, at fetch time: what solana.supply_less_owners subtracts, as a level.',
+    validateParams: validateOwnersBalance,
+    run: ownersBalance,
   },
   { name: 'solana.supply_burn_daily', needsRpc: false, run: supplyBurnDaily, computedFrom: ['solana.token_supply'] },
 ];

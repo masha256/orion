@@ -216,6 +216,7 @@ const SAMPLES: Record<string, () => Promise<SourceValue>> = {
   'solana.token_supply': async () => getAdapter('solana.token_supply').run(solCtx(), { mint: 'token' }),
   'solana.owner_balance': async () => getAdapter('solana.owner_balance').run(solCtx(), { mint: 'token', owner: 'burn_wallet_a' }),
   'solana.supply_less_owners': async () => getAdapter('solana.supply_less_owners').run(solCtx(), { mint: 'token', subtract: ['burn_wallet_a'] }),
+  'solana.owners_balance': async () => getAdapter('solana.owners_balance').run(solCtx(), { mint: 'token', owners: ['burn_wallet_a'] }),
   'solana.supply_burn_daily': async () =>
     getAdapter('solana.supply_burn_daily').run(solCtx({ observations: async (m) => (m === 'total_supply' ? [supplyRow('2026-10-14T06:00:00.000Z', 898e9), supplyRow('2026-10-15T06:00:00.000Z', 897e9)] : []) }), {
       mint: 'token', unit: 'usd', supply_metric: 'total_supply', days: 7, history: { slug: 'pump', data_type: 'dailyHoldersRevenue' },

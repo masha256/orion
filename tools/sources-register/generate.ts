@@ -101,6 +101,7 @@ export const ADAPTER_ENDPOINTS: Record<string, (params: AdapterParams, asset: As
   'solana.token_supply': (p) => [solRpc(p)],
   'solana.owner_balance': (p) => [solRpc(p)],
   'solana.supply_less_owners': (p) => [solRpc(p)],
+  'solana.owners_balance': (p) => [solRpc(p)],
   // The day's price from CoinGecko's market chart; `history` stitches DefiLlama's summary before the first supply read.
   // Priced from the stored chain prices of the mint (Phase 3 R2): no CoinGecko read.
   'solana.supply_burn_daily': (p) => [solRpc(p), ...(p.history !== undefined ? [http(DEFILLAMA_API)] : [])],

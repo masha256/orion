@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { STD_METRICS, WATCH_RULES } from '../types.js';
+import { levelGapIssues } from '../ingest/derived.js';
 import { holderFlowMetrics, IncomeStatementBaseSchema, incomeStatementIssues } from './incomeStatement.js';
 import { CrossCheckSchema, IngestSchema, SourceSchema, sourceIssues } from './sources.js';
 
@@ -120,6 +121,10 @@ export const AssetConfigSchema = z
     const standardKeys = new Set<string>(Object.values(STD_METRICS));
     const holderFlows = new Set<string>(holderFlowMetrics(a.income_statement));
     for (const [key, def] of Object.entries(a.metrics)) {
+      // Phase 3 R3 (Ruling R3): a level_gap_pct check names two levels read in the run; refused here, at load.
+      if (def.source?.type === 'derived' && def.source.name === 'level_gap_pct') {
+        for (const message of levelGapIssues(key, def, def.source.params, a.metrics)) issue(message);
+      }
       if (def.watch !== undefined) {
         const w = def.watch;
         if (def.monitor_only !== true) issue(`metrics: "${key}" has a watch, which is for monitor_only metrics`);
