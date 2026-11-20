@@ -70,6 +70,7 @@ QUERIES = {
         "select asset_id, source_type, coalesce(locator->>$$adapter$$, locator->>$$call$$, locator->>$$provider$$, $$$$) as kind, "
         f"(count(*) filter (where {ACTIVE}))::int as active, count(*)::int as total, "
         f"(count(*) filter (where {ACTIVE} and ({_before})))::int as before_rebuild_from, "
+        f"(count(*) filter (where {_before}))::int as before_rebuild_from_all, "
         f"(count(*) filter (where {ACTIVE} and locator->$$rebuilt$$ is not null))::int as rebuilt "
         f"from observations where metric_key = $${METRIC}$$ group by 1, 2, 3 order by 1, 2, 3"
     ),
@@ -105,7 +106,8 @@ def rc_ok(rc, what):
 
 
 def stale_groups(supply_rows):
-    """Per asset: {(source_type, kind): (active, total, before_rebuild_from)} of every non-current group."""
+    """Per asset: {(source_type, kind): (active, total, before_rebuild_from, before_rebuild_from_all)} of every
+    non-current group (before_rebuild_from: active rows; _all: every status, as the purge counts them)."""
     out = {a: {} for a in ASSETS}
     for r in supply_rows:
         a = r["asset_id"]
@@ -113,7 +115,9 @@ def stale_groups(supply_rows):
             raise Stop(f"unknown asset {a} in the supply rows")
         key = (r["source_type"], r["kind"])
         if key != CURRENT[a]:
-            out[a][key] = (int(r["active"]), int(r["total"]), int(r["before_rebuild_from"]))
+            if "before_rebuild_from_all" not in r:
+                raise Stop("the supply rows have no `before_rebuild_from_all` column (an r3_check.py before the final review fixes?)")
+            out[a][key] = (int(r["active"]), int(r["total"]), int(r["before_rebuild_from"]), int(r["before_rebuild_from_all"]))
     return out
 
 
@@ -138,11 +142,11 @@ def step1_rebuilt(e, asset):
 def classify(groups):
     """Split one asset's non-current groups into market_data, the wrappers' old locator, kept (another source_type than
     market_data / contract_state: never a rebuild target, ruling R15), and anything else (unlisted)."""
-    md = {"active": 0, "total": 0, "beforeRebuildFrom": 0}
-    old = {"active": 0, "total": 0, "beforeRebuildFrom": 0}
+    md = {"active": 0, "total": 0, "beforeRebuildFrom": 0, "beforeRebuildFromAll": 0}
+    old = {"active": 0, "total": 0, "beforeRebuildFrom": 0, "beforeRebuildFromAll": 0}
     kept = {"active": 0, "total": 0, "kinds": []}
     other = []
-    for (st, kind), (active, total, brf) in sorted(groups.items()):
+    for (st, kind), (active, total, brf, brf_all) in sorted(groups.items()):
         if st not in TARGET_TYPES:
             kept["active"] += active
             kept["total"] += total
@@ -158,12 +162,30 @@ def classify(groups):
         t["active"] += active
         t["total"] += total
         t["beforeRebuildFrom"] += brf
+        t["beforeRebuildFromAll"] += brf_all
     return md, old, kept, other
 
 
 def kept_note(assets_kept):
     """`vvv disclosure=1` for every asset with kept rows (from {asset: kept})."""
     return " ".join(f"{a} " + ",".join(f"{k['sourceType']}={k['active']}" for k in x["kinds"]) for a, x in sorted(assets_kept.items()) if x["active"])
+
+
+def md_without_replacement(asset, md, status):
+    """The notRebuildable market_data rows: active ones (status "active": what step 6 leaves stale for step 7), or every
+    status ("total": what step 7's purge deletes and lists as withoutReplacement; it targets superseded rows too)."""
+    if asset in NEVER_REBUILDABLE:
+        return md[status]
+    if asset in REBUILD_FROM:
+        return md["beforeRebuildFrom" if status == "active" else "beforeRebuildFromAll"]
+    return 0
+
+
+def step1_without_replacement(e, asset):
+    if "mdWithoutReplacementAll" not in e:
+        raise Stop(f"expected.json has no mdWithoutReplacementAll for {asset} (written by an s0 before the final review "
+                   f"fixes: rerun s0 with a fresh work dir before s2)")
+    return int(e["mdWithoutReplacementAll"])
 
 
 def not_rebuildable(asset, md, old):
@@ -219,11 +241,12 @@ def c_expected(supply, levels, out, env, now):
         md, old, kept, other = classify(groups[a])
         if old["total"] and a not in WRAPPERS:
             other.append({"sourceType": OLD_LOCATOR[0], "kind": OLD_LOCATOR[1], "active": old["active"], "total": old["total"]})
-            old = {"active": 0, "total": 0, "beforeRebuildFrom": 0}
+            old = {"active": 0, "total": 0, "beforeRebuildFrom": 0, "beforeRebuildFromAll": 0}
         nr = not_rebuildable(a, md, old)
         stale = md["active"] + old["active"]
         assets[a] = {"marketData": md, "oldLocator": old, "stale": stale, "notRebuildable": nr, "rebuilt": stale - nr,
-                     "mdWithoutReplacement": md["active"] if a in NEVER_REBUILDABLE else (md["beforeRebuildFrom"] if a in REBUILD_FROM else 0),
+                     "mdWithoutReplacement": md_without_replacement(a, md, "active"),
+                     "mdWithoutReplacementAll": md_without_replacement(a, md, "total"),
                      "kept": kept["active"], "keptKinds": kept["kinds"], "rebuiltRows": rb_rows[a]}
         other_all += [dict(o, asset=a) for o in other]
     lv = rows(levels)
@@ -235,7 +258,8 @@ def c_expected(supply, levels, out, env, now):
     for a in ASSETS:
         x = assets[a]
         print(f"{a}: market_data {x['marketData']['active']} active / {x['marketData']['total']} total, old locator "
-              f"{x['oldLocator']['active']}, expected rebuilt {x['rebuilt']} notRebuildable {x['notRebuildable']} kept {x['kept']}")
+              f"{x['oldLocator']['active']}, expected rebuilt {x['rebuilt']} notRebuildable {x['notRebuildable']} kept {x['kept']}"
+              + (f" withoutReplacement {x['mdWithoutReplacementAll']}" if x["mdWithoutReplacementAll"] else ""))
     kept_all = {a: {"active": x["kept"], "kinds": x["keptKinds"]} for a, x in assets.items()}
     print(f"kept (never a rebuild target, ruling R15; untouched): {kept_note(kept_all) or 'none'}")
     print(f"market_data total {exp['marketDataTotal']}; latest_levels market_data {len(md_levels)} ({' '.join(md_levels)})")
@@ -475,6 +499,8 @@ def purge_counts(r):
 
 
 def c_purge_dry(out, rc, asset, expected):
+    """observations = step 1's market_data total; withoutReplacement = step 1's every-status count of the notRebuildable
+    market_data rows (the purge targets superseded rows too; final review Minor 5)."""
     r = load(out)
     if isinstance(r, dict) and "error" in r:
         raise Stop(f"{asset} purge dry run refused {json.dumps(r['error'])[:400]} (a purge_unreplaced_supply_level "
@@ -482,7 +508,7 @@ def c_purge_dry(out, rc, asset, expected):
     rc_ok(rc, f"{asset} purge dry run")
     e = load(expected)["assets"][asset]
     got = purge_counts(r)
-    want = (e["marketData"]["total"], e["mdWithoutReplacement"])
+    want = (e["marketData"]["total"], step1_without_replacement(e, asset))
     if got != want:
         raise Stop(f"{asset} purge dry run observations/withoutReplacement {got}, expected from step 1 {want}")
     print(f"{asset} purge dry ok (observations {got[0]} withoutReplacement {got[1]})")
@@ -557,8 +583,9 @@ def c_purge_dry_resume(out, rc, asset, expected, supply):
     if purged + obs != total:
         raise Stop(f"{asset} purge dry run (resume): already purged {purged} + remaining {obs} = {purged + obs}, expected "
                    f"step 1's market_data total {total}")
-    if (purged == 0 and wr != e["mdWithoutReplacement"]) or wr > e["mdWithoutReplacement"]:
-        raise Stop(f"{asset} purge dry run (resume) withoutReplacement {wr}, expected step 1's {e['mdWithoutReplacement']}"
+    want_wr = step1_without_replacement(e, asset)
+    if (purged == 0 and wr != want_wr) or wr > want_wr:
+        raise Stop(f"{asset} purge dry run (resume) withoutReplacement {wr}, expected step 1's {want_wr}"
                    + (" (at most, after a part purge)" if purged else ""))
     print(f"{asset} purge dry (resume) ok (observations {obs} withoutReplacement {wr}; already purged {purged})")
 

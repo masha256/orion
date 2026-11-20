@@ -16,7 +16,8 @@ ASSETS = "aero cake crv cvxcrv hype link lit pump sdcrv sky uni vvv ycrv".split(
 ENV, TAG, D, D91, SINCE = "stage", "orion-2026.11.20.1", "2026-11-18", "2026-08-19", "2026-11-20T12-00-00Z"
 MD = {"aero": 45, "cake": 40, "crv": 43, "hype": 55, "link": 37, "lit": 38, "pump": 37, "sky": 36, "uni": 40, "vvv": 57}
 OLD = {"cvxcrv": 39, "sdcrv": 39, "ycrv": 39}
-NR = {"aero": 45, "hype": 55, "pump": 37}  # notRebuildable: HYPE, PUMP all; AERO's rows before 2026-11-10
+NR = {"aero": 44, "hype": 55, "pump": 37}  # notRebuildable: HYPE, PUMP all; AERO's rows before 2026-11-10 (ruling R20:
+# prod 2026-11-19 holds 44 of them; its 45th, 2026-11-10T00:45Z, is on/after rebuild_from and is rebuilt)
 # Kept (ruling R15): VVV's active 2026-09-18 disclosure row (prod id 3, a pre-v2 seed: locator {note, legacy_seed}, kind '').
 KEPT = {"vvv": [{"id": 3, "observedAt": "2026-09-18T00:00:00.000Z", "reason": "a disclosure row: only market_data and old-locator contract_state rows are rebuilt (Ruling R15)"}]}
 CURRENT = {a: ("contract_state", "chain.view_sum") for a in ASSETS}
@@ -32,25 +33,31 @@ def sql(rows):
     return {"rows": rows, "rowCount": len(rows)}
 
 
-def supply(state, done=None, purged=()):
+def supply(state, done=None, purged=(), superseded=None):
     """sql-ro supply rows: pre (before the rebuild), rebuilt (after s2's --yes), purged (after s3's --yes). done = {asset:
     rows rebuilt so far} on a pre state (an s2 --yes that stopped part way); purged = assets whose market_data rows a
-    stopped s3 --yes already deleted (on a rebuilt state). `rebuilt` = active rows whose locator carries `rebuilt`."""
+    stopped s3 --yes already deleted (on a rebuilt state). `rebuilt` = active rows whose locator carries `rebuilt`.
+    superseded = {asset: n} extra superseded market_data rows (on AERO: before its rebuild_from) present in every state
+    until the purge: counted in `total` and `before_rebuild_from_all`, never in `active`."""
     done = done or {}
+    superseded = superseded or {}
     out = []
     for a in ASSETS:
         st, kind = CURRENT[a]
         cur = 10 if a == "aero" else 2  # rows on the new source (AERO's since 2026-11-10; the others' nightlies)
         rb = (MD.get(a, 0) - NR.get(a, 0) + OLD.get(a, 0)) if state != "pre" else done.get(a, 0)
-        out.append({"asset_id": a, "source_type": st, "kind": kind, "active": cur + rb, "total": cur, "before_rebuild_from": 0, "rebuilt": rb})
+        out.append({"asset_id": a, "source_type": st, "kind": kind, "active": cur + rb, "total": cur, "before_rebuild_from": 0, "before_rebuild_from_all": 0, "rebuilt": rb})
         md_done = min(done.get(a, 0), MD.get(a, 0))
         if a in MD and state != "purged" and a not in purged:
             active = MD[a] - md_done if state == "pre" else NR.get(a, 0)
-            out.append({"asset_id": a, "source_type": "market_data", "kind": "coingecko", "active": active, "total": MD[a], "before_rebuild_from": MD[a] if a == "aero" else 0, "rebuilt": 0})
+            sup = superseded.get(a, 0)
+            brf = NR[a] if a == "aero" else 0  # AERO's active rows before 2026-11-10 (its 45th is after: rebuilt)
+            out.append({"asset_id": a, "source_type": "market_data", "kind": "coingecko", "active": active, "total": MD[a] + sup,
+                        "before_rebuild_from": brf, "before_rebuild_from_all": brf + sup if a == "aero" else 0, "rebuilt": 0})
         if a in OLD:
-            out.append({"asset_id": a, "source_type": "contract_state", "kind": "totalSupply()", "active": OLD[a] - (done.get(a, 0) - md_done) if state == "pre" else 0, "total": OLD[a], "before_rebuild_from": 0, "rebuilt": 0})
+            out.append({"asset_id": a, "source_type": "contract_state", "kind": "totalSupply()", "active": OLD[a] - (done.get(a, 0) - md_done) if state == "pre" else 0, "total": OLD[a], "before_rebuild_from": 0, "before_rebuild_from_all": 0, "rebuilt": 0})
         if a in KEPT:  # untouched by the rebuild and the purge: the same in every state
-            out.append({"asset_id": a, "source_type": "disclosure", "kind": "", "active": len(KEPT[a]), "total": len(KEPT[a]), "before_rebuild_from": 0, "rebuilt": 0})
+            out.append({"asset_id": a, "source_type": "disclosure", "kind": "", "active": len(KEPT[a]), "total": len(KEPT[a]), "before_rebuild_from": 0, "before_rebuild_from_all": 0, "rebuilt": 0})
     return sql(sorted(out, key=lambda r: (r["asset_id"], r["source_type"], r["kind"])))
 
 
@@ -77,9 +84,11 @@ def rebuild(a, phase, done=0):
             "kept": KEPT.get(a, []), "calls": 3 * rebuilt}
 
 
-def purge(a, yes, observations=None):
-    wr = NR.get(a, 0)
-    m = {"metric": "circulating_supply", "configured": True, "observations": MD[a] if observations is None else observations, "superseded": MD[a] - wr, "firstDay": "2026-09-24",
+def purge(a, yes, observations=None, superseded=0):
+    """superseded = extra superseded market_data rows of a notRebuildable set (listed by the purge as withoutReplacement)."""
+    wr = NR.get(a, 0) + superseded
+    total = MD[a] + superseded
+    m = {"metric": "circulating_supply", "configured": True, "observations": total if observations is None else observations, "superseded": total - NR.get(a, 0), "firstDay": "2026-09-24",
          "lastDay": "2026-11-19", "valueSum": 1.0, "latestLevels": 0, "watchState": 0, "fetchCursors": 0,
          "withoutReplacement": [{"id": 2000 + i, "observedAt": "2026-10-01T00:45:00.000Z", "day": "2026-10-01"} for i in range(wr)]}
     return {"asset": a, "perMetric": [m], "exportFile": f"/home/orion-stage/home/purged/{a}-circulating_supply-20261120T120000Z.json" if yes else None,
@@ -189,11 +198,12 @@ def stops():
     # old-locator row (ycrv 1).
     put(HERE / "stop-leftover-md", "r3-s2/sql-ro_supply.2", _md_left())
     put(HERE / "stop-leftover-old", "r3-s2/sql-ro_supply.2", _old_left())
-    # s2 --resume (R18 M4): the first run's --yes stopped at crv after 20 of its 43 rows (aero 0, cake 40 done before it).
+    # s2 --resume (R18 M4): the first run's --yes stopped at crv after 20 of its 43 rows (aero 1, cake 40 done before it).
     put(HERE / "partial-s2", "r3-s2/data_rebuild-supply-levels_crv_--yes", {"error": {"code": "rebuild_conflict", "message": "circulating_supply: #4321 at 2026-10-12T00:45:00.000Z is no longer active"}}, 1)
-    done = {"cake": 40, "crv": 20}
+    done = {"aero": 1, "cake": 40, "crv": 20}  # aero's one rebuildable row (ruling R20) went first
     for d in ("resume-s2", "stop-resume-s2"):
         put(HERE / d, "r3-s2/sql-ro_supply.1", supply("pre", done=done))
+        put(HERE / d, "r3-s2/data_rebuild-supply-levels_aero.1", rebuild("aero", "dry", done=1))
         put(HERE / d, "r3-s2/data_rebuild-supply-levels_cake.1", rebuild("cake", "dry", done=40))
         put(HERE / d, "r3-s2/data_rebuild-supply-levels_crv.1", rebuild("crv", "dry", done=20))
     put(HERE / "resume-s2", "r3-s2/data_rebuild-supply-levels_crv_--yes", rebuild("crv", "yes", done=20))
@@ -205,6 +215,16 @@ def stops():
         put(HERE / d, "r3-s3/sql-ro_supply.1", supply("rebuilt", purged=("aero",)))
     # ... and one that does not add up: cake's dry run finds 39 rows, the supply rows 40.
     put(HERE / "stop-resume-s3", "r3-s3/data_purge_cake_--metrics_circulating_supply_--source-type_market_data", purge("cake", False, observations=39))
+    # s0-s3 (final review Minor 5): one superseded market_data row each on hype and on aero before its rebuild_from (a
+    # correction): active counts unchanged; the purge counts and lists it (observations and withoutReplacement +1).
+    sup = {"hype": 1, "aero": 1}
+    d = HERE / "superseded-md"
+    put(d, "r3-s0/sql-ro_supply", supply("pre", superseded=sup))
+    put(d, "r3-s2/sql-ro_supply.1", supply("pre", superseded=sup))
+    put(d, "r3-s2/sql-ro_supply.2", supply("rebuilt", superseded=sup))
+    for a, n in sup.items():
+        put(d, f"r3-s3/data_purge_{a}_--metrics_circulating_supply_--source-type_market_data", purge(a, False, superseded=n))
+        put(d, f"r3-s3/data_purge_{a}_--metrics_circulating_supply_--source-type_market_data_--yes", purge(a, True, superseded=n))
     # s4: cake's D report moved on a path the allowlist does not allow.
     put(HERE / "stop-gate", f"r3-s4/report_yield_cake_--day_{D}", report("cake", D, cap=2000.0))
 

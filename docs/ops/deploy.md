@@ -1016,7 +1016,11 @@ circulating_supply --source-type market_data [--yes]`. `ST`/`PR` = the stage/pro
 1. **Task 7 is signed.** The proof on a prod copy (plan Task 7) is done and Mike has signed its per-asset table
    (circulating, marketCap, mcap/revenue, mcap/holder flow, HF/mcap, old -> new; the refused and notRebuildable lists;
    the archive call count). The tag carries `tools/phase3-proof/r3-allowlist.json` (N4 classes: S `ratio` = the signed
-   ratio ± 0.01, L exact label pins, G and AERO no entry) and `tools/phase3-proof/r3-signed-circulating.json` (the
+   ratio ± 0.01, L exact label pins, G and AERO no entry; **HYPE and PUMP class S = `"new": null` pins at D**, ruling
+   R21: s3 purges every HYPE/PUMP circulating row, and with no circulating row at or before D's as-of their
+   `marketCap`, `multiples.mcapTo*` and `perToken.*` (per circulating) are null in the D report (their history starts
+   on the release day, N2), which a `ratio` bound cannot hold; the signed table shows `-> null` for them; D-91 is
+   unchanged for all 13) and `tools/phase3-proof/r3-signed-circulating.json` (the
    signed circulating value per asset, `{"<asset>": <tokens>, ...}`: s1's ±2% check). No tag before the sign-off. s1
    stops (before deploying) without `r3-signed-circulating.json`; s4 stops (before any call) without
    `r3-allowlist.json`. Neither script checks the other file.
@@ -1091,7 +1095,7 @@ rows on 2026-11-20).
 | artifact | seen by (exempt, counts printed) | measured | cleared by | re-check with no exemption |
 |---|---|---|---|---|
 | `latest_levels` `circulating_supply` rows with `source_type = market_data` (the old release wrote them; latest-only) | step 4 before the first hourly `levels` run on the tag: `expected pre-switch: 9 (assets ...)` | 9: cake crv hype link lit pump sky uni vvv | that run (it overwrites each from the new source) | step 4 after that run: 0; step 8 again: 0 |
-| active `market_data` `circulating_supply` rows | step 5 (s2, before the rebuild): `expected pre-rebuild` | aero 45, cake 40, crv 43, hype 55, link 37, lit 38, pump 37, sky 36, uni 40, vvv 57 = 428 | step 6 (rebuilt: cake crv link lit sky uni vvv), step 7 (deleted, all 10; hype, pump, aero's 45 as `withoutReplacement`) | step 5 after step 6's `--yes`: only hype's, pump's and aero's notRebuildable rows left (step 1's counts); step 8: 0 `market_data` rows of any metric, 0 stale rows on all 13 |
+| active `market_data` `circulating_supply` rows | step 5 (s2, before the rebuild): `expected pre-rebuild` | aero 45 (44 before its `rebuild_from` 2026-11-10 + 1 at 2026-11-10T00:45Z), cake 40, crv 43, hype 55, link 37, lit 38, pump 37, sky 36, uni 40, vvv 57 = 428 | step 6 (rebuilt: cake crv link lit sky uni vvv, and aero's 1 row on/after its `rebuild_from`: 2026-11-10T00:45Z, ruling R20), step 7 (deleted, all 10; hype, pump and aero's 44 before 2026-11-10 as `withoutReplacement`) | step 5 after step 6's `--yes`: only hype's, pump's and aero's notRebuildable rows left (step 1's counts); step 8: 0 `market_data` rows of any metric, 0 stale rows on all 13 |
 | the wrappers' active rows on the old `erc20_supply` locator (`contract_state`, `call = totalSupply()`) | step 5: `expected pre-rebuild` | cvxcrv 39, sdcrv 39, ycrv 39 | step 6 (rebuilt) | step 5 after step 6's `--yes`: 0; step 8: 0 |
 | kept: active circulating rows of another `source_type` than `market_data` / `contract_state` and not the new source (ruling R15: never a rebuild target, untouched by steps 6 and 7) | step 1 records them per asset (`kept (never a rebuild target ...)`); step 6's dry runs list them as `kept` | vvv 1 (prod id 3, the 2026-09-18 `disclosure` row, 48.35M, N3 "keep") | nothing: they stay | every later check: per asset exactly step 1's count (`[kept, as step 1: vvv disclosure=1]`; the rebuild's `kept` list the same length); a kept row step 1 did not record: stop |
 
@@ -1106,7 +1110,8 @@ asset's new source nor a wrapper's old locator) is no listed artifact: s0 stops 
    circulating rows by `source_type`. From these, per asset: the kept rows (any other `source_type`, ruling R15:
    counted, never rebuilt or purged; prod: vvv's `disclosure` row, 1), the stale rows (`market_data` + old locator), the
    notRebuildable ones (HYPE and PUMP: every stale row; AERO: those before 2026-11-10; any other: 0), the expected
-   `rebuilt` (stale - notRebuildable) and `withoutReplacement` (the notRebuildable `market_data` rows), and the active
+   `rebuilt` (stale - notRebuildable) and `withoutReplacement` (the notRebuildable `market_data` rows of every status:
+   the purge deletes and lists superseded rows too; prod has none superseded), and the active
    rows already carrying `locator.rebuilt` (0 before the first rebuild; `--resume`'s base). s0 prints one
    line per asset: paste them.
 2. **Deploy (s1)**: `scripts/release/deploy.sh <env> <tag>` from `$T`; the report is printed (paste it) and must name the
@@ -1128,14 +1133,17 @@ asset's new source nor a wrapper's old locator) is no listed artifact: s0 stops 
    nightly ran after s0).
 6. **Rebuild (s2): 13 dry runs, then `--yes`.** `data rebuild-supply-levels <a>` dry run; expected exactly, per asset
    from step 1's file: `rows` = its stale rows, `rebuilt` = cake, crv, link, lit, sky, uni, vvv (`market_data`) and
-   cvxcrv, sdcrv, ycrv (old locator) all of them, `notRebuildable` = every row of hype and pump and aero's 45, `kept` =
+   cvxcrv, sdcrv, ycrv (old locator) all of them, aero its rows on/after 2026-11-10 (prod 2026-11-19: 1, the
+   2026-11-10T00:45Z CoinGecko row, rebuilt with the on-chain definition prod itself used from 03:31Z that day; ruling
+   R20), `notRebuildable` = every row of hype and pump and aero's before 2026-11-10 (prod: 44), `kept` =
    step 1's kept count (vvv 1: its disclosure row, untouched), `refused` 0 everywhere (a refused row or exit 3: stop,
    Mike decides; the row keeps its old value). Then `--yes` x13 (applied,
    counts == the dry run's), a second dry run x13 (`rebuilt` 0), and step 5 again: the only stale rows left are hype's,
    pump's and aero's `market_data` rows (step 1's counts), cleared by step 7.
 7. **Purge (s3): dry runs, then `--yes`**, on the assets step 1 found `market_data` rows for (the 10): `data purge <a>
    --metrics circulating_supply --source-type market_data`; expected: `observations` = step 1's `market_data` total,
-   `withoutReplacement` = all of hype's and pump's rows, aero's 45, every other asset 0; any refusal (`error` in the JSON,
+   `withoutReplacement` = step 1's every-status count of the notRebuildable `market_data` rows (all of hype's and pump's,
+   aero's before 2026-11-10: prod 44), every other asset 0; any refusal (`error` in the JSON,
    e.g. `purge_unreplaced_supply_level`: a row step 6 should have replaced): stop. `--yes` per asset: applied, counts ==
    the dry run's; each `exportFile` (`~/home/purged/<asset>-circulating_supply-<UTCstamp>.json` on the env) and its
    `exportSha256` go to `~/r3-<env>/yes/exports.txt`: keep them (rollback evidence, never served; N3).
@@ -1148,8 +1156,11 @@ asset's new source nor a wrapper's old locator) is no listed artifact: s0 stops 
     unallowed paths (before -> after) and stops: no widening on the spot; an addendum allowlist file on Mike's ruling,
     as R43. On stage: no prod deploy until then.
 
-**Soak (stage):** one scheduled 02:45 UTC nightly on the tag (section 3), no failed source, no `ORION WATCH stage ...
-circulating` line (the CRV and LINK `level_gap_pct` checks, PUMP's `reserved_balance`) without a stated cause; the
+**Soak (stage):** one scheduled 02:45 UTC nightly on the tag (section 3), no failed source, and none of the three N5
+WATCH lines without a stated cause: `ORION WATCH CRV: circulating_gap_curve outside ...` and `ORION WATCH LINK:
+circulating_gap_chainlink outside ...` (the `level_gap_pct` checks, in the nightly report body) and `ORION WATCH PUMP:
+reserved_balance change_pct ...` (posted by the hourly `levels` job); the lines carry no env (src/notify/format.ts
+`formatWatchPost`: `ORION WATCH <SYM>: <metric> <rule> <value>`), so read them in stage's channel; the
 snapshot `full` body shows the new `marketCap`; Raymond's soak cron resumes with its "known queue" line naming R3's
 moves (circulating and what it feeds, per the signed table; the controller updates the prompt outside the repo).
 Stage-vs-prod parity is not the check while prod is still on CoinGecko circulating.

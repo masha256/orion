@@ -67,6 +67,12 @@ const citationUrl = (params: AdapterParams): string => {
   const c = params.citation;
   return c !== null && typeof c === 'object' && typeof (c as { url?: unknown }).url === 'string' ? (c as { url: string }).url : '';
 };
+/** view_sum's `locked_schedule.citation` (a URL string; LIT): read by no code, cited, so the register lists it. */
+const lockedScheduleCitation = (params: AdapterParams): Endpoint[] => {
+  const s = params.locked_schedule;
+  const c = s !== null && typeof s === 'object' ? (s as { citation?: unknown }).citation : undefined;
+  return typeof c === 'string' ? [http(c)] : [];
+};
 const solRpc = (params: AdapterParams): Endpoint => ({ kind: 'solana_rpc', env: str(params, 'rpc_url_env', DEFAULT_SOL_RPC_ENV) });
 
 /**
@@ -75,7 +81,8 @@ const solRpc = (params: AdapterParams): Endpoint => ({ kind: 'solana_rpc', env: 
  */
 export const ADAPTER_ENDPOINTS: Record<string, (params: AdapterParams, asset: AssetConfig) => Endpoint[]> = {
   'chain.counter_rate': (_p, a) => chainRpc(a, 'chain.counter_rate'),
-  'chain.view_sum': (_p, a) => chainRpc(a, 'chain.view_sum'),
+  // A locked_schedule's citation url is listed like schedule.unlocks_next_year's (the schedule is in the YAML).
+  'chain.view_sum': (p, a) => [...chainRpc(a, 'chain.view_sum'), ...lockedScheduleCitation(p)],
   'chain.v2_pool_twap_price': (_p, a) => chainRpc(a, 'chain.v2_pool_twap_price'),
   'chain.cl_pool_spot_price': (_p, a) => chainRpc(a, 'chain.cl_pool_spot_price'),
   'cake.emission_rate_annual': (_p, a) => chainRpc(a, 'cake.emission_rate_annual'),
@@ -165,7 +172,7 @@ export const TERMS: Record<string, Terms> = {
   'x.com': {
     label: 'Lighter on X (its own post)', kind: 'first_party_api', operator: 'Lighter',
     commercial: 'unknown',
-    note: 'LIT unlock schedule (schedule.unlocks_next_year citation): Lighter\'s own post, first party; cited by hand, not read by code',
+    note: 'LIT unlock schedule (the schedule.unlocks_next_year citation and chain.view_sum\'s locked_schedule citation): Lighter\'s own post, first party; cited by hand, not read by code',
   },
   'mainnet.zklighter.elliot.ai': {
     label: 'Lighter API (Core)', kind: 'first_party_api', operator: 'Lighter',

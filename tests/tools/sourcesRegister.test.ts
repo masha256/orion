@@ -23,6 +23,19 @@ describe('sources register (docs/ops/sources-register.md)', () => {
     expect(() => sourceKey(ADAPTER_ENDPOINTS['schedule.unlocks_next_year']!({}, asset)[0]!)).toThrow(/has no URL/);
   });
 
+  it('chain.view_sum with a locked_schedule lists its citation url beside the RPC (LIT: x.com)', () => {
+    const assets = loadAssets(root);
+    const lit = assets.find((a) => a.id === 'lit')!;
+    const url = 'https://x.com/Lighter_xyz/status/2005862687331303804';
+    const schedule = { amount: 1, first_tranche: '2027-01-29', tranches: 1, every_months: 1, citation: url };
+    expect(ADAPTER_ENDPOINTS['chain.view_sum']!({ terms: [], locked_schedule: schedule }, lit)).toEqual([
+      { kind: 'rpc', chainId: lit.ingest!.chain_id, env: lit.ingest!.rpc_url_env },
+      { kind: 'http', url },
+    ]);
+    expect(ADAPTER_ENDPOINTS['chain.view_sum']!({ terms: [] }, lit)).toHaveLength(1);
+    expect(collectUses(assets).get('x.com')).toEqual(expect.arrayContaining([{ asset: 'lit', via: 'adapter chain.view_sum' }]));
+  });
+
   it('a new asset reading an unregistered host fails generation, naming the host and the asset', () => {
     const assets = loadAssets(root);
     const uni = structuredClone(assets.find((a) => a.id === 'uni')!);

@@ -72,8 +72,11 @@ from a snapshot at or after 06955e0; the R3 `orion-host.sh` re-run (Task 6 prere
     `vvv_stats` stays the check at 2% (rec).
 - **N2 History of stored circulating rows.** (A, rec) Rebuild at archive blocks every stored row of the EVM assets
   (CAKE, CRV, LINK, LIT, SKY, UNI, VVV CoinGecko rows; cvxCRV, sdCRV, yCRV contract_state rows, so each asset has one
-  definition), then purge the CoinGecko rows; HYPE, PUMP and AERO's 45 pre-rebuild rows have no rebuild (no archive,
-  or pre-migration token): purged, their market cap starts on the release day (AERO: 2026-11-10). (B) Purge all
+  definition), then purge the CoinGecko rows; HYPE, PUMP and AERO's pre-2026-11-10 rows have no rebuild (no archive,
+  or pre-migration token): purged, their market cap starts on the release day (AERO: 2026-11-10). AERO on prod
+  (2026-11-19): 44 notRebuildable before `rebuild_from` 2026-11-10 + 1 rebuilt (the 2026-11-10T00:45Z CoinGecko row,
+  rebuilt with the on-chain definition prod used from 03:31Z that day; ruling R20); the scripts read the counts from
+  step 1. (B) Purge all
   CoinGecko rows, no rebuild: market cap null on every past report day of the 9 assets. (C) Keep them labelled until
   R8: contradicts R3's goal. Under A, UNI's past market caps drop ~2.8% before 2026-11-02 (CoinGecko began excluding
   the UF/Aera wallets then); CAKE's pending-burn spikes (up to 377M) disappear.
@@ -86,7 +89,11 @@ from a snapshot at or after 06955e0; the R3 `orion-host.sh` re-run (Task 6 prere
   - (S) circulating-derived paths (`marketCap`, `multiples.mcapTo*`, `perToken.{revenue,grossProfit,holderFlow.*,
     dilution,circulatingSupply}`) on the 12 changed assets: a `ratio` pin = the signed proof's new/old ratio ± 0.01
     (new flatdiff bound, Task 7 Step 1). Relative by construction, so a multiple over a near-zero bucket (e.g. a tiny
-    `mcapToHolderFlow.cash`) holds where an abs floor would not; no abs-only entry in this class.
+    `mcapToHolderFlow.cash`) holds where an abs floor would not; no abs-only entry in this class. **Except HYPE and
+    PUMP (ruling R21)**: s3 purges every circulating row they have, so at D (no circulating row at or before D's
+    as-of; their history starts on the release day, N2) their `marketCap`, `multiples.mcapTo*` and `perToken.*` (per
+    circulating) become null; their class S entries are `"new": null` value pins (no bound; flatdiff fails a bounded
+    path that turns null), and the signed table shows `-> null`. D-91 is unchanged for all 13.
   - (L) the metric's source labels (`provenance.sources`, `thirdParty` lists): exact `old`/`new` value pins.
   - (G) growth `.change` / `.annualized` / `.current` / `.prior`, PEG, yields, flows, prices: **no entry** (they must
     be byte-identical; circulating feeds none). If the proof ever forces one, it carries both bounds: the R41 abs floor
@@ -254,8 +261,8 @@ then redo stage steps 4-6).
 1. **Write the expected-counts file** `~/r3-<env>/expected.json` from `sql-ro` (both envs after N6): per asset the
    active `circulating_supply` rows by `source_type` and locator kind; the `latest_levels` circulating rows by
    `source_type`. Measured on prod 2026-11-19 14:30Z (they grow by one row per asset per nightly until the block runs,
-   so the script uses its own step-1 file, never these figures): `market_data` aero 45 / cake 40 / crv 43 / hype 55 /
-   link 37 / lit 38 / pump 37 / sky 36 / uni 40 / vvv 57 (428); wrapper `contract_state` rows on the old
+   so the script uses its own step-1 file, never these figures): `market_data` aero 45 (44 before 2026-11-10 + 1) /
+   cake 40 / crv 43 / hype 55 / link 37 / lit 38 / pump 37 / sky 36 / uni 40 / vvv 57 (428); wrapper `contract_state` rows on the old
    `erc20_supply` locator cvxcrv 39 / sdcrv 39 / ycrv 39; `latest_levels` `market_data` 9 (cake crv hype link lit pump
    sky uni vvv). Stage: measured by its own step 1 (no stage figure exists before N6).
 
@@ -279,15 +286,16 @@ then redo stage steps 4-6).
    1 and 5 adds only rows on the new source, so these counts equal step 1's exactly (a mismatch = stop).
 6. **Rebuild: dry runs (13), then `--yes`.** `data rebuild-supply-levels <a>` dry run; expected exactly: `rebuilt` =
    step 1's count for cake, crv, link, lit, sky, uni, vvv (`market_data`) and cvxcrv, sdcrv, ycrv (old locator);
-   `notRebuildable` = every row for hype and pump and aero's 45; `refused` 0 everywhere (exit 3 = stop, Mike decides).
+   aero its rows on/after 2026-11-10 (prod 2026-11-19: 1, ruling R20); `notRebuildable` = every row for hype and pump
+   and aero's before 2026-11-10 (prod: 44); `refused` 0 everywhere (exit 3 = stop, Mike decides).
    `--yes` (prod: Mike's go); yes == dry per asset; a second dry run rebuilds 0. **Re-check step 5 after `--yes`:
    0 stale rows on the 10 rebuilt assets; the only stale rows left are hype's, pump's and aero's `market_data`
    (step 1's counts), cleared by step 7.**
 
 **Script s3: steps 7-8 (purge).**
 7. **Purge: dry runs, then `--yes`.** `data purge <a> --metrics circulating_supply --source-type market_data` on the
-   10 assets with rows; expected: `observations` = step 1's count; `withoutReplacement` = all of hype's and pump's,
-   aero's 45, every other asset 0; no `purge_unreplaced_supply_level` refusal (a refusal = a row step 6 should have
+   10 assets with rows; expected: `observations` = step 1's count; `withoutReplacement` = step 1's every-status count of
+   the notRebuildable rows (all of hype's and pump's, aero's before 2026-11-10: prod 44), every other asset 0; no `purge_unreplaced_supply_level` refusal (a refusal = a row step 6 should have
    replaced: stop). `--yes` (prod: Mike's go); yes == dry; record each export file and sha256.
 8. **Re-check with no exemption** (`sql-ro`): `count(*) from observations where source_type = $$market_data$$` = 0;
    `latest_levels` `market_data` rows = 0; step 5's check shows 0 stale rows on all 13.
@@ -297,7 +305,8 @@ then redo stage steps 4-6).
 10. **Gate**: `flatdiff` with `tools/phase3-proof/r3-allowlist.json` (run from the tag): 26/26 exit 0; else stop with
     every unallowed path before -> after (no widening on the spot; an addendum file on Mike's ruling, as R43).
 
-**Soak (stage):** one scheduled nightly, no failed source, no `ORION WATCH ... circulating` line without a stated cause;
+**Soak (stage):** one scheduled nightly, no failed source, no `ORION WATCH CRV: circulating_gap_curve ...`, `ORION WATCH
+LINK: circulating_gap_chainlink ...` or `ORION WATCH PUMP: reserved_balance ...` line without a stated cause;
 the snapshot `full` body shows the new `marketCap`; soak cron resumed with its "known queue" line naming R3's moves.
 **Rollback:** no migration; `deploy.sh <env> orion-2026.11.15.1` runs, but the old code writes CoinGecko circulating
 again at its first hourly and nightly run (new `market_data` rows, which steps 7-8 would have to purge again after

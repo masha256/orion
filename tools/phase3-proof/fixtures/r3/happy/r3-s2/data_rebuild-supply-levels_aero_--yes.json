@@ -3,7 +3,7 @@
  "applied": true,
  "metric": "circulating_supply",
  "rows": 45,
- "rebuilt": 0,
+ "rebuilt": 1,
  "unchanged": 2,
  "refused": [],
  "notRebuildable": [
@@ -226,13 +226,8 @@
    "id": 1043,
    "observedAt": "2026-10-01T00:45:00.000Z",
    "day": "2026-10-01"
-  },
-  {
-   "id": 1044,
-   "observedAt": "2026-10-01T00:45:00.000Z",
-   "day": "2026-10-01"
   }
  ],
  "kept": [],
- "calls": 0
+ "calls": 3
 }

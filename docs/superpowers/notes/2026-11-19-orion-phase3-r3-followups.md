@@ -25,6 +25,8 @@ expected artifacts, soak, rollback). Source of every line below: the SDD ledger
   `tools/phase3-proof/r3-signed-circulating.json` (`{"<asset>": <signed circulating tokens>}`, s1's ±2% check after the
   first hourly `levels` run). s1 stops (before deploying) without `r3-signed-circulating.json`; s4 stops without
   `r3-allowlist.json`.
+- **Task 7's table carries two R3 rows Mike has not seen yet**: AERO's rebuilt 2026-11-10T00:45Z row (R20: the on-chain
+  read at that block, mid upgrade-wave, replaces CoinGecko's ~305M) and HYPE's/PUMP's D values `-> null` (R21).
 - **Prod `--yes`** (s2's rebuild, s3's purge) only on his go, or under his conditional pre-approval of the whole script;
   any refused rebuild row is his decision.
 - The published `masha256/orion-data` history keeps old CoinGecko-derived figures (N3: left; Phase 5 decides).
@@ -39,11 +41,13 @@ expected artifacts, soak, rollback). Source of every line below: the SDD ledger
   two genesis wallets; N1h UNI Timelock + UF + Aera out; N1i SKY Pause Proxy + converter `take()` out, lsSKY and
   converter-held MKR-backed SKY in; N1j VVV `view_sum` primary, Venice `vvv_stats` the check at 2%.
 - N2 A: rebuild at archive blocks every stored row of the EVM assets (CAKE, CRV, LINK, LIT, SKY, UNI, VVV CoinGecko rows;
-  cvxCRV, sdCRV, yCRV old-locator rows), then purge the CoinGecko rows; HYPE, PUMP and AERO's 45 pre-2026-11-10 rows are
-  purged without replacement (their market cap starts on the release day; AERO 2026-11-10).
+  cvxCRV, sdCRV, yCRV old-locator rows), then purge the CoinGecko rows; HYPE's, PUMP's and AERO's pre-2026-11-10 rows are
+  purged without replacement (their market cap starts on the release day; AERO 2026-11-10). AERO on prod (2026-11-19):
+  44 notRebuildable + 1 rebuilt (the 2026-11-10T00:45Z CoinGecko row is on/after `rebuild_from`; ruling R20); counts
+  read from step 1.
 - N3: keep the purge exports in `~/home/purged/` on venus; leave the `orion-data` git history.
-- N4: allowlist classes S (`ratio` = signed ratio ± 0.01), L (exact label pins), G (no entry; if ever forced, R41 abs
-  floor AND R43 rel 0.1%), AERO no entry.
+- N4: allowlist classes S (`ratio` = signed ratio ± 0.01; HYPE and PUMP `"new": null` pins at D, ruling R21), L (exact
+  label pins), G (no entry; if ever forced, R41 abs floor AND R43 rel 0.1%), AERO no entry.
 - N5: CRV (Curve `circulating_supply()`) and LINK (`supply.chain.link`) checks as WATCH lines; VVV keeps Venice; PUMP a
   watch (built as `reserved_balance` change_pct 1, R4/R11); HYPE, SKY, UNI, CAKE none.
 - N6: stage `sql-ro` installed (`orion_stage_ro`); one more `orion-host.sh` re-run at the R3 release for `data
@@ -98,6 +102,25 @@ One line each with its cost if wrong (as the ledger states it).
   it, with the pre-check skipped once such a job started; STOP fixtures for the wrappers' old-locator count, leftovers
   after `--yes` and the step-4 pre-check; deploy.md names which script needs which file; s2/s3 `--resume` (already
   done + remaining = step 1's counts) after a STOP mid `--yes`; review M6 accepted as R16. Cost: none.
+- R19: the closing fix wave's concerns accepted: `--resume` assumes one rebuilt row per target and no other rebuild
+  between s0 and s2 (true by construction); an expected.json from an older s0 is refused; s3 `--resume` bounds
+  `withoutReplacement` from above; a step-4 STOP is recovered by hand per deploy.md. Cost: none.
+- Task 7 Step 1 (f46f615): flatdiff gains a `ratio` bound `[lo, hi]` (holds when both values are numbers and lo <=
+  new/old <= hi; a bounded path that turns null fails), N4 class S's pin.
+- R20 (final review I1): AERO is 44 notRebuildable (before `rebuild_from` 2026-11-10) + 1 rebuilt: the
+  2026-11-10T00:45Z CoinGecko row is rebuilt with the on-chain definition prod itself used 3 h later (first
+  `contract_state` row 2026-11-10T03:31Z, 691.5M); docs say 44 + 1, the scripts read the counts from step 1. Cost: one
+  AERO day's market cap from the on-chain read instead of none.
+- R21 (final review I2): HYPE's and PUMP's class S paths (`marketCap`, `multiples.mcapTo*`, `perToken.*` per
+  circulating) become null at D after the purge (no circulating row at or before D's as-of; history starts on the
+  release day, N2): their allowlist entries are `"new": null` pins (Task 7 writes the allowlist), the signed table
+  shows `-> null`; D-91 unchanged for all; s4 unchanged (fails closed on anything else). Cost: none (the table states
+  it).
+- Final review fixes (one docs/tools commit): R20/R21 in the plan and deploy.md; the soak names the three real WATCH
+  lines (`ORION WATCH CRV: circulating_gap_curve ...`, `ORION WATCH LINK: circulating_gap_chainlink ...`, `ORION WATCH
+  PUMP: reserved_balance ...`); s3 compares the purge's `withoutReplacement` with step 1's every-status count of the
+  notRebuildable `market_data` rows (`mdWithoutReplacementAll`; the purge lists superseded rows too), with a
+  superseded-row fixture; the LIT `locked_schedule` citation is in the sources register. Cost: none.
 
 ## Deferred (minor) findings
 
@@ -106,7 +129,8 @@ One line each with its cost if wrong (as the ledger states it).
 - Task 1-3: `isName` defined three times (evm, hype, solana).
 - Task 1-3: hype detail prints tiny spot balances in JS exponent form.
 - Task 1-3: solana supply and owner balances read at different slots (detail records each).
-- Task 1-3: `locked_schedule` citation URL not in the sources register.
+- ~~Task 1-3: `locked_schedule` citation URL not in the sources register.~~ **Done in the final review fixes**
+  (`chain.view_sum` lists it; the `x.com` row names `lit: adapter chain.view_sum`).
 - Task 1-3: `view_sum` with `locked_schedule` accepts exactly 0 (hype/solana refuse 0).
 - Task 4: `ownersBalance` resolves owners before validating (load-time check covers it).
 - Task 4: `schema.ts` imports from the ingest layer (precedent in load.ts).
