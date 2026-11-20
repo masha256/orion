@@ -21,7 +21,12 @@ Scoping (measured 2026-11-19, measured/claimed marked, CoinGecko dev-only): `~/.
 (`README.md` = the table and decisions' numbers; `code-and-data.md`; per asset `crv-wrappers.md`, `link-uni.md`,
 `sky-lit.md`, `cake-vvv-aero.md`, `hype-pump.md`). **Every address in this plan's YAML work is copied from those files.**
 
-**Status:** DRAFT for Mike's review (decisions N1-N6 owed). Base recorded 2026-11-19: `feat/phase3-r3-supply` =
+**Status:** APPROVED by Mike 2026-11-20 (#orion-dev): "all recommendations" = N1 as recommended (N1a staking rule;
+N1b CRV treasury out, grant escrows in; N1c wrapper treasuries out, yCRV `times`; N1d PUMP option B 403.51B; N1e CAKE
+option B 315.73M; N1f-N1j as recommended), N2 A (rebuild EVM incl. wrappers, purge; HYPE/PUMP/AERO pre-11-10 purged
+without replacement), N3 keep exports on venus, leave orion-data history, N4 classes S/L/G as written (R43), N5 CRV +
+LINK + PUMP checks as WATCH lines, N6 stage sql-ro done, one more re-run at the R3 release; execution subagent-driven.
+Earlier: DRAFT (decisions N1-N6 owed). Base recorded 2026-11-19: `feat/phase3-r3-supply` =
 GitHub main **06955e0** (fetched over HTTPS, `git merge --ff-only FETCH_HEAD`: already up to date) + this plan's
 commits only. No build, merge, stage or prod work before Mike approves the plan.
 
