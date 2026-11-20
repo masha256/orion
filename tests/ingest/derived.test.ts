@@ -136,7 +136,8 @@ describe('level_gap_pct', () => {
 
   // Task 4 review I1: a first-party side (LINK's supply.chain.link) is the only metric of its monitor-only source. When
   // it fails every run, the gap only skips with a note; the source's failure streak is the signal, so a source that
-  // feeds a watched metric, or a side of a watched gap, is not exempt from it as a monitor-only source.
+  // feeds a side of a watched gap is not exempt from it as a monitor-only source. Ruling R14: only those sides; a plain
+  // watched monitor-only metric (LIT's app_fee_share, PUMP's reserved_balance) stays exempt as before.
   describe('the failure streak of a source that feeds a watched check', () => {
     const ISSUER_URL = 'https://issuer.test/supply';
     const ISSUER_ID = `http_json:${ISSUER_URL}`;
@@ -158,8 +159,15 @@ describe('level_gap_pct', () => {
       expect(await streaks(withIssuer('', ', watch: { outside: [ -0.5, 0.5 ] }'))).toEqual([[], [], [`${ISSUER_ID} advisory`]]);
     });
 
-    it('raises it for a source whose own monitor-only metric has a watch', async () => {
-      expect(await streaks(withIssuer(', watch: { change_pct: 1 }', ''))).toEqual([[], [], [`${ISSUER_ID} advisory`]]);
+    it('raises none for a watched monitor-only metric that is no side of a watched gap (Ruling R14)', async () => {
+      const noGap = INGEST_ASSET_YAML.replace(
+        '  staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }',
+        `  staker_emission_share: { type: level, unit: ratio, staleness_days: 30 }\n${ISSUER.replace('%WATCH%', ', watch: { change_pct: 1 }').trimEnd()}`,
+      );
+      expect(noGap).not.toBe(INGEST_ASSET_YAML);
+      expect(await streaks(noGap)).toEqual([[], [], []]);
+      // Its own watch on a side of an unwatched gap does not un-exempt it either.
+      expect(await streaks(withIssuer(', watch: { change_pct: 1 }', ''))).toEqual([[], [], []]);
     });
 
     it('raises none when neither the side nor its gap has a watch (plain report data stays exempt)', async () => {

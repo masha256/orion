@@ -685,10 +685,10 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
   }
 
   // Failure streaks: this run plus the two previous attempts of the same source. A source that feeds only monitor-only
-  // metrics raises none: it feeds report data only, so a streak alert over it would only be noise. A watched check is not
-  // report data (Task 4 review I1): a source is not exempt when a metric it writes has a watch, or is a side (a or b) of
-  // a level_gap_pct with a watch, since a side that fails every run only skips the gap with a note (LINK's
-  // supply.chain.link) and its streak is then the only signal.
+  // metrics raises none: it feeds report data only, so a streak alert over it would only be noise. Task 4 review I1 and
+  // Ruling R14: a source is not exempt when a metric it writes is a side (a or b) of a level_gap_pct with a watch, since
+  // a side that fails every run only skips the gap with a note (LINK's supply.chain.link) and its streak is then the only
+  // signal. A plain watched monitor-only metric (LIT's app_fee_share, PUMP's reserved_balance) stays exempt as before.
   const metricsOfSource = new Map<string, string[]>();
   for (const b of plan.batches) metricsOfSource.set(b.sourceId, [...(metricsOfSource.get(b.sourceId) ?? []), ...b.requests.map((r) => r.metricKey)]);
   for (const g of plan.flowGroups) metricsOfSource.set(g.sourceId, [...(metricsOfSource.get(g.sourceId) ?? []), ...g.members.map((m) => m.metricKey)]);
@@ -701,7 +701,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     if (d.watch === undefined || d.source?.type !== 'derived' || d.source.name !== 'level_gap_pct') continue;
     for (const side of [d.source.params?.a, d.source.params?.b]) if (typeof side === 'string') watchedSides.add(side);
   }
-  const exempt = (k: string) => asset.metrics[k]?.monitor_only === true && asset.metrics[k].watch === undefined && !watchedSides.has(k);
+  const exempt = (k: string) => asset.metrics[k]?.monitor_only === true && !watchedSides.has(k);
   const monitorOnly = (id: string) => {
     const keys = metricsOfSource.get(id) ?? [];
     return keys.length > 0 && keys.every(exempt);
