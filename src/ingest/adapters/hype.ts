@@ -59,28 +59,45 @@ async function totalStake(ctx: SourceContext, params: Record<string, unknown>): 
   return { stake, validators: reply.length };
 }
 
+type Row = Record<string, unknown>;
+const row = (v: unknown): Row | null => (v !== null && typeof v === 'object' ? (v as Row) : null);
+
+/** The spot meta and the pairs' contexts, from one `spotMetaAndAssetCtxs` request. */
+async function spotMeta(ctx: SourceContext, params: Record<string, unknown>): Promise<{ tokens: (Row | null)[]; universe: (Row | null)[]; contexts: (Row | null)[] }> {
+  const reply = await ctx.http.postJson(infoUrl(ctx, params), { type: 'spotMetaAndAssetCtxs' });
+  if (!Array.isArray(reply) || reply.length < 2 || reply[0] === null || typeof reply[0] !== 'object' || !Array.isArray(reply[1])) {
+    throw new Error("spotMetaAndAssetCtxs: the info API's reply is not a [meta, contexts] pair");
+  }
+  const meta = reply[0] as Row;
+  return {
+    tokens: Array.isArray(meta.tokens) ? meta.tokens.map(row) : [],
+    universe: Array.isArray(meta.universe) ? meta.universe.map(row) : [],
+    contexts: (reply[1] as unknown[]).map(row),
+  };
+}
+
+/** The context of the token's pair against the quote token (USDC, index 0, by default). */
+function pairContext(spot: Awaited<ReturnType<typeof spotMeta>>, token: Row & { index: number; name: string }, quote: number): { context: Row; pair: string } {
+  const pair = spot.universe.find((p) => Array.isArray(p?.tokens) && p.tokens[0] === token.index && p.tokens[1] === quote);
+  if (!pair || typeof pair.name !== 'string') throw new Error(`spotMetaAndAssetCtxs: no pair of ${token.name} (token ${token.index}) against quote token ${quote}`);
+  const context = spot.contexts.find((c) => c?.coin === pair.name);
+  if (!context) throw new Error(`spotMetaAndAssetCtxs: no context for pair ${pair.name}`);
+  return { context, pair: pair.name };
+}
+
+const isToken = (t: Row | null | undefined): t is Row & { index: number; name: string } => !!t && typeof t.index === 'number' && typeof t.name === 'string';
+
 /**
  * The token's total supply, from the spot meta: the token's pair against the quote (USDC, index 0) carries `totalSupply`.
  * The `tokenDetails` reply carries it too, but with 94,023 genesis balances (5 MB), which a slow link cannot finish
  * inside any sane timeout; the spot meta is 300 KB.
  */
 async function totalSupply(ctx: SourceContext, params: Record<string, unknown>, tokenId: string): Promise<{ total: number; symbol: string; pair: string }> {
-  const reply = await ctx.http.postJson(infoUrl(ctx, params), { type: 'spotMetaAndAssetCtxs' });
-  if (!Array.isArray(reply) || reply.length < 2 || reply[0] === null || typeof reply[0] !== 'object' || !Array.isArray(reply[1])) {
-    throw new Error("spotMetaAndAssetCtxs: the info API's reply is not a [meta, contexts] pair");
-  }
-  const meta = reply[0] as Record<string, unknown>;
-  const row = (v: unknown): Record<string, unknown> | null => (v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : null);
-  const tokens = Array.isArray(meta.tokens) ? meta.tokens.map(row) : [];
-  const token = tokens.find((t) => typeof t?.tokenId === 'string' && t.tokenId.toLowerCase() === tokenId.toLowerCase());
-  if (!token || typeof token.index !== 'number' || typeof token.name !== 'string') throw new Error(`spotMetaAndAssetCtxs: no token with id ${tokenId}`);
-  const quote = number(params, 'quote_index', 0);
-  const universe = Array.isArray(meta.universe) ? meta.universe.map(row) : [];
-  const pair = universe.find((p) => Array.isArray(p?.tokens) && p.tokens[0] === token.index && p.tokens[1] === quote);
-  if (!pair || typeof pair.name !== 'string') throw new Error(`spotMetaAndAssetCtxs: no pair of ${token.name} (token ${token.index}) against quote token ${quote}`);
-  const context = (reply[1] as unknown[]).map(row).find((c) => c?.coin === pair.name);
-  if (!context) throw new Error(`spotMetaAndAssetCtxs: no context for pair ${pair.name}`);
-  return { total: amount(context.totalSupply, `${pair.name} totalSupply`), symbol: token.name, pair: pair.name };
+  const spot = await spotMeta(ctx, params);
+  const token = spot.tokens.find((t) => typeof t?.tokenId === 'string' && t.tokenId.toLowerCase() === tokenId.toLowerCase());
+  if (!isToken(token)) throw new Error(`spotMetaAndAssetCtxs: no token with id ${tokenId}`);
+  const { context, pair } = pairContext(spot, token, number(params, 'quote_index', 0));
+  return { total: amount(context.totalSupply, `${pair} totalSupply`), symbol: token.name, pair };
 }
 
 /** One address's balance of the token from its clearinghouse state; an address holding none has no entry and counts as zero. */
@@ -91,6 +108,79 @@ async function balanceAt(ctx: SourceContext, params: Record<string, unknown>, na
   // A fund emptied by a vote shows as a supply jump the deviation trigger sees, not as a failed read.
   return entry ? amount(entry.total, `the ${symbol} balance at ${name}`) : 0;
 }
+
+/**
+ * One address's stake from its `delegatorSummary`: delegated, undelegated (in the staking account, not delegated) and
+ * pending withdrawals (the 7-day unstaking queue), all still the address's HYPE. An address Hyperliquid has never seen
+ * answers zeros (or nothing): zero, not an error.
+ */
+async function stakedAt(ctx: SourceContext, params: Record<string, unknown>, name: string, address: string): Promise<{ delegated: number; undelegated: number; pending: number }> {
+  const reply = await ctx.http.postJson(infoUrl(ctx, params), { type: 'delegatorSummary', user: address });
+  if (reply === null || (typeof reply === 'object' && !Array.isArray(reply) && Object.keys(reply).length === 0)) return { delegated: 0, undelegated: 0, pending: 0 };
+  if (typeof reply !== 'object' || Array.isArray(reply)) throw new Error(`delegatorSummary ${name}: the info API's reply is not an object`);
+  const r = reply as Row;
+  const part = (key: string): number => {
+    const n = amount(r[key], `delegatorSummary ${name}'s ${key}`);
+    if (n < 0) throw new Error(`delegatorSummary ${name}'s ${key} is negative (${n})`);
+    return n;
+  };
+  return { delegated: part('delegated'), undelegated: part('undelegated'), pending: part('totalPendingWithdrawal') };
+}
+
+/** Contract names to subtract, from params.subtract (validated at load; checked again here for a direct run). */
+function subtractNames(params: Record<string, unknown>): string[] {
+  if (!Array.isArray(params.subtract)) throw new Error('params.subtract must be an array of contract names');
+  const names = params.subtract.filter((n): n is string => typeof n === 'string');
+  if (names.length !== params.subtract.length) throw new Error('params.subtract must contain only strings (contract names)');
+  return names;
+}
+
+const isName = (x: unknown): x is string => typeof x === 'string' && /^[a-z0-9_]+$/.test(x);
+const CIRCULATING_TOKEN = 'HYPE';
+
+/**
+ * Hyperliquid's own circulating figure (the HYPE/USDC pair context's `circulatingSupply` in `spotMetaAndAssetCtxs`, the
+ * same reply `hype.total_supply` reads: totalSupply less Hyperliquid's non-circulating balances and future emissions)
+ * less every named address's spot balance and stake (Phase 3 R3, decision N1g: the Hyper Foundation budget and the
+ * community-grants wallets, which hold nearly all of it staked). HYPE's token and pair come from the meta by name, never
+ * a hard-coded index. 1 + 2 x N requests; refused when the result is not positive.
+ */
+const circulatingSupply: AdapterDef = {
+  name: 'hype.circulating_supply',
+  needsRpc: false,
+  paramsDoc:
+    "subtract: contract names (the wallets to take out), url?: the info API (default the asset's external_ids.hyperliquid_info, else https://api.hyperliquid.xyz/info). Hyperliquid's circulatingSupply of the HYPE/USDC pair less each wallet's spot total (spotClearinghouseState) and stake (delegatorSummary: delegated + undelegated + totalPendingWithdrawal); refused when not positive.",
+  validateParams(p) {
+    const out = Object.keys(p).filter((k) => k !== 'subtract' && k !== 'url').map((k) => `unknown param "${k}"`);
+    if (!Array.isArray(p.subtract) || p.subtract.length === 0 || !p.subtract.every(isName)) out.push('subtract must be a non-empty list of contract names');
+    else if (new Set(p.subtract).size !== p.subtract.length) out.push('subtract must not name a contract twice');
+    if (p.url !== undefined && !(typeof p.url === 'string' && /^https:\/\/\S+$/.test(p.url))) out.push('url must be an https URL');
+    return out;
+  },
+  async run(ctx, params) {
+    const names = subtractNames(params);
+    const addresses = names.map((n) => ctx.contract(n)); // an unknown name is a configuration error and propagates
+    const spot = await spotMeta(ctx, params);
+    const hype = spot.tokens.filter((t) => t?.name === CIRCULATING_TOKEN);
+    if (hype.length !== 1) throw new Error(`spotMetaAndAssetCtxs: ${hype.length === 0 ? 'no token' : `${hype.length} tokens`} named ${CIRCULATING_TOKEN}`);
+    const token = hype[0];
+    if (!isToken(token)) throw new Error(`spotMetaAndAssetCtxs: the ${CIRCULATING_TOKEN} token has no index`);
+    const { context, pair } = pairContext(spot, token, 0);
+    const circ = amount(context.circulatingSupply, `${pair} circulatingSupply`);
+    let subtracted = 0;
+    const parts: string[] = [];
+    for (const [i, name] of names.entries()) {
+      const held = await balanceAt(ctx, params, name, addresses[i], token.name);
+      const s = await stakedAt(ctx, params, name, addresses[i]);
+      const stake = s.delegated + s.undelegated + s.pending;
+      subtracted += held + stake;
+      parts.push(`${name} spot ${held} staked ${stake} (delegated ${s.delegated}, undelegated ${s.undelegated}, pending withdrawal ${s.pending})`);
+    }
+    const value = circ - subtracted;
+    if (!(value > 0)) throw new Error(`circulating supply ${value} is not positive (Hyperliquid's ${circ}, subtracted ${subtracted})`);
+    return api(ctx, value, `spotMetaAndAssetCtxs ${pair} (${token.name}): circulating ${circ} less ${subtracted} = ${parts.join('; ')}`);
+  },
+};
 
 /** Total supply less the token held at the named addresses: the fund and the dead addresses. Four small requests, cached per run. */
 const totalSupplyLessHeld: AdapterDef = {
@@ -303,4 +393,4 @@ const reserveYieldPayments: AdapterDef = {
   },
 };
 
-export const hypeAdapters: AdapterDef[] = [totalSupplyLessHeld, stakedSupply, emissionRateAnnual, fundBuysDaily, reserveYieldPayments];
+export const hypeAdapters: AdapterDef[] = [totalSupplyLessHeld, circulatingSupply, stakedSupply, emissionRateAnnual, fundBuysDaily, reserveYieldPayments];

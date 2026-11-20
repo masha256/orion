@@ -36,6 +36,7 @@ export const ADAPTER_SOURCE_TYPES: Readonly<Record<string, SourceType>> = {
   'chain.cl_pool_spot_price': 'contract_state',
   'crv.emission_rate_annual': 'contract_state',
   'hype.total_supply': 'first_party_api',
+  'hype.circulating_supply': 'first_party_api',
   'hype.staked_supply': 'first_party_api',
   'hype.emission_rate_annual': 'first_party_api',
   'hype.fund_buys_daily': 'first_party_api',

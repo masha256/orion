@@ -86,6 +86,7 @@ export const ADAPTER_ENDPOINTS: Record<string, (params: AdapterParams, asset: As
   'vvv.burn_history_tokens': (p) => [http(str(p, 'url', ''))],
   // The Hyperliquid info URL: params.url, else the asset's external_ids.hyperliquid_info, else the default.
   'hype.total_supply': (p, a) => [http(str(p, 'url', a.external_ids.hyperliquid_info ?? HYPERLIQUID_INFO))],
+  'hype.circulating_supply': (p, a) => [http(str(p, 'url', a.external_ids.hyperliquid_info ?? HYPERLIQUID_INFO))],
   'hype.staked_supply': (p, a) => [http(str(p, 'url', a.external_ids.hyperliquid_info ?? HYPERLIQUID_INFO))],
   'hype.emission_rate_annual': (p, a) => [http(str(p, 'url', a.external_ids.hyperliquid_info ?? HYPERLIQUID_INFO))],
   'hype.fund_buys_daily': (p, a) => [http(str(p, 'url', a.external_ids.hyperliquid_info ?? HYPERLIQUID_INFO))],

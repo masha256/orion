@@ -145,6 +145,16 @@ const SAMPLES: Record<string, () => Promise<SourceValue>> = {
     return getAdapter('crv.emission_rate_annual').run(sourceCtx({ rpc, block: await rpc.latestBlock(), contract: () => crv }), {});
   },
   'hype.total_supply': async () => getAdapter('hype.total_supply').run(hypeCtx('2026-09-24T12:00:00.000Z', hypeInfo), {}),
+  'hype.circulating_supply': async () =>
+    getAdapter('hype.circulating_supply').run(
+      hypeCtx('2026-11-19T12:00:00.000Z', (u, body) => {
+        const { type } = body as { type: string };
+        if (type === 'spotClearinghouseState') return { balances: [{ coin: 'HYPE', total: '1000' }] };
+        if (type === 'delegatorSummary') return { delegated: '60642286.11', undelegated: '0.0', totalPendingWithdrawal: '0.0', nPendingWithdrawals: 0 };
+        return hypeInfo(u, body);
+      }),
+      { subtract: ['assistance_fund'] },
+    ),
   'hype.staked_supply': async () => getAdapter('hype.staked_supply').run(hypeCtx('2026-09-24T12:00:00.000Z', hypeInfo), {}),
   'hype.emission_rate_annual': async () => getAdapter('hype.emission_rate_annual').run(hypeCtx('2026-09-24T12:00:00.000Z', hypeInfo), {}),
   'hype.fund_buys_daily': async () => {

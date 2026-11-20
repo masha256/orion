@@ -60,7 +60,7 @@ const WRITERS: Shape[] = [
   ['third_party llama.box', { method: 'measured', sourceType: 'third_party', locator: { endpoint: 'https://api.llama.box/x', path: 'a' }, formula: null }, 'api'],
   ['pre-v2 rule 5 api', { method: 'measured', sourceType: 'first_party_api', locator: { note: 'written by a source this release no longer reads' }, formula: null }, 'api'],
   // The other first-party adapters (levels and flows).
-  ...['hype.total_supply', 'hype.staked_supply', 'hype.emission_rate_annual', 'hype.reserve_yield_payments', 'lit.treasury_buys_daily', 'lit.exchange_fees_daily', 'lit.app_fee_share', 'lit.staking_pool', 'vvv.staker_share_from_api'].map(
+  ...['hype.total_supply', 'hype.circulating_supply', 'hype.staked_supply', 'hype.emission_rate_annual', 'hype.reserve_yield_payments', 'lit.treasury_buys_daily', 'lit.exchange_fees_daily', 'lit.app_fee_share', 'lit.staking_pool', 'vvv.staker_share_from_api'].map(
     (n): Shape => [n, { method: 'measured', sourceType: 'first_party_api', locator: { adapter: n, params: {} }, formula: null }, 'api'],
   ),
   ['chain.cl_pool_spot_price', adapter('chain.cl_pool_spot_price'), 'onchain'],

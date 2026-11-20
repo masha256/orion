@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { adapterNames, getAdapter } from '../../src/ingest/adapters/registry.js';
+import { ADAPTER_SOURCE_TYPES } from '../../src/report/sourceTypes.js';
 import { fakeHttp, type Route } from '../helpers/fakeHttp.js';
 import { ingestAsset } from '../helpers/ingestAsset.js';
 import { NOW_ISO, sourceCtx } from '../helpers/sourceCtx.js';
@@ -15,7 +16,7 @@ const FUND = '0xfefefefefefefefefefefefefefefefefefefefe';
 const recorded = (name: string): Record<string, unknown> | unknown[] =>
   JSON.parse(readFileSync(fileURLToPath(new URL(`../fixtures/hype/${name}.json`, import.meta.url)), 'utf8')) as Record<string, unknown> | unknown[];
 type Meta = { tokens: { name: string; index: number; tokenId: string }[]; universe: { tokens: number[]; name: string }[] };
-type Ctx = { coin: string; totalSupply: string };
+type Ctx = { coin: string; totalSupply: string; circulatingSupply?: unknown };
 type State = { balances: { coin: string; total: string }[] };
 const spotMeta = recorded('spotMetaAndAssetCtxs') as [Meta, Ctx[]];
 const validators = recorded('validatorSummaries') as { stake: number }[];
@@ -24,12 +25,13 @@ const DEAD = '0x000000000000000000000000000000000000dead';
 const states: Record<string, State> = Object.fromEntries([FUND, ZERO, DEAD].map((a) => [a, recorded(`spotClearinghouseState-${a}`) as State]));
 
 /** One URL answers by request type, as the real API does. */
-/** `over` keys: a request type, or `spotClearinghouseState:<address>` for one address's state. */
+/** `over` keys: a request type, or `spotClearinghouseState:<address>` / `delegatorSummary:<address>` for one address's reply. */
 const info = (over: Record<string, Route> = {}): Route => (_url: string, body?: unknown) => {
   const { type = '', user = '' } = (body as { type?: string; user?: string } | undefined) ?? {};
-  const key = type === 'spotClearinghouseState' ? `${type}:${user.toLowerCase()}` : type;
+  const key = type === 'spotClearinghouseState' || type === 'delegatorSummary' ? `${type}:${user.toLowerCase()}` : type;
   const defaults: Record<string, unknown> = { spotMetaAndAssetCtxs: spotMeta, validatorSummaries: validators };
-  const route = over[key] ?? over[type] ?? (type === 'spotClearinghouseState' ? states[user.toLowerCase()] : defaults[type]);
+  // `in`, not `??`: a route may answer null (an address Hyperliquid has never seen).
+  const route = key in over ? over[key] : type in over ? over[type] : type === 'spotClearinghouseState' ? states[user.toLowerCase()] : defaults[type];
   if (route === undefined) throw new Error(`no fixture for ${type}`);
   if (route instanceof Error) throw route;
   return typeof route === 'function' ? (route as (u: string, b?: unknown) => unknown)(_url, body) : structuredClone(route);
@@ -180,5 +182,135 @@ describe('HYPE adapters', () => {
     const exp05 = await getAdapter('hype.emission_rate_annual').run(ctxWith().ctx, { exponent: 0.5 });
     expect(exp1.kind === 'level' && exp1.value).not.toBeCloseTo(exp05.kind === 'level' && exp05.value ? exp05.value : 0, 3);
     expect(exp025.kind === 'level' && exp025.value).not.toBeCloseTo(exp05.kind === 'level' && exp05.value ? exp05.value : 0, 3);
+  });
+});
+
+// Phase 3 R3 Task 2: Hyperliquid's own circulating figure less the two genesis wallets (spot + staked). Figures from the
+// scoping read of 2026-11-19 (hype-pump.md; the brief's fixture): circ 301,557,370.473276; the Hyper Foundation budget
+// wallet holds 0.00000044 spot and 60,642,286.11 staked, the community-grants wallet 2,979,878.37.
+describe('hype.circulating_supply', () => {
+  const FOUNDATION = '0xd57ecca444a9acb7208d286be439de12dd09de5d';
+  const GRANTS = '0xa20fcfa0507fe762011962cc581b95bbbc3bbdba';
+  const GENESIS = { hyper_foundation: FOUNDATION, community_grants: GRANTS };
+  const CIRC = '301557370.473276';
+  const meta = (circ: unknown = CIRC): [Meta, Ctx[]] => {
+    const [m, ctxs] = structuredClone(spotMeta);
+    return [m, ctxs.map((c) => (c.coin === '@107' ? { ...c, circulatingSupply: circ } : c)) as Ctx[]];
+  };
+  const spot = (total: string | null): State => ({ balances: total === null ? [] : [{ coin: 'HYPE', total }, { coin: 'USDC', total: '12.5' }] as State['balances'] });
+  const staked = (delegated: string, undelegated = '0.0', pending = '0.0') => ({ delegated, undelegated, totalPendingWithdrawal: pending, nPendingWithdrawals: pending === '0.0' ? 0 : 1 });
+  const replies = (over: Record<string, Route> = {}): Record<string, Route> => ({
+    spotMetaAndAssetCtxs: meta(),
+    [`spotClearinghouseState:${FOUNDATION}`]: spot('0.00000044'),
+    [`delegatorSummary:${FOUNDATION}`]: staked('60642286.11'),
+    [`spotClearinghouseState:${GRANTS}`]: spot(null),
+    [`delegatorSummary:${GRANTS}`]: staked('2979878.37'),
+    ...over,
+  });
+  function genesisCtx(over: Record<string, Route> = {}, external: Record<string, string> = { hyperliquid_info: INFO }) {
+    const http = fakeHttp({ [INFO]: info(replies(over)), 'https://other.test/info': info(replies(over)) });
+    const asset = { ...ingestAsset().config, contracts: GENESIS, external_ids: external };
+    return { ctx: sourceCtx({ http, asset, contract: (name) => GENESIS[name as keyof typeof GENESIS] ?? (() => { throw new Error(`no contract ${name}`); })() }), http };
+  }
+  const SUB = { subtract: ['hyper_foundation', 'community_grants'] };
+  const run = (over: Record<string, Route> = {}, params: Record<string, unknown> = SUB) => getAdapter('hype.circulating_supply').run(genesisCtx(over).ctx, params);
+  const valueOf = async (over: Record<string, Route> = {}, params: Record<string, unknown> = SUB) => {
+    const v = await run(over, params);
+    if (v.kind !== 'level') throw new Error(v.kind);
+    return v.value;
+  };
+
+  it('is registered on the first-party rung and needs no chain', () => {
+    expect(adapterNames()).toContain('hype.circulating_supply');
+    expect(getAdapter('hype.circulating_supply').needsRpc).toBe(false);
+    expect(ADAPTER_SOURCE_TYPES['hype.circulating_supply']).toBe('first_party_api');
+  });
+
+  it('is circulatingSupply of the HYPE/USDC pair less each wallet\'s spot and stake: 301,557,370 - (60,642,286 + 2,979,878) = 237,935,206', async () => {
+    const { ctx, http } = genesisCtx();
+    const v = await getAdapter('hype.circulating_supply').run(ctx, SUB);
+    expect(v).toMatchObject({ kind: 'level', source: 'api', observedAt: NOW_ISO });
+    // 301557370.473276 - 0.00000044 - 60642286.11 - 2979878.37, by hand.
+    expect(v.kind === 'level' && v.value).toBeCloseTo(237_935_205.99327556, 6);
+    expect(v.kind === 'level' && v.value).toBeCloseTo(237_935_206, 0);
+    expect(v.detail).toBe(
+      'spotMetaAndAssetCtxs @107 (HYPE): circulating 301557370.473276 less 63622164.48000044 = ' +
+        'hyper_foundation spot 4.4e-7 staked 60642286.11 (delegated 60642286.11, undelegated 0, pending withdrawal 0); ' +
+        'community_grants spot 0 staked 2979878.37 (delegated 2979878.37, undelegated 0, pending withdrawal 0)',
+    );
+    expect(http.calls).toEqual([
+      CALL({ type: 'spotMetaAndAssetCtxs' }),
+      CALL({ type: 'spotClearinghouseState', user: FOUNDATION }),
+      CALL({ type: 'delegatorSummary', user: FOUNDATION }),
+      CALL({ type: 'spotClearinghouseState', user: GRANTS }),
+      CALL({ type: 'delegatorSummary', user: GRANTS }),
+    ]);
+  });
+
+  it('counts a wallet holding spot only, staked only (undelegated too), or a pending withdrawal; an unknown wallet is 0 (Review Focus 4)', async () => {
+    const circ = Number(CIRC);
+    const zero = staked('0.0');
+    const only = (spotTotal: string | null, summary: unknown) => ({
+      [`spotClearinghouseState:${FOUNDATION}`]: spotTotal === null ? { balances: [] } : spot(spotTotal),
+      [`delegatorSummary:${FOUNDATION}`]: summary,
+    });
+    const one = { subtract: ['hyper_foundation'] };
+    expect(await valueOf(only('1000.5', zero), one)).toBeCloseTo(circ - 1000.5, 6);
+    expect(await valueOf(only(null, staked('2000', '300')), one)).toBeCloseTo(circ - 2300, 6);
+    expect(await valueOf(only(null, staked('0.0', '0.0', '450.25')), one)).toBeCloseTo(circ - 450.25, 6);
+    expect(await valueOf(only('1', staked('2', '3', '4')), one)).toBeCloseTo(circ - 10, 6);
+    // An address Hyperliquid has never seen: no balances, and a zero (or empty) staking summary. Zero, not an error.
+    expect(await valueOf(only(null, zero), one)).toBeCloseTo(circ, 6);
+    expect(await valueOf(only(null, {}), one)).toBeCloseTo(circ, 6);
+    expect(await valueOf(only(null, null), one)).toBeCloseTo(circ, 6);
+  });
+
+  it('finds HYPE by name and its USDC pair in the meta (not a hard-coded @107), and takes the URL from params or the external ids', async () => {
+    // HYPE re-indexed as token 151 on pair @300: the adapter follows the meta.
+    const [m, ctxs] = meta();
+    const moved: [Meta, Ctx[]] = [
+      { tokens: m.tokens.map((t) => (t.name === 'HYPE' ? { ...t, index: 151 } : t)), universe: m.universe.map((p) => (p.name === '@107' ? { ...p, tokens: [151, 0], name: '@300' } : p)) },
+      ctxs.map((c) => (c.coin === '@107' ? { ...c, coin: '@300' } : c)),
+    ];
+    const v = await run({ spotMetaAndAssetCtxs: moved });
+    expect(v.kind === 'level' && v.value).toBeCloseTo(237_935_205.99327556, 6);
+    expect(v.detail).toMatch(/^spotMetaAndAssetCtxs @300 \(HYPE\): /);
+    const { ctx, http } = genesisCtx({}, {});
+    await getAdapter('hype.circulating_supply').run(ctx, { ...SUB, url: 'https://other.test/info' });
+    expect(new Set(http.calls.map((c) => c.url))).toEqual(new Set(['https://other.test/info']));
+    const byDefault = genesisCtx({}, {});
+    await getAdapter('hype.circulating_supply').run(byDefault.ctx, SUB);
+    expect(new Set(byDefault.http.calls.map((c) => c.url))).toEqual(new Set([INFO]));
+  });
+
+  it('refuses a meta without HYPE, a missing circulatingSupply, a malformed balance or stake, and a result that is not positive', async () => {
+    const [m, ctxs] = meta();
+    await expect(run({ spotMetaAndAssetCtxs: [{ ...m, tokens: m.tokens.filter((t) => t.name !== 'HYPE') }, ctxs] })).rejects.toThrow(/no token named HYPE/);
+    await expect(run({ spotMetaAndAssetCtxs: [{ ...m, tokens: [...m.tokens, { ...m.tokens.find((t) => t.name === 'HYPE')!, index: 999 }] }, ctxs] })).rejects.toThrow(/2 tokens named HYPE/);
+    await expect(run({ spotMetaAndAssetCtxs: [{ ...m, universe: [] }, ctxs] })).rejects.toThrow(/no pair of HYPE \(token 150\) against quote token 0/);
+    await expect(run({ spotMetaAndAssetCtxs: [m, ctxs.map(({ circulatingSupply: _c, ...c }) => c)] })).rejects.toThrow(/@107 circulatingSupply is missing or not a number/);
+    await expect(run({ spotMetaAndAssetCtxs: meta('lots') })).rejects.toThrow(/@107 circulatingSupply is missing or not a number/);
+    await expect(run({ spotMetaAndAssetCtxs: { tokens: [] } })).rejects.toThrow(/not a \[meta, contexts\] pair/);
+    await expect(run({ [`spotClearinghouseState:${FOUNDATION}`]: { balances: 'nope' } })).rejects.toThrow(/spotClearinghouseState hyper_foundation: balances is missing/);
+    await expect(run({ [`delegatorSummary:${FOUNDATION}`]: { delegated: '1', undelegated: '0' } })).rejects.toThrow(/hyper_foundation's totalPendingWithdrawal is missing or not a number/);
+    await expect(run({ [`delegatorSummary:${FOUNDATION}`]: { ...staked('x') } })).rejects.toThrow(/hyper_foundation's delegated is missing or not a number/);
+    await expect(run({ [`delegatorSummary:${FOUNDATION}`]: { ...staked('-1') } })).rejects.toThrow(/hyper_foundation's delegated is negative/);
+    await expect(run({ [`delegatorSummary:${FOUNDATION}`]: [] })).rejects.toThrow(/delegatorSummary hyper_foundation: the info API's reply is not an object/);
+    await expect(run({ [`delegatorSummary:${FOUNDATION}`]: staked('301557370.473276') })).rejects.toThrow(/circulating supply .* is not positive/);
+    await expect(run({ [`delegatorSummary:${GRANTS}`]: new Error('HTTP 503') })).rejects.toThrow(/HTTP 503/);
+    await expect(run({}, { subtract: ['treasury'] })).rejects.toThrow(/no contract treasury/);
+  });
+
+  it('validates its params: subtract a non-empty list of contract names, url a string, nothing else', () => {
+    const v = getAdapter('hype.circulating_supply').validateParams!;
+    expect(v(SUB)).toEqual([]);
+    expect(v({ ...SUB, url: 'https://other.test/info' })).toEqual([]);
+    expect(v({ ...SUB, token_id: 'x' })).toEqual(['unknown param "token_id"']);
+    expect(v({})).not.toEqual([]);
+    expect(v({ subtract: [] })).not.toEqual([]);
+    expect(v({ subtract: 'hyper_foundation' })).not.toEqual([]);
+    expect(v({ subtract: ['Hyper Foundation'] })).not.toEqual([]);
+    expect(v({ subtract: ['hyper_foundation', 'hyper_foundation'] })).not.toEqual([]);
+    expect(v({ ...SUB, url: 3 })).not.toEqual([]);
   });
 });
