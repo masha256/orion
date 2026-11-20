@@ -41,18 +41,20 @@ flatdiff exits 2. Real reports use identifier keys and string ids, so their path
 ```
 
 - Keys: an asset id, or `*` (applies to every asset). Entry keys: `glob` (required), `reason` (required, non-empty),
-  `rel` / `abs` (optional, finite, >= 0), `old` / `new` (optional, any JSON value), `absent` (optional, `"old"` or
-  `"new"`), `todo` (optional bool). Any other key, a malformed value, a duplicate key
-  (an asset listed twice, say: JSON would keep only the last) or a glob that is blank or starts with `*` (a bare `*`
-  would allow everything; name the first path segment literally) exits 2.
+  `rel` / `abs` (optional, finite, >= 0), `ratio` (optional, `[lo, hi]`: two finite numbers, 0 < lo <= hi), `old` /
+  `new` (optional, any JSON value), `absent` (optional, `"old"` or `"new"`), `todo` (optional bool). Any other key, a
+  malformed value (a `ratio` that is not such a pair included), a duplicate key (an asset listed twice, say: JSON
+  would keep only the last) or a glob that is blank or starts with `*` (a bare `*` would allow everything; name the
+  first path segment literally) exits 2.
 - Glob: only `*` is special and matches any run of characters including `.` and `[...]`; brackets are literal; the
   glob must match the whole path. `incomeStatement.volume.*` does not match `incomeStatement.volume` itself (list both
   when the object itself may become null).
 - A differing path is allowed when at least one applicable entry (`<asset>`'s or `*`'s) matches it and every matching
-  entry holds. An entry without `rel`/`abs` holds for any change (added, removed, any type). A bounded entry holds only
-  for a numeric change with `|new - old| <= abs` or `|new - old| / |old| <= rel` (either, when both are given; with
-  old = 0, rel holds only when nothing changed). So a broad unbounded glob never loosens a bounded entry on the same
-  path, and a bounded path that turns null fails.
+  entry holds. An entry without `rel`/`abs`/`ratio` holds for any change (added, removed, any type). A bounded entry
+  holds only for a numeric change with `|new - old| <= abs`, `|new - old| / |old| <= rel` or `lo <= new / old <= hi`
+  (`ratio`): any one of its bounds, when several are given. The ratio is signed (old -10, new -9 is 0.9; a sign change
+  never holds); with old = 0, rel and ratio hold only when nothing changed. So a broad unbounded glob never loosens a
+  bounded entry on the same path, and a bounded path that turns null fails.
 - Value pins (any entry, checked before a bound): `old` / `new` require that side to be present and equal to the
   value (numbers by value, `2` == `2.0`; anything else by type and value, so `[]` is not `{}`; `"old": null` pins the
   value null). `"absent": "old"` requires the path to be `added`, `"absent": "new"` `removed`; `absent` naming a side
@@ -159,6 +161,15 @@ prompt). It is a record, not runnable as is: it sources the session file `$TMPDI
 `d91` and `PR`, as in deploy.md R2 step 0), writes under `~/r2-prod/`, reads the addendum from Raymond's workspace and
 runs flatdiff from the release worktree `.worktrees/rel-r2-prod` (removed after the release). Its yCRV `compare-usd`
 re-check after step 6 is the one deploy.md step 5 now documents.
+
+## R3 (circulating supply): the `ratio` bound
+
+Class S of the R3 allowlist (plan N4: the circulating-derived paths `marketCap`, `multiples.mcapTo*`,
+`perToken.{revenue,grossProfit,holderFlow.*,dilution,circulatingSupply}` on the 12 changed assets) uses `ratio`: the
+signed proof's new/old ratio +- 0.01, e.g. `{"glob": "marketCap", "ratio": [1.24, 1.26], "reason": "..."}`. It is
+relative by construction, so a multiple over a near-zero base holds where an abs floor would not; class S has no
+abs-only entry. Class L (source labels) uses exact `old`/`new` pins. The R43 lesson above still binds class G: a
+growth `.change` / `.annualized` entry, should the proof ever force one, carries the abs floor AND a rel alternative.
 
 ## Run (controller)
 

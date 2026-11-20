@@ -14,16 +14,18 @@ string ids, so their paths carry no escapes. Every path that differs is printed,
 distinction); a bool is not a number.
 
 Allowlist: {"<asset>" | "*": [{"glob": "<path glob>", "rel": <float, optional>, "abs": <float, optional>,
-"old": <JSON value, optional>, "new": <JSON value, optional>, "absent": "old" | "new" (optional),
-"reason": "<text, required>", "todo": <bool, optional>}, ...]}; top-level keys starting with `_` are comments; a
-duplicate key anywhere is refused, and so is a glob that is blank or starts with `*` (a bare `*` would allow
-everything: a glob must name at least its first path segment literally). In a
-glob only `*` is special: it matches any run of characters, `.` and `[...]` included; everything else (brackets too)
+"ratio": [<lo>, <hi>] (optional), "old": <JSON value, optional>, "new": <JSON value, optional>,
+"absent": "old" | "new" (optional), "reason": "<text, required>", "todo": <bool, optional>}, ...]}; top-level keys
+starting with `_` are comments; a duplicate key anywhere is refused, and so is a glob that is blank or starts with
+`*` (a bare `*` would allow everything: a glob must name at least its first path segment literally). In a glob only
+`*` is special: it matches any run of characters, `.` and `[...]` included; everything else (brackets too)
 is literal, and the glob must match the whole path. The entries that apply are <asset>'s and `*`'s. A differing path
 is allowed when at least one applicable entry matches it and EVERY applicable entry matching it holds:
-- an entry with no `rel`/`abs` holds for any change (added, removed, any type);
+- an entry with no `rel`/`abs`/`ratio` holds for any change (added, removed, any type);
 - an entry with a bound holds only for a numeric change (both sides numbers) with |new - old| <= abs, or
-  |new - old| / |old| <= rel (either one, when both are given; rel with old == 0 holds only when new == old).
+  |new - old| / |old| <= rel, or lo <= new / old <= hi for `ratio: [lo, hi]` (two finite numbers, 0 < lo <= hi;
+  anything else is malformed): ANY one of its bounds, when several are given. The ratio is signed (old -10, new -9 is
+  0.9; a sign change is negative and never holds); rel or ratio with old == 0 holds only when new == old.
 A value pin is checked first, on any entry: `old` / `new` require that side present and equal to the value (numbers by
 value, anything else by type and value, so `[]` is not `{}` and `null` is a real pin); `absent: "old"` requires the
 path to be added, `absent: "new"` removed (`absent` naming a side that also carries a value is refused). So
@@ -46,8 +48,9 @@ import re
 import sys
 from pathlib import Path
 
-ENTRY_KEYS = {"glob", "rel", "abs", "reason", "todo", "old", "new", "absent"}
+ENTRY_KEYS = {"glob", "rel", "abs", "ratio", "reason", "todo", "old", "new", "absent"}
 SIDES = ("old", "new")
+BOUND_KEYS = ("rel", "abs", "ratio")
 STAR = "*"
 
 
@@ -98,6 +101,12 @@ def is_bound(x):
     return is_num(x) and math.isfinite(x) and x >= 0
 
 
+def is_ratio(x):
+    """[lo, hi]: two finite numbers with 0 < lo <= hi."""
+    return (isinstance(x, list) and len(x) == 2 and all(is_num(v) and math.isfinite(v) for v in x)
+            and 0 < x[0] <= x[1])
+
+
 def load_allowlist(path):
     """{asset or '*': [entry, ...]} with every entry validated; Bad when malformed."""
     value = load_json(path, "allowlist")
@@ -125,6 +134,8 @@ def load_allowlist(path):
             for k in ("rel", "abs"):
                 if k in e and not is_bound(e[k]):
                     raise Bad(f"{where}: `{k}` must be a finite number >= 0")
+            if "ratio" in e and not is_ratio(e["ratio"]):
+                raise Bad(f"{where}: `ratio` must be [lo, hi], two finite numbers with 0 < lo <= hi")
             if "todo" in e and not isinstance(e["todo"], bool):
                 raise Bad(f"{where}: `todo` must be true or false")
             if "absent" in e:
@@ -220,7 +231,7 @@ def entry_holds(e, old, new, kind):
     if why:
         return False, why
     pinned = any(k in e for k in ("old", "new", "absent"))
-    if "rel" not in e and "abs" not in e:
+    if not any(k in e for k in BOUND_KEYS):
         return True, "value pinned" if pinned else "no bound"
     if kind != "changed" or not (is_num(old) and is_num(new)):
         return False, "bounded entry, but not a numeric change"
@@ -230,7 +241,18 @@ def entry_holds(e, old, new, kind):
     rel = (0.0 if gap == 0 else math.inf) if old == 0 else gap / abs(old)
     if "rel" in e and rel <= e["rel"]:
         return True, f"rel {rel:.3g} <= {e['rel']:g}"
+    if "ratio" in e:
+        lo, hi = e["ratio"]
+        if old == 0:
+            if new == old:
+                return True, "ratio: old == 0 and new == old"
+        elif lo <= new / old <= hi:
+            return True, f"ratio {new / old:.6g} in [{lo:g}, {hi:g}]"
     parts = ([f"abs {gap:.3g} > {e['abs']:g}"] if "abs" in e else []) + ([f"rel {rel:.3g} > {e['rel']:g}"] if "rel" in e else [])
+    if "ratio" in e:
+        lo, hi = e["ratio"]
+        parts.append(f"ratio: old == 0 and new {new:.3g} != 0" if old == 0
+                     else f"ratio {new / old:.6g} not in [{lo:g}, {hi:g}]")
     return False, " and ".join(parts)
 
 

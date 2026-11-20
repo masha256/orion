@@ -232,6 +232,79 @@ class FlatdiffTest(unittest.TestCase):
         self.assertEqual(self.run_cli([1, 2], [1, 2], {})[0], 2)  # not a report object
         self.assertEqual(self.run_cli({"error": "x"}, {"error": "x"}, {})[0], 2)  # no asset key
 
+    # --- ratio bound (R3 class S) ---------------------------------------------------------------------------------
+
+    def ratio_code(self, old, new, **bounds):
+        allow = {"lit": [{"glob": "price", "reason": "class S", **bounds}]}
+        return self.run_cli({**report(), "price": old}, {**report(), "price": new}, allow)
+
+    def test_ratio_holds_within_and_at_both_edges_only(self):
+        for new in (100.5, 99, 101):  # within, lo edge (99/100 == 0.99), hi edge (101/100 == 1.01)
+            code, res, _ = self.ratio_code(100, new, ratio=[0.99, 1.01])
+            self.assertEqual(code, 0, (new, res))
+            self.assertIn("ratio", res["diffs"][0]["why"])
+        for new in (98.9, 101.1, -100):  # below, above, sign flip (ratio -1)
+            code, res, _ = self.ratio_code(100, new, ratio=[0.99, 1.01])
+            self.assertEqual(code, 1, (new, res))
+            self.assertIn("ratio", res["diffs"][0]["why"])
+        # A narrow pin around a large signed ratio (the proof's new/old +- 0.01).
+        self.assertEqual(self.ratio_code(2.0, 5.0, ratio=[2.49, 2.51])[0], 0)
+        self.assertEqual(self.ratio_code(2.0, 2.0 * 1.01, ratio=[2.49, 2.51])[0], 1)
+
+    def test_ratio_on_negative_values_is_the_signed_quotient(self):
+        self.assertEqual(self.ratio_code(-10, -9, ratio=[0.89, 0.91])[0], 0)  # -9 / -10 = 0.9
+        self.assertEqual(self.ratio_code(-10, -9, ratio=[1.09, 1.12])[0], 1)
+        self.assertEqual(self.ratio_code(-10, 9, ratio=[0.89, 0.91])[0], 1)  # -0.9: a sign change never holds
+
+    def test_ratio_with_old_zero_holds_only_when_unchanged(self):
+        code, res, _ = self.ratio_code(0, 1e-9, ratio=[0.5, 2])
+        self.assertEqual(code, 1, res)
+        self.assertIn("old == 0", res["diffs"][0]["why"])
+        self.assertEqual(flatdiff.entry_holds({"glob": "p", "reason": "r", "ratio": [0.5, 2]}, 0, 0, "changed")[0], True)
+        self.assertEqual(flatdiff.entry_holds({"glob": "p", "reason": "r", "ratio": [0.5, 2]}, 0.0, -0.0, "changed")[0], True)
+
+    def test_ratio_refuses_a_non_numeric_change_added_or_removed(self):
+        self.assertEqual(self.ratio_code(1.7, None, ratio=[0.5, 2])[0], 1)
+        self.assertEqual(self.ratio_code(1.7, "1.7", ratio=[0.5, 2])[0], 1)
+        allow = {"lit": [{"glob": "price", "reason": "class S", "ratio": [0.5, 2]}]}
+        self.assertEqual(self.run_cli({k: v for k, v in report().items() if k != "price"}, report(), allow)[0], 1)
+        self.assertEqual(self.run_cli(report(), {k: v for k, v in report().items() if k != "price"}, allow)[0], 1)
+
+    def test_ratio_combined_with_rel_or_abs_holds_when_any_bound_holds(self):
+        # ratio fails (1.05 > 1.01), rel holds (5% <= 6%): allowed.
+        code, res, _ = self.ratio_code(100, 105, ratio=[0.99, 1.01], rel=0.06)
+        self.assertEqual(code, 0, res)
+        self.assertIn("rel", res["diffs"][0]["why"])
+        # rel fails (5% > 1%), ratio holds: allowed.
+        self.assertEqual(self.ratio_code(100, 105, ratio=[1.04, 1.06], rel=0.01)[0], 0)
+        # abs fails, ratio holds: allowed.
+        self.assertEqual(self.ratio_code(100, 105, ratio=[1.04, 1.06], abs=1)[0], 0)
+        # every bound fails: not allowed, and the detail names each.
+        code, res, _ = self.ratio_code(100, 105, ratio=[0.99, 1.01], rel=0.01, abs=1)
+        self.assertEqual(code, 1)
+        why = res["diffs"][0]["why"]
+        for k in ("ratio", "rel", "abs"):
+            self.assertIn(k, why)
+        # old == 0: a ratio entry with abs still holds by abs (either bound).
+        self.assertEqual(self.ratio_code(0, 0.5, ratio=[0.5, 2], abs=1)[0], 0)
+
+    def test_ratio_entry_never_relaxed_by_an_unbounded_entry_and_pins_still_apply(self):
+        allow = {"lit": [{"glob": "price", "reason": "class S", "ratio": [0.99, 1.01]}, {"glob": "pri*", "reason": "broad"}]}
+        self.assertEqual(self.run_cli({**report(), "price": 100}, {**report(), "price": 110}, allow)[0], 1)
+        allow = {"lit": [{"glob": "price", "reason": "class S", "ratio": [0.99, 1.01], "old": 100}]}
+        self.assertEqual(self.run_cli({**report(), "price": 100}, {**report(), "price": 100.5}, allow)[0], 0)
+        self.assertEqual(self.run_cli({**report(), "price": 200}, {**report(), "price": 201}, allow)[0], 1)
+
+    def test_malformed_ratio_exits_2(self):
+        bad = [[1], [1, 2, 3], "1,2", {"lo": 1, "hi": 2}, 1.0, None, [], ["0.9", 1.1], [0.9, None], [True, 2],
+               [1.1, 0.9], [0, 1], [-1, 1], [-2, -1], [0.9, float("inf")], [float("nan"), 1]]
+        for ratio in bad:
+            code, _, err = self.ratio_code(100, 100.5, ratio=ratio)
+            self.assertEqual(code, 2, ratio)
+            self.assertIn("ratio", err, ratio)
+        # lo == hi is a valid (exact-ratio) bound, ints allowed.
+        self.assertEqual(self.ratio_code(100, 200, ratio=[2, 2])[0], 0)
+
     def test_malformed_allowlist_exits_2(self):
         bad = [
             [],
