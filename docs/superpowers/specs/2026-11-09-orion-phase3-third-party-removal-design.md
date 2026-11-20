@@ -7,6 +7,13 @@
   in R7); D8 order R0 -> R8 as written; D9 yes; D10 yes; D11 yes (CAKE fix ships alone; Mike: "cake to stage ok").
 - R0 CAKE: tag `orion-2026.11.10.1` = `fix/cake-pending-burn` 0ecc69e on main 0f4b2fe. It is staged after AERO's
   orion-2026.11.09.1 reaches prod, so AERO's soak gate is not invalidated. Prod needs its own soak and Mike's go.
+- 2026-11-20: R3 (circulating supply on chain): plan `docs/superpowers/plans/2026-11-19-orion-phase3-r3-circulating-supply.md`
+  APPROVED by Mike 2026-11-20 (#orion-dev, "all recommendations": N1-N6); built on `feat/phase3-r3-supply` (plan
+  Tasks 1-6: view_sum `times` / `locked_schedule`, `hype.circulating_supply`, `solana.supply_less_owners`, the 12-asset
+  YAML sweep with CoinGecko refused in every field, `data rebuild-supply-levels` and the unreplaced-circulating purge
+  refusal, release block `docs/ops/deploy.md` "Phase 3 R3 release" with stage scripts `tools/phase3-proof/r3-s0..s4.sh`);
+  not tagged: the proof on a prod copy and Mike's sign-off (Task 7) come next. Rulings R1-R14 and the deferred items:
+  docs/superpowers/notes/2026-11-19-orion-phase3-r3-followups.md.
 - 2026-11-14: R2 built on feat/phase3-third-party (plan Tasks 1-9; commits 4498513..3aca04e plus the Task 9 docs
   commit); not tagged: Task 10 (the prod-copy proof and Mike's sign-off table) comes first. Rulings that changed the
   plan: its "Amendments made during execution" section; release block `docs/ops/deploy.md` "Phase 3 R2 release";

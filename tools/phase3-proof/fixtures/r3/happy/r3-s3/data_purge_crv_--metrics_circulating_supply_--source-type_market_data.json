@@ -1,0 +1,21 @@
+{
+ "asset": "crv",
+ "perMetric": [
+  {
+   "metric": "circulating_supply",
+   "configured": true,
+   "observations": 43,
+   "superseded": 43,
+   "firstDay": "2026-09-24",
+   "lastDay": "2026-11-19",
+   "valueSum": 1.0,
+   "latestLevels": 0,
+   "watchState": 0,
+   "fetchCursors": 0,
+   "withoutReplacement": []
+  }
+ ],
+ "exportFile": null,
+ "exportSha256": null,
+ "applied": false
+}

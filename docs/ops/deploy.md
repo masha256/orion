@@ -996,6 +996,149 @@ deferred when the older release takes over fails silently there (it has no handl
 forward, queue it again with `job run-now backfill-prices --from 2025-10-13` (it skips every stored hour). The older
 release's orion-remote verbs are unchanged; the four R2 verbs fail with Orion's own unknown command error on it.
 
+## Phase 3 R3 release
+
+The release that carries Phase 3 R3, circulating supply on chain (`feat/phase3-r3-supply`; plan
+`docs/superpowers/plans/2026-11-19-orion-phase3-r3-circulating-supply.md`, its Task 6, and the followups note
+`docs/superpowers/notes/2026-11-19-orion-phase3-r3-followups.md`): every asset's `circulating_supply` from an owned
+method (`chain.view_sum` with `times` / `locked_schedule`, `hype.circulating_supply`, `solana.supply_less_owners`), a
+`coingecko` source of any field refused at load, filing and approve (no code path calls `/coins/markets` after the
+switch), the N5 `level_gap_pct` / `reserved_balance` WATCH lines, and two one-time steps: `data rebuild-supply-levels`
+re-reads each stored circulating row of another source at the block of its `observed_at`, then `data purge
+--source-type market_data` deletes every CoinGecko circulating row, refusing one a rebuild could have replaced
+(`purge_unreplaced_supply_level`). **No migration**: the release runs on schema 8 and `orion-2026.11.15.1` still runs
+after it (rollback, below). Verbs used, all in the verb reference above: `report yield`, `status`, `logs`, `jobs`,
+`sql-ro` (both envs), `data rebuild-supply-levels <a> [--yes]` (R3 release on), `data purge <a> --metrics
+circulating_supply --source-type market_data [--yes]`. `ST`/`PR` = the stage/prod ssh commands above.
+
+**Prerequisites (once, before the staging deploy):**
+
+1. **Task 7 is signed.** The proof on a prod copy (plan Task 7) is done and Mike has signed its per-asset table
+   (circulating, marketCap, mcap/revenue, mcap/holder flow, HF/mcap, old -> new; the refused and notRebuildable lists;
+   the archive call count). The tag carries `tools/phase3-proof/r3-allowlist.json` (N4 classes: S `ratio` = the signed
+   ratio ± 0.01, L exact label pins, G and AERO no entry) and `tools/phase3-proof/r3-signed-circulating.json` (the
+   signed circulating value per asset, `{"<asset>": <tokens>, ...}`: s1's ±2% check). No tag before the sign-off; s1
+   and s4 stop when either file is missing.
+2. **N6: Mike re-runs `orion-host.sh` once more** from a fixed snapshot of `scripts/provision/` at the R3 release sha,
+   exactly as in the R1 release step 1 above (the snapshot commands, the same flags, paste back the SELF-CHECK). Stage
+   `sql-ro` already exists since 2026-11-20 (`orion_stage_ro`, from the `/home/hermes/orion-provision-06955e0`
+   snapshot); this re-run adds only R3's `data rebuild-supply-levels` verb. Check (s0 runs both and stops otherwise):
+   `$ST data rebuild-supply-levels` exits 64 with its usage line (`orion-remote: asset required (usage: data
+   rebuild-supply-levels <asset> [--yes] (a dry run without --yes))`), and `$ST "sql-ro \"select current_user\""`
+   prints `orion_stage_ro`. On an older orion-remote the verb is refused before Orion runs (nothing written).
+3. **Merge and tag on `main`.** `feat/phase3-r3-supply` fast-forwarded to `main`, tag `orion-YYYY.MM.DD.N` on `main`,
+   branch and tag pushed (HTTPS + `GH_PAT`), then `scripts/release/build.sh <tag>` (section 1). The block's scripts run
+   from a checkout of that tag (`T` below: a detached worktree of the tag), never from a moving branch.
+4. **A normal deploy, staging first.** No migration: no `--breaking`, no pre-deploy dump, rollback allowed. Stage, one
+   scheduled nightly soak (section 3 and the soak note below), then prod on Mike's go.
+
+**Timing.** Outside 05:00-06:30 PT and the env's nightly -4 h / +2 h (stage nightly 02:45 UTC: run 04:45-22:45 UTC;
+prod 00:45 UTC: 02:45-20:45 UTC). **No nightly between s0 and s1's switch**: a nightly on the old release adds one
+`market_data` row per CoinGecko asset, and s2 then stops on step 1's counts (rerun from s0 with a fresh work dir).
+After the switch a nightly adds rows on the new source only, which no check counts as stale. The report day is `D` =
+today-2 UTC, saved once by s0 in `~/r3-<env>/days.json` and read by s4: D+1 is then a complete past day, so no hourly
+price or level written during the block falls inside D's as-of. Both envs are on schema 8, so `staging_refresh`
+(Sunday 10:30 UTC) does not refuse a prod dump: **no Sunday 10:30 UTC between the stage switch and the end of prod's
+s3** (steps 7-8; until then prod holds CoinGecko rows, and a refresh copies them, and prod's whole state, onto stage).
+If one does fall there, redo stage after it with a fresh work dir (move `~/r3-stage` away): s0, s2, s3, s4 (s1's
+deploy is already done: run its step 3-4 checks by hand). On stage, `levels` runs every 6 h (00:15, 06:15, 12:15,
+18:15 UTC; prod hourly at :15): deploy stage shortly before one of those slots, or s1 waits up to 6 h 30 min for it.
+
+**Per-env release block** (`<env>` = `stage`, then `prod`). One script per pre-approved stage, each one terminal call
+(so one approval prompt): `set -u`, every check prints `ok` or `STOP: <reason>` and the script exits 1 at the first
+STOP; every expected count is read from step 1's file `~/r3-<env>/expected.json`, none is typed into a script. Work
+dir `~/r3-<env>/{before,after,dry,yes}` on the machine running the block. The 13 assets: `aero cake crv cvxcrv hype
+link lit pump sdcrv sky uni vvv ycrv`. The checks live in `tools/phase3-proof/r3_check.py` (each subcommand's rule is
+in its docstring; `r3_check.py sql <name>` prints the `sql-ro` query a step runs); every script has a `--fake <dir>`
+mode with no ssh (`tools/phase3-proof/r3-lib.sh`; tested by `tools/phase3-proof/test_r3_scripts.py`).
+
+```
+T=<checkout of the release tag>
+$T/tools/phase3-proof/r3-s0.sh <env>                         # steps 0-1, read-only, no --yes
+$T/tools/phase3-proof/r3-s1.sh <env> <tag> --tools $T        # steps 2-4: deploy, the switch, levels coverage
+$T/tools/phase3-proof/r3-s2.sh <env>                         # steps 5-6: stale coverage, rebuild (dry, --yes)
+$T/tools/phase3-proof/r3-s3.sh <env>                         # steps 7-8: purge (dry, --yes), re-checks at 0
+$T/tools/phase3-proof/r3-s4.sh <env> --tools $T              # steps 9-10: after/, the flatdiff gate
+```
+
+Stage: s0-s4 under the release go. **Prod: s1, s2 and s3 each only on Mike's go** (or under his conditional
+pre-approval of that whole stage), given in the thread after he has seen stage's output of the same script and prod's
+s0 counts. s2 and s3 run their dry runs and every dry-run check before their first `--yes`, so a deviation stops them
+before anything is written; the go covers "dry runs, and `--yes` if every check is ok". Paste each script's full
+output into the thread.
+
+**Expected artifacts (section 7).** Measured, not pinned: the scripts read step 1's file. Prod 2026-11-19 14:30Z
+(they grow by one row per CoinGecko asset per nightly until the block runs); stage: its own step 1 (437 `market_data`
+rows on 2026-11-20).
+
+| artifact | seen by (exempt, counts printed) | measured | cleared by | re-check with no exemption |
+|---|---|---|---|---|
+| `latest_levels` `circulating_supply` rows with `source_type = market_data` (the old release wrote them; latest-only) | step 4 before the first hourly `levels` run on the tag: `expected pre-switch: 9 (assets ...)` | 9: cake crv hype link lit pump sky uni vvv | that run (it overwrites each from the new source) | step 4 after that run: 0; step 8 again: 0 |
+| active `market_data` `circulating_supply` rows | step 5 (s2, before the rebuild): `expected pre-rebuild` | aero 45, cake 40, crv 43, hype 55, link 37, lit 38, pump 37, sky 36, uni 40, vvv 57 = 428 | step 6 (rebuilt: cake crv link lit sky uni vvv), step 7 (deleted, all 10; hype, pump, aero's 45 as `withoutReplacement`) | step 5 after step 6's `--yes`: only hype's, pump's and aero's notRebuildable rows left (step 1's counts); step 8: 0 `market_data` rows of any metric, 0 stale rows on all 13 |
+| the wrappers' active rows on the old `erc20_supply` locator (`contract_state`, `call = totalSupply()`) | step 5: `expected pre-rebuild` | cvxcrv 39, sdcrv 39, ycrv 39 | step 6 (rebuilt) | step 5 after step 6's `--yes`: 0; step 8: 0 |
+
+Any other stale circulating row (an active row whose `(source_type, locator kind)` is not the asset's new source) is
+no listed artifact: s0 stops on it. The scoping (2026-11-19) names one candidate: VVV's 2026-09-18 `disclosure` row
+(48.35M, cited, "keep"); if it is still active, the rebuild's target rule (ruling R12: another source type) targets it
+too, and s0 stops: bring it to Mike (rebuild it, or keep it, which needs a code change) before going on.
+
+0. **Save `before/` (s0)**: the N6 checks above, then D = today-2 UTC and D-91 into `days.json` (written once; a rerun
+   keeps it), then `report yield <a> --day D` and `--day D-91` for the 13 into `before/<a>.json`, `before/<a>-91.json`.
+1. **Write the expected-counts file (s0)** from `sql-ro` (both envs): per asset the `circulating_supply` rows grouped by
+   `source_type` and locator kind (`adapter`, else `call`, else `provider`), active (`superseded_by is null and status
+   <> 'rejected'`) and total, and AERO's active rows before its `rebuild_from` (2026-11-10); the `latest_levels`
+   circulating rows by `source_type`. From these, per asset: the stale rows (`market_data` + old locator), the
+   notRebuildable ones (HYPE and PUMP: every stale row; AERO: those before 2026-11-10; any other: 0), the expected
+   `rebuilt` (stale - notRebuildable) and `withoutReplacement` (the notRebuildable `market_data` rows). s0 prints one
+   line per asset: paste them.
+2. **Deploy (s1)**: `scripts/release/deploy.sh <env> <tag>` from `$T`; the report is printed (paste it) and must name the
+   tag with `migrations applied: none`.
+3. **Check the switch (s1)**: `status` names the tag as current; `logs 30` has `daemon started: ... release <tag>` and
+   no `ORION ALERT` / error line; `sql-ro` `max(id)` of `schema_migrations` = 8.
+4. **Levels coverage (s1, read-only), before and after the first hourly `levels` run on the tag.** Before it: the
+   `latest_levels` `market_data` circulating rows must be exactly step 1's (printed `expected pre-switch: 9 (assets
+   ...)`; any other count or asset: stop; skipped, with a note, when that run already finished). Then `jobs --since
+   <switch>` every 300 s until the first `levels` job on the tag is `done` (prod at most 75 min, stage 6 h 30 min;
+   `failed`, or a result with any `failed` source: stop). **Re-check with no exemption: 0 `market_data` rows in
+   `latest_levels`, and each asset's new circulating value within ±2% of its signed value** (more: stop).
+5. **Stale-definition coverage (s2, read-only)**: per asset the active circulating rows not on the asset's new source
+   must be exactly step 1's `market_data` and old-locator counts (printed `expected pre-rebuild`); any other source type,
+   asset or count: stop (a mismatch usually means an old-release nightly ran after s0).
+6. **Rebuild (s2): 13 dry runs, then `--yes`.** `data rebuild-supply-levels <a>` dry run; expected exactly, per asset
+   from step 1's file: `rows` = its stale rows, `rebuilt` = cake, crv, link, lit, sky, uni, vvv (`market_data`) and
+   cvxcrv, sdcrv, ycrv (old locator) all of them, `notRebuildable` = every row of hype and pump and aero's 45, `refused`
+   0 everywhere (a refused row or exit 3: stop, Mike decides; the row keeps its old value). Then `--yes` x13 (applied,
+   counts == the dry run's), a second dry run x13 (`rebuilt` 0), and step 5 again: the only stale rows left are hype's,
+   pump's and aero's `market_data` rows (step 1's counts), cleared by step 7.
+7. **Purge (s3): dry runs, then `--yes`**, on the assets step 1 found `market_data` rows for (the 10): `data purge <a>
+   --metrics circulating_supply --source-type market_data`; expected: `observations` = step 1's `market_data` total,
+   `withoutReplacement` = all of hype's and pump's rows, aero's 45, every other asset 0; any refusal (`error` in the JSON,
+   e.g. `purge_unreplaced_supply_level`: a row step 6 should have replaced): stop. `--yes` per asset: applied, counts ==
+   the dry run's; each `exportFile` (`~/home/purged/<asset>-circulating_supply-<UTCstamp>.json` on the env) and its
+   `exportSha256` go to `~/r3-<env>/yes/exports.txt`: keep them (rollback evidence, never served; N3).
+8. **Re-check with no exemption (s3, `sql-ro`)**: `select count(*) from observations where source_type =
+   $$market_data$$` = 0; `latest_levels` `market_data` circulating rows = 0; step 5's check shows 0 stale rows on all
+   13.
+9. **Save `after/` (s4)**: the same 26 reports (`--day D`, `--day D-91` from `days.json`).
+10. **Gate (s4)**: `$T/tools/phase3-proof/flatdiff.py before/<f>.json after/<f>.json --allow
+    $T/tools/phase3-proof/r3-allowlist.json --asset <a>` for the 26: all exit 0. Otherwise s4 prints every report's
+    unallowed paths (before -> after) and stops: no widening on the spot; an addendum allowlist file on Mike's ruling,
+    as R43. On stage: no prod deploy until then.
+
+**Soak (stage):** one scheduled 02:45 UTC nightly on the tag (section 3), no failed source, no `ORION WATCH stage ...
+circulating` line (the CRV and LINK `level_gap_pct` checks, PUMP's `reserved_balance`) without a stated cause; the
+snapshot `full` body shows the new `marketCap`; Raymond's soak cron resumes with its "known queue" line naming R3's
+moves (circulating and what it feeds, per the signed table; the controller updates the prompt outside the repo).
+Stage-vs-prod parity is not the check while prod is still on CoinGecko circulating.
+
+**Rollback across this release** (section 5): allowed. No migration, so `scripts/release/deploy.sh <env>
+orion-2026.11.15.1` (or `--rollback`) runs, but the old code writes CoinGecko circulating again at its first hourly
+`levels` run (`latest_levels`) and nightly (new `market_data` observations), which steps 7-8 would have to purge again
+after rolling forward. Rebuilt rows stay (the old release reads them as stored circulating rows); purged rows are only
+in the exports. After a rollback and roll-forward: s0 again with a fresh work dir (its counts are the new base), then
+s2-s4. The older orion-remote verbs are unchanged; `data rebuild-supply-levels` fails with Orion's own unknown command
+error on the old release (nothing written).
+
 ## The ssh verbs (any release)
 
 ```

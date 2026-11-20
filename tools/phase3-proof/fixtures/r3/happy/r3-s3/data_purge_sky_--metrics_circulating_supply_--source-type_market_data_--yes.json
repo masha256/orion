@@ -1,0 +1,21 @@
+{
+ "asset": "sky",
+ "perMetric": [
+  {
+   "metric": "circulating_supply",
+   "configured": true,
+   "observations": 36,
+   "superseded": 36,
+   "firstDay": "2026-09-24",
+   "lastDay": "2026-11-19",
+   "valueSum": 1.0,
+   "latestLevels": 0,
+   "watchState": 0,
+   "fetchCursors": 0,
+   "withoutReplacement": []
+  }
+ ],
+ "exportFile": "/home/orion-stage/home/purged/sky-circulating_supply-20261120T120000Z.json",
+ "exportSha256": "abababababababababababababababababababababababababababababababab",
+ "applied": true
+}

@@ -1,0 +1,11 @@
+{
+ "asset": "cake",
+ "applied": false,
+ "metric": "circulating_supply",
+ "rows": 40,
+ "rebuilt": 40,
+ "unchanged": 2,
+ "refused": [],
+ "notRebuildable": [],
+ "calls": 120
+}

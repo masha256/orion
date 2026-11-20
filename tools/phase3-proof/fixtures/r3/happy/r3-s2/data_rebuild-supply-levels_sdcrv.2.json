@@ -1,0 +1,11 @@
+{
+ "asset": "sdcrv",
+ "applied": false,
+ "metric": "circulating_supply",
+ "rows": 0,
+ "rebuilt": 0,
+ "unchanged": 2,
+ "refused": [],
+ "notRebuildable": [],
+ "calls": 0
+}

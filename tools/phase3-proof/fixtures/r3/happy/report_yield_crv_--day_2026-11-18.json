@@ -1,0 +1,10 @@
+{
+ "asset": "crv",
+ "day": "2026-11-18",
+ "marketCap": 1000.0,
+ "incomeStatement": {
+  "perToken": {
+   "circulatingSupply": 1582336065
+  }
+ }
+}

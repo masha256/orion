@@ -1,0 +1,11 @@
+{
+ "asset": "vvv",
+ "applied": false,
+ "metric": "circulating_supply",
+ "rows": 57,
+ "rebuilt": 57,
+ "unchanged": 2,
+ "refused": [],
+ "notRebuildable": [],
+ "calls": 171
+}

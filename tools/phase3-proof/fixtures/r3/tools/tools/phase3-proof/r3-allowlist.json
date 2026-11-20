@@ -1,0 +1,4 @@
+{
+ "_comment": "test fixture: allows nothing",
+ "*": []
+}

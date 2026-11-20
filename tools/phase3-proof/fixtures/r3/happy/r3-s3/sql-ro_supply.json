@@ -1,0 +1,133 @@
+{
+ "rows": [
+  {
+   "asset_id": "aero",
+   "source_type": "contract_state",
+   "kind": "chain.view_sum",
+   "active": 10,
+   "total": 10,
+   "before_rebuild_from": 0
+  },
+  {
+   "asset_id": "cake",
+   "source_type": "contract_state",
+   "kind": "chain.view_sum",
+   "active": 42,
+   "total": 2,
+   "before_rebuild_from": 0
+  },
+  {
+   "asset_id": "crv",
+   "source_type": "contract_state",
+   "kind": "chain.view_sum",
+   "active": 45,
+   "total": 2,
+   "before_rebuild_from": 0
+  },
+  {
+   "asset_id": "cvxcrv",
+   "source_type": "contract_state",
+   "kind": "chain.view_sum",
+   "active": 41,
+   "total": 2,
+   "before_rebuild_from": 0
+  },
+  {
+   "asset_id": "cvxcrv",
+   "source_type": "contract_state",
+   "kind": "totalSupply()",
+   "active": 0,
+   "total": 39,
+   "before_rebuild_from": 0
+  },
+  {
+   "asset_id": "hype",
+   "source_type": "first_party_api",
+   "kind": "hype.circulating_supply",
+   "active": 2,
+   "total": 2,
+   "before_rebuild_from": 0
+  },
+  {
+   "asset_id": "link",
+   "source_type": "contract_state",
+   "kind": "chain.view_sum",
+   "active": 39,
+   "total": 2,
+   "before_rebuild_from": 0
+  },
+  {
+   "asset_id": "lit",
+   "source_type": "contract_state",
+   "kind": "chain.view_sum",
+   "active": 40,
+   "total": 2,
+   "before_rebuild_from": 0
+  },
+  {
+   "asset_id": "pump",
+   "source_type": "contract_state",
+   "kind": "solana.supply_less_owners",
+   "active": 2,
+   "total": 2,
+   "before_rebuild_from": 0
+  },
+  {
+   "asset_id": "sdcrv",
+   "source_type": "contract_state",
+   "kind": "chain.view_sum",
+   "active": 41,
+   "total": 2,
+   "before_rebuild_from": 0
+  },
+  {
+   "asset_id": "sdcrv",
+   "source_type": "contract_state",
+   "kind": "totalSupply()",
+   "active": 0,
+   "total": 39,
+   "before_rebuild_from": 0
+  },
+  {
+   "asset_id": "sky",
+   "source_type": "contract_state",
+   "kind": "chain.view_sum",
+   "active": 38,
+   "total": 2,
+   "before_rebuild_from": 0
+  },
+  {
+   "asset_id": "uni",
+   "source_type": "contract_state",
+   "kind": "chain.view_sum",
+   "active": 42,
+   "total": 2,
+   "before_rebuild_from": 0
+  },
+  {
+   "asset_id": "vvv",
+   "source_type": "contract_state",
+   "kind": "chain.view_sum",
+   "active": 59,
+   "total": 2,
+   "before_rebuild_from": 0
+  },
+  {
+   "asset_id": "ycrv",
+   "source_type": "contract_state",
+   "kind": "chain.view_sum",
+   "active": 41,
+   "total": 2,
+   "before_rebuild_from": 0
+  },
+  {
+   "asset_id": "ycrv",
+   "source_type": "contract_state",
+   "kind": "totalSupply()",
+   "active": 0,
+   "total": 39,
+   "before_rebuild_from": 0
+  }
+ ],
+ "rowCount": 16
+}

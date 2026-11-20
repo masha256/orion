@@ -1,0 +1,17 @@
+{
+ "asset": "crv",
+ "applied": false,
+ "metric": "circulating_supply",
+ "rows": 43,
+ "rebuilt": 42,
+ "unchanged": 2,
+ "refused": [
+  {
+   "id": 501,
+   "observedAt": "2025-11-20T00:00:00.000Z",
+   "reason": "contract 0xabc has no code at block 23800000"
+  }
+ ],
+ "notRebuildable": [],
+ "calls": 129
+}

@@ -1,0 +1,4 @@
+env: stage
+host: venus
+current: /home/orion-stage/releases/orion-2026.11.20.1
+postgres: accepting connections
