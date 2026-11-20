@@ -129,7 +129,8 @@ metrics:
 
   # The N5 check (Phase 3 R3): Chainlink's own figure (first party) and the gap of ours to it, in percent, 0 on
   # 2026-11-20. Outside [-0.5, 0.5] is an ORION WATCH: Chainlink moved LINK to a wallet not listed here yet (add it from
-  # balances[]), or the API lags a release.
+  # balances[]), or the API lags a release. Both are read, and the watch checked, at the nightly run only: the hourly
+  # read skips derived and unwatched monitor-only metrics.
   chainlink_circulating:
     type: level
     unit: tokens

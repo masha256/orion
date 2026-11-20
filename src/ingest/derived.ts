@@ -54,8 +54,8 @@ const LEVEL_GAP_KEYS = ['a', 'b'];
 
 /**
  * The configuration issues of a `level_gap_pct` source on metric `key` (checked at load): params exactly { a, b }, two
- * different level metrics of the asset that are read in the run (a source, not a derived one, not the gap itself), and
- * the gap metric a monitor-only level (a check, never report data).
+ * different level metrics of the asset that are read in the run (a source, not a derived or constant one, not the gap
+ * itself), and the gap metric a monitor-only level (a check, never report data).
  */
 export function levelGapIssues(
   key: string,
@@ -78,7 +78,7 @@ export function levelGapIssues(
     if (m === key) out.push(`${where} "${side}" cannot be the gap metric itself`);
     else if (d === undefined) out.push(`${where} "${side}": unknown metric "${m}"`);
     else if (d.type !== 'level') out.push(`${where} "${side}": "${m}" is a ${d.type} metric, not a level`);
-    else if (d.source === undefined || d.source.type === 'derived') out.push(`${where} "${side}": "${m}" must be read this run (a source, not derived)`);
+    else if (d.source === undefined || d.source.type === 'derived' || d.source.type === 'constant') out.push(`${where} "${side}": "${m}" must be read this run (a source, not derived or constant)`);
   }
   if (typeof p.a === 'string' && p.a === p.b) out.push(`${where} "a" and "b" must be different metrics`);
   return out;

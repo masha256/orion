@@ -72,7 +72,8 @@ metrics:
 
   # The N5 check (Phase 3 R3): Curve's own circulating_supply() and the gap of ours to it, in percent. Ours also excludes
   # the Curve Treasury, so the steady gap is about -0.36 percent (2026-11-20); outside [-1.5, 0.5] is an ORION WATCH (a
-  # treasury move, or CRV parked where Curve's frozen list does not look).
+  # treasury move, or CRV parked where Curve's frozen list does not look). Both are read, and the watch checked, at the
+  # nightly run only: the hourly read skips derived and unwatched monitor-only metrics.
   curve_circulating:
     type: level
     unit: tokens

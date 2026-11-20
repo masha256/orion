@@ -219,6 +219,10 @@ describe('assets/pump.yaml', () => {
     expect((await rows('reserved_balance')).at(-1)!.value).toBeCloseTo(RESERVED_SUM, 1);
     expect(r.watch).toEqual([]);
     expect(w.http.calls.filter((c) => /coingecko|pump\.fun/.test(c.url))).toEqual([]);
+    // Task 4 review M1: circulating_supply and reserved_balance subtract and sum the same six owners; one run asks each
+    // once (the run's request cache, withRunCache), as it asks the two burn wallets once.
+    const ownerReads = w.http.calls.filter((c) => (c.body as { method?: string } | undefined)?.method === 'getTokenAccountsByOwner').map((c) => String((c.body as { params: unknown[] }).params[0]));
+    expect(ownerReads.sort()).toEqual([...Object.keys(RESERVED), config.contracts.burn_wallet_a, config.contracts.burn_wallet_b].sort());
 
     const report = await loadHolderYieldReport(w.db, config);
     const rep = report.incomeStatement!; // Task 11b: the v2 statement (v1 retired)

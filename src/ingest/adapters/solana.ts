@@ -65,7 +65,11 @@ function ownRpcUrl(ctx: SourceContext, params: Record<string, unknown>): string 
   return url;
 }
 
-/** Every named owner's balance of the mint (all of each owner's token accounts), one finalized read each: the sum and a part per owner. */
+/**
+ * Every named owner's balance of the mint (all of each owner's token accounts), one finalized read each: the sum and a
+ * part per owner. The run's HTTP transport caches identical requests (withRunCache), so supply_less_owners and
+ * owners_balance over the same owners (PUMP) ask each owner once per run.
+ */
 async function ownersHeld(ctx: SourceContext, url: string, mint: string, list: unknown, param: string): Promise<{ held: number; parts: string[] }> {
   if (!Array.isArray(list) || !list.every((n) => typeof n === 'string')) throw new Error(`params.${param} must be a list of contract names (owners)`);
   const names = list as string[];

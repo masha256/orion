@@ -90,6 +90,9 @@ describe('level_gap_pct', () => {
     expect(refusal(GAP('{ a: circulating_supply, b: nope }'))).toMatch(/level_gap_pct "b": unknown metric "nope"/);
     expect(refusal(GAP('{ a: flow_usd.fees, b: total_supply }'))).toMatch(/level_gap_pct "a": "flow_usd.fees" is a flow metric, not a level/);
     expect(refusal(GAP('{ a: revenue_run_rate_usd, b: total_supply }'))).toMatch(/level_gap_pct "a": "revenue_run_rate_usd" must be read this run/);
+    // Task 4 review M4: a constant is not read either; a check against it is no first-party check.
+    const PINNED = '  pinned_supply: { type: level, unit: tokens, staleness_days: 3, source: { type: constant, value: 100, note: "a fixed figure" } }\n';
+    expect(refusal(GAP('{ a: circulating_supply, b: pinned_supply }').replace('  supply_gap:', `${PINNED}  supply_gap:`))).toMatch(/level_gap_pct "b": "pinned_supply" must be read this run \(a source, not derived or constant\)/);
     expect(refusal(GAP('{ a: supply_gap, b: total_supply }'))).toMatch(/level_gap_pct "a" cannot be the gap metric itself/);
     expect(refusal(GAP('{ a: total_supply, b: total_supply }'))).toMatch(/level_gap_pct "a" and "b" must be different metrics/);
     expect(refusal(GAP('{ a: circulating_supply, b: total_supply }').replace('unit: pct, staleness_days: 3, monitor_only: true,', 'unit: pct, staleness_days: 3,'))).toMatch(/level_gap_pct is a check: the metric must be monitor_only/);
@@ -129,6 +132,39 @@ describe('level_gap_pct', () => {
     const z = await fetchAsset(zero.db, zero.loaded, NOW, zero.deps);
     expect(z.sources.find((s) => s.sourceId === 'derived:level_gap_pct')).toMatchObject({ status: 'failed', error: 'supply_gap: level_gap_pct: staking_held is 0; no gap' });
     expect(await listActiveObservations(zero.db, 'mini', 'supply_gap')).toEqual([]);
+  });
+
+  // Task 4 review I1: a first-party side (LINK's supply.chain.link) is the only metric of its monitor-only source. When
+  // it fails every run, the gap only skips with a note; the source's failure streak is the signal, so a source that
+  // feeds a watched metric, or a side of a watched gap, is not exempt from it as a monitor-only source.
+  describe('the failure streak of a source that feeds a watched check', () => {
+    const ISSUER_URL = 'https://issuer.test/supply';
+    const ISSUER_ID = `http_json:${ISSUER_URL}`;
+    const ISSUER = `  issuer_circulating: { type: level, unit: tokens, staleness_days: 3, monitor_only: true, source: { type: http_json, url: "${ISSUER_URL}", path: circulating }%WATCH% }\n`;
+    const withIssuer = (issuerWatch: string, gapExtra: string) =>
+      GAP('{ a: circulating_supply, b: issuer_circulating }', gapExtra).replace('  supply_gap:', `${ISSUER.replace('%WATCH%', issuerWatch)}  supply_gap:`);
+    const streaks = async (yaml: string): Promise<string[][]> => {
+      const h = harness(testDb(), { loaded: parseAssetYaml(yaml), routes: { [ISSUER_URL]: new Error('HTTP 503') } });
+      const out: string[][] = [];
+      for (const attempt of [0, 1, 2]) {
+        const r = await fetchAsset(h.db, h.loaded, new Date(NOW.getTime() + attempt * 86_400_000), h.deps);
+        expect(r.sources.find((s) => s.sourceId === ISSUER_ID)?.status).toBe('failed');
+        out.push(r.anomalies.filter((a) => a.kind === 'source_failure_streak').map((a) => `${a.dedupeKey} ${a.severity}`));
+      }
+      return out;
+    };
+
+    it('raises the advisory streak on the third failure in a row of a side of a watched gap', async () => {
+      expect(await streaks(withIssuer('', ', watch: { outside: [ -0.5, 0.5 ] }'))).toEqual([[], [], [`${ISSUER_ID} advisory`]]);
+    });
+
+    it('raises it for a source whose own monitor-only metric has a watch', async () => {
+      expect(await streaks(withIssuer(', watch: { change_pct: 1 }', ''))).toEqual([[], [], [`${ISSUER_ID} advisory`]]);
+    });
+
+    it('raises none when neither the side nor its gap has a watch (plain report data stays exempt)', async () => {
+      expect(await streaks(withIssuer('', ''))).toEqual([[], [], []]);
+    });
   });
 });
 
