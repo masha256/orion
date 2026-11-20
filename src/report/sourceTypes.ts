@@ -49,6 +49,7 @@ export const ADAPTER_SOURCE_TYPES: Readonly<Record<string, SourceType>> = {
   'schedule.unlocks_next_year': 'disclosure',
   'solana.token_supply': 'contract_state',
   'solana.owner_balance': 'contract_state',
+  'solana.supply_less_owners': 'contract_state',
   'solana.supply_burn_daily': 'contract_state',
   'vvv.staker_emission_share': 'contract_state',
   'vvv.diem_target_supply': 'contract_state',

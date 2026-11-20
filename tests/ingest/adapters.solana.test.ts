@@ -7,6 +7,8 @@ import { loadAsset } from '../../src/config/load.js';
 import { fileURLToPath } from 'node:url';
 import { fakeHttp } from '../helpers/fakeHttp.js';
 import { sourceCtx } from '../helpers/sourceCtx.js';
+import { ADAPTER_SOURCE_TYPES } from '../../src/report/sourceTypes.js';
+import { ADAPTER_ORIGINS } from '../../src/provenance/origin.js';
 
 // Shapes read live on 2026-10-16 from Alchemy's Solana RPC (getTokenSupply, getTokenAccountsByOwner jsonParsed) and
 // DefiLlama's summary/fees totalDataChart. The burns are priced from the stored chain prices (Phase 3 R2 Task 6a).
@@ -224,5 +226,115 @@ describe('solana.token_supply and solana.owner_balance', () => {
     const b = await getAdapter('solana.owner_balance').run(ctx, { mint: 'token', owner: 'burn_wallet_a' });
     expect(b).toMatchObject({ kind: 'level', value: 0, source: 'onchain' });
     await expect(getAdapter('solana.owner_balance').run(ctx, { mint: 'token' })).rejects.toThrow(/params.owner/);
+  });
+});
+
+// Phase 3 R3 Task 3 (decision N1d, option B): PUMP's circulating supply = the mint's supply less pump.fun's Token
+// Custodian and the five dormant custodian-funded vaults (owners, task-4-values.md), read 2026-11-20.
+describe('solana.supply_less_owners', () => {
+  const OWNERS: Record<string, string> = {
+    token: MINT,
+    token_custodian: 'Cfq1ts1iFr1eUWWBm8eFxUzm5R3YA3UvMZznwiShbgZt',
+    dormant_a: '8UhbNoBXmGoxJr2TeWW8wmSMoWmjS2rTT2tVJxzuTogC',
+    dormant_b: '9pkFKCR1mdS31JxjKdtmWg2awZUg6vJUYVY722DAcXzv',
+    dormant_c: 'BBvQteuawKB2UtExfevL8HYLjWWsgmWXsp922vFbvCfT',
+    dormant_d: 'GTeSSwovPiVirpvWJpThUWiLDSLsuApmJw621Yom3MhB',
+    dormant_e: 'AvqFxKNrYZNvxsj2oWhLW8det68HzCXBqswshoD2TdT6',
+    empty_owner: '11111111111111111111111111111111',
+  };
+  const acct = (amount: string) => ({ pubkey: 'x', account: { data: { parsed: { info: { mint: MINT, tokenAmount: { amount, decimals: 6 } } } } } });
+  /** Token accounts by owner (raw amounts, 6 decimals): the custodian's 229,261,858,182.10 split over two accounts. */
+  const HELD: Record<string, string[]> = {
+    [OWNERS.token_custodian]: ['229000000000000000', '261858182100000'],
+    [OWNERS.dormant_a]: [raw(80e9)],
+    [OWNERS.dormant_b]: [raw(35e9)],
+    [OWNERS.dormant_c]: [raw(25e9)],
+    [OWNERS.dormant_d]: [raw(25e9)],
+    [OWNERS.dormant_e]: [raw(24e9)],
+  };
+  const SUPPLY = '821771911575120000'; // 821,771,911,575.12 PUMP
+  const rpc = (over: { supply?: string; held?: Record<string, string[]>; fail?: string } = {}) => (_u: string, body?: unknown) => {
+    const { method, params: p } = body as { method: string; params: unknown[] };
+    if (over.fail === method) throw new Error(`${KEYED}: HTTP 503`);
+    if (method === 'getTokenSupply') return supplyReply(over.supply ?? SUPPLY, 380_000_100);
+    if (method === 'getTokenAccountsByOwner') {
+      const owner = p[0] as string;
+      expect(p[1]).toEqual({ mint: MINT });
+      expect(p[2]).toMatchObject({ commitment: 'finalized' });
+      return { jsonrpc: '2.0', id: 1, result: { context: { slot: 380_000_101 }, value: ((over.held ?? HELD)[owner] ?? []).map(acct) } };
+    }
+    throw new Error(`unexpected ${method}`);
+  };
+  const SUB = { mint: 'token', subtract: ['token_custodian', 'dormant_a', 'dormant_b', 'dormant_c', 'dormant_d', 'dormant_e'] };
+  function solRun(params: Record<string, unknown> = SUB, over: Parameters<typeof rpc>[0] = {}, env: Record<string, string> = { ORION_SOL_RPC_URL: KEYED }) {
+    const http = fakeHttp({ [KEYED]: rpc(over), [PUBLIC_SOL_RPC_URL]: rpc(over), 'https://frontend-api-v3.pump.fun': rpc(over) });
+    const ctx = sourceCtx({ asset: pump, nowIso: NOW, http, env, contract: (n) => OWNERS[n] ?? (() => { throw new Error(`no contract ${n}`); })() });
+    return { http, result: getAdapter('solana.supply_less_owners').run(ctx, params) };
+  }
+
+  it('is registered on the contract-state rung, onchain, and needs no EVM chain', () => {
+    expect(adapterNames()).toContain('solana.supply_less_owners');
+    expect(getAdapter('solana.supply_less_owners').needsRpc).toBe(false);
+    expect(ADAPTER_SOURCE_TYPES['solana.supply_less_owners']).toBe('contract_state');
+    expect(ADAPTER_ORIGINS['solana.supply_less_owners']).toBe('onchain');
+  });
+
+  it('is the mint supply less every named owner\'s balance: 821,771.9M - 229,261.9M - 189,000M = 403,510,053,393.02', async () => {
+    const { result, http } = solRun();
+    const v = await result;
+    expect(v).toMatchObject({ kind: 'level', source: 'onchain', observedAt: NOW });
+    expect(v.kind === 'level' && v.value).toBeCloseTo(403_510_053_393.02, 2);
+    expect(v.detail).toBe(
+      `solana getTokenSupply ${MINT} 821771911575.12 at slot 380000100 less 418261858182.1: ` +
+        `token_custodian ${OWNERS.token_custodian} 229261858182.1 at slot 380000101, dormant_a ${OWNERS.dormant_a} 80000000000 at slot 380000101, ` +
+        `dormant_b ${OWNERS.dormant_b} 35000000000 at slot 380000101, dormant_c ${OWNERS.dormant_c} 25000000000 at slot 380000101, ` +
+        `dormant_d ${OWNERS.dormant_d} 25000000000 at slot 380000101, dormant_e ${OWNERS.dormant_e} 24000000000 at slot 380000101`,
+    );
+    expect(v.detail).not.toContain('SECRETKEY');
+    // One finalized read each: the supply, then each owner's accounts of the mint.
+    expect(http.calls.map((c) => (c.body as { method: string }).method)).toEqual(['getTokenSupply', ...Array(6).fill('getTokenAccountsByOwner')]);
+  });
+
+  it('sums an owner\'s token accounts, counts an owner with none as 0, and refuses a result that is not positive', async () => {
+    const two = await solRun({ mint: 'token', subtract: ['token_custodian'] }).result;
+    expect(two.kind === 'level' && two.value).toBeCloseTo(821_771_911_575.12 - 229_261_858_182.1, 2);
+    const none = await solRun({ mint: 'token', subtract: ['empty_owner'] }).result;
+    expect(none.kind === 'level' && none.value).toBeCloseTo(821_771_911_575.12, 2);
+    expect(none.detail).toContain(`empty_owner ${OWNERS.empty_owner} 0 at slot 380000101`);
+    await expect(solRun(SUB, { supply: raw(418_261_858_182.1) }).result).rejects.toThrow(/not positive/);
+    await expect(solRun(SUB, { supply: raw(1e9) }).result).rejects.toThrow(/not positive/);
+  });
+
+  it('fails the level on a transport error, naming only the RPC origin', async () => {
+    const e = await solRun(SUB, { fail: 'getTokenAccountsByOwner' }).result.catch((x: Error) => x.message);
+    expect(e).toContain('solana getTokenAccountsByOwner at https://solana-mainnet.g.alchemy.com: ');
+    expect(e).not.toContain('SECRETKEY');
+    await expect(solRun(SUB, { fail: 'getTokenSupply' }).result).rejects.toThrow(/solana getTokenSupply at https:\/\/solana-mainnet\.g\.alchemy\.com/);
+    await expect(solRun({ mint: 'token', subtract: ['nobody'] }).result).rejects.toThrow(/no contract nobody/);
+  });
+
+  it('reads only the host ORION_SOL_RPC_URL names, never a pump.fun host (R8)', async () => {
+    const { http, result } = solRun();
+    await result;
+    expect(http.calls.length).toBe(7);
+    expect(new Set(http.calls.map((c) => new URL(c.url).host))).toEqual(new Set(['solana-mainnet.g.alchemy.com']));
+    expect(http.calls.some((c) => /pump\.fun/i.test(c.url))).toBe(false);
+    // An RPC URL on a pump.fun host is refused before any request.
+    const bad = solRun(SUB, {}, { ORION_SOL_RPC_URL: 'https://frontend-api-v3.pump.fun/rpc' });
+    await expect(bad.result).rejects.toThrow(/pump\.fun/);
+    expect(bad.http.calls).toEqual([]);
+  });
+
+  it('validates its params: mint and subtract contract names, rpc_url_env an env var name, nothing else', () => {
+    const v = getAdapter('solana.supply_less_owners').validateParams!;
+    expect(v(SUB)).toEqual([]);
+    expect(v({ ...SUB, rpc_url_env: 'ORION_SOL_RPC_URL' })).toEqual([]);
+    expect(v({ ...SUB, owner: 'x' })).toEqual(['unknown param "owner"']);
+    expect(v({ subtract: SUB.subtract })).not.toEqual([]);
+    expect(v({ mint: 'token', subtract: [] })).not.toEqual([]);
+    expect(v({ mint: 'token', subtract: 'token_custodian' })).not.toEqual([]);
+    expect(v({ mint: 'token', subtract: ['Cfq1ts1iFr1eUWWBm8eFxUzm5R3YA3UvMZznwiShbgZt'] })).not.toEqual([]);
+    expect(v({ mint: 'token', subtract: ['dormant_a', 'dormant_a'] })).not.toEqual([]);
+    expect(v({ ...SUB, rpc_url_env: 'https://x.test' })).not.toEqual([]);
   });
 });

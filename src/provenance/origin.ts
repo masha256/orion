@@ -50,6 +50,7 @@ export const ADAPTER_ORIGINS: Readonly<Record<string, 'onchain' | 'api'>> = {
   'price.token_check': 'onchain',
   'solana.token_supply': 'onchain',
   'solana.owner_balance': 'onchain',
+  'solana.supply_less_owners': 'onchain',
   'solana.supply_burn_daily': 'api',
   'vvv.staker_emission_share': 'onchain',
   'vvv.diem_target_supply': 'onchain',

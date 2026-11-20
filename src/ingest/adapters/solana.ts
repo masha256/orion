@@ -35,6 +35,51 @@ async function ownerBalanceLevel(ctx: SourceContext, params: Record<string, unkn
   return { kind: 'level', value: b.amount, observedAt: ctx.nowIso, source: 'onchain', detail: `solana ${ownerName} ${owner} balance of ${mint} slot ${b.slot}` };
 }
 
+/** Ruling R8 / M8: pump.fun's own hosts are never read; PUMP is read only through our own Solana RPC. */
+const PUMP_FUN_HOST = /(^|\.)pump\.fun$/i;
+const isName = (x: unknown): x is string => typeof x === 'string' && /^[a-z0-9_]+$/.test(x);
+
+function validateSupplyLessOwners(p: Record<string, unknown>): string[] {
+  const out = Object.keys(p).filter((k) => !['mint', 'subtract', 'rpc_url_env'].includes(k)).map((k) => `unknown param "${k}"`);
+  if (!isName(p.mint)) out.push('mint must be a contract name');
+  if (!Array.isArray(p.subtract) || p.subtract.length === 0 || !p.subtract.every(isName)) out.push('subtract must be a non-empty list of contract names (owners, not token accounts)');
+  else if (new Set(p.subtract).size !== p.subtract.length) out.push('subtract must not name an owner twice');
+  if (p.rpc_url_env !== undefined && !(typeof p.rpc_url_env === 'string' && /^[A-Z][A-Z0-9_]*$/.test(p.rpc_url_env))) out.push('rpc_url_env must be an environment variable name');
+  return out;
+}
+
+/**
+ * The mint's supply less every named owner's balance of it (all of each owner's token accounts): PUMP's circulating
+ * supply less pump.fun's Token Custodian and the dormant custodian-funded vaults (Phase 3 R3, decision N1d). One
+ * finalized read each, at fetch time (Solana has no past-slot supply); refused when not positive. The owners are names
+ * in the asset's contracts map, and the RPC is only ever ORION_SOL_RPC_URL's (or rpc_url_env's), never a pump.fun host.
+ */
+async function supplyLessOwners(ctx: SourceContext, params: Record<string, unknown>): Promise<SourceValue> {
+  const mint = ctx.contract(text(params, 'mint', 'token'));
+  if (!Array.isArray(params.subtract) || !params.subtract.every((n) => typeof n === 'string')) throw new Error('params.subtract must be a list of contract names (owners)');
+  const names = params.subtract as string[];
+  const owners = names.map((n) => ctx.contract(n)); // an unknown name is a configuration error and propagates
+  const url = rpcUrl(ctx, params);
+  let host = '';
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    throw new Error('the Solana RPC URL is not a URL');
+  }
+  if (PUMP_FUN_HOST.test(host)) throw new Error(`${host}: PUMP is read only through our own Solana RPC, never a pump.fun host (R8)`);
+  const supply = await tokenSupply(ctx.http, url, mint);
+  let held = 0;
+  const parts: string[] = [];
+  for (const [i, name] of names.entries()) {
+    const b = await ownerBalance(ctx.http, url, owners[i], mint);
+    held += b.amount;
+    parts.push(`${name} ${owners[i]} ${b.amount} at slot ${b.slot}`);
+  }
+  const value = supply.amount - held;
+  if (!(value > 0)) throw new Error(`supply less owners ${value} is not positive (supply ${supply.amount}, owners ${held})`);
+  return { kind: 'level', value, observedAt: ctx.nowIso, source: 'onchain', detail: `solana getTokenSupply ${mint} ${supply.amount} at slot ${supply.slot} less ${held}: ${parts.join(', ')}` };
+}
+
 export interface SupplyReading {
   ms: number;
   supply: number;
@@ -196,5 +241,12 @@ async function supplyBurnDaily(ctx: SourceContext, params: Record<string, unknow
 export const solanaAdapters: AdapterDef[] = [
   { name: 'solana.token_supply', needsRpc: false, run: tokenSupplyLevel },
   { name: 'solana.owner_balance', needsRpc: false, run: ownerBalanceLevel },
+  {
+    name: 'solana.supply_less_owners',
+    needsRpc: false,
+    paramsDoc: 'mint: contract name, subtract: contract names of owners (not token accounts), rpc_url_env? (ORION_SOL_RPC_URL). getTokenSupply of the mint less each owner\'s balance over all its token accounts (getTokenAccountsByOwner), finalized, at fetch time; refused when not positive.',
+    validateParams: validateSupplyLessOwners,
+    run: supplyLessOwners,
+  },
   { name: 'solana.supply_burn_daily', needsRpc: false, run: supplyBurnDaily, computedFrom: ['solana.token_supply'] },
 ];
