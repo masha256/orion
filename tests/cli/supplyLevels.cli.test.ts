@@ -83,13 +83,31 @@ const cg = async (observedAt: string): Promise<number> => (await insertObservati
 })).id;
 
 describe('orion data rebuild-supply-levels', () => {
+  it('a disclosure row is listed KEPT (text and JSON), untouched by --yes (Ruling R15)', async () => {
+    const h = home();
+    await cg('2026-10-20T00:47:00.000Z');
+    const disc = (await insertObservation(db(), {
+      assetId: 'sup', metricKey: 'circulating_supply', observedAt: '2026-09-18T00:00:00.000Z', value: 48_350_000, periodDays: null,
+      fetchedAt: '2026-09-18T00:00:00.000Z', citationUrl: 'https://example.test/disclosed',
+      provenance: { method: 'disclosed', sourceType: 'disclosure', chain: null, locator: { citation_url: 'https://example.test/disclosed' }, codeVersion: 'test', configHash: 'h' },
+    })).id;
+    const dry = await orion(h, 'data', 'rebuild-supply-levels', 'sup');
+    const lines = dry.out.split('\n');
+    expect(lines[1]).toMatch(/: 1 row\(s\) of another source: 1 to rebuild, 0 refused, 0 not rebuildable; 0 of the current source unchanged; 1 kept; \d+ RPC call\(s\)$/);
+    expect(lines[2]).toBe(`    KEPT #${disc} 2026-09-18T00:00:00.000Z: a disclosure row: only market_data and old-locator contract_state rows are rebuilt (Ruling R15)`);
+    expect(dry.exit).toEqual([]);
+    const yes = await orion(h, 'data', 'rebuild-supply-levels', 'sup', '--yes', '--json');
+    expect(JSON.parse(yes.out)).toMatchObject({ applied: true, rows: 1, rebuilt: 1, kept: [{ id: disc, observedAt: '2026-09-18T00:00:00.000Z' }] });
+    expect(await db().one('SELECT superseded_by, value, source_type FROM observations WHERE id = $1', [disc])).toEqual({ superseded_by: null, value: 48_350_000, source_type: 'disclosure' });
+  });
+
   it('dry run, then --yes; nothing refused exits 0', async () => {
     const h = home();
     await cg('2026-10-20T00:47:00.000Z');
     const dry = await orion(h, 'data', 'rebuild-supply-levels', 'sup');
     const lines = dry.out.split('\n');
     expect(lines[0]).toBe('SUP rebuild-supply-levels (dry run):');
-    expect(lines[1]).toMatch(/^ {2}circulating_supply: 1 row\(s\) of another source: 1 to rebuild, 0 refused, 0 not rebuildable; 0 of the current source unchanged; \d+ RPC call\(s\)$/);
+    expect(lines[1]).toMatch(/^ {2}circulating_supply: 1 row\(s\) of another source: 1 to rebuild, 0 refused, 0 not rebuildable; 0 of the current source unchanged; 0 kept; \d+ RPC call\(s\)$/);
     expect(lines[2]).toBe('dry run: nothing written; --yes writes the rebuilt rows');
     expect(dry.exit).toEqual([]);
     const yes = await orion(h, 'data', 'rebuild-supply-levels', 'sup', '--yes', '--json');

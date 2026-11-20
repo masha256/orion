@@ -186,6 +186,14 @@
   },
   {
    "asset_id": "vvv",
+   "source_type": "disclosure",
+   "kind": "",
+   "active": 1,
+   "total": 1,
+   "before_rebuild_from": 0
+  },
+  {
+   "asset_id": "vvv",
    "source_type": "market_data",
    "kind": "coingecko",
    "active": 57,
@@ -209,5 +217,5 @@
    "before_rebuild_from": 0
   }
  ],
- "rowCount": 26
+ "rowCount": 27
 }

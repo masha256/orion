@@ -113,6 +113,14 @@
    "before_rebuild_from": 0
   },
   {
+   "asset_id": "vvv",
+   "source_type": "disclosure",
+   "kind": "",
+   "active": 1,
+   "total": 1,
+   "before_rebuild_from": 0
+  },
+  {
    "asset_id": "ycrv",
    "source_type": "contract_state",
    "kind": "chain.view_sum",
@@ -129,5 +137,5 @@
    "before_rebuild_from": 0
   }
  ],
- "rowCount": 16
+ "rowCount": 17
 }

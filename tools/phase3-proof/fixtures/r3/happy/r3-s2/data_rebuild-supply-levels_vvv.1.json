@@ -7,5 +7,12 @@
  "unchanged": 2,
  "refused": [],
  "notRebuildable": [],
+ "kept": [
+  {
+   "id": 3,
+   "observedAt": "2026-09-18T00:00:00.000Z",
+   "reason": "a disclosure row: only market_data and old-locator contract_state rows are rebuilt (Ruling R15)"
+  }
+ ],
  "calls": 171
 }

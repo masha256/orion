@@ -124,8 +124,9 @@ function supplyRebuildLines(r: SupplyRebuildResult): string[] {
   return [
     `${r.asset.toUpperCase()} rebuild-supply-levels${r.applied ? '' : ' (dry run)'}:`,
     `  ${r.metric}: ${r.rows} row(s) of another source: ${r.rebuilt} ${r.applied ? 'rebuilt' : 'to rebuild'}, ${r.refused.length} refused, ` +
-      `${r.notRebuildable.length} not rebuildable; ${r.unchanged} of the current source unchanged; ${r.calls} RPC call(s)`,
+      `${r.notRebuildable.length} not rebuildable; ${r.unchanged} of the current source unchanged; ${r.kept.length} kept; ${r.calls} RPC call(s)`,
     ...r.refused.map((x) => `    REFUSED #${x.id} ${x.observedAt}: ${x.reason}`),
+    ...r.kept.map((x) => `    KEPT #${x.id} ${x.observedAt}: ${x.reason}`),
     ...r.notRebuildable.map((x) => `    NOT REBUILDABLE #${x.id} ${x.day} (${x.observedAt}): data purge --source-type market_data deletes it without replacement`),
     r.applied
       ? `wrote ${r.rebuilt} row(s); the old rows are superseded (data purge --source-type market_data deletes the CoinGecko ones)`
@@ -354,7 +355,7 @@ export function registerData(program: Command, ctx: CliContext): void {
     .description(
       'for every active circulating_supply row of another source than the configured one (CoinGecko; a wrapper\'s old totalSupply()): a new row at the ' +
         'same observed_at, read by the configured source at the first block at or after it; HYPE/PUMP rows and rows before rebuild_from are not rebuildable ' +
-        `(listed). A dry run unless --yes. Deletes nothing (data purge --source-type market_data does); exits ${REPRICE_REFUSED_EXIT} when any row is refused`,
+        `(listed); a row of another rung (disclosure, hand-entered) is kept, untouched (listed). A dry run unless --yes. Deletes nothing (data purge --source-type market_data does); exits ${REPRICE_REFUSED_EXIT} when any row is refused`,
     )
     .option('--yes', 'write the rebuilt rows')
     .option('--json', 'JSON output')

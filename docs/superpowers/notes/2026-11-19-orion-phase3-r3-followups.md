@@ -15,11 +15,10 @@ expected artifacts, soak, rollback). Source of every line below: the SDD ledger
   them (only the sides of a watched `level_gap_pct`, LINK's `chainlink_circulating` from `supply.chain.link` and CRV's
   `curve_circulating`, leave the exemption). Decide whether watched reads should raise streaks. PUMP's owners are already covered by
   `supply_less_owners`' streak on the same RPC.
-- **VVV's 2026-09-18 `disclosure` circulating row** (scoping: 48.35M, cited, "keep"). If it is still active, the
-  rebuild's target rule (R12: another source type than the configured one) targets it as well, so VVV's rebuild would
-  count one row more than its `market_data` rows; the release block's s0 stops on any stale row of an unlisted kind.
-  Task 7's prod-copy dry run shows whether it is active. Decide: rebuild it (count it as a target) or keep it (a code
-  change: exempt `disclosure` rows from the target rule).
+- ~~VVV's 2026-09-18 `disclosure` circulating row~~ **resolved by R15**: it is active on prod (id 3, 48,350,000, a
+  pre-v2 seed). The rebuild now targets only `market_data` rows and `contract_state` rows of another locator; a
+  `disclosure` (or hand-entered) row is listed as `kept` and untouched (N3: keep). s0 records the kept rows per asset
+  from `sql-ro` and every later check expects exactly that count (vvv 1 on prod); a kept row s0 did not record stops.
 - **PUMP's Blockworks schedule floor is not built** (R4): the `reserved_balance` change watch (1%) is the check for
   option B; it fires first on any custodian or dormant-vault move.
 - **Task 7's sign-off writes two files the tag must carry**: `tools/phase3-proof/r3-allowlist.json` (s4's gate) and
@@ -81,6 +80,10 @@ One line each with its cost if wrong (as the ledger states it).
 - R14 (narrows the Task 4 review I1 fix): only the sides (a/b) of a watched `level_gap_pct` leave the monitor-only
   failure-streak exemption; a plain watched monitor-only metric stays exempt. Cost: LIT's watched sources stay as silent
   as today (open item above).
+- R15 (amends R12): rebuild targets = active circulating rows with `source_type` `market_data`, or `contract_state` rows
+  of another locator (the wrappers' old `erc20_supply` rows); `disclosure` / hand-entered rows are never targets: listed
+  as `kept` (id, observedAt, reason) and untouched; s0/s2 expect VVV kept 1. Cost: one pre-v2 disclosed point inside
+  VVV's on-chain series.
 
 ## Deferred (minor) findings
 

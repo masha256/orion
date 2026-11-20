@@ -10,7 +10,7 @@ r3_args "$@"
 need_expected
 E=$W/expected.json
 
-say "5 stale-definition coverage (exempt: step 1's market_data and wrapper old-locator rows)"
+say "5 stale-definition coverage (exempt: step 1's market_data and wrapper old-locator rows; kept rows = step 1's, R15)"
 Q supply > "$W/dry/supply-pre.json" || stop "sql-ro supply exit $?"
 $CHECK stale "$W/dry/supply-pre.json" "$E" pre || exit 1
 

@@ -17,6 +17,8 @@ ENV, TAG, D, D91, SINCE = "stage", "orion-2026.11.20.1", "2026-11-18", "2026-08-
 MD = {"aero": 45, "cake": 40, "crv": 43, "hype": 55, "link": 37, "lit": 38, "pump": 37, "sky": 36, "uni": 40, "vvv": 57}
 OLD = {"cvxcrv": 39, "sdcrv": 39, "ycrv": 39}
 NR = {"aero": 45, "hype": 55, "pump": 37}  # notRebuildable: HYPE, PUMP all; AERO's rows before 2026-11-10
+# Kept (ruling R15): VVV's active 2026-09-18 disclosure row (prod id 3, a pre-v2 seed: locator {note, legacy_seed}, kind '').
+KEPT = {"vvv": [{"id": 3, "observedAt": "2026-09-18T00:00:00.000Z", "reason": "a disclosure row: only market_data and old-locator contract_state rows are rebuilt (Ruling R15)"}]}
 CURRENT = {a: ("contract_state", "chain.view_sum") for a in ASSETS}
 CURRENT["hype"] = ("first_party_api", "hype.circulating_supply")
 CURRENT["pump"] = ("contract_state", "solana.supply_less_owners")
@@ -42,6 +44,8 @@ def supply(state):
             out.append({"asset_id": a, "source_type": "market_data", "kind": "coingecko", "active": active, "total": MD[a], "before_rebuild_from": MD[a] if a == "aero" else 0})
         if a in OLD:
             out.append({"asset_id": a, "source_type": "contract_state", "kind": "totalSupply()", "active": OLD[a] if state == "pre" else 0, "total": OLD[a], "before_rebuild_from": 0})
+        if a in KEPT:  # untouched by the rebuild and the purge: the same in every state
+            out.append({"asset_id": a, "source_type": "disclosure", "kind": "", "active": len(KEPT[a]), "total": len(KEPT[a]), "before_rebuild_from": 0})
     return sql(sorted(out, key=lambda r: (r["asset_id"], r["source_type"], r["kind"])))
 
 
@@ -56,7 +60,7 @@ def rebuild(a, phase):
     rebuilt = stale - nr if phase != "again" else 0
     return {"asset": a, "applied": phase == "yes", "metric": "circulating_supply", "rows": rows, "rebuilt": rebuilt,
             "unchanged": 2, "refused": [], "notRebuildable": [{"id": 1000 + i, "observedAt": "2026-10-01T00:45:00.000Z", "day": "2026-10-01"} for i in range(nr)],
-            "calls": 3 * rebuilt}
+            "kept": KEPT.get(a, []), "calls": 3 * rebuilt}
 
 
 def purge(a, yes):
@@ -123,6 +127,16 @@ def stops():
         if r["asset_id"] == "cake" and r["source_type"] == "market_data":
             r["active"] = r["total"] = 41
     put(HERE / "stop-md-count", "r3-s2/sql-ro_supply.1", pre)
+    # s2: a second vvv disclosure row at step 5 that step 1 did not record (ruling R15: kept rows are re-checked).
+    pre = supply("pre")
+    for r in pre["rows"]:
+        if r["asset_id"] == "vvv" and r["source_type"] == "disclosure":
+            r["active"] = r["total"] = 2
+    put(HERE / "stop-kept-unrecorded", "r3-s2/sql-ro_supply.1", pre)
+    # s2: cake's rebuild dry run keeps a row step 1 did not record.
+    r = rebuild("cake", "dry")
+    r["kept"] = [{"id": 601, "observedAt": "2026-10-02T00:00:00.000Z", "reason": "a disclosure row: only market_data and old-locator contract_state rows are rebuilt (Ruling R15)"}]
+    put(HERE / "stop-kept-rebuild", "r3-s2/data_rebuild-supply-levels_cake.1", r)
     # s2: one crv row refused at its block (exit 3).
     r = rebuild("crv", "dry")
     r["rebuilt"] -= 1

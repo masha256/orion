@@ -38,12 +38,16 @@ METRIC = "circulating_supply"
 # Each asset's circulating source after the release: (source_type, locator kind), kind = the locator's `adapter`, else
 # its `call`, else its `provider` (the `kind` column of the supply query). From assets/<a>.yaml at the release and
 # src/report/sourceTypes.ts (chain.view_sum and solana.supply_less_owners: contract_state; hype.circulating_supply:
-# first_party_api). A row of any other (source_type, kind) is stale (the rebuild's target rule, ruling R12).
+# first_party_api). A row of any other (source_type, kind) is stale (the rebuild's target rule, ruling R12) when its
+# source_type is market_data or contract_state; a non-current row of any other source_type (disclosure, hand-entered:
+# VVV's 2026-09-18 disclosure row) is never a rebuild target (ruling R15): `kept`, untouched by every step, its count
+# per asset recorded by step 1 and re-checked by every later check.
 CURRENT = {a: ("contract_state", "chain.view_sum") for a in ASSETS}
 CURRENT["hype"] = ("first_party_api", "hype.circulating_supply")
 CURRENT["pump"] = ("contract_state", "solana.supply_less_owners")
 # The listed stale kinds (the artifacts): CoinGecko rows on any asset, and the three wrappers' old erc20_supply rows.
 MARKET_DATA = "market_data"
+TARGET_TYPES = (MARKET_DATA, "contract_state")
 OLD_LOCATOR = ("contract_state", "totalSupply()")
 WRAPPERS = ("cvxcrv", "sdcrv", "ycrv")
 # notRebuildable (src/db/supplyLevels.ts supplyNotRebuildable): HYPE and PUMP never; AERO before its rebuild_from.
@@ -106,11 +110,18 @@ def stale_groups(supply_rows):
 
 
 def classify(groups):
-    """Split one asset's stale groups into market_data, the wrappers' old locator, and anything else (unlisted)."""
+    """Split one asset's non-current groups into market_data, the wrappers' old locator, kept (another source_type than
+    market_data / contract_state: never a rebuild target, ruling R15), and anything else (unlisted)."""
     md = {"active": 0, "total": 0, "beforeRebuildFrom": 0}
     old = {"active": 0, "total": 0, "beforeRebuildFrom": 0}
+    kept = {"active": 0, "total": 0, "kinds": []}
     other = []
     for (st, kind), (active, total, brf) in sorted(groups.items()):
+        if st not in TARGET_TYPES:
+            kept["active"] += active
+            kept["total"] += total
+            kept["kinds"].append({"sourceType": st, "kind": kind, "active": active, "total": total})
+            continue
         if st == MARKET_DATA:
             t = md
         elif (st, kind) == OLD_LOCATOR:
@@ -121,7 +132,12 @@ def classify(groups):
         t["active"] += active
         t["total"] += total
         t["beforeRebuildFrom"] += brf
-    return md, old, other
+    return md, old, kept, other
+
+
+def kept_note(assets_kept):
+    """`vvv disclosure=1` for every asset with kept rows (from {asset: kept})."""
+    return " ".join(f"{a} " + ",".join(f"{k['sourceType']}={k['active']}" for k in x["kinds"]) for a, x in sorted(assets_kept.items()) if x["active"])
 
 
 def not_rebuildable(asset, md, old):
@@ -172,14 +188,15 @@ def c_expected(supply, levels, out, env, now):
     assets = {}
     other_all = []
     for a in ASSETS:
-        md, old, other = classify(groups[a])
+        md, old, kept, other = classify(groups[a])
         if old["total"] and a not in WRAPPERS:
             other.append({"sourceType": OLD_LOCATOR[0], "kind": OLD_LOCATOR[1], "active": old["active"], "total": old["total"]})
             old = {"active": 0, "total": 0, "beforeRebuildFrom": 0}
         nr = not_rebuildable(a, md, old)
         stale = md["active"] + old["active"]
         assets[a] = {"marketData": md, "oldLocator": old, "stale": stale, "notRebuildable": nr, "rebuilt": stale - nr,
-                     "mdWithoutReplacement": md["active"] if a in NEVER_REBUILDABLE else (md["beforeRebuildFrom"] if a in REBUILD_FROM else 0)}
+                     "mdWithoutReplacement": md["active"] if a in NEVER_REBUILDABLE else (md["beforeRebuildFrom"] if a in REBUILD_FROM else 0),
+                     "kept": kept["active"], "keptKinds": kept["kinds"]}
         other_all += [dict(o, asset=a) for o in other]
     lv = rows(levels)
     md_levels = sorted(r["asset_id"] for r in lv if r["source_type"] == MARKET_DATA)
@@ -190,7 +207,9 @@ def c_expected(supply, levels, out, env, now):
     for a in ASSETS:
         x = assets[a]
         print(f"{a}: market_data {x['marketData']['active']} active / {x['marketData']['total']} total, old locator "
-              f"{x['oldLocator']['active']}, expected rebuilt {x['rebuilt']} notRebuildable {x['notRebuildable']}")
+              f"{x['oldLocator']['active']}, expected rebuilt {x['rebuilt']} notRebuildable {x['notRebuildable']} kept {x['kept']}")
+    kept_all = {a: {"active": x["kept"], "kinds": x["keptKinds"]} for a, x in assets.items()}
+    print(f"kept (never a rebuild target, ruling R15; untouched): {kept_note(kept_all) or 'none'}")
     print(f"market_data total {exp['marketDataTotal']}; latest_levels market_data {len(md_levels)} ({' '.join(md_levels)})")
     if other_all:
         raise Stop("stale circulating rows of an unlisted kind (no block step clears them; bring them to Mike): "
@@ -293,11 +312,16 @@ def c_stale(supply, expected, phase):
     exp = load(expected)["assets"]
     groups = stale_groups(rows(supply))
     bad, notes, label = [], [], ""
+    kept_all = {}
     for a in ASSETS:
-        md, old, other = classify(groups[a])
+        md, old, kept, other = classify(groups[a])
         if other:
             bad.append(f"{a} unlisted stale {json.dumps(other)}")
         e = exp[a]
+        kept_all[a] = kept
+        if kept["active"] != e["kept"]:
+            bad.append(f"{a} kept (non-market_data, non-contract_state) rows {kept['active']} {json.dumps(kept['kinds'])}, "
+                       f"expected step 1's {e['kept']} (a row step 1 did not record: bring it to Mike)")
         if phase == "pre":
             want_md, want_old = e["marketData"]["active"], e["oldLocator"]["active"]
             label = "expected pre-rebuild"
@@ -315,11 +339,16 @@ def c_stale(supply, expected, phase):
             notes.append(f"{a} market_data={md['active']}" + (f" old-locator={old['active']}" if old["active"] else ""))
     if bad:
         raise Stop(f"stale circulating rows ({phase}): " + "; ".join(bad))
-    print(f"stale {phase} ok" + (f" ({label}: {' '.join(notes)})" if notes else " (0 stale rows on all 13)"))
+    kn = kept_note(kept_all)
+    print(f"stale {phase} ok" + (f" ({label}: {' '.join(notes)})" if notes else " (0 stale rows on all 13)")
+          + (f" [kept, as step 1: {kn}]" if kn else ""))
 
 
 def rebuild_counts(r):
-    return (r["rows"], r["rebuilt"], len(r["refused"]), len(r["notRebuildable"]))
+    """(rows, rebuilt, refused, notRebuildable, kept); a result without `kept` (a pre-R15 binary) is a STOP."""
+    if not isinstance(r.get("kept"), list):
+        raise Stop(f"rebuild result for {r.get('asset')} has no `kept` list (a release before ruling R15?)")
+    return (r["rows"], r["rebuilt"], len(r["refused"]), len(r["notRebuildable"]), len(r["kept"]))
 
 
 def c_rebuild_dry(out, rc, asset, expected):
@@ -331,10 +360,10 @@ def c_rebuild_dry(out, rc, asset, expected):
         raise Stop(f"{asset} rebuild dry run error {json.dumps(r['error'])}")
     e = load(expected)["assets"][asset]
     got = rebuild_counts(r)
-    want = (e["stale"], e["rebuilt"], 0, e["notRebuildable"])
+    want = (e["stale"], e["rebuilt"], 0, e["notRebuildable"], e["kept"])
     if got != want:
-        raise Stop(f"{asset} rebuild dry run rows/rebuilt/refused/notRebuildable {got}, expected from step 1 {want}")
-    print(f"{asset} rebuild dry ok (rows {got[0]} rebuilt {got[1]} refused 0 notRebuildable {got[3]})")
+        raise Stop(f"{asset} rebuild dry run rows/rebuilt/refused/notRebuildable/kept {got}, expected from step 1 {want}")
+    print(f"{asset} rebuild dry ok (rows {got[0]} rebuilt {got[1]} refused 0 notRebuildable {got[3]} kept {got[4]})")
 
 
 def c_rebuild_again(out, rc, asset, expected):
@@ -342,7 +371,7 @@ def c_rebuild_again(out, rc, asset, expected):
     rc_ok(rc, f"{asset} second rebuild dry run")
     e = load(expected)["assets"][asset]
     got = rebuild_counts(r)
-    want = (e["notRebuildable"], 0, 0, e["notRebuildable"])
+    want = (e["notRebuildable"], 0, 0, e["notRebuildable"], e["kept"])
     if got != want:
         raise Stop(f"{asset} second dry run after --yes {got}, expected {want} (rebuilds 0)")
     print(f"{asset} second dry ok (rebuilds 0)")

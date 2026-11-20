@@ -26,11 +26,14 @@ import { insertObservation } from './observations.js';
  * what a fetch at that block would have written; there is no per-adapter read path here. insertObservation supersedes
  * the old row; nothing is deleted (`data purge --source-type market_data` does that afterwards, src/db/purge.ts).
  *
- * The rule for "another source" (precise): a row is the current source's when its `source_type` equals the current
- * source's rung AND its locator's `adapter` and `call` keys equal the current source's locator's (an absent key equals
- * an absent key). So CoinGecko rows (`market_data`) and the wrappers' `erc20_supply` rows (contract_state, no adapter,
- * call `totalSupply()`) are targets; a row of the same adapter is `unchanged` (a rebuilt row included, so a second run
- * rebuilds nothing), whatever its params were: a params change is a definition change and its release says so.
+ * Which rows are targets (Rulings R12, R15): a row is the current source's (`unchanged`) when its `source_type` equals
+ * the current source's rung AND its locator's `adapter` and `call` keys equal the current source's locator's (an absent
+ * key equals an absent key); a row of the same adapter is `unchanged` (a rebuilt row included, so a second run rebuilds
+ * nothing), whatever its params were: a params change is a definition change and its release says so. Of the other
+ * rows, only two kinds are targets: CoinGecko rows (`market_data`) and `contract_state` rows of another locator (the
+ * wrappers' old `erc20_supply` rows: no adapter, call `totalSupply()`, while the current source is `chain.view_sum`).
+ * A row of any other rung (a `disclosure` row, e.g. VVV's cited 2026-09-18 figure; a hand-entered one) is never a
+ * target: listed as `kept` with the reason, and untouched.
  *
  * Per target: `notRebuildable` (listed with its day, untouched) when the current source is not an EVM chain read (a
  * Hyperliquid or Solana adapter: no archive state to read) or `observed_at` is before the metric's `rebuild_from`;
@@ -48,13 +51,15 @@ export interface SupplyRebuildResult {
   asset: string;
   applied: boolean;
   metric: 'circulating_supply';
-  /** Active rows of another source than the current one: rebuilt + refused + notRebuildable. */
+  /** Active target rows (market_data; contract_state of another locator): rebuilt + refused + notRebuildable. */
   rows: number;
   rebuilt: number;
   /** Active rows already of the current source (not targets). */
   unchanged: number;
   refused: { id: number; observedAt: string; reason: string }[];
   notRebuildable: { id: number; observedAt: string; day: string }[];
+  /** Active rows of another rung than market_data / contract_state (disclosure, hand-entered): never targets, untouched (R15). */
+  kept: { id: number; observedAt: string; reason: string }[];
   /** RPC requests made (block searches and reads). */
   calls: number;
 }
@@ -99,6 +104,9 @@ const keyOf = (l: Locator | null | undefined, k: 'adapter' | 'call'): string | n
   return typeof v === 'string' ? v : null;
 };
 
+/** The rungs whose rows of another source are rebuild targets (Ruling R15); any other rung's row is kept. */
+const TARGET_RUNGS: ReadonlySet<string> = new Set(['market_data', 'contract_state']);
+
 /** The current-source rule above. */
 function isCurrentSource(current: { sourceType: string; locator: Locator }, row: { source_type: string; locator: Locator | null }): boolean {
   return row.source_type === current.sourceType && keyOf(row.locator, 'adapter') === keyOf(current.locator, 'adapter') && keyOf(row.locator, 'call') === keyOf(current.locator, 'call');
@@ -140,7 +148,7 @@ async function planRebuild(db: Db, loaded: LoadedAsset, deps: SupplyRebuildDeps,
   const { config } = loaded;
   const asset = config.id;
   const counter = { calls: 0 };
-  const result: SupplyRebuildResult = { asset, applied: false, metric: SUPPLY_LEVEL_METRIC, rows: 0, rebuilt: 0, unchanged: 0, refused: [], notRebuildable: [], calls: 0 };
+  const result: SupplyRebuildResult = { asset, applied: false, metric: SUPPLY_LEVEL_METRIC, rows: 0, rebuilt: 0, unchanged: 0, refused: [], notRebuildable: [], kept: [], calls: 0 };
   const planned: Planned[] = [];
   const boundaries = new Map<string, BlockRef>();
   const def = config.metrics[SUPPLY_LEVEL_METRIC];
@@ -154,8 +162,10 @@ async function planRebuild(db: Db, loaded: LoadedAsset, deps: SupplyRebuildDeps,
   );
   const targets: { id: number; observedAt: string }[] = [];
   for (const r of rows) {
+    const row = { id: Number(r.id), observedAt: new Date(r.observed_at).toISOString() };
     if (isCurrentSource(current, r)) result.unchanged++;
-    else targets.push({ id: Number(r.id), observedAt: new Date(r.observed_at).toISOString() });
+    else if (TARGET_RUNGS.has(r.source_type)) targets.push(row);
+    else result.kept.push({ ...row, reason: `a ${r.source_type} row: only market_data and old-locator contract_state rows are rebuilt (Ruling R15)` });
   }
   result.rows = targets.length;
 

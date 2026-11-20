@@ -1076,18 +1076,18 @@ rows on 2026-11-20).
 | `latest_levels` `circulating_supply` rows with `source_type = market_data` (the old release wrote them; latest-only) | step 4 before the first hourly `levels` run on the tag: `expected pre-switch: 9 (assets ...)` | 9: cake crv hype link lit pump sky uni vvv | that run (it overwrites each from the new source) | step 4 after that run: 0; step 8 again: 0 |
 | active `market_data` `circulating_supply` rows | step 5 (s2, before the rebuild): `expected pre-rebuild` | aero 45, cake 40, crv 43, hype 55, link 37, lit 38, pump 37, sky 36, uni 40, vvv 57 = 428 | step 6 (rebuilt: cake crv link lit sky uni vvv), step 7 (deleted, all 10; hype, pump, aero's 45 as `withoutReplacement`) | step 5 after step 6's `--yes`: only hype's, pump's and aero's notRebuildable rows left (step 1's counts); step 8: 0 `market_data` rows of any metric, 0 stale rows on all 13 |
 | the wrappers' active rows on the old `erc20_supply` locator (`contract_state`, `call = totalSupply()`) | step 5: `expected pre-rebuild` | cvxcrv 39, sdcrv 39, ycrv 39 | step 6 (rebuilt) | step 5 after step 6's `--yes`: 0; step 8: 0 |
+| kept: active circulating rows of another `source_type` than `market_data` / `contract_state` and not the new source (ruling R15: never a rebuild target, untouched by steps 6 and 7) | step 1 records them per asset (`kept (never a rebuild target ...)`); step 6's dry runs list them as `kept` | vvv 1 (prod id 3, the 2026-09-18 `disclosure` row, 48.35M, N3 "keep") | nothing: they stay | every later check: per asset exactly step 1's count (`[kept, as step 1: vvv disclosure=1]`; the rebuild's `kept` list the same length); a kept row step 1 did not record: stop |
 
-Any other stale circulating row (an active row whose `(source_type, locator kind)` is not the asset's new source) is
-no listed artifact: s0 stops on it. The scoping (2026-11-19) names one candidate: VVV's 2026-09-18 `disclosure` row
-(48.35M, cited, "keep"); if it is still active, the rebuild's target rule (ruling R12: another source type) targets it
-too, and s0 stops: bring it to Mike (rebuild it, or keep it, which needs a code change) before going on.
+Any other stale circulating row (an active `market_data` or `contract_state` row whose locator kind is neither the
+asset's new source nor a wrapper's old locator) is no listed artifact: s0 stops on it.
 
 0. **Save `before/` (s0)**: the N6 checks above, then D = today-2 UTC and D-91 into `days.json` (written once; a rerun
    keeps it), then `report yield <a> --day D` and `--day D-91` for the 13 into `before/<a>.json`, `before/<a>-91.json`.
 1. **Write the expected-counts file (s0)** from `sql-ro` (both envs): per asset the `circulating_supply` rows grouped by
    `source_type` and locator kind (`adapter`, else `call`, else `provider`), active (`superseded_by is null and status
    <> 'rejected'`) and total, and AERO's active rows before its `rebuild_from` (2026-11-10); the `latest_levels`
-   circulating rows by `source_type`. From these, per asset: the stale rows (`market_data` + old locator), the
+   circulating rows by `source_type`. From these, per asset: the kept rows (any other `source_type`, ruling R15:
+   counted, never rebuilt or purged; prod: vvv's `disclosure` row, 1), the stale rows (`market_data` + old locator), the
    notRebuildable ones (HYPE and PUMP: every stale row; AERO: those before 2026-11-10; any other: 0), the expected
    `rebuilt` (stale - notRebuildable) and `withoutReplacement` (the notRebuildable `market_data` rows). s0 prints one
    line per asset: paste them.
@@ -1102,12 +1102,14 @@ too, and s0 stops: bring it to Mike (rebuild it, or keep it, which needs a code 
    `failed`, or a result with any `failed` source: stop). **Re-check with no exemption: 0 `market_data` rows in
    `latest_levels`, and each asset's new circulating value within ±2% of its signed value** (more: stop).
 5. **Stale-definition coverage (s2, read-only)**: per asset the active circulating rows not on the asset's new source
-   must be exactly step 1's `market_data` and old-locator counts (printed `expected pre-rebuild`); any other source type,
-   asset or count: stop (a mismatch usually means an old-release nightly ran after s0).
+   must be exactly step 1's `market_data` and old-locator counts (printed `expected pre-rebuild`), and its kept rows
+   exactly step 1's kept count; any other source type, asset or count: stop (a mismatch usually means an old-release
+   nightly ran after s0).
 6. **Rebuild (s2): 13 dry runs, then `--yes`.** `data rebuild-supply-levels <a>` dry run; expected exactly, per asset
    from step 1's file: `rows` = its stale rows, `rebuilt` = cake, crv, link, lit, sky, uni, vvv (`market_data`) and
-   cvxcrv, sdcrv, ycrv (old locator) all of them, `notRebuildable` = every row of hype and pump and aero's 45, `refused`
-   0 everywhere (a refused row or exit 3: stop, Mike decides; the row keeps its old value). Then `--yes` x13 (applied,
+   cvxcrv, sdcrv, ycrv (old locator) all of them, `notRebuildable` = every row of hype and pump and aero's 45, `kept` =
+   step 1's kept count (vvv 1: its disclosure row, untouched), `refused` 0 everywhere (a refused row or exit 3: stop,
+   Mike decides; the row keeps its old value). Then `--yes` x13 (applied,
    counts == the dry run's), a second dry run x13 (`rebuilt` 0), and step 5 again: the only stale rows left are hype's,
    pump's and aero's `market_data` rows (step 1's counts), cleared by step 7.
 7. **Purge (s3): dry runs, then `--yes`**, on the assets step 1 found `market_data` rows for (the 10): `data purge <a>

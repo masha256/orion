@@ -78,6 +78,10 @@ class R3Scripts(unittest.TestCase):
         self.assertEqual(exp["latestLevelsMarketData"], ["cake", "crv", "hype", "link", "lit", "pump", "sky", "uni", "vvv"])
         self.assertEqual({a: exp["assets"][a]["notRebuildable"] for a in ("aero", "hype", "pump", "cake")}, {"aero": 45, "hype": 55, "pump": 37, "cake": 0})
         self.assertEqual(exp["assets"]["cvxcrv"]["rebuilt"], 39)
+        # Ruling R15: VVV's disclosure row is recorded as kept (from the supply rows, never typed), not a STOP.
+        self.assertEqual({a: x["kept"] for a, x in exp["assets"].items() if x["kept"]}, {"vvv": 1})
+        self.assertEqual(exp["assets"]["vvv"]["rebuilt"], 57)
+        self.assertIn("kept (never a rebuild target, ruling R15; untouched): vvv disclosure=1", out)
         self.assertEqual(sorted(p.name for p in (self.work / "before").glob("*-91.json")), sorted(f"{a}-91.json" for a in ASSETS))
         self.assertIn("N6 rebuild-supply-levels verb ok", out)
         self.assertFalse(any("--yes" in c for c in self.calls(0)))
@@ -102,7 +106,9 @@ class R3Scripts(unittest.TestCase):
         out = self.ok(2)
         self.assertIn("stale pre ok (expected pre-rebuild:", out)
         self.assertIn("cvxcrv market_data=0 old-locator=39", out)
-        self.assertIn("stale rebuilt ok (left for step 7 (notRebuildable): aero market_data=45 hype market_data=55 pump market_data=37)", out)
+        self.assertIn("stale rebuilt ok (left for step 7 (notRebuildable): aero market_data=45 hype market_data=55 pump market_data=37) [kept, as step 1: vvv disclosure=1]", out)
+        self.assertIn("vvv rebuild dry ok (rows 57 rebuilt 57 refused 0 notRebuildable 0 kept 1)", out)
+        self.assertIn("cake rebuild dry ok (rows 40 rebuilt 40 refused 0 notRebuildable 0 kept 0)", out)
         calls = self.calls(2)
         first_yes = next(i for i, c in enumerate(calls) if c.endswith("--yes"))
         dry = [i for i, c in enumerate(calls) if c.startswith("data rebuild-supply-levels") and not c.endswith("--yes")]
@@ -115,7 +121,7 @@ class R3Scripts(unittest.TestCase):
         self.assertIn("hype purge dry ok (observations 55 withoutReplacement 55)", out)
         self.assertIn("cake purge dry ok (observations 40 withoutReplacement 0)", out)
         self.assertIn("market_data ok (0 rows in observations)", out)
-        self.assertIn("stale purged ok (0 stale rows on all 13)", out)
+        self.assertIn("stale purged ok (0 stale rows on all 13) [kept, as step 1: vvv disclosure=1]", out)
         purged = [c.split()[2] for c in self.calls(3) if c.startswith("data purge") and c.endswith("--yes")]
         self.assertEqual(purged, ["aero", "cake", "crv", "hype", "link", "lit", "pump", "sky", "uni", "vvv"])
         self.assertEqual(len((self.work / "yes" / "exports.txt").read_text().splitlines()), 10)
@@ -147,6 +153,16 @@ class R3Scripts(unittest.TestCase):
         self.ok(0)
         self.stops(2, overlay="stop-md-count", reason="cake stale market_data 41 (expected 40)")
         self.assertFalse(any(c.startswith("data rebuild-supply-levels") for c in self.calls(2)))
+
+    def test_s2_stops_on_a_disclosure_row_step_1_did_not_record(self):
+        self.ok(0)
+        self.stops(2, overlay="stop-kept-unrecorded", reason="vvv kept (non-market_data, non-contract_state) rows 2")
+        self.assertFalse(any(c.startswith("data rebuild-supply-levels") for c in self.calls(2)))
+
+    def test_s2_stops_when_a_rebuild_keeps_a_row_step_1_did_not_record(self):
+        self.ok(0)
+        self.stops(2, overlay="stop-kept-rebuild", reason="cake rebuild dry run rows/rebuilt/refused/notRebuildable/kept (40, 40, 0, 0, 1), expected from step 1 (40, 40, 0, 0, 0)")
+        self.assertFalse(any(c.endswith("--yes") for c in self.calls(2)))
 
     def test_s2_stops_on_a_refused_rebuild_row_before_any_yes(self):
         self.ok(0)

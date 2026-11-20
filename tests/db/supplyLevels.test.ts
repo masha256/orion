@@ -218,7 +218,7 @@ describe('rebuildSupplyLevels', () => {
     expect(dry).toEqual({
       asset: 'cak', applied: false, metric: 'circulating_supply', rows: 3, rebuilt: 2, unchanged: 1,
       refused: [{ id: old, observedAt: '2026-09-15T00:47:00.000Z', reason: expect.stringMatching(/lockedSupply\(\) at block \d+: execution reverted/) }],
-      notRebuildable: [], calls: expect.any(Number),
+      notRebuildable: [], kept: [], calls: expect.any(Number),
     });
     expect(dry.calls).toBeGreaterThan(3);
     expect(await obsCount()).toBe(before);
@@ -291,7 +291,7 @@ describe('rebuildSupplyLevels', () => {
     const loaded = load(HYP_YAML);
     const r = await rebuildSupplyLevels(d, loaded, noRpc, { yes: true, now: NOW.toISOString() });
     expect(r).toEqual({
-      asset: 'hyp', applied: true, metric: 'circulating_supply', rows: 2, rebuilt: 0, unchanged: 0, refused: [], calls: 0,
+      asset: 'hyp', applied: true, metric: 'circulating_supply', rows: 2, rebuilt: 0, unchanged: 0, refused: [], kept: [], calls: 0,
       notRebuildable: [{ id: a, observedAt: '2026-10-20T00:47:00.000Z', day: '2026-10-20' }, { id: b, observedAt: '2026-10-21T00:47:00.000Z', day: '2026-10-21' }],
     });
     expect((await listActiveObservations(d, 'hyp', 'circulating_supply')).map((o) => o.value)).toEqual([1, 2]);
@@ -329,7 +329,235 @@ describe('rebuildSupplyLevels', () => {
 
   it('a metric without circulating_supply has nothing to rebuild', async () => {
     const r = await rebuildSupplyLevels(db(), load(`\nid: nos\nsymbol: NOS\nname: None\nmetrics:${REQUIRED}\n`), noRpc, { yes: false, now: NOW.toISOString() });
-    expect(r).toEqual({ asset: 'nos', applied: false, metric: 'circulating_supply', rows: 0, rebuilt: 0, unchanged: 0, refused: [], notRebuildable: [], calls: 0 });
+    expect(r).toEqual({ asset: 'nos', applied: false, metric: 'circulating_supply', rows: 0, rebuilt: 0, unchanged: 0, refused: [], notRebuildable: [], kept: [], calls: 0 });
+  });
+});
+
+/** VVV's shape (Base, view_sum): its circulating history holds CoinGecko rows and one cited 2026-09-18 disclosure row. */
+const VVV_YAML = `
+id: vvt
+symbol: VVT
+name: Venice Test
+contracts:
+  token: "${TOKEN}"
+  dead: "${DEAD}"
+ingest: { chain_id: 8453, rpc_url_env: ORION_BASE_RPC_URL, backfill_days: 100 }
+metrics:${REQUIRED}
+  circulating_supply:
+    type: level
+    unit: tokens
+    staleness_days: 14
+    source:
+      type: adapter
+      name: chain.view_sum
+      params:
+        terms:
+          - { contract: token, function: totalSupply }
+          - { contract: token, function: balanceOf, args: [ dead ], sign: -1 }
+`;
+
+/** LIT's shape: total less a cited 500M locked schedule (36 monthly tranches from 2027-01-29). */
+const LTT_TOKEN = '0x00000000000000000000000000000000000000b7';
+const LTT_YAML = `
+id: ltt
+symbol: LTT
+name: Lighter Test
+contracts:
+  token: "${LTT_TOKEN}"
+ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
+metrics:${REQUIRED}
+  circulating_supply:
+    type: level
+    unit: tokens
+    staleness_days: 14
+    source:
+      type: adapter
+      name: chain.view_sum
+      params:
+        terms:
+          - { contract: token, function: totalSupply }
+        locked_schedule: { amount: 500000000, first_tranche: "2027-01-29", tranches: 36, every_months: 1, citation: "https://x.com/Lighter_xyz/status/2005862687331303804" }
+`;
+
+/** PUMP's shape: Solana, the mint's supply less owner balances (no EVM archive). */
+const PMP_YAML = `
+id: pmp
+symbol: PMP
+name: Pump Test
+chain: solana
+contracts:
+  token: "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn"
+  token_custodian: "Cfq1ts1iFr1eUWWBm8eFxUzm5R3YA3UvMZznwiShbgZt"
+metrics:${REQUIRED}
+  circulating_supply: { type: level, unit: tokens, staleness_days: 14, source: { type: adapter, name: solana.supply_less_owners, params: { mint: token, subtract: [ token_custodian ] } } }
+`;
+
+/** A cited `disclosure` circulating row (VVV's 2026-09-18 research figure). */
+async function seedDisclosure(d: Db, assetId: string, observedAt: string, value: number): Promise<number> {
+  return (await insertObservation(d, {
+    assetId, metricKey: 'circulating_supply', observedAt, value, periodDays: null, fetchedAt: observedAt, citationUrl: 'https://venice.ai/blog/vvv',
+    provenance: { method: 'disclosed', sourceType: 'disclosure', chain: null, locator: { citation_url: 'https://venice.ai/blog/vvv' }, codeVersion: 'test', configHash: 'h' },
+  })).id;
+}
+
+/** `db` with its n-th asset-locked transaction failing before it runs: a --yes killed after its first n-1 days. */
+function dyingAt<T extends object>(d: T, n: number): T {
+  let seen = 0;
+  return new Proxy(d, {
+    get(target, prop) {
+      const v: unknown = Reflect.get(target, prop, target);
+      if (typeof v !== 'function') return v;
+      if (prop !== 'tx') return (v as (...a: unknown[]) => unknown).bind(target);
+      return async (fn: unknown, opts?: { lockAsset?: string }) => {
+        if (opts?.lockAsset !== undefined && ++seen === n) throw new Error('killed (the --yes was interrupted)');
+        return await (v as (...a: unknown[]) => Promise<unknown>).call(target, fn, opts);
+      };
+    },
+  });
+}
+
+describe('rebuild targets (Ruling R15): CoinGecko and old-locator rows only; disclosure rows are kept', () => {
+  it('VVV: the disclosure row is listed kept and untouched after --yes; the market_data rows are rebuilt', async () => {
+    const d = db();
+    const rpc = chain();
+    const loaded = load(VVV_YAML);
+    const disc = await seedDisclosure(d, 'vvt', '2026-09-18T00:00:00.000Z', 48_350_000);
+    const a = await seedMarket(d, 'vvt', '2026-10-20T00:47:00.000Z', 1);
+    const b = await seedMarket(d, 'vvt', '2026-10-21T00:47:00.000Z', 2);
+    const kept = [{ id: disc, observedAt: '2026-09-18T00:00:00.000Z', reason: expect.stringMatching(/^a disclosure row: .*Ruling R15/) }];
+
+    const dry = await rebuildSupplyLevels(d, loaded, deps(rpc), { yes: false, now: NOW.toISOString() });
+    expect(dry).toMatchObject({ rows: 2, rebuilt: 2, unchanged: 0, refused: [], notRebuildable: [], kept });
+    const yes = await rebuildSupplyLevels(d, loaded, deps(rpc), { yes: true, now: NOW.toISOString() });
+    expect(yes).toMatchObject({ applied: true, rows: 2, rebuilt: 2, unchanged: 0, refused: [], notRebuildable: [], kept });
+
+    const row = await d.one<{ superseded_by: number | null; value: number; source_type: string }>('SELECT superseded_by, value, source_type FROM observations WHERE id = $1', [disc]);
+    expect(row).toEqual({ superseded_by: null, value: 48_350_000, source_type: 'disclosure' });
+    for (const id of [a, b]) expect((await d.one<{ superseded_by: number | null }>('SELECT superseded_by FROM observations WHERE id = $1', [id]))!.superseded_by).not.toBeNull();
+    const active = await listActiveObservations(d, 'vvt', 'circulating_supply');
+    const ba = rpc.blockAtOrAfter(sec('2026-10-20T00:47:00.000Z'));
+    const bb = rpc.blockAtOrAfter(sec('2026-10-21T00:47:00.000Z'));
+    expect(active.map((o) => [o.observedAt, o.value])).toEqual([
+      ['2026-09-18T00:00:00.000Z', 48_350_000], ['2026-10-20T00:47:00.000Z', 900_000 + Number(ba)], ['2026-10-21T00:47:00.000Z', 900_000 + Number(bb)],
+    ]);
+    // Rerun: the rebuilt rows are the current source's; the disclosure row is still kept, never a target.
+    expect(await rebuildSupplyLevels(d, loaded, deps(rpc), { yes: false, now: NOW.toISOString() })).toMatchObject({ rows: 0, rebuilt: 0, unchanged: 2, kept });
+  });
+});
+
+describe('Task 5 review M2: the conflict path, an interrupted --yes, a locked_schedule at old blocks, PUMP', () => {
+  it('a row superseded between the plan and its day\'s transaction: rebuild_conflict, that day rolled back, earlier days kept; a rerun rebuilds the new row', async () => {
+    const d = db();
+    const fake = chain();
+    const day1 = await seedMarket(d, 'cak', '2026-10-20T00:47:00.000Z', 1);
+    const day2 = await seedMarket(d, 'cak', '2026-10-21T00:47:00.000Z', 2);
+    let refresh = 0;
+    let reads = 0;
+    // The second read is day 2's: right after it (the plan is done, no transaction yet), a refresh rewrites day 2.
+    const rpc = new Proxy(fake, {
+      get(target, prop) {
+        const v: unknown = Reflect.get(target, prop, target);
+        if (prop !== 'multicall' || typeof v !== 'function') return v;
+        return async (...args: unknown[]) => {
+          const r: unknown = await (v as (...a: unknown[]) => Promise<unknown>).apply(target, args);
+          if (++reads === 2) refresh = await seedMarket(d, 'cak', '2026-10-21T00:47:00.000Z', 22);
+          return r;
+        };
+      },
+    }) as FakeRpc;
+    const loaded = load(CAK_YAML);
+    let err: { code?: string; message?: string } = {};
+    try {
+      await rebuildSupplyLevels(d, loaded, deps(rpc), { yes: true, now: NOW.toISOString() });
+    } catch (e) {
+      err = e as typeof err;
+    }
+    expect(err.code).toBe('rebuild_conflict');
+    expect(err.message).toContain(`#${day2} at 2026-10-21T00:47:00.000Z is no longer active`);
+    expect(refresh).toBeGreaterThan(0);
+    // Day 1 committed; day 2 rolled back: the refresh row is the active one, no rebuilt row on that day.
+    const active = await d.all<{ id: number; observed_at: string; source_type: string; value: number }>(
+      "SELECT id, observed_at, source_type, value FROM observations WHERE asset_id = 'cak' AND superseded_by IS NULL ORDER BY observed_at",
+    );
+    const b1 = fake.blockAtOrAfter(sec('2026-10-20T00:47:00.000Z'));
+    expect(active.map((x) => [Number(x.id) === refresh ? 'refresh' : x.source_type, new Date(x.observed_at).toISOString(), x.value])).toEqual([
+      ['contract_state', '2026-10-20T00:47:00.000Z', 850_000 + Number(b1)],
+      ['refresh', '2026-10-21T00:47:00.000Z', 22],
+    ]);
+    expect((await d.one<{ superseded_by: number | null }>('SELECT superseded_by FROM observations WHERE id = $1', [day1]))!.superseded_by).not.toBeNull();
+    expect(await d.one("SELECT 1 FROM observations WHERE asset_id = 'cak' AND observed_at = '2026-10-21T00:47:00Z' AND source_type = 'contract_state'")).toBeUndefined();
+    // The lock was released; a rerun rebuilds the refreshed row (and only it).
+    const again = await rebuildSupplyLevels(d, loaded, deps(fake), { yes: true, now: NOW.toISOString() });
+    expect(again).toMatchObject({ applied: true, rows: 1, rebuilt: 1, unchanged: 1, refused: [] });
+    const rebuilt = await d.one<{ locator: { rebuilt: { from_id: number } } }>(
+      "SELECT locator FROM observations WHERE asset_id = 'cak' AND observed_at = '2026-10-21T00:47:00Z' AND superseded_by IS NULL",
+    );
+    expect(rebuilt!.locator.rebuilt.from_id).toBe(refresh);
+  });
+
+  it('a --yes interrupted after its first day: that day stays written, a rerun finishes the rest, a third dry run rebuilds 0', async () => {
+    const d = db();
+    const rpc = chain();
+    const days = ['2026-10-20', '2026-10-21', '2026-10-22'];
+    const ids: number[] = [];
+    for (const day of days) ids.push(await seedMarket(d, 'cak', `${day}T00:47:00.000Z`, 1));
+    const loaded = load(CAK_YAML);
+    const before = await obsCount();
+    expect(await errCode(rebuildSupplyLevels(dyingAt(d, 2), loaded, deps(rpc), { yes: true, now: NOW.toISOString() }))).toMatch(/killed/);
+    expect(await obsCount()).toBe(before + 1);
+    const active = async () => (await listActiveObservations(d, 'cak', 'circulating_supply')).map((o) => [o.observedAt.slice(0, 10), o.value === 1 ? 'coingecko' : 'rebuilt']);
+    expect(await active()).toEqual([['2026-10-20', 'rebuilt'], ['2026-10-21', 'coingecko'], ['2026-10-22', 'coingecko']]);
+
+    const dry = await rebuildSupplyLevels(d, loaded, deps(rpc), { yes: false, now: NOW.toISOString() });
+    expect(dry).toMatchObject({ rows: 2, rebuilt: 2, unchanged: 1, refused: [] });
+    const rerun = await rebuildSupplyLevels(d, loaded, deps(rpc), { yes: true, now: NOW.toISOString() });
+    expect(rerun).toMatchObject({ applied: true, rows: 2, rebuilt: 2, unchanged: 1, refused: [] });
+    expect(await active()).toEqual([['2026-10-20', 'rebuilt'], ['2026-10-21', 'rebuilt'], ['2026-10-22', 'rebuilt']]);
+    expect(await obsCount()).toBe(before + 3);
+    const third = await rebuildSupplyLevels(d, loaded, deps(rpc), { yes: false, now: NOW.toISOString() });
+    expect(third).toMatchObject({ rows: 0, rebuilt: 0, unchanged: 3, refused: [], notRebuildable: [] });
+  });
+
+  it("LIT: a locked_schedule rebuilt at an old block subtracts what was locked at that block's time", async () => {
+    const d = db();
+    const later = Date.parse('2027-03-01T00:00:00.000Z') / 1000;
+    const rpc = fakeRpc({
+      genesisTs: GENESIS, latest: BigInt(Math.floor((later - GENESIS) / BLOCK_SEC)), blockTimeSec: BLOCK_SEC,
+      callsAt: () => ({ [callKey(LTT_TOKEN, 'totalSupply')]: 1_000_000_000n * E18 }),
+    });
+    const loaded = load(LTT_YAML);
+    // 2026-12-01: every tranche locked. 2027-01-28T23:59:58Z: observed before the first tranche, but its block (3 s
+    // blocks from 00:00Z) is 2027-01-29T00:00:00Z, the tranche's day: 35/36, the block's time and not observed_at.
+    // 2027-02-10: one tranche out.
+    const at = ['2026-12-01T00:47:00.000Z', '2027-01-28T23:59:58.000Z', '2027-02-10T00:47:00.000Z'];
+    for (const t of at) await seedMarket(d, 'ltt', t, 1);
+    expect(rpc.timestampOf(rpc.blockAtOrAfter(sec(at[1]!)))).toBe(sec('2027-01-29T00:00:00.000Z'));
+    const r = await rebuildSupplyLevels(d, loaded, deps(rpc), { yes: true, now: '2027-03-01T00:00:00.000Z' });
+    expect(r).toMatchObject({ rows: 3, rebuilt: 3, refused: [], notRebuildable: [] });
+    const rows = await d.all<{ observed_at: string; value: number; source_detail: string }>(
+      "SELECT observed_at, value, source_detail FROM observations WHERE asset_id = 'ltt' AND superseded_by IS NULL ORDER BY observed_at",
+    );
+    const oneOut = 1_000_000_000 - (500_000_000 * 35) / 36;
+    expect(rows.map((x) => [new Date(x.observed_at).toISOString(), x.value])).toEqual([[at[0], 500_000_000], [at[1], oneOut], [at[2], oneOut]]);
+    expect(rows[0]!.source_detail).toContain('locked_schedule 500000000 x 36/36 = 500000000 (0 of 36 tranches out');
+    expect(rows[1]!.source_detail).toContain('block ' + String(rpc.blockAtOrAfter(sec(at[1]!))) + ' (2027-01-29T00:00:00.000Z)');
+    expect(rows[1]!.source_detail).toContain('x 35/36');
+    expect(rows[2]!.source_detail).toContain('(1 of 36 tranches out');
+  });
+
+  it('PUMP: a solana.supply_less_owners source has no archive, every row is notRebuildable (no RPC opened, untouched)', async () => {
+    const d = db();
+    const loaded = load(PMP_YAML);
+    const a = await seedMarket(d, 'pmp', '2026-10-20T00:47:00.000Z', 1);
+    const b = await seedMarket(d, 'pmp', '2026-11-19T00:00:00.000Z', 2);
+    for (const yes of [false, true]) {
+      expect(await rebuildSupplyLevels(d, loaded, noRpc, { yes, now: NOW.toISOString() })).toEqual({
+        asset: 'pmp', applied: yes, metric: 'circulating_supply', rows: 2, rebuilt: 0, unchanged: 0, refused: [], kept: [], calls: 0,
+        notRebuildable: [{ id: a, observedAt: '2026-10-20T00:47:00.000Z', day: '2026-10-20' }, { id: b, observedAt: '2026-11-19T00:00:00.000Z', day: '2026-11-19' }],
+      });
+    }
+    expect((await listActiveObservations(d, 'pmp', 'circulating_supply')).map((o) => o.value)).toEqual([1, 2]);
+    expect(supplyNotRebuildable(loaded, '2026-11-20T00:00:00.000Z')).toBe(true);
   });
 });
 

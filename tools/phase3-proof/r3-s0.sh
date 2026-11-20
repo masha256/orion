@@ -20,7 +20,7 @@ say "0 save before/ (D = today-2 UTC and D-91, saved once in days.json)"
 $CHECK days "$W/days.json" "$(now_iso)" || exit 1
 save_reports "$W/before"
 
-say "1 expected counts (sql-ro)"
+say "1 expected counts (sql-ro; kept = active non-market_data, non-contract_state rows, ruling R15)"
 Q supply > "$W/before/supply.json" || stop "sql-ro supply exit $?"
 Q levels > "$W/before/levels.json" || stop "sql-ro levels exit $?"
 $CHECK expected "$W/before/supply.json" "$W/before/levels.json" "$W/expected.json" "$ENV" "$(now_iso)" || { rm -f "$W/expected.json"; exit 1; }
