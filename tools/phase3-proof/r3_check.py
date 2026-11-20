@@ -17,15 +17,22 @@ EVM archive read) and AERO's `rebuild_from` (assets/aero.yaml). Stdlib only.
     r3_check.py status <status-out> <logs-out> <tag>        step 3: on the tag, logs clean
     r3_check.py migrations <out>                            step 3: schema max 8
     r3_check.py levels-job <jobs> <tag> <since>             step 4: exit 0 done clean, 1 STOP, 3 not yet
-    r3_check.py levels-pre <levels> <expected> <jobs> <tag> <since>   step 4 before the hourly run (exempt: step 1's)
+    r3_check.py levels-pre <levels> <expected> <jobs> <tag> <since>   step 4 before the hourly run (exempt: step 1's;
+                                                            <jobs> read AFTER <levels>: skipped once a run started)
     r3_check.py levels-post <levels> <expected> <signed>    step 4 after it (no exemption, +-2% of the signed value)
-    r3_check.py stale <supply> <expected> pre|rebuilt|purged step 5 / its re-checks after steps 6 and 7
+    r3_check.py stale <supply> <expected> pre|rebuilt|purged|resume  step 5 / its re-checks after steps 6 and 7 /
+                                                            s2 --resume (already rebuilt + remaining = step 1's)
     r3_check.py rebuild-dry <out> <rc> <asset> <expected>   step 6 dry run
+    r3_check.py rebuild-dry-resume <out> <rc> <asset> <expected> <supply>  s2 --resume dry run: step 1's less rebuilt
     r3_check.py rebuild-again <out> <rc> <asset> <expected> step 6 second dry run after --yes: 0 rebuilt
     r3_check.py same-rebuild <dry> <yes> <rc> <asset>       step 6 yes == dry
     r3_check.py purge-dry <out> <rc> <asset> <expected>     step 7 dry run
     r3_check.py same-purge <dry> <yes> <rc> <asset>         step 7 yes == dry, prints the export file and sha256
     r3_check.py purge-assets <expected>                     step 7: the assets with market_data rows in step 1
+    r3_check.py purge-resume <supply> <expected>            s3 --resume: already purged + remaining = step 1's;
+                                                            last line `left: <assets>`
+    r3_check.py purge-dry-resume <out> <rc> <asset> <expected> <supply>  s3 --resume dry run
+    r3_check.py field <json> <key>                          print one top-level field (s2 --resume: `rebuilt`)
     r3_check.py zero-market-data <out>                      step 8 global market_data = 0
     r3_check.py levels-zero <levels>                        step 8 latest_levels market_data = 0
 """
@@ -62,7 +69,8 @@ QUERIES = {
     "supply": (
         "select asset_id, source_type, coalesce(locator->>$$adapter$$, locator->>$$call$$, locator->>$$provider$$, $$$$) as kind, "
         f"(count(*) filter (where {ACTIVE}))::int as active, count(*)::int as total, "
-        f"(count(*) filter (where {ACTIVE} and ({_before})))::int as before_rebuild_from "
+        f"(count(*) filter (where {ACTIVE} and ({_before})))::int as before_rebuild_from, "
+        f"(count(*) filter (where {ACTIVE} and locator->$$rebuilt$$ is not null))::int as rebuilt "
         f"from observations where metric_key = $${METRIC}$$ group by 1, 2, 3 order by 1, 2, 3"
     ),
     "levels": f"select asset_id, source_type, value from latest_levels where metric_key = $${METRIC}$$ order by asset_id",
@@ -107,6 +115,24 @@ def stale_groups(supply_rows):
         if key != CURRENT[a]:
             out[a][key] = (int(r["active"]), int(r["total"]), int(r["before_rebuild_from"]))
     return out
+
+
+def rebuilt_rows(supply_rows):
+    """Per asset: its active circulating rows written by `data rebuild-supply-levels` (locator.rebuilt, any group)."""
+    out = {a: 0 for a in ASSETS}
+    for r in supply_rows:
+        if r["asset_id"] not in out:
+            raise Stop(f"unknown asset {r['asset_id']} in the supply rows")
+        if "rebuilt" not in r:
+            raise Stop("the supply rows have no `rebuilt` column (an r3_check.py before ruling R18?)")
+        out[r["asset_id"]] += int(r["rebuilt"])
+    return out
+
+
+def step1_rebuilt(e, asset):
+    if "rebuiltRows" not in e:
+        raise Stop(f"expected.json has no rebuiltRows for {asset} (written by an s0 before ruling R18: --resume needs it)")
+    return int(e["rebuiltRows"])
 
 
 def classify(groups):
@@ -184,7 +210,9 @@ def c_days(path, now):
 
 
 def c_expected(supply, levels, out, env, now):
-    groups = stale_groups(rows(supply))
+    srows = rows(supply)
+    groups = stale_groups(srows)
+    rb_rows = rebuilt_rows(srows)
     assets = {}
     other_all = []
     for a in ASSETS:
@@ -196,7 +224,7 @@ def c_expected(supply, levels, out, env, now):
         stale = md["active"] + old["active"]
         assets[a] = {"marketData": md, "oldLocator": old, "stale": stale, "notRebuildable": nr, "rebuilt": stale - nr,
                      "mdWithoutReplacement": md["active"] if a in NEVER_REBUILDABLE else (md["beforeRebuildFrom"] if a in REBUILD_FROM else 0),
-                     "kept": kept["active"], "keptKinds": kept["kinds"]}
+                     "kept": kept["active"], "keptKinds": kept["kinds"], "rebuiltRows": rb_rows[a]}
         other_all += [dict(o, asset=a) for o in other]
     lv = rows(levels)
     md_levels = sorted(r["asset_id"] for r in lv if r["source_type"] == MARKET_DATA)
@@ -250,9 +278,8 @@ def levels_job(jobs, tag, since):
     js = load(jobs)
     if not isinstance(js, list):
         raise Stop(f"{jobs}: not a job list")
-    t0 = datetime.datetime.fromisoformat(since.replace("Z", "+00:00"))
-    mine = [j for j in js if j.get("kind") == "levels" and j.get("releaseTag") == tag and j.get("startedAt")
-            and datetime.datetime.fromisoformat(j["startedAt"].replace("Z", "+00:00")) >= t0]
+    # running / queued / skipped jobs, and any that started before the switch, are ignored.
+    mine = [j for j in js if j.get("kind") == "levels" and j.get("releaseTag") == tag and started_after(j, since)]
     ended = sorted((j for j in mine if j.get("status") in ("done", "failed")), key=lambda j: j["startedAt"])
     if not ended:
         return "wait", None
@@ -273,12 +300,25 @@ def c_levels_job(jobs, tag, since):
     print(f"levels job ok (id {j.get('id')} on {tag}, no failed source)")
 
 
+def started_after(j, since):
+    t0 = datetime.datetime.fromisoformat(since.replace("Z", "+00:00"))
+    return bool(j.get("startedAt")) and datetime.datetime.fromisoformat(j["startedAt"].replace("Z", "+00:00")) >= t0
+
+
 def c_levels_pre(levels, expected, jobs, tag, since):
+    """`jobs` is read after `levels`: a levels job on the tag that started after the switch (running or ended) may have
+    overwritten some rows before the levels read, so the pre-check is skipped; a job that started later did not."""
     exp = load(expected)["latestLevelsMarketData"]
-    state, _ = levels_job(jobs, tag, since)
     md = sorted(r["asset_id"] for r in rows(levels) if r["source_type"] == MARKET_DATA)
-    if state == "done":
-        print(f"levels pre ok (the first hourly run on {tag} already ran; its re-check below has no exemption)")
+    js = load(jobs)
+    if not isinstance(js, list):
+        raise Stop(f"{jobs}: not a job list")
+    started = sorted((j for j in js if j.get("kind") == "levels" and j.get("releaseTag") == tag and started_after(j, since)),
+                     key=lambda j: j["startedAt"])
+    if started:
+        j = started[0]
+        print(f"levels pre skipped (levels job {j.get('id')} on {tag} started {j['startedAt']}, {j.get('status')}, by the "
+              f"latest_levels read: it may have overwritten rows ({len(md)} market_data seen); the re-check below has no exemption)")
         return
     if md != exp:
         raise Stop(f"latest_levels market_data before the first hourly run: {len(md)} ({' '.join(md)}), expected "
@@ -310,7 +350,9 @@ def c_levels_post(levels, expected, signed):
 
 def c_stale(supply, expected, phase):
     exp = load(expected)["assets"]
-    groups = stale_groups(rows(supply))
+    srows = rows(supply)
+    groups = stale_groups(srows)
+    rb_now = rebuilt_rows(srows) if phase == "resume" else None
     bad, notes, label = [], [], ""
     kept_all = {}
     for a in ASSETS:
@@ -319,9 +361,20 @@ def c_stale(supply, expected, phase):
             bad.append(f"{a} unlisted stale {json.dumps(other)}")
         e = exp[a]
         kept_all[a] = kept
+        if phase == "resume":
+            already = rb_now[a] - step1_rebuilt(e, a)
+            left = md["active"] + old["active"]
+            if already < 0 or already > e["rebuilt"] or already + left != e["stale"]:
+                bad.append(f"{a} already rebuilt since step 1 {already} + remaining stale {left} = {already + left}, expected "
+                           f"step 1's {e['stale']} (at most {e['rebuilt']} rebuilt)")
+            elif already:
+                notes.append(f"{a} {already}+{left}={e['stale']}")
+            label = "already rebuilt since step 1 + remaining = step 1's stale"
         if kept["active"] != e["kept"]:
             bad.append(f"{a} kept (non-market_data, non-contract_state) rows {kept['active']} {json.dumps(kept['kinds'])}, "
                        f"expected step 1's {e['kept']} (a row step 1 did not record: bring it to Mike)")
+        if phase == "resume":
+            continue
         if phase == "pre":
             want_md, want_old = e["marketData"]["active"], e["oldLocator"]["active"]
             label = "expected pre-rebuild"
@@ -340,7 +393,8 @@ def c_stale(supply, expected, phase):
     if bad:
         raise Stop(f"stale circulating rows ({phase}): " + "; ".join(bad))
     kn = kept_note(kept_all)
-    print(f"stale {phase} ok" + (f" ({label}: {' '.join(notes)})" if notes else " (0 stale rows on all 13)")
+    empty = " (nothing rebuilt since step 1)" if phase == "resume" else " (0 stale rows on all 13)"
+    print(f"stale {phase} ok" + (f" ({label}: {' '.join(notes)})" if notes else empty)
           + (f" [kept, as step 1: {kn}]" if kn else ""))
 
 
@@ -364,6 +418,32 @@ def c_rebuild_dry(out, rc, asset, expected):
     if got != want:
         raise Stop(f"{asset} rebuild dry run rows/rebuilt/refused/notRebuildable/kept {got}, expected from step 1 {want}")
     print(f"{asset} rebuild dry ok (rows {got[0]} rebuilt {got[1]} refused 0 notRebuildable {got[3]} kept {got[4]})")
+
+
+def c_rebuild_dry_resume(out, rc, asset, expected, supply):
+    """s2 --resume: step 1's counts less the rows already rebuilt since step 1 (locator.rebuilt, from `supply`)."""
+    r = load(out)
+    if isinstance(r, dict) and r.get("refused"):
+        raise Stop(f"{asset} rebuild dry run (resume) refused {len(r['refused'])} rows (Mike decides): {json.dumps(r['refused'])[:600]}")
+    rc_ok(rc, f"{asset} rebuild dry run (resume)")
+    if "error" in r:
+        raise Stop(f"{asset} rebuild dry run (resume) error {json.dumps(r['error'])}")
+    e = load(expected)["assets"][asset]
+    already = rebuilt_rows(rows(supply))[asset] - step1_rebuilt(e, asset)
+    got = rebuild_counts(r)
+    want = (e["stale"] - already, e["rebuilt"] - already, 0, e["notRebuildable"], e["kept"])
+    if got != want:
+        raise Stop(f"{asset} rebuild dry run (resume) rows/rebuilt/refused/notRebuildable/kept {got}, expected step 1's less "
+                   f"the {already} already rebuilt {want}")
+    print(f"{asset} rebuild dry (resume) ok (rows {got[0]} rebuilt {got[1]} refused 0 notRebuildable {got[3]} kept {got[4]}; "
+          f"already rebuilt {already})")
+
+
+def c_field(path, key):
+    r = load(path)
+    if not isinstance(r, dict) or key not in r:
+        raise Stop(f"{path} has no {key}")
+    print(r[key])
 
 
 def c_rebuild_again(out, rc, asset, expected):
@@ -432,6 +512,57 @@ def purge_assets(expected):
     print(" ".join(a for a in ASSETS if exp[a]["marketData"]["total"] > 0))
 
 
+def md_now(supply_rows):
+    """Per asset: its market_data circulating rows now (every status: the purge deletes them all)."""
+    out = {a: 0 for a in ASSETS}
+    for r in supply_rows:
+        if r["asset_id"] not in out:
+            raise Stop(f"unknown asset {r['asset_id']} in the supply rows")
+        if r["source_type"] == MARKET_DATA:
+            out[r["asset_id"]] += int(r["total"])
+    return out
+
+
+def c_purge_resume(supply, expected):
+    """s3 --resume: per asset, already purged since step 1 (step 1's market_data total - the rows now) + remaining (the
+    rows now) = step 1's total, with 0 <= remaining <= step 1's; the last line is `left: <assets with rows left>` (the
+    ones r3-s3.sh --resume purges)."""
+    exp = load(expected)["assets"]
+    now = md_now(rows(supply))
+    bad, notes, left = [], [], []
+    for a in ASSETS:
+        total = exp[a]["marketData"]["total"]
+        if now[a] > total:
+            bad.append(f"{a} {now[a]} market_data rows, more than step 1's {total}")
+            continue
+        if total:
+            notes.append(f"{a} {total - now[a]}+{now[a]}={total}")
+        if now[a]:
+            left.append(a)
+    if bad:
+        raise Stop("purge resume: " + "; ".join(bad))
+    print(f"purge resume ok (already purged since step 1 + remaining = step 1's market_data total: {' '.join(notes)})")
+    print("left:" + "".join(f" {x}" for x in left))
+
+
+def c_purge_dry_resume(out, rc, asset, expected, supply):
+    r = load(out)
+    if isinstance(r, dict) and "error" in r:
+        raise Stop(f"{asset} purge dry run (resume) refused {json.dumps(r['error'])[:400]}")
+    rc_ok(rc, f"{asset} purge dry run (resume)")
+    e = load(expected)["assets"][asset]
+    total, now = e["marketData"]["total"], md_now(rows(supply))[asset]
+    purged = total - now
+    obs, wr = purge_counts(r)
+    if purged + obs != total:
+        raise Stop(f"{asset} purge dry run (resume): already purged {purged} + remaining {obs} = {purged + obs}, expected "
+                   f"step 1's market_data total {total}")
+    if (purged == 0 and wr != e["mdWithoutReplacement"]) or wr > e["mdWithoutReplacement"]:
+        raise Stop(f"{asset} purge dry run (resume) withoutReplacement {wr}, expected step 1's {e['mdWithoutReplacement']}"
+                   + (" (at most, after a part purge)" if purged else ""))
+    print(f"{asset} purge dry (resume) ok (observations {obs} withoutReplacement {wr}; already purged {purged})")
+
+
 def c_zero_market_data(out):
     r = rows(out)
     if len(r) != 1 or r[0].get("n") != 0:
@@ -445,7 +576,8 @@ COMMANDS = {
     "levels-job": (c_levels_job, 3), "levels-pre": (c_levels_pre, 5), "levels-post": (c_levels_post, 3),
     "stale": (c_stale, 3), "rebuild-dry": (c_rebuild_dry, 4), "rebuild-again": (c_rebuild_again, 4),
     "same-rebuild": (c_same_rebuild, 4), "purge-dry": (c_purge_dry, 4), "same-purge": (c_same_purge, 4),
-    "zero-market-data": (c_zero_market_data, 1), "levels-zero": (c_levels_zero, 1), "purge-assets": (purge_assets, 1),
+    "rebuild-dry-resume": (c_rebuild_dry_resume, 5), "field": (c_field, 2), "purge-resume": (c_purge_resume, 2),
+    "purge-dry-resume": (c_purge_dry_resume, 5), "zero-market-data": (c_zero_market_data, 1), "levels-zero": (c_levels_zero, 1), "purge-assets": (purge_assets, 1),
 }
 
 

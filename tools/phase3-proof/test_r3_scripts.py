@@ -50,8 +50,8 @@ class R3Scripts(unittest.TestCase):
         f = self.work / ".fake" / f"r3-s{n}" / "calls.log"
         return f.read_text().splitlines() if f.exists() else []
 
-    def ok(self, n, *args):
-        rc, out = self.run_script(n, *args)
+    def ok(self, n, *args, overlay=None):
+        rc, out = self.run_script(n, *args, overlay=overlay)
         self.assertEqual(rc, 0, out)
         self.assertNotIn("STOP", out)
         return out
@@ -81,6 +81,7 @@ class R3Scripts(unittest.TestCase):
         # Ruling R15: VVV's disclosure row is recorded as kept (from the supply rows, never typed), not a STOP.
         self.assertEqual({a: x["kept"] for a, x in exp["assets"].items() if x["kept"]}, {"vvv": 1})
         self.assertEqual(exp["assets"]["vvv"]["rebuilt"], 57)
+        self.assertEqual({x["rebuiltRows"] for x in exp["assets"].values()}, {0})  # --resume's base (R18 M4)
         self.assertIn("kept (never a rebuild target, ruling R15; untouched): vvv disclosure=1", out)
         self.assertEqual(sorted(p.name for p in (self.work / "before").glob("*-91.json")), sorted(f"{a}-91.json" for a in ASSETS))
         self.assertIn("N6 rebuild-supply-levels verb ok", out)
@@ -177,6 +178,105 @@ class R3Scripts(unittest.TestCase):
     def test_s3_stops_when_market_data_is_left_after_the_purge(self):
         self.ok(0)
         self.stops(3, overlay="stop-market-data", reason="observations with source_type market_data after the purge")
+
+    # --- step 4: the levels race (R18 M1) ---------------------------------------------------------------------------
+
+    def test_s1_a_levels_run_already_running_at_the_pre_check_is_no_false_stop(self):
+        # latest_levels read while the first levels run on the tag was writing (5 market_data rows left, not 9); the jobs
+        # read after it shows that run `running`: the pre-check is skipped, the wait ignores the running job until `done`.
+        self.ok(0)
+        rc, out = self.run_script(1, TAG, "--tools", str(self.tools), overlay="levels-race")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("STOP", out)
+        self.assertIn("levels pre skipped (levels job 77 on orion-2026.11.20.1 started 2026-11-20T12:15:02.000Z, running", out)
+        self.assertIn("levels post ok (0 market_data in latest_levels", out)
+        calls = self.calls(1)
+        self.assertEqual(calls.count(f"jobs --since {NOW}"), 3)  # the pre-check read, poll 1 (running), poll 2 (done)
+        self.assertLess(calls.index("sql-ro levels"), calls.index(f"jobs --since {NOW}"))  # jobs read AFTER latest_levels
+
+    def test_s1_a_levels_job_that_started_before_the_switch_is_ignored(self):
+        # A failed levels job started 11:15 (before the 12:00 switch, even on the tag) and a done one on the old release:
+        # neither skips the pre-check nor ends the wait; the first poll waits, the second sees the post-switch job done.
+        self.ok(0)
+        rc, out = self.run_script(1, TAG, "--tools", str(self.tools), overlay="levels-before-switch")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("STOP", out)
+        self.assertIn("expected pre-switch: 9 (assets cake crv hype link lit pump sky uni vvv)", out)
+        self.assertIn("levels job ok (id 77 on orion-2026.11.20.1", out)
+        self.assertEqual(self.calls(1).count(f"jobs --since {NOW}"), 3)
+
+    def test_s1_stops_when_a_levels_job_after_the_switch_failed(self):
+        self.ok(0)
+        self.stops(1, TAG, "--tools", str(self.tools), overlay="stop-levels-failed", reason="levels job 78 on orion-2026.11.20.1: failed")
+
+    # --- the three artifact STOPs (R18 M2) ---------------------------------------------------------------------------
+
+    def test_s1_stops_when_the_pre_check_count_differs_from_step_1(self):
+        self.ok(0)
+        self.stops(1, TAG, "--tools", str(self.tools), overlay="stop-levels-pre-count",
+                   reason="latest_levels market_data before the first hourly run: 8 (cake crv hype link lit pump sky uni), expected step 1's 9")
+
+    def test_s1_stops_when_the_pre_check_names_an_asset_step_1_did_not(self):
+        self.ok(0)
+        self.stops(1, TAG, "--tools", str(self.tools), overlay="stop-levels-pre-asset",
+                   reason="latest_levels market_data before the first hourly run: 9 (aero cake crv hype link lit pump sky uni), expected step 1's 9 (cake")
+
+    def test_s2_stops_when_a_wrapper_old_locator_count_differs_from_step_1(self):
+        self.ok(0)
+        self.stops(2, overlay="stop-old-locator", reason="ycrv stale market_data 0 (expected 0), old locator 38 (expected 39)")
+        self.assertFalse(any(c.startswith("data rebuild-supply-levels") for c in self.calls(2)))
+
+    def test_s2_stops_on_a_market_data_row_left_on_an_evm_asset_after_yes(self):
+        self.ok(0)
+        self.stops(2, overlay="stop-leftover-md", reason="stale circulating rows (rebuilt): cake stale market_data 1 (expected 0)")
+        self.assertEqual(len([c for c in self.calls(2) if c.endswith("--yes")]), 13)
+
+    def test_s2_stops_on_a_wrapper_old_locator_row_left_after_yes(self):
+        self.ok(0)
+        self.stops(2, overlay="stop-leftover-old", reason="ycrv stale market_data 0 (expected 0), old locator 1 (expected 0)")
+
+    # --- --resume after a STOP mid --yes (R18 M4) --------------------------------------------------------------------
+
+    def test_s2_resume_finishes_a_partial_yes(self):
+        self.ok(0)
+        self.stops(2, overlay="partial-s2", reason="crv rebuild --yes exit 1")
+        yes1 = [c for c in self.calls(2) if c.endswith("--yes")]
+        self.assertEqual(yes1, [f"data rebuild-supply-levels {a} --yes" for a in ("aero", "cake", "crv")])
+        # A plain rerun is the dead end the review named: step 5 sees cake's 40 rows already rebuilt.
+        self.stops(2, overlay="resume-s2", reason="cake stale market_data 0 (expected 40)")
+        out = self.ok(2, "--resume", overlay="resume-s2")
+        self.assertIn("stale resume ok (already rebuilt since step 1 + remaining = step 1's stale: cake 40+0=40 crv 20+23=43", out)
+        self.assertIn("crv rebuild dry (resume) ok (rows 23 rebuilt 23 refused 0 notRebuildable 0 kept 0; already rebuilt 20)", out)
+        self.assertIn("stale rebuilt ok (left for step 7 (notRebuildable): aero market_data=45 hype market_data=55 pump market_data=37)", out)
+        yes2 = [c.split()[2] for c in self.calls(2) if c.endswith("--yes")]
+        self.assertEqual(yes2, ["crv", "cvxcrv", "link", "lit", "sdcrv", "sky", "uni", "vvv", "ycrv"])  # the rest only
+        calls = self.calls(2)
+        first_yes = next(i for i, c in enumerate(calls) if c.endswith("--yes"))
+        self.assertEqual(len([c for c in calls[:first_yes] if c.startswith("data rebuild-supply-levels")]), 13)
+
+    def test_s2_resume_stops_when_the_counts_do_not_add_up(self):
+        self.ok(0)
+        self.stops(2, "--resume", overlay="stop-resume-s2",
+                   reason="crv already rebuilt since step 1 20 + remaining stale 22 = 42, expected step 1's 43")
+        self.assertFalse(any(c.startswith("data rebuild-supply-levels") for c in self.calls(2)))
+
+    def test_s3_resume_finishes_a_partial_yes(self):
+        self.ok(0)
+        self.stops(3, overlay="partial-s3", reason="cake purge --yes")
+        out = self.ok(3, "--resume", overlay="resume-s3")
+        self.assertIn("purge resume ok (already purged since step 1 + remaining = step 1's market_data total: aero 45+0=45 cake 0+40=40", out)
+        purged = [c.split()[2] for c in self.calls(3) if c.startswith("data purge") and c.endswith("--yes")]
+        self.assertEqual(purged, ["cake", "crv", "hype", "link", "lit", "pump", "sky", "uni", "vvv"])
+        self.assertIn("stale purged ok (0 stale rows on all 13)", out)
+
+    def test_s3_resume_stops_when_the_counts_do_not_add_up(self):
+        self.ok(0)
+        self.stops(3, "--resume", overlay="stop-resume-s3",
+                   reason="cake purge dry run (resume): already purged 0 + remaining 39 = 39, expected step 1's market_data total 40")
+        self.assertFalse(any(c.endswith("--yes") for c in self.calls(3)))
+
+    def test_resume_is_refused_by_s0_s1_s4(self):
+        self.stops(0, "--resume", reason="--resume: only r3-s2.sh and r3-s3.sh")
 
     def test_s4_stops_on_an_unallowed_path(self):
         self.ok(0)

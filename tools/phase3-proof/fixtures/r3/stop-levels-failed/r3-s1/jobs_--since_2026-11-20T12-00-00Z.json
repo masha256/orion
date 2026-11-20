@@ -1,0 +1,14 @@
+[
+ {
+  "id": 78,
+  "kind": "levels",
+  "assetId": null,
+  "slot": "2026-11-20T12:15:00.000Z",
+  "status": "failed",
+  "startedAt": "2026-11-20T12:15:02.000Z",
+  "endedAt": "2026-11-20T12:16:40.000Z",
+  "releaseTag": "orion-2026.11.20.1",
+  "result": null,
+  "lastError": "levels: rpc timeout"
+ }
+]

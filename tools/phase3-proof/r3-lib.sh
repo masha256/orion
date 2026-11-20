@@ -1,6 +1,7 @@
 # Phase 3 R3 release block: what r3-s0.sh .. r3-s4.sh share (docs/ops/deploy.md "Phase 3 R3 release"). Sourced, not run.
 #
-# Arguments of every script: <env> (stage|prod) first, then the script's own, then optionally `--fake <dir>`.
+# Arguments of every script: <env> (stage|prod) first, then the script's own, then optionally `--fake <dir>`; r3-s2.sh
+# and r3-s3.sh also take `--resume` (after a STOP part way through their --yes loop, on Mike's go: docs/ops/deploy.md).
 # Work dir: ~/r3-<env>/{before,after,dry,yes}; ~/r3-<env>/expected.json (step 1) and ~/r3-<env>/days.json (step 0) are
 # written by r3-s0.sh only and read by the others. Every check prints `ok` or `STOP: <reason>`; the first STOP exits 1.
 #
@@ -23,11 +24,12 @@ SCRIPT=$(basename "$0" .sh)
 stop() { echo "STOP: $*"; exit 1; }
 say() { echo "== $* $(date -u +%T)"; }
 
-ENV=""; FAKE=""; TOOLS=""; POS=()
+ENV=""; FAKE=""; TOOLS=""; RESUME=""; POS=()
 r3_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --fake) [ $# -ge 2 ] || stop "--fake needs a dir"; FAKE=$(cd "$2" && pwd) || stop "--fake $2: no such dir"; shift 2 ;;
+      --resume) case "$SCRIPT" in r3-s2|r3-s3) RESUME=1 ;; *) stop "--resume: only r3-s2.sh and r3-s3.sh take it" ;; esac; shift ;;
       --tools) [ $# -ge 2 ] || stop "--tools needs a dir"; TOOLS=$(cd "$2" && pwd) || stop "--tools $2: no such dir"; shift 2 ;;
       -*) stop "unknown option $1" ;;
       *) POS+=("$1"); shift ;;

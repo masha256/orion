@@ -1,0 +1,56 @@
+[
+ {
+  "id": 70,
+  "kind": "levels",
+  "assetId": null,
+  "slot": "2026-11-20T11:15:00.000Z",
+  "status": "failed",
+  "startedAt": "2026-11-20T11:15:02.000Z",
+  "endedAt": "2026-11-20T11:16:40.000Z",
+  "releaseTag": "orion-2026.11.20.1",
+  "result": null,
+  "lastError": "levels: rpc timeout"
+ },
+ {
+  "id": 69,
+  "kind": "levels",
+  "assetId": null,
+  "slot": "2026-11-20T10:15:00.000Z",
+  "status": "done",
+  "startedAt": "2026-11-20T10:15:02.000Z",
+  "endedAt": "2026-11-20T10:16:40.000Z",
+  "releaseTag": "orion-2026.11.15.1",
+  "result": {
+   "assets": 13,
+   "rows": 60,
+   "failed": [],
+   "fired": [],
+   "cleared": [],
+   "undelivered": [],
+   "deadman": true,
+   "prices": null
+  },
+  "lastError": null
+ },
+ {
+  "id": 77,
+  "kind": "levels",
+  "assetId": null,
+  "slot": "2026-11-20T12:15:00.000Z",
+  "status": "done",
+  "startedAt": "2026-11-20T12:15:02.000Z",
+  "endedAt": "2026-11-20T12:16:40.000Z",
+  "releaseTag": "orion-2026.11.20.1",
+  "result": {
+   "assets": 13,
+   "rows": 60,
+   "failed": [],
+   "fired": [],
+   "cleared": [],
+   "undelivered": [],
+   "deadman": true,
+   "prices": null
+  },
+  "lastError": null
+ }
+]

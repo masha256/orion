@@ -13,9 +13,9 @@ need_expected
 SIGNED=$TOOLS/tools/phase3-proof/r3-signed-circulating.json
 [ -f "$SIGNED" ] || stop "$SIGNED missing (Task 7's signed circulating values; the tag must carry it)"
 # levels runs every hour at :15 on prod and every 6 h on stage (schedule.yaml staging_overrides: 00:15, 06:15, 12:15,
-# 18:15 UTC): poll every 300 s for up to 75 min (prod) or 6 h 30 min (stage). R3_POLLS overrides the count.
-DEF_POLLS=15; [ "$ENV" = stage ] && DEF_POLLS=78
-POLLS=${R3_POLLS:-$DEF_POLLS}; NAP=300; [ -n "$FAKE" ] && NAP=0
+# 18:15 UTC): poll `jobs` every 300 s, waiting at most 75 min (prod) or 6 h 30 min (stage). R3_POLLS overrides the count.
+NAP=300; MAX_WAIT=4500; [ "$ENV" = stage ] && MAX_WAIT=23400
+POLLS=${R3_POLLS:-$(( MAX_WAIT / NAP + 1 ))}; [ -n "$FAKE" ] && NAP=0
 
 say "2 deploy $ENV $TAG"
 SINCE=$(now_iso)
@@ -37,17 +37,21 @@ Q migrations > "$W/after/migrations.json" || stop "sql-ro migrations exit $?"
 $CHECK migrations "$W/after/migrations.json" || exit 1
 
 say "4 levels coverage before the first hourly run (exempt: step 1's latest_levels market_data rows)"
-R jobs --since "$SINCE" > "$W/after/jobs-pre.json" || stop "jobs exit $?"
+# latest_levels first, THEN jobs: a levels job on the tag that started after the switch (running or ended) by the time
+# of the jobs read may have overwritten rows already, so the pre-check is skipped (no false STOP); its re-check below
+# has no exemption. A job that starts after the jobs read started after the latest_levels read too.
 Q levels > "$W/after/levels-pre.json" || stop "sql-ro levels exit $?"
+R jobs --since "$SINCE" > "$W/after/jobs-pre.json" || stop "jobs exit $?"
 $CHECK levels-pre "$W/after/levels-pre.json" "$W/expected.json" "$W/after/jobs-pre.json" "$TAG" "$SINCE" || exit 1
 
-say "4 wait for the first hourly levels run on $TAG (jobs every ${NAP}s, at most $POLLS polls)"
+say "4 wait for the first levels run on $TAG started after the switch to be done (jobs every ${NAP}s, at most $POLLS polls)"
+# running / queued jobs, and any that started before the switch, are ignored; a failed one is a STOP.
 rc=3
 for i in $(seq 1 "$POLLS"); do
   R jobs --since "$SINCE" > "$W/after/jobs.json" || stop "jobs exit $?"
   $CHECK levels-job "$W/after/jobs.json" "$TAG" "$SINCE"; rc=$?
   [ $rc -eq 3 ] || break
-  sleep $NAP
+  [ "$i" -lt "$POLLS" ] && sleep $NAP
 done
 [ $rc -eq 3 ] && stop "no levels run on $TAG finished after $POLLS polls"
 [ $rc -eq 0 ] || exit 1

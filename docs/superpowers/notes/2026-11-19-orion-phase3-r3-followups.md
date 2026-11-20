@@ -23,7 +23,8 @@ expected artifacts, soak, rollback). Source of every line below: the SDD ledger
   option B; it fires first on any custodian or dormant-vault move.
 - **Task 7's sign-off writes two files the tag must carry**: `tools/phase3-proof/r3-allowlist.json` (s4's gate) and
   `tools/phase3-proof/r3-signed-circulating.json` (`{"<asset>": <signed circulating tokens>}`, s1's ±2% check after the
-  first hourly `levels` run). s1 and s4 stop without them.
+  first hourly `levels` run). s1 stops (before deploying) without `r3-signed-circulating.json`; s4 stops without
+  `r3-allowlist.json`.
 - **Prod `--yes`** (s2's rebuild, s3's purge) only on his go, or under his conditional pre-approval of the whole script;
   any refused rebuild row is his decision.
 - The published `masha256/orion-data` history keeps old CoinGecko-derived figures (N3: left; Phase 5 decides).
@@ -84,6 +85,19 @@ One line each with its cost if wrong (as the ledger states it).
   of another locator (the wrappers' old `erc20_supply` rows); `disclosure` / hand-entered rows are never targets: listed
   as `kept` (id, observedAt, reason) and untouched; s0/s2 expect VVV kept 1. Cost: one pre-v2 disclosed point inside
   VVV's on-chain series.
+- R16: Task 6 concerns 2-5 accepted as written: Task 7 creates `r3-signed-circulating.json`; stage `levels` runs every
+  6 h, so s1 polls up to 6 h 30 min (deploy stage just before a :15 slot); the `staging_refresh` hold lasts until prod's
+  s3; the step-3 log check is strict (any ` error` line stops). Cost: a long stage wait, or a false STOP on a benign
+  "error" log line.
+- R17: the R15 fix wave's concerns accepted: `contract_state` targets keep R12's (adapter, call) comparison (on shipped
+  data only the wrappers' old rows; the scripts stop on any other kind); non-target rungs (e.g. a `first_party_api`
+  row of an old source) are kept, not notRebuildable; the spec Status line is updated at the closing commit. Cost: none
+  on the shipped data.
+- R18: closing fix wave over the 176c45a..ca3be1d review: R16/R17 here and the spec Status; s1's step 4 waits for a
+  `levels` job that started after the switch to be `done` (running ones ignored) and reads `latest_levels` only after
+  it, with the pre-check skipped once such a job started; STOP fixtures for the wrappers' old-locator count, leftovers
+  after `--yes` and the step-4 pre-check; deploy.md names which script needs which file; s2/s3 `--resume` (already
+  done + remaining = step 1's counts) after a STOP mid `--yes`; review M6 accepted as R16. Cost: none.
 
 ## Deferred (minor) findings
 
@@ -98,8 +112,8 @@ One line each with its cost if wrong (as the ledger states it).
 - Task 4: `schema.ts` imports from the ingest layer (precedent in load.ts).
 - Task 5: rebuild writes midnight `day_blocks` without flow.ts's 3600 s age check (rebuild rows are past days;
   boundaries never young).
-- Task 5: no tests for the rebuild conflict path, a partly committed `--yes` finished by rerun, a LIT `locked_schedule`
-  rebuild at an old block, PUMP notRebuildable.
+- ~~Task 5: no tests for the rebuild conflict path, a partly committed `--yes` finished by rerun, a LIT `locked_schedule`
+  rebuild at an old block, PUMP notRebuildable.~~ **Done in ca3be1d** (tests/db/supplyLevels.test.ts: all four).
 - Task 5: RPC call counter counts 7 named methods only.
 - Task 5: `planRebuild` has an unused `opts` param.
 - Task 5: CLI NOT REBUILDABLE line says purge deletes it (true only for `market_data` rows).

@@ -1,0 +1,6 @@
+{
+ "error": {
+  "code": "rebuild_conflict",
+  "message": "circulating_supply: #4321 at 2026-10-12T00:45:00.000Z is no longer active"
+ }
+}

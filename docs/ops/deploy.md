@@ -1017,8 +1017,9 @@ circulating_supply --source-type market_data [--yes]`. `ST`/`PR` = the stage/pro
    (circulating, marketCap, mcap/revenue, mcap/holder flow, HF/mcap, old -> new; the refused and notRebuildable lists;
    the archive call count). The tag carries `tools/phase3-proof/r3-allowlist.json` (N4 classes: S `ratio` = the signed
    ratio ± 0.01, L exact label pins, G and AERO no entry) and `tools/phase3-proof/r3-signed-circulating.json` (the
-   signed circulating value per asset, `{"<asset>": <tokens>, ...}`: s1's ±2% check). No tag before the sign-off; s1
-   and s4 stop when either file is missing.
+   signed circulating value per asset, `{"<asset>": <tokens>, ...}`: s1's ±2% check). No tag before the sign-off. s1
+   stops (before deploying) without `r3-signed-circulating.json`; s4 stops (before any call) without
+   `r3-allowlist.json`. Neither script checks the other file.
 2. **N6: Mike re-runs `orion-host.sh` once more** from a fixed snapshot of `scripts/provision/` at the R3 release sha,
    exactly as in the R1 release step 1 above (the snapshot commands, the same flags, paste back the SELF-CHECK). Stage
    `sql-ro` already exists since 2026-11-20 (`orion_stage_ro`, from the `/home/hermes/orion-provision-06955e0`
@@ -1059,6 +1060,8 @@ $T/tools/phase3-proof/r3-s1.sh <env> <tag> --tools $T        # steps 2-4: deploy
 $T/tools/phase3-proof/r3-s2.sh <env>                         # steps 5-6: stale coverage, rebuild (dry, --yes)
 $T/tools/phase3-proof/r3-s3.sh <env>                         # steps 7-8: purge (dry, --yes), re-checks at 0
 $T/tools/phase3-proof/r3-s4.sh <env> --tools $T              # steps 9-10: after/, the flatdiff gate
+$T/tools/phase3-proof/r3-s2.sh <env> --resume                # only after a STOP inside s2's --yes loop, on Mike's go
+$T/tools/phase3-proof/r3-s3.sh <env> --resume                # only after a STOP inside s3's --yes loop, on Mike's go
 ```
 
 Stage: s0-s4 under the release go. **Prod: s1, s2 and s3 each only on Mike's go** (or under his conditional
@@ -1066,6 +1069,20 @@ pre-approval of that whole stage), given in the thread after he has seen stage's
 s0 counts. s2 and s3 run their dry runs and every dry-run check before their first `--yes`, so a deviation stops them
 before anything is written; the go covers "dry runs, and `--yes` if every check is ok". Paste each script's full
 output into the thread.
+
+**After a STOP.** A STOP before a script's first `--yes` wrote nothing: fix the cause (Mike decides) and rerun the same
+script. **A STOP part way through s2's or s3's `--yes` loop** (some assets, or some days of one asset, already
+written): bring it to Mike; a plain rerun stops at its first check, because step 1's counts no longer hold, and s0 again
+is not valid mid-release. On his go, rerun the same script with `--resume`. It skips the "stale / market_data = step 1's
+count" check and instead requires, per asset, *already done since step 1 + remaining = step 1's count*, from the rows'
+provenance: s2 counts the already rebuilt rows as the active circulating rows whose locator carries `rebuilt` (less
+step 1's count of them), the remaining as the stale rows still active, against step 1's stale count, and each dry run
+must show step 1's counts less the already rebuilt; s3 counts the already purged rows as step 1's `market_data` total
+less the `market_data` rows now, and each dry run (only the assets with rows left) must find exactly the rows now. Then
+`--yes` on the rest only, and the same yes == dry, second dry runs and re-checks as a first run (`dry/resume-*`,
+`yes/resume-*`; the first run's files stay). Any count that does not add up: stop, Mike decides. **A STOP in s1's step
+4** comes after the deploy: do not rerun s1 (it would deploy again); run the step 4 checks by hand (`r3_check.py
+levels-job` / `levels-post` on fresh `jobs` and `sql-ro levels` reads) once Mike has seen the cause.
 
 **Expected artifacts (section 7).** Measured, not pinned: the scripts read step 1's file. Prod 2026-11-19 14:30Z
 (they grow by one row per CoinGecko asset per nightly until the block runs); stage: its own step 1 (437 `market_data`
@@ -1089,7 +1106,8 @@ asset's new source nor a wrapper's old locator) is no listed artifact: s0 stops 
    circulating rows by `source_type`. From these, per asset: the kept rows (any other `source_type`, ruling R15:
    counted, never rebuilt or purged; prod: vvv's `disclosure` row, 1), the stale rows (`market_data` + old locator), the
    notRebuildable ones (HYPE and PUMP: every stale row; AERO: those before 2026-11-10; any other: 0), the expected
-   `rebuilt` (stale - notRebuildable) and `withoutReplacement` (the notRebuildable `market_data` rows). s0 prints one
+   `rebuilt` (stale - notRebuildable) and `withoutReplacement` (the notRebuildable `market_data` rows), and the active
+   rows already carrying `locator.rebuilt` (0 before the first rebuild; `--resume`'s base). s0 prints one
    line per asset: paste them.
 2. **Deploy (s1)**: `scripts/release/deploy.sh <env> <tag>` from `$T`; the report is printed (paste it) and must name the
    tag with `migrations applied: none`.
@@ -1097,9 +1115,12 @@ asset's new source nor a wrapper's old locator) is no listed artifact: s0 stops 
    no `ORION ALERT` / error line; `sql-ro` `max(id)` of `schema_migrations` = 8.
 4. **Levels coverage (s1, read-only), before and after the first hourly `levels` run on the tag.** Before it: the
    `latest_levels` `market_data` circulating rows must be exactly step 1's (printed `expected pre-switch: 9 (assets
-   ...)`; any other count or asset: stop; skipped, with a note, when that run already finished). Then `jobs --since
-   <switch>` every 300 s until the first `levels` job on the tag is `done` (prod at most 75 min, stage 6 h 30 min;
-   `failed`, or a result with any `failed` source: stop). **Re-check with no exemption: 0 `market_data` rows in
+   ...)`; any other count or asset: stop). `latest_levels` is read first and `jobs --since <switch>` after it: when that
+   jobs read shows a `levels` job on the tag that started after the switch (running or ended), the run may have
+   overwritten rows already, so the pre-check is skipped with a note (`levels pre skipped (...)`), never a false stop.
+   Then `jobs --since <switch>` every 300 s (sleeps of 300 s, prod at most 75 min, stage 6 h 30 min) until a `levels`
+   job on the tag that **started after the switch** is `done`: running and queued jobs, and any job that started before
+   the switch, are ignored; `failed`, or a result with any `failed` source: stop. Only then is `latest_levels` read. **Re-check with no exemption: 0 `market_data` rows in
    `latest_levels`, and each asset's new circulating value within ±2% of its signed value** (more: stop).
 5. **Stale-definition coverage (s2, read-only)**: per asset the active circulating rows not on the asset's new source
    must be exactly step 1's `market_data` and old-locator counts (printed `expected pre-rebuild`), and its kept rows

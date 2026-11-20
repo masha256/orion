@@ -13,8 +13,8 @@ fetches, the runs, the purge and backfill rehearsals) are the controller's; this
 | `r2-allowlist.json` | The R2 (price swap) allowlist, from the Task 10 proof Mike signed 2026-11-15 (below). |
 | `r2-allowlist-r43.json` | `r2-allowlist.json` plus Mike's R43 acceptances (2026-11-17, stage step 10): the allowlist prod's step 10 ran with (below). |
 | `r2-prod-6to10.sh` | Reference only: the one script prod's R2 steps 6 (`--yes`) to 10 ran as, under Mike's conditional pre-approval (2026-11-18), stopping at the first deviation (below). |
-| `r3-s0.sh` .. `r3-s4.sh`, `r3-lib.sh`, `r3_check.py` | The R3 release block's five scripts (docs/ops/deploy.md "Phase 3 R3 release": s0 steps 0-1, s1 2-4, s2 5-6, s3 7-8, s4 9-10), their shared shell part (arguments, the ssh calls, the `--fake <dir>` mode and its slug rule) and their checks (one subcommand each; expected counts only from step 1's `~/r3-<env>/expected.json`). |
-| `test_r3_scripts.py`, `fixtures/r3/` | The scripts in `--fake` mode: a happy path per script and one STOP per artifact. `python3 -m unittest tools/phase3-proof/test_r3_scripts.py`; `fixtures/r3/generate.py` rewrites the fixtures. |
+| `r3-s0.sh` .. `r3-s4.sh`, `r3-lib.sh`, `r3_check.py` | The R3 release block's five scripts (docs/ops/deploy.md "Phase 3 R3 release": s0 steps 0-1, s1 2-4, s2 5-6, s3 7-8, s4 9-10), their shared shell part (arguments, the ssh calls, the `--fake <dir>` mode and its slug rule) and their checks (one subcommand each; expected counts only from step 1's `~/r3-<env>/expected.json`); s2 and s3 take `--resume` after a STOP inside their `--yes` loop. |
+| `test_r3_scripts.py`, `fixtures/r3/` | The scripts in `--fake` mode: a happy path per script, one STOP per artifact (incl. the wrappers' old-locator count, leftovers after `--yes`, the step-4 pre-check), the step-4 levels race, and `--resume`. `python3 -m unittest tools/phase3-proof/test_r3_scripts.py`; `fixtures/r3/generate.py` rewrites the fixtures. |
 
 ## Paths
 

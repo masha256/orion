@@ -12,7 +12,7 @@
   Tasks 1-6: view_sum `times` / `locked_schedule`, `hype.circulating_supply`, `solana.supply_less_owners`, the 12-asset
   YAML sweep with CoinGecko refused in every field, `data rebuild-supply-levels` and the unreplaced-circulating purge
   refusal, release block `docs/ops/deploy.md` "Phase 3 R3 release" with stage scripts `tools/phase3-proof/r3-s0..s4.sh`);
-  not tagged: the proof on a prod copy and Mike's sign-off (Task 7) come next. Rulings R1-R14 and the deferred items:
+  not tagged: the proof on a prod copy and Mike's sign-off (Task 7) come next. Rulings R1-R18 and the deferred items:
   docs/superpowers/notes/2026-11-19-orion-phase3-r3-followups.md.
 - 2026-11-14: R2 built on feat/phase3-third-party (plan Tasks 1-9; commits 4498513..3aca04e plus the Task 9 docs
   commit); not tagged: Task 10 (the prod-copy proof and Mike's sign-off table) comes first. Rulings that changed the
