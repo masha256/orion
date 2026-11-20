@@ -34,6 +34,16 @@ const MetricDefSchema = z.strictObject({
       outside: z.tuple([z.number(), z.number()]).optional(),
     })
     .optional(),
+  /**
+   * Phase 3 R3 (Ruling R6): on a level metric, the first UTC day (YYYY-MM-DD, a real calendar day) whose stored rows
+   * `data rebuild-supply-levels` may rebuild at an archive block. A row observed before 00:00Z of it is not rebuildable
+   * (AERO: CoinGecko's rows before the new token's migration completed) and `data purge --source-type market_data`
+   * deletes it without a replacement. Optional with no default (hashes).
+   */
+  rebuild_from: z
+    .string()
+    .refine((x) => /^\d{4}-\d{2}-\d{2}$/.test(x) && Number.isFinite(Date.parse(`${x}T00:00:00Z`)) && new Date(`${x}T00:00:00Z`).toISOString().slice(0, 10) === x, 'must be a real UTC day, YYYY-MM-DD')
+    .optional(),
 });
 
 /** The trailing window for every series, and the length of each half of a growth comparison. */
@@ -125,6 +135,7 @@ export const AssetConfigSchema = z
       if (def.source?.type === 'derived' && def.source.name === 'level_gap_pct') {
         for (const message of levelGapIssues(key, def, def.source.params, a.metrics)) issue(message);
       }
+      if (def.rebuild_from !== undefined && def.type !== 'level') issue(`metrics: "${key}" has rebuild_from, which is for level metrics`);
       if (def.watch !== undefined) {
         const w = def.watch;
         if (def.monitor_only !== true) issue(`metrics: "${key}" has a watch, which is for monitor_only metrics`);

@@ -7,6 +7,7 @@ import { sourceTypeOf, type SourceType } from '../report/sourceTypes.js';
 import { OrionError } from '../types.js';
 import type { Db, OrionDb } from './connection.js';
 import { PRICE_LEVEL_METRICS, priceLevelRef, priceLevelValidFromMs } from './priceLevels.js';
+import { SUPPLY_LEVEL_METRIC, supplyNotRebuildable } from './supplyLevels.js';
 
 /**
  * `orion data purge` (Phase 3 plan decision P2): deletes the stored history of a retired metric (one no longer in the
@@ -20,7 +21,11 @@ import { PRICE_LEVEL_METRICS, priceLevelRef, priceLevelValidFromMs } from './pri
  * - (Ruling R38) a `market_data` purge of `price_usd` / `diem_price_usd` while a targeted row has no replacement: no
  *   active row of another source type at its `observed_at` (`data rebuild-price-levels` writes one)
  *   (`purge_unreplaced_price_level`). A row observed before its ref's prices.yaml `valid_from` can never be rebuilt: it
- *   is deleted and listed per metric as `withoutReplacement` (id, day).
+ *   is deleted and listed per metric as `withoutReplacement` (id, day);
+ * - (Phase 3 R3, Review Focus 5) the same for a `market_data` purge of `circulating_supply`
+ *   (`purge_unreplaced_supply_level`; `data rebuild-supply-levels` writes the replacement), except the rows that rebuild
+ *   classes notRebuildable (`supplyNotRebuildable`: an asset whose source is not an EVM chain read, a row before the
+ *   metric's `rebuild_from`): those are deleted and listed as `withoutReplacement`.
  *
  * Side state goes only with a metric that is gone entirely (not configured, and no row of it left after the purge):
  * its `latest_levels` and `watch_state` rows, and the `fetch_cursors` whose scan key names it alone. An API flow's
@@ -52,7 +57,8 @@ export interface PurgeMetricCount {
   fetchCursors: number;
   /**
    * A market_data price-level purge only (R38): the rows deleted with no rebuilt row at their observed_at, all observed
-   * before the ref's valid_from. Absent for every other purge.
+   * before the ref's valid_from. A market_data circulating_supply purge (R3): those rows, all notRebuildable. Absent for
+   * every other purge.
    */
   withoutReplacement?: { id: number; observedAt: string; day: string }[];
 }
@@ -286,9 +292,13 @@ async function planPurge(db: Db, loaded: LoadedAsset, metrics: string[], sourceT
       'SELECT count(*)::bigint AS k FROM observations WHERE asset_id = $1 AND metric_key = $2 AND NOT (id = ANY($3::bigint[]))', [asset, metric, ids],
     ))?.k);
     const gone = !configured && kept === 0;
-    const withoutReplacement = sourceType === 'market_data' && (PRICE_LEVEL_METRICS as readonly string[]).includes(metric)
-      ? await unreplacedPriceLevels(db, loaded, metric, ids)
-      : undefined;
+    const withoutReplacement = sourceType !== 'market_data'
+      ? undefined
+      : (PRICE_LEVEL_METRICS as readonly string[]).includes(metric)
+        ? await unreplacedPriceLevels(db, loaded, metric, ids)
+        : metric === SUPPLY_LEVEL_METRIC
+          ? await unreplacedSupplyLevels(db, loaded, ids)
+          : undefined;
     const side = async (sql: string): Promise<number> => (gone ? n((await db.one<{ c: number }>(sql, [asset, metric]))?.c) : 0);
     plans.push({
       ids,
@@ -323,7 +333,24 @@ async function planPurge(db: Db, loaded: LoadedAsset, metrics: string[], sourceT
  * refuses the purge (`purge_unreplaced_price_level`), so a level is never dropped while it could still be rebuilt.
  */
 async function unreplacedPriceLevels(db: Db, loaded: LoadedAsset, metric: string, ids: number[]): Promise<{ id: number; observedAt: string; day: string }[]> {
-  const asset = loaded.config.id;
+  const listed = await unreplacedRows(db, loaded.config.id, metric, ids);
+  const tokenRef = priceLevelRef(loaded, metric);
+  const validFromMs = priceLevelValidFromMs(loaded, tokenRef);
+  const refused = listed.filter((r) => validFromMs === null || Date.parse(r.observedAt) >= validFromMs);
+  if (refused.length > 0) {
+    const shown = refused.slice(0, 10).map((r) => `#${r.id} ${r.observedAt}`).join(', ');
+    throw new OrionError(
+      'purge_unreplaced_price_level',
+      `metric "${metric}": ${refused.length} market_data row(s) have no rebuilt row at their observed_at (${shown}${refused.length > 10 ? ', ...' : ''}) and are ` +
+        (validFromMs === null ? `not before a prices.yaml valid_from (${tokenRef ?? 'no price ref'} has no entry)` : `on or after ${tokenRef}'s valid_from`) +
+        ': run `data rebuild-price-levels` first; nothing was deleted',
+    );
+  }
+  return listed;
+}
+
+/** The targeted rows with no active row of another source type than market_data at their observed_at (R38, R3). */
+async function unreplacedRows(db: Db, asset: string, metric: string, ids: number[]): Promise<{ id: number; observedAt: string; day: string }[]> {
   const rows = await db.all<{ id: number; observed_at: string }>(
     `SELECT o.id, o.observed_at FROM observations o
       WHERE o.id = ANY($1::bigint[])
@@ -333,20 +360,27 @@ async function unreplacedPriceLevels(db: Db, loaded: LoadedAsset, metric: string
       ORDER BY o.observed_at, o.id`,
     [ids, asset, metric],
   );
-  const tokenRef = priceLevelRef(loaded, metric);
-  const validFromMs = priceLevelValidFromMs(loaded, tokenRef);
-  const listed = rows.map((r) => {
+  return rows.map((r) => {
     const observedAt = new Date(r.observed_at).toISOString();
     return { id: n(r.id), observedAt, day: observedAt.slice(0, 10) };
   });
-  const refused = listed.filter((r) => validFromMs === null || Date.parse(r.observedAt) >= validFromMs);
+}
+
+/**
+ * Phase 3 R3 (Review Focus 5): the targeted market_data circulating_supply rows with no replacement. Those the rebuild
+ * classes notRebuildable (supplyNotRebuildable, shared with src/db/supplyLevels.ts) are returned (deleted without
+ * replacement, listed); any other refuses the purge (`purge_unreplaced_supply_level`): a row an archive read could
+ * still replace is never dropped before `data rebuild-supply-levels` has written its replacement.
+ */
+async function unreplacedSupplyLevels(db: Db, loaded: LoadedAsset, ids: number[]): Promise<{ id: number; observedAt: string; day: string }[]> {
+  const listed = await unreplacedRows(db, loaded.config.id, SUPPLY_LEVEL_METRIC, ids);
+  const refused = listed.filter((r) => !supplyNotRebuildable(loaded, r.observedAt));
   if (refused.length > 0) {
     const shown = refused.slice(0, 10).map((r) => `#${r.id} ${r.observedAt}`).join(', ');
     throw new OrionError(
-      'purge_unreplaced_price_level',
-      `metric "${metric}": ${refused.length} market_data row(s) have no rebuilt row at their observed_at (${shown}${refused.length > 10 ? ', ...' : ''}) and are ` +
-        (validFromMs === null ? `not before a prices.yaml valid_from (${tokenRef ?? 'no price ref'} has no entry)` : `on or after ${tokenRef}'s valid_from`) +
-        ': run `data rebuild-price-levels` first; nothing was deleted',
+      'purge_unreplaced_supply_level',
+      `metric "${SUPPLY_LEVEL_METRIC}": ${refused.length} market_data row(s) have no rebuilt row at their observed_at (${shown}${refused.length > 10 ? ', ...' : ''}) ` +
+        'and could be rebuilt at an archive block: run `data rebuild-supply-levels` first (a refused row stays until its read succeeds); nothing was deleted',
     );
   }
   return listed;

@@ -7,6 +7,7 @@ import { compareUsd, type UsdComparison } from '../../db/prices.js';
 import { rebuildPriceLevels, type RebuildResult } from '../../db/priceLevels.js';
 import { purgeMetrics, purgePrices, type PurgePricesResult, type PurgeResult } from '../../db/purge.js';
 import { repriceAsset, type RepriceResult } from '../../db/reprice.js';
+import { rebuildSupplyLevels, type SupplyRebuildResult } from '../../db/supplyLevels.js';
 import { describeSources } from '../../ingest/describe.js';
 import { backfillTokens, type BackfillTokensResult } from '../../ingest/tokenBackfill.js';
 import { lockHolder, withRunLock } from '../../app/lock.js';
@@ -116,6 +117,19 @@ function rebuildLines(r: RebuildResult): string[] {
       ...m.beforeValidFrom.map((x) => `    BEFORE VALID_FROM #${x.id} ${x.observedAt}`),
     ]),
     r.applied ? `wrote ${r.days} day(s); the CoinGecko rows are superseded (data purge --source-type market_data deletes them)` : 'dry run: nothing written; --yes writes the rebuilt rows',
+  ];
+}
+
+function supplyRebuildLines(r: SupplyRebuildResult): string[] {
+  return [
+    `${r.asset.toUpperCase()} rebuild-supply-levels${r.applied ? '' : ' (dry run)'}:`,
+    `  ${r.metric}: ${r.rows} row(s) of another source: ${r.rebuilt} ${r.applied ? 'rebuilt' : 'to rebuild'}, ${r.refused.length} refused, ` +
+      `${r.notRebuildable.length} not rebuildable; ${r.unchanged} of the current source unchanged; ${r.calls} RPC call(s)`,
+    ...r.refused.map((x) => `    REFUSED #${x.id} ${x.observedAt}: ${x.reason}`),
+    ...r.notRebuildable.map((x) => `    NOT REBUILDABLE #${x.id} ${x.day} (${x.observedAt}): data purge --source-type market_data deletes it without replacement`),
+    r.applied
+      ? `wrote ${r.rebuilt} row(s); the old rows are superseded (data purge --source-type market_data deletes the CoinGecko ones)`
+      : 'dry run: nothing written; --yes writes the rebuilt rows',
   ];
 }
 
@@ -332,6 +346,30 @@ export function registerData(program: Command, ctx: CliContext): void {
         output(ctx, opts.json, result, () => rebuildLines(result));
         // A refused row keeps its CoinGecko row: exit 3 (dry run and --yes), as data reprice, so the release block stops.
         if (result.perMetric.some((m) => m.refused.length > 0)) ctx.setExitCode?.(REPRICE_REFUSED_EXIT);
+      }),
+    );
+
+  data
+    .command('rebuild-supply-levels <asset>')
+    .description(
+      'for every active circulating_supply row of another source than the configured one (CoinGecko; a wrapper\'s old totalSupply()): a new row at the ' +
+        'same observed_at, read by the configured source at the first block at or after it; HYPE/PUMP rows and rows before rebuild_from are not rebuildable ' +
+        `(listed). A dry run unless --yes. Deletes nothing (data purge --source-type market_data does); exits ${REPRICE_REFUSED_EXIT} when any row is refused`,
+    )
+    .option('--yes', 'write the rebuilt rows')
+    .option('--json', 'JSON output')
+    .action(async (assetId: string, opts: { yes?: boolean; json?: boolean }) =>
+      await guarded(ctx, opts.json, async () => {
+        const loaded = loadAsset(ctx.configRoot, assetId);
+        const fetchDeps = ingestDepsFor(ctx);
+        const result = await withDb(ctx, async (db) =>
+          await rebuildSupplyLevels(db, loaded, { rpc: fetchDeps.rpcFactory, http: fetchDeps.http, env: fetchDeps.env }, {
+            yes: opts.yes === true, now: ctx.now().toISOString(), ...(ctx.release ? { release: ctx.release.tag } : {}),
+          }),
+        );
+        output(ctx, opts.json, result, () => supplyRebuildLines(result));
+        // A refused row keeps its old row: exit 3 (dry run and --yes), as rebuild-price-levels, so the release block stops.
+        if (result.refused.length > 0) ctx.setExitCode?.(REPRICE_REFUSED_EXIT);
       }),
     );
 

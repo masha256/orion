@@ -39,6 +39,11 @@ undrains and restarts the daemon, logs `recovered ...` to deploys.log and prints
                                   a dry run without --yes; --yes writes chain-priced price_usd/diem_price_usd rows over
                                   the CoinGecko ones (deletes nothing); exit 3 when any row is refused (dry run and
                                   --yes; the refused rows are still listed)
+  data rebuild-supply-levels <a> [--yes]
+                                  a dry run without --yes; --yes writes circulating_supply rows read by the configured
+                                  source at the first block at or after each CoinGecko (or old-source) row (deletes
+                                  nothing); HYPE/PUMP rows and rows before rebuild_from are listed as not rebuildable;
+                                  exit 3 when any row is refused (dry run and --yes; the refused rows are still listed)
   data purge-prices --source coingecko [--yes]
                                   a dry run without --yes; --yes exports the prices rows to ~/home/purged/, then deletes
                                   them and the unreferenced coingecko:* tokens rows (refused while a row still uses one)
@@ -473,6 +478,10 @@ def v_data(env, args):
         usage = 'data rebuild-price-levels <asset> [--yes] (a dry run without --yes)'
         o = parse(rest, [('asset', ASSET, True)], {'--yes': None}, usage)
         return passthrough(env, ['data', 'rebuild-price-levels', o['asset']] + (['--yes'] if o.get('yes') else []) + ['--json'])
+    if sub == 'rebuild-supply-levels':
+        usage = 'data rebuild-supply-levels <asset> [--yes] (a dry run without --yes)'
+        o = parse(rest, [('asset', ASSET, True)], {'--yes': None}, usage)
+        return passthrough(env, ['data', 'rebuild-supply-levels', o['asset']] + (['--yes'] if o.get('yes') else []) + ['--json'])
     if sub == 'purge-prices':
         usage = 'data purge-prices --source coingecko [--yes] (a dry run without --yes)'
         o = parse(rest, (), {'--source': pattern(PRICE_SOURCE_RE, 'price source'), '--yes': None}, usage)
@@ -480,7 +489,7 @@ def v_data(env, args):
             raise Refused(f'--source required (usage: {usage})')
         return passthrough(env, ['data', 'purge-prices', '--source', o['source']] + (['--yes'] if o.get('yes') else []) + ['--json'])
     raise Refused('data: only "data anomalies", "data sources", "data show", "data compare-usd", "data purge", "data reprice", '
-                  '"data rebuild-price-levels", "data purge-prices" (decisions are confirm/reject/ack/resolve)')
+                  '"data rebuild-price-levels", "data rebuild-supply-levels", "data purge-prices" (decisions are confirm/reject/ack/resolve)')
 
 
 def v_proposals(env, args):

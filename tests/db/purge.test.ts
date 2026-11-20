@@ -487,3 +487,46 @@ metrics:
     expect(() => readdirSync(exportDir)).toThrow();
   });
 });
+
+describe('Phase 3 R3 (Review Focus 5): a market_data circulating_supply purge', () => {
+  const circ = (source: string, extra = '') => {
+    const { config, hash } = parseAssetYaml(`
+id: circ
+symbol: CIRC
+name: Circulating Purge Test
+contracts:
+  token: "0x00000000000000000000000000000000000000c1"
+  fund: "0x00000000000000000000000000000000000000a9"
+ingest: { chain_id: 56, rpc_url_env: ORION_BNB_RPC_URL, backfill_days: 100 }
+metrics:
+  price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }
+  total_supply: { type: level, unit: tokens, staleness_days: 7, critical: true }
+  staked_supply: { type: level, unit: tokens, staleness_days: 7 }
+  emission_rate_annual: { type: schedule, unit: tokens_per_year, staleness_days: 400 }
+  circulating_supply: { type: level, unit: tokens, staleness_days: 14, ${extra}source: ${source} }
+`);
+    return { config, hash } as LoadedAsset;
+  };
+  const evm = '{ type: erc20_supply, token: token }';
+  const api = '{ type: adapter, name: hype.circulating_supply, params: { subtract: [ fund ] } }';
+  const purge = async (l: LoadedAsset) => await purgeMetrics(db(), l, { metrics: ['circulating_supply'], sourceType: 'market_data', apply: false, exportDir: scratch(), now: NOW });
+  const code = async (p: Promise<unknown>) => p.then(() => 'ok', (e: { code?: string }) => e.code);
+
+  it('refuses a superseded CoinGecko row with no replacement at its observed_at (an EVM source); a contract_state row there replaces it', async () => {
+    const d = db();
+    const a = await seed(d, 'circulating_supply', 'market_data', '2026-10-04T05:00:00.000Z', 1, 'circ');
+    await seed(d, 'circulating_supply', 'market_data', '2026-10-04T05:00:00.000Z', 2, 'circ'); // supersedes a
+    expect((await d.one<{ s: number | null }>('SELECT superseded_by AS s FROM observations WHERE id = $1', [a]))!.s).not.toBeNull();
+    expect(await code(purge(circ(evm)))).toBe('purge_unreplaced_supply_level');
+    await seed(d, 'circulating_supply', 'contract_state', '2026-10-04T05:00:00.000Z', 3, 'circ');
+    expect((await purge(circ(evm))).perMetric[0]).toMatchObject({ observations: 2, withoutReplacement: [] });
+  });
+
+  it('an API source (no archive) or a row before rebuild_from: deleted without replacement, listed; no other metric or rung is affected', async () => {
+    const d = db();
+    const a = await seed(d, 'circulating_supply', 'market_data', '2026-10-04T05:00:00.000Z', 1, 'circ');
+    expect((await purge(circ(api))).perMetric[0]!.withoutReplacement).toEqual([{ id: a, observedAt: '2026-10-04T05:00:00.000Z', day: '2026-10-04' }]);
+    expect((await purge(circ(evm, 'rebuild_from: 2026-10-05, '))).perMetric[0]!.withoutReplacement).toHaveLength(1);
+    expect(await code(purge(circ(evm, 'rebuild_from: 2026-10-04, ')))).toBe('purge_unreplaced_supply_level');
+  });
+});

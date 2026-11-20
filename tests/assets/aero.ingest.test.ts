@@ -97,7 +97,8 @@ describe('assets/aero.yaml', () => {
     // Re-pinned (Phase 3 R2 Task 6b): AERO names no ref (R11: entriesFor reads price.* params and scanned tokens; its price adapters are its own, R21).
     // Re-pinned (Phase 3 R2 Task 6 fix wave, E): entriesFor includes the asset's own token's prices.yaml entry (AERO's again).
     // Re-pinned (Phase 3 R2 Task 10 fix wave, A/R36): AERO's prices.yaml entry valid_from 2026-09-23 -> 2026-10-22.
-    expect(loadAsset(ROOT, 'aero').hash).toBe('80c3237360149048239438b53bcf8dd58c9e484aba794eff2f109215c4c9c8a7');
+    // Re-pinned (Phase 3 R3 Task 5, Ruling R6): circulating_supply rebuild_from 2026-11-10.
+    expect(loadAsset(ROOT, 'aero').hash).toBe('4f3d7c2f690dbef0bc30f078d966ce6fb34ffc4252847dfbcfeeac2180cda99d');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

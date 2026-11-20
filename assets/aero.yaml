@@ -55,6 +55,10 @@ metrics:
     type: level
     unit: tokens
     staleness_days: 14
+    # Phase 3 R3 (Ruling R6): the stored rows before 2026-11-10 are CoinGecko's, from before the new token's migration
+    # completed; this definition cannot be read at their blocks, so data rebuild-supply-levels leaves them (not
+    # rebuildable) and the market_data purge deletes them without replacement. Market cap starts on 2026-11-10.
+    rebuild_from: 2026-11-10
     source:
       type: adapter
       name: chain.view_sum

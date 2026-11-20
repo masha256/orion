@@ -1063,7 +1063,7 @@ class Phase3VerbTests(RemoteCase):
         with open(REMOTE) as f:
             text = f.read()
         head = text[:text.index('"""', text.index('"""') + 3)]
-        for verb in ('data reprice <a>', 'data rebuild-price-levels <a>'):
+        for verb in ('data reprice <a>', 'data rebuild-price-levels <a>', 'data rebuild-supply-levels <a>'):
             block = head[head.index(verb):].split('\n  data ', 1)[0]
             self.assertIn('exit 3', block, verb)
 
@@ -1103,6 +1103,28 @@ class Phase3VerbTests(RemoteCase):
         # Orion exits 3 when a row is refused (dry run and --yes): the release block's stop rule reads it over ssh.
         self.behave(node_exit=3)
         for cmd in ('data rebuild-price-levels vvv', 'data rebuild-price-levels vvv --yes'):
+            self.assertEqual(self.remote(cmd)[0], 3, cmd)
+
+    def test_rebuild_supply_levels_passthrough(self):
+        """Phase 3 R3 Task 5: as rebuild-price-levels: a dry run by default, --yes the only switch, --json added."""
+        argv = self.last('data rebuild-supply-levels cake')
+        self.assertEqual(argv, ['data', 'rebuild-supply-levels', 'cake', '--json'])
+        self.assertNotIn('--yes', argv)
+        self.assertEqual(self.last('data rebuild-supply-levels cake --yes'), ['data', 'rebuild-supply-levels', 'cake', '--yes', '--json'])
+        self.assert_refused([
+            'data rebuild-supply-levels', 'data rebuild-supply-levels CAKE', 'data rebuild-supply-levels cake aero',
+            'data rebuild-supply-levels cake --yes --yes', 'data rebuild-supply-levels cake --yes=1', 'data rebuild-supply-levels cake --from 2025-10-13',
+            'data rebuild-supply-levels cake --json', "data rebuild-supply-levels 'cake\n'", "data rebuild-supply-levels 'cake;id'",
+            'data rebuild-supply-levels --yes', 'data rebuild-supply-levels cake --metrics circulating_supply',
+        ])
+
+    def test_rebuild_supply_levels_usage_and_exit_3(self):
+        with open(REMOTE) as f:
+            text = f.read()
+        head = text[:text.index('"""', text.index('"""') + 3)]
+        self.assertIn('data rebuild-supply-levels <a> [--yes]', head)
+        self.behave(node_exit=3)
+        for cmd in ('data rebuild-supply-levels cake', 'data rebuild-supply-levels cake --yes'):
             self.assertEqual(self.remote(cmd)[0], 3, cmd)
 
     def test_purge_prices_passthrough(self):

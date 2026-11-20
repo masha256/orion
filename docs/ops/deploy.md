@@ -491,6 +491,16 @@ ssh orion-<env> data rebuild-price-levels <asset> [--yes]
     # keeps its CoinGecko row. Exits 3 when any row is refused (dry run and --yes, as `data reprice`; the JSON still
     # lists `refused`; --yes still writes the rows it could rebuild).
     $ST data rebuild-price-levels vvv
+ssh orion-<env> data rebuild-supply-levels <asset> [--yes]
+    # (R3 release on) per active circulating_supply row of another source than the configured one (CoinGecko
+    # market_data; a wrapper's old erc20_supply totalSupply() row): a new row at the same observed_at, read by the
+    # configured source at the first block at or after it (block_from/to = that block; locator.rebuilt = at, release,
+    # from_id). notRebuildable (listed, untouched; the market_data purge deletes them as withoutReplacement): HYPE and
+    # PUMP (no EVM archive read) and rows before the metric's rebuild_from (AERO 2026-11-10). A read that fails or
+    # reverts at that block (a term's contract not deployed yet) is refused: listed, its row kept, exit 3 (dry run and
+    # --yes). Deletes nothing; `data purge <asset> --metrics circulating_supply --source-type market_data` refuses
+    # (purge_unreplaced_supply_level) while a rebuildable row has no replacement.
+    $ST data rebuild-supply-levels cake
 ssh orion-<env> data purge-prices --source coingecko [--yes]
     # (R2 release on) `job:prices` run lock; refused while an active observation has a coingecko:* token ref (run
     # `data reprice --yes` first). --yes writes ~/home/purged/prices-coingecko-<UTCstamp>.json, then deletes every
