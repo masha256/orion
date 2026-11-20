@@ -21,6 +21,10 @@ Scoping (measured 2026-11-19, measured/claimed marked, CoinGecko dev-only): `~/.
 (`README.md` = the table and decisions' numbers; `code-and-data.md`; per asset `crv-wrappers.md`, `link-uni.md`,
 `sky-lit.md`, `cake-vvv-aero.md`, `hype-pump.md`). **Every address in this plan's YAML work is copied from those files.**
 
+**Status:** DRAFT for Mike's review (decisions N1-N6 owed). Base recorded 2026-11-19: `feat/phase3-r3-supply` =
+GitHub main **06955e0** (fetched over HTTPS, `git merge --ff-only FETCH_HEAD`: already up to date) + this plan's
+commits only. No build, merge, stage or prod work before Mike approves the plan.
+
 **Base:** GitHub `main` 06955e0 = `orion-2026.11.15.1` code (02f39e3) + RET-41 (`chore/r2-followups`, merged
 2026-11-19 by another session: stage `sql-ro` design, R43 allowlist and `r2-prod-6to10.sh` in `tools/phase3-proof/`,
 deploy.md section 7 "expected pre-remap artifacts"). Stage `sql-ro` is live only after Mike re-runs `orion-host.sh`
@@ -72,10 +76,24 @@ from a snapshot at or after 06955e0; the R3 `orion-host.sh` re-run (Task 6 prere
   rows on 2026-11-19 plus 9 a night until the release. Exports go to `~/home/purged/` on venus as every purge does:
   (rec) keep them there (rollback evidence, never served). The published `masha256/orion-data` git history keeps old
   CoinGecko-derived figures: (rec) leave it (Phase 5 decides the site's history).
-- **N4 Allowlist classes** (Task 7): (S) the circulating-derived paths above, on the 12 changed assets, as a `ratio`
-  pin = the signed proof's new/old ratio ± 0.01 (a new flatdiff bound, Task 7 Step 1); (L) exact `old`/`new` value
-  pins for the metric's source labels; everything else no entry (fail closed): growth, PEG and yields must not move. Any
-  growth entry that ever has to be added carries the abs floor AND a rel alternative (R43 lesson). AERO: no entry at all.
+- **N4 Allowlist classes** (Task 7), with the R43 lesson (`tools/phase3-proof/README.md`: an abs floor on a growth
+  figure needs a rel alternative when the prior period is tiny) applied to every class:
+  - (S) circulating-derived paths (`marketCap`, `multiples.mcapTo*`, `perToken.{revenue,grossProfit,holderFlow.*,
+    dilution,circulatingSupply}`) on the 12 changed assets: a `ratio` pin = the signed proof's new/old ratio ± 0.01
+    (new flatdiff bound, Task 7 Step 1). Relative by construction, so a multiple over a near-zero bucket (e.g. a tiny
+    `mcapToHolderFlow.cash`) holds where an abs floor would not; no abs-only entry in this class.
+  - (L) the metric's source labels (`provenance.sources`, `thirdParty` lists): exact `old`/`new` value pins.
+  - (G) growth `.change` / `.annualized` / `.current` / `.prior`, PEG, yields, flows, prices: **no entry** (they must
+    be byte-identical; circulating feeds none). If the proof ever forces one, it carries both bounds: the R41 abs floor
+    AND a rel alternative (R43: rel 0.1%), and the proof reports are checked first for any line whose prior window is
+    under ~1% of its current (the SKY `stakers` / `surplus_usds` case).
+  - AERO: no entry at all (its D report cannot move).
+- **N6 Prerequisite: one `orion-host.sh` re-run** (Mike) from the R3 release snapshot (it contains 06955e0, so it
+  installs stage `sql-ro` / `orion_stage_ro` and R3's `data rebuild-supply-levels` verb together; the
+  `/home/hermes/orion-provision-06955e0` snapshot alone gives only `sql-ro`). The stage block's count pre-checks and
+  its "0 market_data" re-check use `ssh orion-stage "sql-ro \"select ...\""`. (Rec) require it; fallback if Mike
+  prefers not to re-run before stage: the R2 waiver (prod's `sql-ro` counts + stage `data show`, active rows only),
+  which cannot show the global 0 on stage, so stage's re-check would be per asset only.
 - **N5 Checks.** New first-party checks for CRV (Curve `circulating_supply()`, 1%) and LINK (`supply.chain.link`,
   0.5%) as `watch` lines (ORION WATCH, never an anomaly: a level cross-check opens a paid triage run, R22) (rec), or
   none. VVV keeps its existing Venice cross-check. PUMP's schedule floor (custodian >= Blockworks still-locked) as a
@@ -210,39 +228,77 @@ every asset (pinned).
 **Files:** Modify `docs/ops/deploy.md` ("Phase 3 R3 release"), create
 `docs/superpowers/notes/2026-11-19-orion-phase3-r3-followups.md`, spec Status. No code.
 
-The block, per env (stage first; prod after one scheduled stage nightly and Mike's go). **One script per
-pre-approved stage** (`tools/phase3-proof/r3-<stage>.sh <env>`), each `set -u`, each step `|| stop`, exit 1 at the
-first deviation, every expected count read from the stage-0 file, never typed in the script:
+The block follows `docs/ops/deploy.md` section 7 ("Writing a per-env release block") and R2's step-5 pattern: every
+read-only check that runs before the step that clears a known artifact exempts exactly that artifact (printing its
+counts), stops on anything else, and is re-run with no exemption after the clearing step, where it must show 0. Per env
+(stage first; prod after one scheduled stage nightly and Mike's go; every prod `--yes` on Mike's go, or under a
+conditional pre-approval of a whole stage). **One script per pre-approved stage** (`tools/phase3-proof/r3-s<N>.sh
+<env>`: `set -u`, each step `|| stop`, exit 1 at the first deviation, every expected count read from step 0's file,
+none typed into the script; each script is one terminal call, so one approval prompt).
 
-- **Prerequisites:** Task 7 signed; Mike re-runs `orion-host.sh` from a snapshot at the release sha (new verb; check:
-  `$ST data rebuild-supply-levels` exits 64 with the usage line); merge + tag on main; outside 05:00-06:30 PT and each
-  env's nightly -4 h/+2 h.
-- **Stage 0 (read-only, no approval):** before/ = 26 reports at D = today-2 (so D+1 is a complete past day and no
-  hourly price can move D's report) and D-91. Expected-counts file `r3-<env>-expected.json` from `sql-ro` (prod; stage
-  via the stage `sql-ro` installed by the prerequisite re-run; if its self-check fails, the R2 waiver: prod's counts
-  + stage `data show`): per asset active
-  `market_data` circulating rows, `contract_state` wrapper rows, rows before AERO's `rebuild_from`.
-- **Stage 1 deploy:** `deploy.sh <env> <tag>`; checks: `status` on the tag; migrations max 8 (unchanged); the first
-  hourly `levels` run after the switch: `latest_levels` circulating rows with `source_type = 'market_data'` 9 before ->
-  0 after (pre-switch artifact: 9 is expected until that run), 0 `api.coingecko.com` requests in its result; each
-  asset's new circulating within ±2% of the proof table's value at that time.
-- **Stage 2 rebuild:** dry run 13 assets; expected exactly: `rebuilt` = the expected file's count for CAKE, CRV, LINK,
-  LIT, SKY, UNI, VVV, cvxCRV, sdCRV, yCRV; `notRebuildable` = all rows for HYPE and PUMP and AERO's 45; `refused` 0
-  everywhere (any refusal = stop, Mike decides). `--yes`; yes == dry per asset; a second dry run rebuilds 0.
-- **Stage 3 purge:** dry run `data purge <a> --metrics circulating_supply --source-type market_data` on the 10 assets
-  with rows; expected `observations` = the expected file's count; `withoutReplacement` = HYPE all, PUMP all, AERO 45,
-  others 0; `--yes`; yes == dry; then `sql-ro`: `count(*) from observations where source_type = $$market_data$$` = 0
-  and `latest_levels` market_data rows = 0. Pre-purge artifact: a nightly between stages 1 and 3 adds on-chain rows
-  only, so the market_data counts at stage 3 equal stage 0's exactly (a mismatch = stop).
-- **Stage 4 gate:** after/ = 26 reports at the same days; `flatdiff` with `tools/phase3-proof/r3-allowlist.json` from
-  the tag: 26/26 exit 0, else stop with every unallowed path before -> after.
-- **Soak (stage):** one scheduled nightly, no failed source, no `ORION WATCH ... circulating` without a stated cause;
-  snapshot `full` shows the new `marketCap`.
-- **Rollback:** no migration; `deploy.sh <env> orion-2026.11.15.1` runs. The old code reads CoinGecko circulating
-  again at its first hourly run and nightly (new `market_data` rows); rebuilt rows stay; a rollback needs a forward fix.
+**Prerequisites:** Task 7 signed; N6 (Mike's `orion-host.sh` re-run from the R3 release snapshot; check: `$ST data
+rebuild-supply-levels` exits 64 with its usage line and `$ST "sql-ro \"select current_user\""` prints
+`orion_stage_ro`); merge + tag on main; outside 05:00-06:30 PT and the env's nightly -4 h/+2 h; no Sunday 10:30Z
+`staging_refresh` between the stage switch and prod's step 6 (a refresh copies prod's CoinGecko rows back onto stage:
+then redo stage steps 4-6).
 
-- [ ] **Step 1: Write** the block, the four stage scripts (tested with a dry `--env fake` mode that reads fixture
-  JSON), the followups note (rulings, deferred minors, N-decisions as recorded).
+**Script s0 (read-only, no `--yes`): steps 0-1.**
+0. **Save `before/`**: 26 reports at `D` = today-2 UTC (D+1 is then a complete past day: no hourly price or level
+   written during the block falls inside D's as-of) and `D-91`, saved on the machine running the block.
+1. **Write the expected-counts file** `~/r3-<env>/expected.json` from `sql-ro` (both envs after N6): per asset the
+   active `circulating_supply` rows by `source_type` and locator kind; the `latest_levels` circulating rows by
+   `source_type`. Measured on prod 2026-11-19 14:30Z (they grow by one row per asset per nightly until the block runs,
+   so the script uses its own step-1 file, never these figures): `market_data` aero 45 / cake 40 / crv 43 / hype 55 /
+   link 37 / lit 38 / pump 37 / sky 36 / uni 40 / vvv 57 (428); wrapper `contract_state` rows on the old
+   `erc20_supply` locator cvxcrv 39 / sdcrv 39 / ycrv 39; `latest_levels` `market_data` 9 (cake crv hype link lit pump
+   sky uni vvv). Stage: measured by its own step 1 (no stage figure exists before N6).
+
+**Script s1: steps 2-4 (deploy and the switch checks).**
+2. **Deploy**: `scripts/release/deploy.sh <env> <tag>` (no migration: the report's migrations line lists none; max
+   stays 8). Paste the report into the thread.
+3. **Check the switch**: `status` on the tag, `logs 30` clean, `sql-ro` `max(id)` of `schema_migrations` = 8.
+4. **Levels coverage (read-only), before and after the first hourly `levels` run on the tag.**
+   **Expected pre-switch artifact: `latest_levels` holds 9 `circulating_supply` rows with `source_type =
+   market_data`** (the 9 CoinGecko assets; the old release wrote them; `latest_levels` is latest-only, so the first
+   hourly run on the tag overwrites each from its new source). The check before that run prints them as `expected
+   pre-switch: 9 (assets ...)` and stops on any other count or asset. **After the first hourly run (poll `jobs` with
+   sleeps <= 300 s), re-run with no exemption: 0 `market_data` rows in `latest_levels`; that run's result has no
+   failed source; each new circulating value within ±2% of Task 7's signed value for that asset** (more = stop).
+
+**Script s2: steps 5-6 (rebuild).**
+5. **Stale-definition coverage (read-only)**: per asset, active `circulating_supply` rows whose source is not the
+   asset's current config. **Expected artifacts (cleared by step 6 for the EVM assets, by step 7 for the rest):**
+   every `market_data` row (counts = step 1's file) and the three wrappers' old-locator rows (step 1's file). The check
+   prints them as `expected pre-rebuild` and stops on any other source type, asset or count. A nightly between steps
+   1 and 5 adds only rows on the new source, so these counts equal step 1's exactly (a mismatch = stop).
+6. **Rebuild: dry runs (13), then `--yes`.** `data rebuild-supply-levels <a>` dry run; expected exactly: `rebuilt` =
+   step 1's count for cake, crv, link, lit, sky, uni, vvv (`market_data`) and cvxcrv, sdcrv, ycrv (old locator);
+   `notRebuildable` = every row for hype and pump and aero's 45; `refused` 0 everywhere (exit 3 = stop, Mike decides).
+   `--yes` (prod: Mike's go); yes == dry per asset; a second dry run rebuilds 0. **Re-check step 5 after `--yes`:
+   0 stale rows on the 10 rebuilt assets; the only stale rows left are hype's, pump's and aero's `market_data`
+   (step 1's counts), cleared by step 7.**
+
+**Script s3: steps 7-8 (purge).**
+7. **Purge: dry runs, then `--yes`.** `data purge <a> --metrics circulating_supply --source-type market_data` on the
+   10 assets with rows; expected: `observations` = step 1's count; `withoutReplacement` = all of hype's and pump's,
+   aero's 45, every other asset 0; no `purge_unreplaced_supply_level` refusal (a refusal = a row step 6 should have
+   replaced: stop). `--yes` (prod: Mike's go); yes == dry; record each export file and sha256.
+8. **Re-check with no exemption** (`sql-ro`): `count(*) from observations where source_type = $$market_data$$` = 0;
+   `latest_levels` `market_data` rows = 0; step 5's check shows 0 stale rows on all 13.
+
+**Script s4: steps 9-10 (gate).**
+9. **Save `after/`**: the same 26 reports (`--day D`, `--day D-91`).
+10. **Gate**: `flatdiff` with `tools/phase3-proof/r3-allowlist.json` (run from the tag): 26/26 exit 0; else stop with
+    every unallowed path before -> after (no widening on the spot; an addendum file on Mike's ruling, as R43).
+
+**Soak (stage):** one scheduled nightly, no failed source, no `ORION WATCH ... circulating` line without a stated cause;
+the snapshot `full` body shows the new `marketCap`; soak cron resumed with its "known queue" line naming R3's moves.
+**Rollback:** no migration; `deploy.sh <env> orion-2026.11.15.1` runs, but the old code writes CoinGecko circulating
+again at its first hourly and nightly run (new `market_data` rows, which steps 7-8 would have to purge again after
+rolling forward); rebuilt rows stay.
+
+- [ ] **Step 1: Write** the block, the five stage scripts s0-s4 (tested with a dry `--env fake` mode that reads fixture
+  JSON, including each artifact's exempt-then-zero path), the followups note (rulings, deferred minors, N-decisions as recorded).
 - [ ] **Step 2: Commit** `docs: Phase 3 R3 release block, stage scripts, followups`.
 
 ### Task 7: Proof on a prod copy and the sign-off table (controller)
@@ -267,7 +323,7 @@ first deviation, every expected count read from the stage-0 file, never typed in
 - Spec §3.2: owned circulating on every asset (Task 4), cited exclusions in YAML comments (Task 4), first-party checks
   where they exist (N5), history policy (N2, Task 5). §5 R3 "nothing CoinGecko-derived stored": stage 3's global
   `market_data` = 0 check plus the loader refusal.
-- R2 lessons carried: one script per pre-approved stage (Task 6); expected counts for every check incl. pre-switch /
-  pre-purge artifacts (Task 6 stages 1, 3); growth entries carry abs + rel (N4); D chosen so no price moves between
-  before and after (stage 0).
+- R2 lessons carried: deploy.md section 7 (artifacts listed with counts, the clearing step, an unexempted re-check at
+  0: Task 6 steps 4, 5/6, 8) and R2's step-5 pattern; one script per pre-approved stage (s0-s4); expected counts from
+  step 1's file; R43 abs + rel on any growth entry (N4); D = today-2 so no price moves between before and after.
 - Proportion: 7 tasks; the YAML terms live in the scoping files, not repeated here.
