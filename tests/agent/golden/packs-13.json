@@ -872,12 +872,12 @@
    {
     "metric": "circulating_supply",
     "adapter": "chain.view_sum",
-    "params_doc": "terms: [{ contract, function, args?: contract names, sign?: 1 | -1 }], decimals? (18), scale?: number, plus_share?: { contract, function, denominator }. The signed sum of uint256 views at the run block (refused when negative), x scale, x (1 + share)."
+    "params_doc": "terms: [{ contract, function, args?: contract names, sign?: 1 | -1, times?: { contract, function, decimals } (the term x that view / 10^decimals, read in the same multicall) }], decimals? (18), scale?: number, plus_share?: { contract, function, denominator }, locked_schedule?: { amount (tokens), first_tranche: YYYY-MM-DD, tranches, every_months, citation: URL } (subtracts amount x the tranches not yet out at the run block's time, 00:00Z each; not with scale or plus_share). The signed sum of uint256 views at the run block (refused when negative), x scale, x (1 + share), less the locked schedule (refused when negative). A view that reverts fails the level."
    },
    {
     "metric": "emission_ceiling_annual",
     "adapter": "chain.view_sum",
-    "params_doc": "terms: [{ contract, function, args?: contract names, sign?: 1 | -1 }], decimals? (18), scale?: number, plus_share?: { contract, function, denominator }. The signed sum of uint256 views at the run block (refused when negative), x scale, x (1 + share)."
+    "params_doc": "terms: [{ contract, function, args?: contract names, sign?: 1 | -1, times?: { contract, function, decimals } (the term x that view / 10^decimals, read in the same multicall) }], decimals? (18), scale?: number, plus_share?: { contract, function, denominator }, locked_schedule?: { amount (tokens), first_tranche: YYYY-MM-DD, tranches, every_months, citation: URL } (subtracts amount x the tranches not yet out at the run block's time, 00:00Z each; not with scale or plus_share). The signed sum of uint256 views at the run block (refused when negative), x scale, x (1 + share), less the locked schedule (refused when negative). A view that reverts fails the level."
    },
    {
     "metric": "emission_rate_annual",

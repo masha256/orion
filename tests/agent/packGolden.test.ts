@@ -26,6 +26,9 @@ import { ALL_ASSETS } from '../helpers/syntheticReport.js';
  * Phase 3 R2 Task 6b rewrote the packs of the 12 assets whose price_usd moved to `price.token` (all but aero): each gains
  * the adapter_params entries of price_usd's price.token and price.token_check (and VVV's diem_price_usd's), with their
  * paramsDoc; with those entries removed every pack is identical to the one before. No value or metric moved.
+ *
+ * Phase 3 R3 Task 1 rewrote aero's pack: the two chain.view_sum adapter_params entries carry the paramsDoc that names
+ * `times` and `locked_schedule`. Only that text moved; no value or metric.
  */
 const GOLDEN = fileURLToPath(new URL('./golden/packs-13.json', import.meta.url));
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));

@@ -141,31 +141,128 @@ async function counterRate(ctx: SourceContext, p: Params): Promise<SourceValue> 
 
 // ---- chain.view_sum ----------------------------------------------------------------------------------------------------
 
-function validateViewSum(p: Params): string[] {
-  const out = unknownKeys(p, ['terms', 'decimals', 'scale', 'plus_share']);
-  if (!Array.isArray(p.terms) || p.terms.length === 0) return [...out, 'terms must be a non-empty list'];
-  p.terms.forEach((t: unknown, i) => {
-    if (typeof t !== 'object' || t === null || Array.isArray(t)) return void out.push(`terms[${i}] must be { contract, function, args?, sign? }`);
-    const x = t as Params;
-    out.push(...unknownKeys(x, ['contract', 'function', 'args', 'sign'], `terms[${i}].`), ...checkArgs(x, `terms[${i}].`));
-    if (!isName(x.contract)) out.push(`terms[${i}].contract must be a contract name`);
-    if (!isFn(x.function)) out.push(`terms[${i}].function must be a function name`);
-    if (x.sign !== undefined && x.sign !== 1 && x.sign !== -1) out.push(`terms[${i}].sign must be 1 or -1`);
-  });
-  out.push(...decimalsOk(p.decimals, 'decimals'), ...checkShare(p.plus_share));
-  if (p.scale !== undefined && !isPos(p.scale)) out.push('scale must be a positive number');
+const TERM_KEYS = ['contract', 'function', 'args', 'sign', 'times'];
+const SCHEDULE_KEYS = ['amount', 'first_tranche', 'tranches', 'every_months', 'citation'];
+
+interface Times {
+  contract: string;
+  function: string;
+  decimals: number;
+}
+interface Term {
+  contract: string;
+  function: string;
+  args?: string[];
+  sign?: 1 | -1;
+  times?: Times;
+}
+interface LockedSchedule {
+  amount: number;
+  first_tranche: string;
+  tranches: number;
+  every_months: number;
+  citation: string;
+}
+
+const isObject = (x: unknown): x is Params => typeof x === 'object' && x !== null && !Array.isArray(x);
+/** A real calendar day, YYYY-MM-DD (2027-02-30 is refused: it does not round-trip). */
+const isDay = (x: unknown): x is string => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x) && Number.isFinite(Date.parse(`${x}T00:00:00Z`)) && new Date(`${x}T00:00:00Z`).toISOString().slice(0, 10) === x;
+
+function checkTimes(x: unknown, where: string): string[] {
+  if (x === undefined) return [];
+  if (!isObject(x)) return [`${where} must be { contract, function, decimals }`];
+  const out = unknownKeys(x, ['contract', 'function', 'decimals'], `${where}.`);
+  if (!isName(x.contract)) out.push(`${where}.contract must be a contract name`);
+  if (!isFn(x.function)) out.push(`${where}.function must be a function name`);
+  if (!isInt(x.decimals, 0, 36)) out.push(`${where}.decimals must be an integer 0..36`);
   return out;
 }
 
+function checkSchedule(x: unknown): string[] {
+  if (x === undefined) return [];
+  if (!isObject(x)) return ['locked_schedule must be { amount, first_tranche, tranches, every_months, citation }'];
+  const out = unknownKeys(x, SCHEDULE_KEYS, 'locked_schedule.');
+  if (!isPos(x.amount)) out.push('locked_schedule.amount must be a positive number (tokens)');
+  if (!isDay(x.first_tranche)) out.push('locked_schedule.first_tranche must be a day, YYYY-MM-DD');
+  if (!isInt(x.tranches, 1, 1200)) out.push('locked_schedule.tranches must be an integer 1..1200');
+  if (!isInt(x.every_months, 1, 120)) out.push('locked_schedule.every_months must be an integer 1..120');
+  if (!(typeof x.citation === 'string' && /^https?:\/\/\S+$/.test(x.citation))) out.push('locked_schedule.citation must be the URL the schedule is cited from');
+  return out;
+}
+
+function validateViewSum(p: Params): string[] {
+  const out = unknownKeys(p, ['terms', 'decimals', 'scale', 'plus_share', 'locked_schedule']);
+  if (!Array.isArray(p.terms) || p.terms.length === 0) return [...out, 'terms must be a non-empty list'];
+  p.terms.forEach((t: unknown, i) => {
+    if (!isObject(t)) return void out.push(`terms[${i}] must be { contract, function, args?, sign?, times? }`);
+    out.push(...unknownKeys(t, TERM_KEYS, `terms[${i}].`), ...checkArgs(t, `terms[${i}].`), ...checkTimes(t.times, `terms[${i}].times`));
+    if (!isName(t.contract)) out.push(`terms[${i}].contract must be a contract name`);
+    if (!isFn(t.function)) out.push(`terms[${i}].function must be a function name`);
+    if (t.sign !== undefined && t.sign !== 1 && t.sign !== -1) out.push(`terms[${i}].sign must be 1 or -1`);
+  });
+  out.push(...decimalsOk(p.decimals, 'decimals'), ...checkShare(p.plus_share), ...checkSchedule(p.locked_schedule));
+  if (p.scale !== undefined && !isPos(p.scale)) out.push('scale must be a positive number');
+  // The schedule is in tokens of the result: subtracting it from a scaled or shared sum would mix units.
+  if (p.locked_schedule !== undefined && (p.scale !== undefined || p.plus_share !== undefined)) out.push('locked_schedule does not combine with scale or plus_share');
+  return out;
+}
+
+/**
+ * The UTC midnight `months` calendar months after `day` (YYYY-MM-DD), in ms. The day of the month is kept, clamped to
+ * the target month's last day only when that month lacks it: 2027-01-29 + 1 month = 2027-02-28 (February 2027 has 28
+ * days), + 2 months = 2027-03-29. Each tranche is counted from the first tranche, never from a clamped one, so a clamp
+ * does not carry into later months.
+ */
+export function addMonthsUtc(day: string, months: number): number {
+  const [y, m, d] = day.split('-').map(Number) as [number, number, number];
+  const index = m - 1 + months;
+  const year = y + Math.floor(index / 12);
+  const month = ((index % 12) + 12) % 12;
+  const last = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return Date.UTC(year, month, Math.min(d, last));
+}
+
+/**
+ * The still-locked part of a cited schedule at `atMs`: amount x (tranches - k) / tranches, k = the tranches whose day
+ * (first_tranche + i x every_months, i = 0..tranches-1, 00:00Z) is at or before `atMs`. 0 once the last tranche is out.
+ */
+export function lockedAt(s: LockedSchedule, atMs: number): { locked: number; unlocked: number } {
+  let k = 0;
+  for (let i = 0; i < s.tranches; i++) if (addMonthsUtc(s.first_tranche, i * s.every_months) <= atMs) k++;
+  return { locked: (s.amount * (s.tranches - k)) / s.tranches, unlocked: k };
+}
+
 async function viewSum(ctx: SourceContext, p: Params): Promise<SourceValue> {
-  const terms = p.terms as { contract: string; function: string; args?: string[]; sign?: 1 | -1 }[];
-  const values = await readAt(ctx, chain(ctx).block.number, terms.map((t) => viewCall(ctx, t.contract, t.function, t.args)));
-  const raw = values.reduce((s, v, i) => s + (terms[i].sign === -1 ? -v : v), 0n);
+  const { block } = chain(ctx);
+  const terms = p.terms as Term[];
+  // Every term and every term's `times` view in one multicall at the run block: a reverting call fails the whole level
+  // (readAt throws, naming it), never a sum missing one term.
+  const calls = terms.map((t) => viewCall(ctx, t.contract, t.function, t.args));
+  const timesAt = terms.map((t) => (t.times === undefined ? -1 : calls.push(viewCall(ctx, t.times.contract, t.times.function, undefined)) - 1));
+  const values = await readAt(ctx, block.number, calls);
+  const term = (i: number): bigint => {
+    const t = terms[i];
+    return t.times === undefined ? values[i] : (values[i] * values[timesAt[i]]) / 10n ** BigInt(t.times.decimals);
+  };
+  const raw = terms.reduce((s, t, i) => s + (t.sign === -1 ? -term(i) : term(i)), 0n);
   if (raw < 0n) throw new Error(`the signed sum is negative (${raw})`);
   const share = await shareFactor(ctx, p.plus_share);
-  const value = unitsToNumber(raw, (p.decimals as number | undefined) ?? 18) * ((p.scale as number | undefined) ?? 1) * share.factor;
-  const parts = terms.map((t, i) => `${t.sign === -1 ? '-' : '+'} ${t.contract}.${t.function}(${(t.args ?? []).join(',')}) ${values[i]}`).join(' ');
-  return level(ctx, value, `${at(chain(ctx).block)}: ${parts}${p.scale !== undefined ? ` x ${p.scale}` : ''}${share.detail}`);
+  let value = unitsToNumber(raw, (p.decimals as number | undefined) ?? 18) * ((p.scale as number | undefined) ?? 1) * share.factor;
+  let schedule = '';
+  if (p.locked_schedule !== undefined) {
+    const s = p.locked_schedule as LockedSchedule;
+    const { locked, unlocked } = lockedAt(s, block.timestamp * 1000);
+    value -= locked;
+    if (value < 0) throw new Error(`the sum less the locked schedule is negative (${value}: ${locked} still locked)`);
+    schedule = ` - locked_schedule ${s.amount} x ${s.tranches - unlocked}/${s.tranches} = ${locked} (${unlocked} of ${s.tranches} tranches out, every ${s.every_months} months from ${s.first_tranche}; ${s.citation})`;
+  }
+  const parts = terms
+    .map((t, i) => {
+      const times = t.times === undefined ? '' : ` x ${t.times.contract}.${t.times.function}() ${values[timesAt[i]]}/1e${t.times.decimals}`;
+      return `${t.sign === -1 ? '-' : '+'} ${t.contract}.${t.function}(${(t.args ?? []).join(',')}) ${values[i]}${times}`;
+    })
+    .join(' ');
+  return level(ctx, value, `${at(block)}: ${parts}${p.scale !== undefined ? ` x ${p.scale}` : ''}${share.detail}${schedule}`);
 }
 
 // ---- pool prices -------------------------------------------------------------------------------------------------------
@@ -224,7 +321,8 @@ export const evmAdapters: AdapterDef[] = [
   {
     name: 'chain.view_sum',
     needsRpc: true,
-    paramsDoc: 'terms: [{ contract, function, args?: contract names, sign?: 1 | -1 }], decimals? (18), scale?: number, plus_share?: { contract, function, denominator }. The signed sum of uint256 views at the run block (refused when negative), x scale, x (1 + share).',
+    paramsDoc:
+      'terms: [{ contract, function, args?: contract names, sign?: 1 | -1, times?: { contract, function, decimals } (the term x that view / 10^decimals, read in the same multicall) }], decimals? (18), scale?: number, plus_share?: { contract, function, denominator }, locked_schedule?: { amount (tokens), first_tranche: YYYY-MM-DD, tranches, every_months, citation: URL } (subtracts amount x the tranches not yet out at the run block\'s time, 00:00Z each; not with scale or plus_share). The signed sum of uint256 views at the run block (refused when negative), x scale, x (1 + share), less the locked schedule (refused when negative). A view that reverts fails the level.',
     validateParams: validateViewSum,
     run: viewSum,
   },

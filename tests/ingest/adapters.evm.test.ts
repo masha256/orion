@@ -157,6 +157,125 @@ describe('chain.view_sum', () => {
   });
 });
 
+// Phase 3 R3 Task 1: a term times another view (yCRV: st_ycrv shares x pricePerShare), and a cited unlock schedule (LIT).
+describe('chain.view_sum: times and locked_schedule', () => {
+  const ST = '0x27b5739e22ad9033bcbf192059122d163b60349d';
+  const TREASURY = '0x93a62da5a14c80f265dabc077fcee437b1a0efde';
+  const names: Record<string, string> = { ...NAMES, st_ycrv: ST, yearn_treasury: TREASURY };
+  const named = (n: string) => names[n] ?? (() => { throw new Error(`no contract ${n}`); })();
+  /** A run whose block is at `iso` (fakeRpc: 2 s blocks, the run block is LATEST). */
+  async function runAt(iso: string, params: Record<string, unknown>, calls: Record<string, bigint | Error>) {
+    const ts = Date.parse(iso) / 1000;
+    const rpc = fakeRpc({ genesisTs: ts - 2 * Number(LATEST), latest: LATEST, calls });
+    const ctx = sourceCtx({ rpc, block: await rpc.latestBlock(), contract: named });
+    const v = await getAdapter('chain.view_sum').run(ctx, params);
+    if (v.kind !== 'level') throw new Error(`expected a level, got ${v.kind}`);
+    return { v, rpc };
+  }
+
+  const ycrv = {
+    terms: [
+      { contract: 'token', function: 'totalSupply' },
+      { contract: 'st_ycrv', function: 'balanceOf', args: ['yearn_treasury'], sign: -1, times: { contract: 'st_ycrv', function: 'pricePerShare', decimals: 18 } },
+    ],
+  };
+  const ycrvCalls = {
+    [callKey(TOKEN, 'totalSupply')]: 10_000n * E18,
+    [callKey(ST, 'balanceOf', [TREASURY])]: 1000n * E18,
+    [callKey(ST, 'pricePerShare')]: 2_680_000_000_000_000_000n,
+  };
+
+  it('multiplies a term by another view read in the same multicall at the same block (1000 shares x 2.68 = 2680 subtracted)', async () => {
+    const { v, rpc } = await runAt('2026-11-19T00:00:00Z', ycrv, ycrvCalls);
+    expect(v.value).toBeCloseTo(10_000 - 2680, 9);
+    expect(rpc.stats.multicall).toBe(1);
+    expect(v.detail).toContain(`- st_ycrv.balanceOf(yearn_treasury) ${1000n * E18} x st_ycrv.pricePerShare() 2680000000000000000/1e18`);
+  });
+
+  it('fails the whole level when any term or times view reverts: never a sum missing one term (Review Focus 2)', async () => {
+    await expect(runAt('2026-11-19T00:00:00Z', ycrv, { ...ycrvCalls, [callKey(ST, 'balanceOf', [TREASURY])]: new Error('execution reverted') })).rejects.toThrow(/balanceOf\(.*\) at block .*execution reverted/);
+    await expect(runAt('2026-11-19T00:00:00Z', ycrv, { ...ycrvCalls, [callKey(ST, 'pricePerShare')]: new Error('execution reverted') })).rejects.toThrow(/pricePerShare\(\) at block .*execution reverted/);
+    // A plain term reverting (an upgraded converter's take()) fails it the same way.
+    const plain = { terms: [{ contract: 'token', function: 'totalSupply' }, { contract: 've', function: 'supply', sign: -1 }] };
+    await expect(runAt('2026-11-19T00:00:00Z', plain, { [callKey(TOKEN, 'totalSupply')]: 10n * E18, [callKey(VE, 'supply')]: new Error('execution reverted') })).rejects.toThrow(/supply\(\) at block .*execution reverted/);
+  });
+
+  // LIT: 500M team/investor tokens unlocking in 36 monthly tranches from 2027-01-29 (task-4-values.md).
+  const lit = {
+    terms: [{ contract: 'token', function: 'totalSupply' }],
+    locked_schedule: { amount: 500_000_000, first_tranche: '2027-01-29', tranches: 36, every_months: 1, citation: 'https://x.com/Lighter_xyz/status/2005862687331303804' },
+  };
+  const billion = { [callKey(TOKEN, 'totalSupply')]: 1_000_000_000n * E18 };
+  const lockedAt = async (iso: string) => 1_000_000_000 - (await runAt(iso, lit, billion)).v.value;
+
+  it('subtracts the still-locked part of a cited schedule at the run block\'s time, across the tranche boundaries (Review Focus 3)', async () => {
+    expect(await lockedAt('2026-11-19T00:00:00Z')).toBeCloseTo(500_000_000, 6);
+    expect(await lockedAt('2027-01-28T23:59:00Z')).toBeCloseTo(500_000_000, 6);
+    expect(await lockedAt('2027-01-29T00:00:00Z')).toBeCloseTo((500_000_000 * 35) / 36, 6);
+    expect(await lockedAt('2027-01-29T00:00:00Z')).toBeCloseTo(486_111_111.111, 2);
+    // The last tranche (i = 35, 2029-12-29) and any run after full vesting: 0, never negative.
+    expect(await lockedAt('2029-12-28T23:59:59Z')).toBeCloseTo(500_000_000 / 36, 6);
+    expect(await lockedAt('2029-12-29T00:00:00Z')).toBe(0);
+    expect(await lockedAt('2031-06-01T00:00:00Z')).toBe(0);
+    const { v } = await runAt('2027-01-29T00:00:00Z', lit, billion);
+    expect(v.detail).toContain('- locked_schedule 500000000 x 35/36 = 486111111.111111');
+    expect(v.detail).toContain('https://x.com/Lighter_xyz/status/2005862687331303804');
+  });
+
+  it('adds calendar months on the UTC day, clamping a day the month lacks (2027-01-29 + 1 = 2027-02-28, + 2 = 2027-03-29)', async () => {
+    expect(await lockedAt('2027-02-27T23:59:59Z')).toBeCloseTo((500_000_000 * 35) / 36, 6);
+    expect(await lockedAt('2027-02-28T00:00:00Z')).toBeCloseTo((500_000_000 * 34) / 36, 6);
+    expect(await lockedAt('2027-03-28T23:59:59Z')).toBeCloseTo((500_000_000 * 34) / 36, 6);
+    expect(await lockedAt('2027-03-29T00:00:00Z')).toBeCloseTo((500_000_000 * 33) / 36, 6);
+    // every_months 3 from 2027-11-30: 2028-02-29 (a leap year), then 2028-05-30 (from the first tranche, not the clamped one).
+    const q = { ...lit, locked_schedule: { ...lit.locked_schedule, first_tranche: '2027-11-30', tranches: 4, every_months: 3 } };
+    const at = async (iso: string) => 1_000_000_000 - (await runAt(iso, q, billion)).v.value;
+    expect(await at('2028-02-28T23:59:59Z')).toBeCloseTo(375_000_000, 6);
+    expect(await at('2028-02-29T00:00:00Z')).toBeCloseTo(250_000_000, 6);
+    expect(await at('2028-05-29T23:59:59Z')).toBeCloseTo(250_000_000, 6);
+    expect(await at('2028-05-30T00:00:00Z')).toBeCloseTo(125_000_000, 6);
+  });
+
+  it('refuses a result below zero once the schedule is subtracted', async () => {
+    await expect(runAt('2026-11-19T00:00:00Z', lit, { [callKey(TOKEN, 'totalSupply')]: 400_000_000n * E18 })).rejects.toThrow(/negative/);
+  });
+
+  it('leaves a view_sum without the new params as it was (no times value, no schedule in the detail)', async () => {
+    const plain = { terms: [{ contract: 'token', function: 'totalSupply' }, { contract: 've', function: 'supply', sign: -1 }] };
+    const { v } = await runAt('2026-11-19T00:00:00Z', plain, { [callKey(TOKEN, 'totalSupply')]: 10n * E18, [callKey(VE, 'supply')]: 4n * E18 });
+    expect(v.value).toBe(6);
+    expect(v.detail).toBe(`block ${LATEST} (2026-11-19T00:00:00.000Z): + token.totalSupply() ${10n * E18} - ve.supply() ${4n * E18}`);
+  });
+
+  it('validates times and locked_schedule, refusing unknown keys, tranches < 1, a bad date and a missing citation', () => {
+    const v = getAdapter('chain.view_sum').validateParams!;
+    expect(v(ycrv)).toEqual([]);
+    expect(v(lit)).toEqual([]);
+    const withTimes = (times: unknown) => ({ terms: [{ ...ycrv.terms[1], times }] });
+    expect(v(withTimes({ contract: 'st_ycrv', function: 'pricePerShare', decimals: 18, extra: 1 }))).toEqual(['unknown param "terms[0].times.extra"']);
+    expect(v(withTimes({ contract: 'st_ycrv', function: 'pricePerShare' }))).not.toEqual([]);
+    expect(v(withTimes({ contract: 'St-YCRV', function: 'pricePerShare', decimals: 18 }))).not.toEqual([]);
+    expect(v(withTimes({ contract: 'st_ycrv', function: 'price per share', decimals: 18 }))).not.toEqual([]);
+    expect(v(withTimes({ contract: 'st_ycrv', function: 'pricePerShare', decimals: 37 }))).not.toEqual([]);
+    expect(v(withTimes('pricePerShare'))).not.toEqual([]);
+    const sched = (over: Record<string, unknown>) => ({ ...lit, locked_schedule: { ...lit.locked_schedule, ...over } });
+    expect(v(sched({ extra: 1 }))).toEqual(['unknown param "locked_schedule.extra"']);
+    expect(v(sched({ tranches: 0 }))).not.toEqual([]);
+    expect(v(sched({ tranches: 1.5 }))).not.toEqual([]);
+    expect(v(sched({ every_months: 0 }))).not.toEqual([]);
+    expect(v(sched({ amount: 0 }))).not.toEqual([]);
+    expect(v(sched({ first_tranche: '2027-02-30' }))).not.toEqual([]);
+    expect(v(sched({ first_tranche: '2027-01-29T00:00:00Z' }))).not.toEqual([]);
+    expect(v(sched({ first_tranche: 'soon' }))).not.toEqual([]);
+    expect(v(sched({ citation: undefined }))).not.toEqual([]);
+    expect(v(sched({ citation: '' }))).not.toEqual([]);
+    expect(v({ ...lit, locked_schedule: 'monthly' })).not.toEqual([]);
+    // The schedule is in tokens of the result: it does not combine with scale or a share.
+    expect(v({ ...lit, scale: 2 })).not.toEqual([]);
+    expect(v({ ...lit, plus_share: { contract: 'minter', function: 'teamRate', denominator: 1_000_000 } })).not.toEqual([]);
+  });
+});
+
 describe('chain.v2_pool_twap_price', () => {
   // An Aero basic pool's cumulative reserves (currentCumulativePrices) at the run block and an hour earlier: the time-weighted
   // reserves are 27.23M AERO (token0, 18 decimals) and 15.57M USDC (token1, 6 decimals). USDC/USD from Chainlink, 8 decimals.
