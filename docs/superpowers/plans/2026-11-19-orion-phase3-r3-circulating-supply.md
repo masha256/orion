@@ -91,9 +91,10 @@ from a snapshot at or after 06955e0; the R3 `orion-host.sh` re-run (Task 6 prere
 - **N6 Prerequisite: one `orion-host.sh` re-run** (Mike) from the R3 release snapshot (it contains 06955e0, so it
   installs stage `sql-ro` / `orion_stage_ro` and R3's `data rebuild-supply-levels` verb together; the
   `/home/hermes/orion-provision-06955e0` snapshot alone gives only `sql-ro`). The stage block's count pre-checks and
-  its "0 market_data" re-check use `ssh orion-stage "sql-ro \"select ...\""`. (Rec) require it; fallback if Mike
-  prefers not to re-run before stage: the R2 waiver (prod's `sql-ro` counts + stage `data show`, active rows only),
-  which cannot show the global 0 on stage, so stage's re-check would be per asset only.
+  its "0 market_data" re-check use `ssh orion-stage "sql-ro \"select ...\""`. **Stage `sql-ro` is installed**: Mike
+  re-ran `orion-host.sh` from `/home/hermes/orion-provision-06955e0` on 2026-11-19 (SELF-CHECK 61 passed, 0 failed);
+  verified `select current_user` = `orion_stage_ro`; stage held 437 `market_data` rows then. What remains of N6 is the
+  R3 re-run for `data rebuild-supply-levels` only (same flags).
 - **N5 Checks.** New first-party checks for CRV (Curve `circulating_supply()`, 1%) and LINK (`supply.chain.link`,
   0.5%) as `watch` lines (ORION WATCH, never an anomaly: a level cross-check opens a paid triage run, R22) (rec), or
   none. VVV keeps its existing Venice cross-check. PUMP's schedule floor (custodian >= Blockworks still-locked) as a
