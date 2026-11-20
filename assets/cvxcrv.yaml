@@ -28,7 +28,7 @@ contracts:
   booster: "0xF403C135812408BFbE8713b5A23a04b3D48AAE31" # reference; not read
   voter_proxy: "0x989AEb4d175e16225E39E87d0D97A3360524AD80" # Convex's veCRV (reference; not read)
   cvx_reward_pool: "0xCF50b810E57Ac33B91dCF525C6ddd9881B139332" # cvxRewardPool: CVX stakers' 4.5 percent of the Booster's CRV
-  convex_treasury: "0x1389388d01708118b497f59521f6943be2541bb7" # TreasuryFunds: the Booster's platformFee (2 percent)
+  convex_treasury: "0x1389388d01708118b497f59521f6943be2541bb7" # TreasuryFunds: the Booster's platformFee (2 percent); Booster treasury() returns it (measured); its stkcvxCRV is not circulating (decision N1c)
   # Convex fee forwarders (owner: Convex multisig 0xa3c5a1e09150b75ff251c1a7815a07182c3de2fb). They send CRV (and FXS/CVX)
   # from Convex's other products to the treasury; not the Booster's Curve cut, so ignored on convex_rev_treasury.
   cvx_fee_fwd_1: "0x04dd97255ddee29c941d85f5b5cde6ace8bd207f"
@@ -59,13 +59,19 @@ metrics:
     critical: true
     source: { type: erc20_supply, token: token }
 
-  # CoinGecko has no circulating supply for this wrapper (Mike, 2026-10-12): every token is in circulation, so it is
-  # the on-chain total. Display basis for market cap only.
+  # On chain (Phase 3 R3, decision N1c): the total less the protocol's own holding, Convex TreasuryFunds' stkcvxCRV (1:1
+  # cvxCRV; 4,862,034.53 on 2026-11-20). Staked cvxCRV is the holders' and stays in. Display basis for market cap only.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: erc20_supply, token: token }
+    source:
+      type: adapter
+      name: chain.view_sum
+      params:
+        terms:
+          - { contract: token, function: totalSupply }
+          - { contract: wrapper, function: balanceOf, args: [ convex_treasury ], sign: -1 }
 
   staked_supply:
     type: level

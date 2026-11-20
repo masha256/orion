@@ -24,7 +24,7 @@ burns) carries a `watch`, so a large move in on-chain usage with no new disclosu
   them on one scan).
 - The staking contract (staked supply, the emission rate read).
 - The company's disclosure channels (calls, posts, reports) for each run-rate update; record citation and quote.
-- The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary (a Chainlink feed, else the deepest pool's TWAP) and a check on another venue. CoinGecko id (CoinGecko for circulating supply only (until R3), never a price); the company's own app API, if any, as a cross-check only (and its register row).
+- The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary (a Chainlink feed, else the deepest pool's TWAP) and a check on another venue. CoinGecko id (an identifier only: no CoinGecko field loads since Phase 3 R3); the company's own app API, if any, as a cross-check only (and its register row).
 
 ## Checks
 
@@ -78,14 +78,15 @@ metrics:
     staleness_days: 7
     critical: true
     source: { type: erc20_supply, token: token, subtract_balances: [ burn_sink ] }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: coingecko, id: {{coingecko_id}}, field: total_supply } }
 
+  # On chain (Phase 3 R3: no CoinGecko field loads): start from total_supply's read and subtract every holder that is
+  # not circulating (a treasury, an unvested allocation, a cited locked_schedule), each a named `contracts:` entry with
+  # its citation (chain.view_sum terms; on Solana, solana.supply_less_owners). Staking with an exit stays circulating.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: {{coingecko_id}}, field: circulating_supply }
+    source: { type: erc20_supply, token: token, subtract_balances: [ burn_sink ] }
 
   staked_supply:
     type: level
@@ -184,6 +185,6 @@ supply_tolerance_tokens: 1
 3. Licence: the RPC's row; any company API used as a cross-check.
 4. `not_measured` lines and why: costs the company does not disclose.
 5. Checks: the `supply` check measured by hand over 30 days; the usage watch threshold set from 6 months of history.
-6. Supply: total = on-chain less the sink; circulating from CoinGecko; staker emissions from the staking contract.
+6. Supply: total = on-chain less the sink; circulating on chain (total less the non-circulating holders); staker emissions from the staking contract.
 7. Imminent events: new products, burn-policy changes, the next scheduled disclosure.
 8. Expected figures re-measured once by hand: the latest run rate with its quote; 91 days of burns.

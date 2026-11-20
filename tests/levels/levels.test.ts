@@ -6,7 +6,7 @@ import { insertObservation } from '../../src/db/observations.js';
 import { fileURLToPath } from 'node:url';
 import { listPrices, upsertPrices, upsertToken } from '../../src/db/prices.js';
 import {
-  formatPriceBreach, LEVELS_PRICE_HOURS, levelMetricKeys, prefetchMarkets, recentPriceHours, runLevels, toLatestLevels, withPrefetchedMarkets,
+  coingeckoIds, formatPriceBreach, LEVELS_PRICE_HOURS, levelMetricKeys, prefetchMarkets, recentPriceHours, runLevels, toLatestLevels, withPrefetchedMarkets,
 } from '../../src/levels/levels.js';
 import { loadPrices, methodSource } from '../../src/prices/config.js';
 import type { FetchDeps } from '../../src/ingest/run.js';
@@ -103,21 +103,19 @@ describe('batched CoinGecko', () => {
   });
 });
 
-describe('the repo assets\' hourly read (Phase 3 R2 Task 6b)', () => {
-  it('/coins/markets is prefetched for the circulating_supply ids only: no asset names a CoinGecko price', async () => {
+describe('the repo assets\' hourly read (Phase 3 R2 Task 6b; Phase 3 R3 Task 4)', () => {
+  it('/coins/markets is never called: no asset names a CoinGecko source of any field', async () => {
     const root = fileURLToPath(new URL('../..', import.meta.url));
     const assets = listAssetIds(root).map((id) => loadAsset(root, id));
+    expect(assets).toHaveLength(13);
     const coingecko = assets.flatMap((a) => Object.values(a.config.metrics).flatMap((d) => [d.source, ...(d.cross_checks ?? []).map((c) => c.source)]))
-      .filter((s) => s?.type === 'coingecko') as { id: string; field: string }[];
-    expect(coingecko.filter((s) => s.field !== 'circulating_supply')).toEqual([]);
+      .filter((s) => s?.type === 'coingecko');
+    expect(coingecko).toEqual([]);
+    for (const a of assets) expect(coingeckoIds(a.config, levelMetricKeys(a.config)), a.config.id).toEqual([]);
     const http = fakeHttp({ 'https://api.coingecko.com/api/v3/coins/markets': [] });
     const deps: FetchDeps = { http, rpcFactory: () => { throw new Error('no rpc in this test'); }, env: {}, sleep: async () => undefined, now: () => NOW };
     await runLevels(testDb(), assets, deps, NOW, 1);
-    const markets = http.calls.filter((c) => c.url.includes('/coins/markets'));
-    expect(markets).toHaveLength(1);
-    const ids = new URL(markets[0]!.url).searchParams.get('ids')!.split(',');
-    expect(ids).toEqual(['chainlink', 'curve-dao-token', 'hyperliquid', 'lighter', 'pancakeswap-token', 'pump-fun', 'sky', 'uniswap', 'venice-token']);
-    expect(ids).toEqual([...new Set(coingecko.map((s) => s.id))].sort());
+    expect(http.calls.filter((c) => /coingecko/.test(c.url))).toEqual([]);
   });
 });
 

@@ -8,7 +8,7 @@ import { notePriceVenues } from '../prices/venue.js';
 import { OrionError } from '../types.js';
 import { canonicalJson, sha256 } from '../util/canonical.js';
 import { AssetConfigSchema, type AssetConfig } from './schema.js';
-import { coingeckoPriceIssues } from './sources.js';
+import { coingeckoIssues } from './sources.js';
 import { isReleaseRoot } from '../cli/paths.js';
 
 export interface LoadedAsset {
@@ -53,11 +53,11 @@ export function parseAssetObject(obj: unknown, prices?: ReadonlyMap<string, Pric
   const paramIssues = adapterParamIssues(config, prices);
   if (paramIssues.length > 0) throw new OrionError('invalid_asset_config', paramIssues.join('\n'));
   if (prices && prices.size > 0) {
-    // No CoinGecko price (Phase 3 R2, Ruling R24): a config root with prices.yaml entries refuses one by name, at load,
+    // No CoinGecko read (Phase 3 R2, Ruling R24: the price; R3: every field): a config root with prices.yaml entries refuses one by name, at load,
     // at a proposal's filing (the run's prices) and at its approve (the home's). A release root or ORION_ENV stage/prod
     // always has entries (R32(b): loadAsset refuses otherwise), so there this always runs; a dev/test root without
     // entries keeps its old behaviour (R32(b)), its chain-priced assets refused above (R32(a)).
-    const cg = coingeckoPriceIssues(config);
+    const cg = coingeckoIssues(config);
     if (cg.length > 0) throw new OrionError('invalid_asset_config', cg.join('\n'));
     // Every usd transfer_flow is valued at its token's chain price (Phase 3 R2): the ref must be priced in prices.yaml.
     const unpriced = usdFlowRefs(config).filter((u) => !prices.has(u.ref));

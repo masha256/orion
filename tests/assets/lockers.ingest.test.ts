@@ -58,6 +58,8 @@ interface Case {
   supply: bigint;
   staked: bigint;
   stakedContract: string;
+  /** circulating_supply's one term (Phase 3 R3, N1c): the protocol treasury's staked wrapper, [container, holder, tokens] (2026-11-20). */
+  treasury: [string, string, bigint];
   /** flow id -> [token, sink, sender, cadence days, tokens per payout, coingecko id, price] */
   streams: Record<string, [string, string, string, number, bigint, string, number]>;
 }
@@ -71,12 +73,14 @@ const CASES: Case[] = [
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
     // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): no fetch-time price cross-check (its check runs hourly in the writer).
-    hash: '5df3f84495c0bb20c955d7eef7deb38431094f160ff08027dd72cc164f754a4d',
+    // Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+    hash: 'f792c7ab2bda6d5eb6c2593f92bda9c6f9160b1e5648da3def9a667f23fa0d01',
     coingecko: 'convex-crv',
     price: 0.1392,
     supply: 423_825_801n,
     staked: 342_184_638n,
     stakedContract: cvx.wrapper,
+    treasury: [cvx.wrapper, cvx.convex_treasury, 4_862_035n],
     streams: {
       // About live: crvUSD 684,621 / 91 days in daily checkpoints, CRV 1.64M, CVX 106K.
       fees: [cvx.crvusd, cvx.wrapper, cvx.crvusd_pool, 1, 7_500n, 'crvusd', 0.9991],
@@ -89,12 +93,14 @@ const CASES: Case[] = [
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
     // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): no fetch-time price cross-check (its check runs hourly in the writer).
-    hash: '09a7ff1a81fdcaea3dcda853821d095a7706ae3d4c8369c7d785631cbd08a981',
+    // Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+    hash: 'bb3a58dae0d77a00ae31ad4b29f5d7d3bb47c7aaf53b4cea6700316dcaf93635',
     coingecko: 'stake-dao-crv',
     price: 0.1884,
     supply: 119_049_969n,
     staked: 106_861_447n,
     stakedContract: sd.gauge,
+    treasury: [sd.gauge, sd.sd_governance, 1_608_572n],
     streams: {
       // About live: weekly, crvUSD 164,457 / 13, CRV 189,832 / 13, bribes 2,452,748 sdCRV / 13.
       fees: [sd.crvusd, sd.gauge, sd.accumulator, 7, 12_650n, 'crvusd', 0.9991],
@@ -140,6 +146,7 @@ function world(c: Case) {
     [callKey(loadAsset(ROOT, c.id).config.contracts.token, 'totalSupply')]: c.supply * E18,
     [callKey(loadAsset(ROOT, c.id).config.contracts.token, 'decimals')]: 18n,
     [callKey(c.stakedContract, 'totalSupply')]: c.staked * E18,
+    [callKey(c.treasury[0], 'balanceOf', [c.treasury[1]])]: c.treasury[2] * E18,
     // price_usd (Phase 3 R2 Task 6b): the locker's Curve EMA in CRV x CRV (the TriCRV EMA x crvUSD) at the run block, at
     // the price CoinGecko gave this test (and the streams' CRV and crvUSD prices); its check reads the same.
     ...(liveEvmCalls({ [priceRef('crvUSD')]: { usd: 0.9991 }, [priceRef('CRV')]: { usd: 0.3534 }, [priceRef(c.id === 'cvxcrv' ? 'cvxCRV' : 'sdCRV')]: { usd: c.price } }, { endTs: LATEST_TS, startTs: LATEST_TS - 3600 }).end as Record<string, bigint>),
@@ -181,11 +188,13 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     expect(loadAsset(ROOT, c.id).hash).toBe(c.hash);
-    // Supply definitions (Mike, 2026-10-12): CoinGecko has no circulating supply for the wrappers, so it is the on-chain total;
+    // Supply definitions: circulating is the on-chain total less the protocol treasury's own staked wrapper (Phase 3 R3,
+    // decision N1c; it was the total itself, Mike 2026-10-12): chain.view_sum, two terms.
+    const circ = config.metrics.circulating_supply.source as { type: string; name?: string; params?: { terms?: unknown[] } };
+    expect([circ.type, circ.name, circ.params?.terms?.length]).toEqual(['adapter', 'chain.view_sum', 2]);
     // No total_supply cross-check on either (Phase 3 R1 removed CoinGecko's total and DefiLlama's price). The price is its
     // prices.yaml method (Task 6b); its check (cvxCRV's get_dy on the old pool, sdCRV's 0.3-1.0 CRV band) runs hourly in
     // the writer, never at fetch (Ruling R22).
-    expect(config.metrics.circulating_supply?.source).toEqual(config.metrics.total_supply.source);
     expect(config.metrics.total_supply.cross_checks).toBeUndefined();
     const ref = priceRef(c.id === 'cvxcrv' ? 'cvxCRV' : 'sdCRV');
     expect(config.metrics.price_usd.source).toEqual({ type: 'adapter', name: 'price.token', params: { ref } });
@@ -221,6 +230,7 @@ for (const c of CASES) describe(`assets/${c.id}.yaml`, () => {
     expect(r.sources.flatMap((s) => s.crossChecks).map((x) => [x.metricKey, x.ok])).toEqual([]); // no price cross-check (R22)
       expect(w.http.calls.filter((x) => new URL(x.url).host === 'coins.llama.fi').map((x) => x.url)).toEqual([]); // Phase 3 R1
     expect((await rows('total_supply')).at(-1)!.value).toBe(Number(c.supply));
+    expect((await rows('circulating_supply')).at(-1)!.value).toBe(Number(c.supply - c.treasury[2])); // Phase 3 R3
     expect((await rows('staked_supply')).at(-1)!.value).toBe(Number(c.staked));
 
     // Every stream is stored daily at the payout's value; no derived run rate any more (it fed only the valuation).

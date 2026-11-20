@@ -67,6 +67,11 @@ function world() {
       [callKey(C.token, 'totalSupply')]: BigInt(chain.token.totalSupply),
       [callKey(C.token, 'decimals')]: 18n,
       [callKey(C.token, 'balanceOf', [C.burn_sink])]: BigInt(chain.token.balanceOf_zero_address),
+      // circulating_supply's Venice holders (Phase 3 R3, N1j), measured 2026-11-19 (cake-vvv-aero.md): Venice's own set.
+      [callKey(C.token, 'balanceOf', [C.treasury])]: 20_710_447n * E18,
+      [callKey(C.token, 'balanceOf', [C.venice_safe_b])]: 8_709_008n * E18,
+      [callKey(C.token, 'balanceOf', [C.venice_safe_c])]: 1_582_470n * E18,
+      [callKey(C.token, 'balanceOf', [C.sablier_linear])]: 969_913n * E18,
       [callKey(C.staking, 'totalSupply')]: BigInt(chain.staking.totalSupply),
       [callKey(C.staking, 'totalLockedStakedVVV')]: BigInt(chain.staking.totalLockedStakedVVV),
       [callKey(C.staking, 'emissionRatePerSecond')]: BigInt(chain.staking.emissionRatePerSecond),
@@ -93,6 +98,11 @@ describe('assets/vvv.yaml', () => {
     // VVV keeps its own revenue_run_rate_usd (Venice's disclosures, the disclosed revenue stream) and its four DIEM levels (D2(a)).
     expect(config.income_statement!.revenue).toEqual([expect.objectContaining({ disclosed: 'revenue_run_rate_usd' })]);
     expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.burn']);
+    // Phase 3 R3 Task 4: circulating on chain (6 terms), Venice's vvv_stats still its check at 2 percent (N1j).
+    const circ = config.metrics.circulating_supply.source as { type: string; name?: string; params?: { terms?: unknown[] } };
+    expect([circ.type, circ.name, circ.params?.terms?.length]).toEqual(['adapter', 'chain.view_sum', 6]);
+    expect(config.metrics.circulating_supply.cross_checks).toMatchObject([{ tolerance_pct: 2, source: { type: 'http_json', url: `${VENICE}/vvv_stats`, path: 'circulatingSupplyCryptoBaseUnit', decimals: 18 } }]);
+    expect(config.metrics.circulating_supply.cross_checks).toHaveLength(1);
     expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     for (const key of ['diem_supply', 'diem_target_supply', 'diem_price_usd', 'diem_locked_yield_share']) expect(config.metrics[key], key).toBeDefined();
     // Re-pinned 2026-11-01 (first pin here; it was in tests/assets/vvv.golden.test.ts, deleted with the valuation layer): the
@@ -104,7 +114,8 @@ describe('assets/vvv.yaml', () => {
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
     // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): diem_price_usd has no fetch-time cross-check (its check runs hourly in the writer).
-    expect(loadAsset(ROOT, 'vvv').hash).toBe('359d286886b9358bf4d6a4f11bc75fbea4dcae8381c60ae1fd1b0243bfc31717');
+    // Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+    expect(loadAsset(ROOT, 'vvv').hash).toBe('e3cc05364004f5f28832a2271cf30a1b7a09b7ff3a75aa38dae69cc7bccf9ef9');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -148,9 +159,10 @@ describe('assets/vvv.yaml ingestion', () => {
     const plan = buildPlan(config);
     expect(plan.batches.map((b) => b.sourceId).sort()).toEqual([
       // The price and DIEM's price: prices.yaml's methods and checks (Phase 3 R2 Task 6b), no CoinGecko or Venice price.
+      'adapter:chain.view_sum', // circulating on chain since Phase 3 R3 (no coingecko batch)
       'adapter:price.token', 'adapter:price.token_check',
       'adapter:vvv.burn_history_tokens', 'adapter:vvv.diem_target_supply', 'adapter:vvv.staker_emission_share', 'adapter:vvv.staker_share_from_api',
-      'chain_levels', 'coingecko', // no DefiLlama (Phase 3 R1): the burn cross-check and revenue_proxy are gone
+      'chain_levels', // no DefiLlama (Phase 3 R1): the burn cross-check and revenue_proxy are gone
       `http_json:${VENICE}/diem_stats`, `http_json:${VENICE}/vvv_staking_yield`, `http_json:${VENICE}/vvv_stats`,
     ]);
     expect(plan.flowGroups).toHaveLength(1);
@@ -173,7 +185,10 @@ describe('assets/vvv.yaml ingestion', () => {
     const value = async (metric: string) => (await listActiveObservations(w.db, 'vvv', metric)).at(-1)!.value;
     expect(await value('price_usd')).toBeCloseTo(26.03, 9); // TWAPs: the cumulative arithmetic, not a stored answer
     expect(await value('diem_price_usd')).toBeCloseTo(1941.6, 6);
-    expect(await value('circulating_supply')).toBeCloseTo(48058904.92603289, 4);
+    // On chain (Phase 3 R3): the total less the three Venice Safes and the team streams; Venice's own figure (the captured
+    // 48.36M, two months older than these balances) stays its check at 2 percent, here 1.4 percent off.
+    expect(await value('circulating_supply')).toBeCloseTo(81009270.24659143 - 20_710_447 - 8_709_008 - 1_582_470 - 969_913, 3);
+    expect(w.http.calls.filter((c) => /coingecko/.test(c.url))).toEqual([]);
     expect(await value('total_supply')).toBeCloseTo(81009270.24659143, 3);
     expect(await value('staked_supply')).toBeCloseTo(33941208.98799314, 3);
     expect(await value('locked_supply')).toBeCloseTo(8954489.934888212, 3);
@@ -194,6 +209,7 @@ describe('assets/vvv.yaml ingestion', () => {
     ]);
     expect(w.http.calls.filter((c) => /llama\.fi/.test(new URL(c.url).host)).map((c) => c.url)).toEqual([]); // Phase 3 R1
     // Levels, two adapters, token decimals; the prices' run-block and hour-earlier reads (VVV, then DIEM's new calls only).
-    expect(w.rpc.stats.multicall).toBeLessThanOrEqual(8); // never one call per read
+    // Phase 3 R3: circulating_supply's view_sum is one more multicall (its terms at the run block).
+    expect(w.rpc.stats.multicall).toBeLessThanOrEqual(9); // never one call per read
   });
 });

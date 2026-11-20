@@ -102,10 +102,10 @@ export function levelMetricKeys(asset: AssetConfig): string[] {
 
 /**
  * The CoinGecko ids an asset's hourly read asks /coins/markets for (primaries and cross-checks): every coingecko source
- * still configured. Since Phase 3 R2 no asset reads a CoinGecko price (price_usd is `price.token`, Task 6b; flows and
- * burns read the chain prices), so these are the `circulating_supply` ids (R3) alone.
+ * still configured. Since Phase 3 R3 the loader refuses every coingecko field (coingeckoIssues), so for every shipped
+ * asset this is [] and no /coins/markets call is made (pinned in tests/config/sources.test.ts); the code goes in R8.
  */
-function coingeckoIds(asset: AssetConfig, metrics: string[]): string[] {
+export function coingeckoIds(asset: AssetConfig, metrics: string[]): string[] {
   return buildPlan(asset, { metrics })
     .batches.flatMap((b) => b.requests)
     .flatMap((r) => (r.source.type === 'coingecko' ? [r.source.id] : []));

@@ -30,7 +30,7 @@ flow is read by an **apportion set** (Task 7b): one line per source, `apportion:
 - Every sender into the splitter (one scan with `count_from` per sender, so all members share one cursor and pricing
   pass).
 - `prices.yaml` entries for the wrapper and the reward's underlying (Phase 3 R2; yCRV: its Curve pool EMA x CRV's
-  price, checked against a second pool). CoinGecko ids (CoinGecko for circulating supply only (until R3), never a price).
+  price, checked against a second pool). CoinGecko ids (identifiers only: no CoinGecko field loads since Phase 3 R3).
 
 ## Checks
 
@@ -92,7 +92,8 @@ metrics:
     critical: true
     source: { type: erc20_supply, token: token }
 
-  # CoinGecko has no circulating figure for most wrappers: the on-chain totalSupply().
+  # The on-chain totalSupply(), less the protocol treasuries' own holdings of the wrapper where there are any (Phase 3 R3,
+  # decision N1c: cvxCRV, sdCRV and yCRV subtract theirs with chain.view_sum terms; yCRV's with `times` pricePerShare).
   circulating_supply:
     type: level
     unit: tokens

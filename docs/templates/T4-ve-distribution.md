@@ -24,7 +24,7 @@ is **below the line** (users did not pay it).
 - The fee route end to end: the contract that sends fees in (hooker / burner), the allocator or splitter, the fee
   distributor, the treasury.
 - The emission rate read (per-second rate × seconds a year), or an adapter if epochs cut it on a schedule.
-- The incentive markets that pay voters, for the Phase 3 scan. The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary (a Chainlink feed, else the deepest pool's TWAP) and a check on another venue, and one for the fee token. CoinGecko id (CoinGecko for circulating supply only (until R3), never a price).
+- The incentive markets that pay voters, for the Phase 3 scan. The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary (a Chainlink feed, else the deepest pool's TWAP) and a check on another venue, and one for the fee token. CoinGecko id (an identifier only: no CoinGecko field loads since Phase 3 R3).
 
 ## Checks
 
@@ -79,14 +79,15 @@ metrics:
     staleness_days: 7
     critical: true
     source: { type: erc20_supply, token: token }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: coingecko, id: {{coingecko_id}}, field: total_supply } }
 
+  # On chain (Phase 3 R3: no CoinGecko field loads): start from total_supply's read and subtract every holder that is
+  # not circulating (a treasury, an unvested allocation, a cited locked_schedule), each a named `contracts:` entry with
+  # its citation (chain.view_sum terms; on Solana, solana.supply_less_owners). Staking with an exit stays circulating.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: {{coingecko_id}}, field: circulating_supply }
+    source: { type: erc20_supply, token: token }
 
   # The tokens locked (not vote power, which decays).
   staked_supply:
@@ -186,6 +187,6 @@ lp_not_measured: "swap fees to LPs and lender interest: not read yet (Phase 3)"
 3. Licence: the RPC's row; no third-party API for bribes (`not_measured` until Phase 3).
 4. `not_measured` lines and why: LP fees (unless one admin share), vote incentives.
 5. Checks: the `sum` check measured by hand over 30 days (CRV: 0.00 percent gap).
-6. Supply: total from `totalSupply()`; circulating from CoinGecko; emissions from the schedule; locked = escrow supply.
+6. Supply: total from `totalSupply()`; circulating on chain (total less the non-circulating holders); emissions from the schedule; locked = escrow supply.
 7. Imminent events: fee-token migrations, new splitter shares, gauge-system changes.
 8. Expected figures re-measured once by hand: 91 days of distributor inflow and treasury share.

@@ -23,6 +23,8 @@ const testDb = useTestDb();
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-10-16T12:30:00.000Z');
+/** circulating_supply (Phase 3 R3, N1f): 1B less dead, the ecosystem reserve, the buyback wallet and the 500M still locked. */
+const CIRC = 1_000_000_000 - 18_090_720 - 231_809_000 - 4_987_096 - 500_000_000;
 const BLOCK_SEC = 12;
 const GENESIS_TS = NOW.getTime() / 1000 - 160 * 86_400;
 const E18 = 10n ** 18n;
@@ -116,6 +118,8 @@ function world(calls: Record<string, bigint> = {}) {
       [callKey(C.token, 'decimals')]: 18n,
       [callKey(C.token, 'balanceOf', [C.dead])]: 18_090_720n * E18,
       [callKey(C.token, 'balanceOf', [C.ecosystem_reserve])]: 231_809_000n * E18,
+      // circulating_supply's last term (Phase 3 R3): the bought LIT withdrawn from the L2, measured 2026-11-19 (sky-lit.md).
+      [callKey(C.token, 'balanceOf', [C.buyback_wallet])]: 4_987_096n * E18,
       ...calls,
     },
   });
@@ -204,6 +208,10 @@ describe('assets/lit.yaml', () => {
       staking_apr: { outside: [0.057, 0.063] },
     });
     expect(config.metrics.staked_supply.source).toMatchObject({ type: 'constant', value: 0 });
+    // Phase 3 R3 Task 4: circulating on chain (4 terms) less the cited locked schedule (N1f).
+    const circ = config.metrics.circulating_supply.source as { type: string; name?: string; params?: { terms?: unknown[]; locked_schedule?: unknown } };
+    expect([circ.type, circ.name, circ.params?.terms?.length]).toEqual(['adapter', 'chain.view_sum', 4]);
+    expect(circ.params?.locked_schedule).toEqual({ amount: 500_000_000, first_tranche: '2027-01-29', tranches: 36, every_months: 1, citation: 'https://x.com/Lighter_xyz/status/2005862687331303804' });
     for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // A deliberate edit of assets/lit.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
@@ -213,7 +221,8 @@ describe('assets/lit.yaml', () => {
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
-    expect(loadAsset(ROOT, 'lit').hash).toBe('7864c28367415b951a2c400eaf01372cc3cfde9ed933630b2f01895ee5fdb883');
+    // Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+    expect(loadAsset(ROOT, 'lit').hash).toBe('4f2495ba6269b3f23cf1039a2f0f88c522eab41888b85079042163e378410237');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -253,6 +262,10 @@ describe('assets/lit.yaml', () => {
     expect(await value('price_usd')).toBe(PRICE);
     expect(await value('total_supply')).toBe(981_909_280);
     expect(await value('reserve_lit')).toBe(231_809_000);
+    // On chain plus the cited schedule (Phase 3 R3): before the first tranche (2027-01-29) all 500M is locked.
+    expect(await value('circulating_supply')).toBe(CIRC);
+    expect((await rows('circulating_supply')).at(-1)!.sourceDetail).toContain('locked_schedule 500000000 x 36/36 = 500000000');
+    expect(w.http.calls.filter((c) => /coingecko/.test(c.url))).toEqual([]);
     // Lighter's cited schedule (Phase 3 R1): 260M team + 240M investors in 36 monthly tranches from 2027-01-29 (proposal
     // #3); 9 of them (Jan 29 .. Sep 29) fall in the next 365 days from 2026-10-16. Computed offline, no read.
     expect(await value('unlocks_next_year')).toBeCloseTo((500e6 / 36) * 9, 0);
@@ -305,7 +318,7 @@ describe('assets/lit.yaml', () => {
     await fetchAsset(w.db, LOADED, NOW, w.deps);
     const rep = (await loadHolderYieldReport(w.db, config)) as YieldReport;
     expect(rep.day).toBe('2026-10-15');
-    expect(rep.marketCap).toBeCloseTo(PRICE * 250_000_000, 0);
+    expect(rep.marketCap).toBeCloseTo(PRICE * CIRC, 0); // on chain since Phase 3 R3 (was CoinGecko's 250M)
     expect(rep.fdv).toBeCloseTo(PRICE * 981_909_280, 0);
     const is = rep.incomeStatement!;
     expect(is.yields.buyback).toBeCloseTo((25_000 * PRICE * 365) / (981_909_280 * PRICE), 3);
@@ -346,7 +359,7 @@ describe('assets/lit.yaml', () => {
     expect(out.incomeStatement.costOfRevenue.lines[0]).toMatchObject({ id: 'robinhood_partner', of: 'robinhood', share: 0.5 });
     expect(out.incomeStatement.grossProfit.annualized).toBeCloseTo(120_000 * 365, -2);
     expect(out.incomeStatement.volume.annualized).toBeCloseTo(140_000 * 365, -2);
-    expect(out.marketCap).toBeCloseTo(PRICE * 250_000_000, 0);
+    expect(out.marketCap).toBeCloseTo(PRICE * CIRC, 0); // on chain since Phase 3 R3 (was CoinGecko's 250M)
     expect(out.fdv).toBeCloseTo(PRICE * 981_909_280, 0);
   });
 

@@ -92,23 +92,29 @@ const CG_PRICE_USD = `  price_usd:
     cross_checks:
       - { tolerance_pct: 2, source: { type: http_json, url: "https://api.example.test/stats", path: price } }
 `;
+/** INGEST_ASSET_YAML's CoinGecko circulating supply: refused from a config root with a prices.yaml too (Phase 3 R3). */
+const CG_CIRCULATING = '    source: { type: coingecko, id: mini-token, field: circulating_supply }\n';
+/** Its replacement there: the chain's total less the burn sink, as total_supply reads it (100 in the fetch harness). */
+const CHAIN_CIRCULATING = '    source: { type: erc20_supply, token: token, subtract_balances: [burn_sink] }\n';
 /**
- * INGEST_ASSET_YAML for a config root with a prices.yaml, where a CoinGecko price is refused (Ruling R24): the same asset
- * with price_usd entered by hand (no source, no cross-check); every other metric unchanged.
+ * INGEST_ASSET_YAML for a config root with a prices.yaml, where a CoinGecko source is refused (Ruling R24; every field
+ * since Phase 3 R3): the same asset with price_usd entered by hand (no source, no cross-check) and circulating_supply
+ * read on chain; every other metric unchanged.
  */
-export const PRICED_INGEST_ASSET_YAML = INGEST_ASSET_YAML.replace(CG_PRICE_USD, '  price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }\n');
-if (PRICED_INGEST_ASSET_YAML === INGEST_ASSET_YAML) throw new Error('PRICED_INGEST_ASSET_YAML: the price_usd block moved');
+export const PRICED_INGEST_ASSET_YAML = INGEST_ASSET_YAML.replace(CG_PRICE_USD, '  price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }\n').replace(CG_CIRCULATING, CHAIN_CIRCULATING);
+if (PRICED_INGEST_ASSET_YAML === INGEST_ASSET_YAML || PRICED_INGEST_ASSET_YAML.includes('type: coingecko')) throw new Error('PRICED_INGEST_ASSET_YAML: the price_usd or circulating_supply block moved');
 
 /** The mini token's prices.yaml entry (its usd flows are valued at it): what a config root needs since Ruling R32(a). */
 export const MINI_PRICES_YAML = `"eip155:8453/0x1111111111111111111111111111111111111111":\n  symbol: MINI\n  decimals: 18\n  chain: eip155:8453\n  valid_from: "2026-09-01"\n` +
   `  primary: { kind: chainlink, feed: "0x${'a'.repeat(40)}" }\n  check: { kind: chainlink, feed: "0x${'b'.repeat(40)}", tolerance_pct: 2 }\n`;
 
 /**
- * An asset YAML as a config root with prices.yaml takes it (Rulings R24, R32): INGEST_ASSET_YAML's CoinGecko price_usd
- * (and its cross-check) becomes the hand-entered price_usd of PRICED_INGEST_ASSET_YAML; any other YAML is unchanged.
+ * An asset YAML as a config root with prices.yaml takes it (Rulings R24, R32; Phase 3 R3): INGEST_ASSET_YAML's CoinGecko
+ * price_usd (and its cross-check) becomes the hand-entered price_usd of PRICED_INGEST_ASSET_YAML, and its CoinGecko
+ * circulating_supply the on-chain one; any other YAML is unchanged.
  */
 export function forPricedRoot(yaml: string): string {
-  return yaml.replace(CG_PRICE_USD, '  price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }\n');
+  return yaml.replace(CG_PRICE_USD, '  price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }\n').replace(CG_CIRCULATING, CHAIN_CIRCULATING);
 }
 
 /** Writes `assets/<id>.yaml` (forPricedRoot) and the mini prices.yaml into `home` (Ruling R32(a): a usd flow needs its entry). */

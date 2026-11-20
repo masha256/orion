@@ -283,6 +283,20 @@ describe('approving a config proposal', () => {
     expect(readFileSync(yamlPath, 'utf8')).toBe(before);
   });
 
+  it('proposals: approving a config proposal that adds a CoinGecko supply source is refused by name (Phase 3 R3: every field)', async () => {
+    copyFileSync(join(fileURLToPath(new URL('../..', import.meta.url)), 'prices.yaml'), join(home, 'prices.yaml'));
+    writeFileSync(yamlPath, MINI_HOLDER_YAML.trimStart());
+    const before = readFileSync(yamlPath, 'utf8');
+    for (const field of ['circulating_supply', 'total_supply']) {
+      const p = await file({ kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'source'], value: { type: 'coingecko', id: 'mini', field } }] }, [null]);
+      await expect(approve(p.id), field).rejects.toThrow(expect.objectContaining({
+        code: 'invalid_asset_config', message: expect.stringContaining(`metrics.staked_supply.source: coingecko field "${field}" is refused: no CoinGecko read (Phase 3 R3)`),
+      }));
+      expect((await getProposal(w.db, p.id))!.status).toBe('pending');
+    }
+    expect(readFileSync(yamlPath, 'utf8')).toBe(before);
+  });
+
   it('restores the file when marking the proposal approved fails', async () => {
     const before = readFileSync(yamlPath, 'utf8');
     const p = await file(stalenessEdit, [7]);

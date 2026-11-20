@@ -25,7 +25,7 @@ A direct read of `accruedToTreasury` × the liquidity index per day needs `state
 - The protocol token, its buyback route (who sends the bought tokens, where they go).
 - Flash-loan fee recipients (a separate revenue line if they accrue apart).
 - The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary (a Chainlink feed, else the deepest pool's TWAP) and a check on another venue; every underlying the reserve scan prices needs an entry too (a usd `transfer_flow` token without one is
-  refused at load). CoinGecko ids (CoinGecko for circulating supply only (until R3), never a price).
+  refused at load). CoinGecko ids (identifiers only: no CoinGecko field loads since Phase 3 R3).
 
 ## Checks
 
@@ -84,14 +84,15 @@ metrics:
     staleness_days: 7
     critical: true
     source: { type: erc20_supply, token: token }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: coingecko, id: {{coingecko_id}}, field: total_supply } }
 
+  # On chain (Phase 3 R3: no CoinGecko field loads): start from total_supply's read and subtract every holder that is
+  # not circulating (a treasury, an unvested allocation, a cited locked_schedule), each a named `contracts:` entry with
+  # its citation (chain.view_sum terms; on Solana, solana.supply_less_owners). Staking with an exit stays circulating.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: {{coingecko_id}}, field: circulating_supply }
+    source: { type: erc20_supply, token: token }
 
   staked_supply:
     type: level
@@ -187,6 +188,6 @@ capture_rule: discretionary
 3. Licence: the RPC's row; any first-party API (none expected).
 4. `not_measured` lines and why: markets not listed, flash-loan fees until read.
 5. Checks: each market's reserve factor equals the configured share today.
-6. Supply: total from `totalSupply()`; circulating from CoinGecko; treasury incentive programs as `dilution`.
+6. Supply: total from `totalSupply()`; circulating on chain (total less the non-circulating holders); treasury incentive programs as `dilution`.
 7. Imminent events: reserve-factor votes, new market versions (v3 → v4), buyback programme changes.
 8. Expected figures re-measured once by hand: 91 days of collector mints per market.

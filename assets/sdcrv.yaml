@@ -18,6 +18,7 @@ chain: ethereum
 contracts:
   token: "0xD1b5651E55D4CeeD36251c61c50C889B36F6abB5" # sdCRV
   gauge: "0x7f50786a0b15723d741727882ee99a0bf34e3466" # Stake DAO sdCRV Gauge: totalSupply() is the sdCRV staked
+  sd_governance: "0xF930EBBd05eF8b25B1797b9b2109DDC9B0d43063" # Stake DAO Governance (treasury Safe): docs.stakedao.org/treasury "The Stake DAO treasury holds protocol-owned assets ... Ethereum 0xf930ebbd05ef8b25b1797b9b2109ddc9b0d43063"; its gauge sdCRV is not circulating (decision N1c)
   crvusd: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E"
   crv: "0xD533a949740bb3306d119CC777fa900bA034cd52"
   accumulator: "0x11f78501e6b0cbc5de4c7e6bbabaacdb973eb4cd" # CurveAccumulator: funds the gauge with crvUSD and CRV
@@ -63,13 +64,19 @@ metrics:
     critical: true
     source: { type: erc20_supply, token: token }
 
-  # CoinGecko has no circulating supply for this wrapper (Mike, 2026-10-12): every token is in circulation, so it is
-  # the on-chain total. Display basis for market cap only.
+  # On chain (Phase 3 R3, decision N1c): the total less the protocol's own holding, Stake DAO Governance's gauge sdCRV
+  # (1:1 sdCRV; 1,608,571.94 on 2026-11-20). Staked sdCRV is the holders' and stays in. Display basis for market cap only.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: erc20_supply, token: token }
+    source:
+      type: adapter
+      name: chain.view_sum
+      params:
+        terms:
+          - { contract: token, function: totalSupply }
+          - { contract: gauge, function: balanceOf, args: [ sd_governance ], sign: -1 }
 
   staked_supply:
     type: level

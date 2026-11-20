@@ -29,6 +29,12 @@ import { ALL_ASSETS } from '../helpers/syntheticReport.js';
  *
  * Phase 3 R3 Task 1 rewrote aero's pack: the two chain.view_sum adapter_params entries carry the paramsDoc that names
  * `times` and `locked_schedule`. Only that text moved; no value or metric.
+ *
+ * Phase 3 R3 Task 4 rewrote the packs of the 12 assets whose circulating_supply moved on chain (all but aero): each gains
+ * circulating_supply's adapter_params entry (chain.view_sum x10, hype.circulating_supply, solana.supply_less_owners),
+ * PUMP also reserved_balance's (solana.owners_balance); CRV, LINK and PUMP gain the seeded rows of their new monitor-only
+ * N5 metrics (curve_circulating, circulating_gap_curve, chainlink_circulating, circulating_gap_chainlink,
+ * reserved_balance), which shifts the later rows' ids there. Keyed by metric and time, no other row moved; no value.
  */
 const GOLDEN = fileURLToPath(new URL('./golden/packs-13.json', import.meta.url));
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));

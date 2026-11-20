@@ -6,7 +6,7 @@ chain: ethereum
 # Read live on 2026-10-08 (block 26,146,581); see docs/superpowers/specs/2026-10-08-orion-crv-onboarding-design.md section 2.
 contracts:
   token: "0xD533a949740bb3306d119CC777fa900bA034cd52" # CRV; also the emission schedule (rate, start_epoch_time)
-  ve: "0x5f3b5DfEb7B28CDbD7FAba78963EE202a494e2A2" # VotingEscrow: veCRV locks; supply() is the CRV locked
+  ve: "0x5f3b5DfEb7B28CDbD7FAba78963EE202a494e2A2" # VotingEscrow: veCRV locks; supply() is the CRV locked; its CRV is not circulating (irrevocable locks up to 4 years, decision N1a; Curve circ contract "# veCRV")
   crvusd: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E" # the FeeDistributor's token()
   fee_distributor: "0xD16d5eC345Dd86Fb63C6a9C43c517210F1027914" # CurveFeeDistribution: pays veCRV weekly in crvUSD
   fee_allocator: "0x22530d384cd9915e096ead2db7f82ee81f8eb468" # FeeAllocator: 90 percent to the distributor, 10 to the Treasury
@@ -15,7 +15,12 @@ contracts:
   locker_stakedao: "0x52f541764E6e90eeBc5c21Ff570De0e2D63766B6" # StakeDAO CRV locker (sdCRV)
   locker_yearn: "0xF147b8125d2ef93FB6965Db97D6746952a133934" # Yearn CurveYCRVVoter (yCRV)
   hooker: "0x9a9df35cd8e88565694ca6ad5093c236c7f6f69d" # Hooker: sends every protocol fee (crvUSD) to the FeeAllocator
-  curve_treasury: "0x6508ef65b0bd57eabd0f1d52685a70433b2d290b" # Curve Treasury: the FeeAllocator's 10 percent
+  curve_treasury: "0x6508ef65b0bd57eabd0f1d52685a70433b2d290b" # Curve Treasury: the FeeAllocator's 10 percent; not circulating (decision N1b; docs.curve.finance/developer/deployments "Ethereum, Core, treasury, 0x6508ef65...")
+  # Not circulating (Phase 3 R3, decision N1b): the rest of Curve's own CRV Circulating Supply contract's list.
+  circ_contract: "0x14139EB676342b6bC8E41E0d419969f23A49881e" # Curve's CRV Circulating Supply contract (the N5 check): resources.curve.finance/crv-token/faq "The on-chain contract (0x14139EB6...) which shows the circulating supply, net of locked or otherwise vested tokens"
+  community_fund: "0xe3997288987E6297Ad550A69B31439504F513267" # Community Fund, the DAO reserve: docs.curve.finance/user/dao/community-fund-treasury "Community Fund is deployed on Ethereum at 0xe399..."; circ contract "# community fund"
+  vest_prelp: "0x575CCD8e2D300e2377B43478339E364000318E2c" # VestingEscrow, pre-CRV LPs (vested 2021-08-13, unclaimed): Curve docs "pre-CRV Liquidity Providers 0x575c..."; circ contract "# LPs"
+  minter: "0xd061D61a4d941c39E5453435B6345Dc261C2fcE0" # Minter (dust): circ contract "# token minter"; CRV sent to the token itself is "# crv token" there
 
 ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
 
@@ -43,12 +48,44 @@ metrics:
     critical: true
     source: { type: erc20_supply, token: token }
 
-  # CoinGecko's own definition; display only, the report's market cap basis (FDV uses total_supply).
+  # On chain (Phase 3 R3, decision N1b): total less the CRV in veCRV (irrevocable locks: not circulating, decision N1a),
+  # the Community Fund, the unclaimed pre-CRV LP vest, CRV stuck in the token and the Minter (Curve's own
+  # circulating_supply() list, reproduced to the wei), and less the Curve Treasury, which Curve's list does not exclude:
+  # 1,582,336,065 on 2026-11-20. Unvested grant escrows stay in (0.28 percent, ending 2027-04). Display only, the
+  # report's market cap basis (FDV uses total_supply).
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: curve-dao-token, field: circulating_supply }
+    source:
+      type: adapter
+      name: chain.view_sum
+      params:
+        terms:
+          - { contract: token, function: totalSupply }
+          - { contract: token, function: balanceOf, args: [ ve ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ community_fund ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ vest_prelp ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ token ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ minter ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ curve_treasury ], sign: -1 }
+
+  # The N5 check (Phase 3 R3): Curve's own circulating_supply() and the gap of ours to it, in percent. Ours also excludes
+  # the Curve Treasury, so the steady gap is about -0.36 percent (2026-11-20); outside [-1.5, 0.5] is an ORION WATCH (a
+  # treasury move, or CRV parked where Curve's frozen list does not look).
+  curve_circulating:
+    type: level
+    unit: tokens
+    staleness_days: 3
+    monitor_only: true
+    source: { type: contract_read, contract: circ_contract, function: circulating_supply, decimals: 18 }
+  circulating_gap_curve:
+    type: level
+    unit: pct
+    staleness_days: 3
+    monitor_only: true
+    source: { type: derived, name: level_gap_pct, params: { a: circulating_supply, b: curve_circulating } }
+    watch: { outside: [ -1.5, 0.5 ] }
 
   # Staking is locking for CRV, as for AERO: both metrics read the escrow's supply(), the CRV held in veCRV locks.
   staked_supply:

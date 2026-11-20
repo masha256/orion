@@ -34,7 +34,8 @@ const NOW = '2026-10-23T12:00:00.000Z';
 const TRANSCRIPT = join(ROOT, 'tests/fixtures/disclosure/lit-q3-2026-call-transcript.txt');
 const RUN_FIXTURE = join(ROOT, 'tests/fixtures/disclosure/lit-q3-run.json');
 // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
-const LIT_HASH = '7864c28367415b951a2c400eaf01372cc3cfde9ed933630b2f01895ee5fdb883';
+// Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+const LIT_HASH = '4f2495ba6269b3f23cf1039a2f0f88c522eab41888b85079042163e378410237';
 const SOURCE_URL = 'https://x.com/Lighter_xyz/status/2113065839352336774';
 
 // Q3 2026 as the live DB has it (spec section 2): the treasury's buys and DefiLlama's revenue, summed over 92 days.

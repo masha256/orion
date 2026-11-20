@@ -354,6 +354,10 @@ describe('propose_change', () => {
     const cg = await file({ type: 'coingecko', id: 'mini', field: 'price' });
     expect(cg).toMatchObject({ isError: true, result: { refused: 'invalid_asset_config' } });
     expect(JSON.stringify(cg.result)).toContain('metrics.price_usd.source: coingecko field \\"price\\" is refused');
+    // Phase 3 R3: every coingecko field, a supply one included.
+    const supply = await ww.call('propose_change', { rationale: 'because', citations: [DOC_CITE], kind: 'config', edits: [{ path: ['metrics', 'staked_supply', 'source'], value: { type: 'coingecko', id: 'mini', field: 'circulating_supply' } }] });
+    expect(supply).toMatchObject({ isError: true, result: { refused: 'invalid_asset_config' } });
+    expect(JSON.stringify(supply.result)).toContain('metrics.staked_supply.source: coingecko field \\"circulating_supply\\" is refused: no CoinGecko read (Phase 3 R3)');
     const unknownRef = 'eip155:1/0x0000000000000000000000000000000000000001';
     const bad = await file({ type: 'adapter', name: 'price.token', params: { ref: unknownRef } });
     expect(bad).toMatchObject({ isError: true, result: { refused: 'invalid_asset_config' } });

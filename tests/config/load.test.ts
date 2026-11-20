@@ -188,13 +188,15 @@ describe('adapter params validation', () => {
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the hash input includes LIT's prices.yaml entry (passed as the prices map).
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
-    expect(parseAssetYaml(litYaml, loadPrices(ROOT)).hash).toBe('7864c28367415b951a2c400eaf01372cc3cfde9ed933630b2f01895ee5fdb883');
-    expect(parseAssetObject(parseYaml(litYaml), loadPrices(ROOT)).hash).toBe('7864c28367415b951a2c400eaf01372cc3cfde9ed933630b2f01895ee5fdb883');
+    // Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+    expect(parseAssetYaml(litYaml, loadPrices(ROOT)).hash).toBe('4f2495ba6269b3f23cf1039a2f0f88c522eab41888b85079042163e378410237');
+    expect(parseAssetObject(parseYaml(litYaml), loadPrices(ROOT)).hash).toBe('4f2495ba6269b3f23cf1039a2f0f88c522eab41888b85079042163e378410237');
     // Another valid schedule loads (and is a different config from the file's 36 monthly tranches).
     const good = parseAssetObject(withTranches({ first: '2027-01-29', every_months: 3, count: 12 }), loadPrices(ROOT));
     expect(good.config.metrics.unlocks_next_year.source).toMatchObject({ params: { schedules: [{ tranches: { first: '2027-01-29', every_months: 3, count: 12 } }, { label: 'investors' }] } });
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
-    expect(good.hash).not.toBe('7864c28367415b951a2c400eaf01372cc3cfde9ed933630b2f01895ee5fdb883');
+    // Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+    expect(good.hash).not.toBe('4f2495ba6269b3f23cf1039a2f0f88c522eab41888b85079042163e378410237');
     // A malformed one is refused with the metric path, through the object path (filing) and the YAML path (approve).
     const bad = withTranches({ first: '2027-01-29', every_months: 13, count: 36 });
     expect(() => parseAssetObject(bad)).toThrow(expect.objectContaining({ code: 'invalid_asset_config', message: expect.stringContaining('metrics.unlocks_next_year.source.params: schedules[0].tranches.every_months') }));
@@ -353,9 +355,11 @@ describe('metric watch', () => {
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
     // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): diem_price_usd has no fetch-time cross-check (its check runs hourly in the writer).
-    expect(asset('vvv')).toBe('359d286886b9358bf4d6a4f11bc75fbea4dcae8381c60ae1fd1b0243bfc31717');
+    // Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+    expect(asset('vvv')).toBe('e3cc05364004f5f28832a2271cf30a1b7a09b7ff3a75aa38dae69cc7bccf9ef9');
     // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): no fetch-time price cross-check (its check runs hourly in the writer).
-    expect(asset('hype')).toBe('74c59b28b4d619a0915ab4cf5cbe5f335849b8503c2a180bfaaef3bdbbf80c4a');
+    // Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+    expect(asset('hype')).toBe('d0142eb0bb5a21c73b5f8f2bced176b1fbbccbb2baad2b29aa162ad04c5b1a5a');
     // Re-pinned (Phase 3 R2 Task 6b): AERO names no ref (R11: entriesFor reads price.* params and scanned tokens; its price adapters are its own, R21).
     // Re-pinned (Phase 3 R2 Task 6 fix wave, E): entriesFor includes the asset's own token's prices.yaml entry (AERO's again).
     // Re-pinned (Phase 3 R2 Task 10 fix wave, A/R36): AERO's prices.yaml entry valid_from 2026-09-23 -> 2026-10-22.

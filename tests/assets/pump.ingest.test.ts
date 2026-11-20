@@ -33,6 +33,16 @@ const MINT = config.contracts.token;
 /** 1B PUMP burned a day on chain; DefiLlama's history at 4M USD a day. */
 const BURN_PER_DAY = 1e9;
 const HISTORY_USD = 4_000_000;
+/** The Token Custodian and the five dormant vaults it funded: PUMP held by owner (task-4-values.md, 2026-11-20). */
+const RESERVED: Record<string, number> = {
+  [config.contracts.token_custodian]: 229_261_858_182.1,
+  [config.contracts.dormant_a]: 80e9,
+  [config.contracts.dormant_b]: 35e9,
+  [config.contracts.dormant_c]: 25e9,
+  [config.contracts.dormant_d]: 25e9,
+  [config.contracts.dormant_e]: 24e9,
+};
+const RESERVED_SUM = 418_261_858_182.1;
 
 function world(supplyNow: number) {
   const llama = (usd: number) => {
@@ -47,7 +57,12 @@ function world(supplyNow: number) {
     [SOL]: (_u: string, body?: unknown) => {
       const b = body as { method: string; params: unknown[] };
       if (b.method === 'getTokenSupply') return { jsonrpc: '2.0', id: 1, result: { context: { slot: 1 }, value: { amount: BigInt(Math.round(supplyNow * 1e6)).toString(), decimals: 6 } } };
-      if (b.method === 'getTokenAccountsByOwner') return { jsonrpc: '2.0', id: 1, result: { context: { slot: 1 }, value: [] } };
+      if (b.method === 'getTokenAccountsByOwner') {
+        // The six owners circulating_supply subtracts (Phase 3 R3, N1d option B), as measured 2026-11-20; others hold none.
+        const held = RESERVED[b.params[0] as string];
+        const accounts = held === undefined ? [] : [{ pubkey: 'x', account: { data: { parsed: { info: { mint: MINT, tokenAmount: { amount: BigInt(Math.round(held * 1e6)).toString(), decimals: 6 } } } } } }];
+        return { jsonrpc: '2.0', id: 1, result: { context: { slot: 1 }, value: accounts } };
+      }
       if (b.method === 'getMultipleAccounts') return { jsonrpc: '2.0', id: 1, result: { context: { slot: 1 }, value: (b.params[0] as string[]).map((k) => PUMP_ACCOUNTS[k] ?? null) } };
       throw new Error(`unexpected ${b.method}`);
     },
@@ -110,6 +125,10 @@ describe('assets/pump.yaml', () => {
     expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.buyback']);
     expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
+    // Phase 3 R3 Task 4: circulating = the mint less six owners (N1d option B); the N5 check (R4) sums the same six.
+    const OWNERS = ['token_custodian', 'dormant_a', 'dormant_b', 'dormant_c', 'dormant_d', 'dormant_e'];
+    expect(config.metrics.circulating_supply.source).toEqual({ type: 'adapter', name: 'solana.supply_less_owners', params: { mint: 'token', subtract: OWNERS } });
+    expect(config.metrics.reserved_balance).toMatchObject({ monitor_only: true, watch: { change_pct: 1 }, source: { type: 'adapter', name: 'solana.owners_balance', params: { mint: 'token', owners: OWNERS } } });
     // DefiLlama only for the pre-reading history and the revenue line (Mike, 2026-10-16); the unlocks are a cited schedule
     // (Phase 3 R1: the Blockworks filing, compiled by Blockworks, not the issuer).
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual(['flow_usd.llama_revenue']);
@@ -127,7 +146,8 @@ describe('assets/pump.yaml', () => {
     // Re-pinned (Task 11, G4): holder_flows and reporting retired from the parsed config.
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
-    expect(loadAsset(ROOT, 'pump').hash).toBe('9c0237adfb21bb0120a535de9ff528fa8809145a2399f63a9208bbd7169811c6');
+    // Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+    expect(loadAsset(ROOT, 'pump').hash).toBe('e5f4f6ac7f473c0028a1aa837f93f0397c0a2b8d06f71ee80268191c7934a2f1');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -145,13 +165,15 @@ describe('assets/pump.yaml', () => {
     });
   });
 
-  it('plans the Solana readers, the price and its check, CoinGecko, the unlocks and the revenue line, and no EVM scan', () => {
+  it('plans the Solana readers, the price and its check, the circulating owners, the unlocks and the revenue line, and no EVM scan', () => {
     const plan = buildPlan(config);
     expect(plan.needsRpc).toBe(false);
     expect(plan.flowGroups).toEqual([]);
     expect(plan.batches.map((b) => b.sourceId)).toEqual(expect.arrayContaining([
-      'adapter:price.token', 'adapter:price.token_check', 'coingecko', 'adapter:solana.token_supply', 'adapter:solana.supply_burn_daily', 'adapter:solana.owner_balance', 'adapter:schedule.unlocks_next_year', 'defillama:pump:dailyRevenue',
+      'adapter:price.token', 'adapter:price.token_check', 'adapter:solana.supply_less_owners', 'adapter:solana.owners_balance', 'adapter:solana.token_supply',
+      'adapter:solana.supply_burn_daily', 'adapter:solana.owner_balance', 'adapter:schedule.unlocks_next_year', 'defillama:pump:dailyRevenue',
     ]));
+    expect(plan.batches.map((b) => b.sourceId)).not.toContain('coingecko'); // circulating on chain since Phase 3 R3
     expect(plan.batches.map((b) => b.sourceId).filter((id) => id.startsWith('http_json:'))).toEqual([]); // Jupiter's check is gone (Task 6b)
     expect(plan.derived).toEqual([]);
   });
@@ -192,6 +214,11 @@ describe('assets/pump.yaml', () => {
     expect(last7.every((o) => o.source === 'api')).toBe(true);
     expect(w.http.calls.filter((c) => c.url.includes('market_chart'))).toEqual([]); // priced from the chain rows (Phase 3 R2)
     expect((await rows('burn_wallet_a_pump')).at(-1)!.value).toBe(0);
+    // On chain (Phase 3 R3): the mint less the six owners; the N5 check (R4) reads what is subtracted, no watch on a first read.
+    expect((await rows('circulating_supply')).at(-1)!.value).toBeCloseTo(supplyNow - RESERVED_SUM, 1);
+    expect((await rows('reserved_balance')).at(-1)!.value).toBeCloseTo(RESERVED_SUM, 1);
+    expect(r.watch).toEqual([]);
+    expect(w.http.calls.filter((c) => /coingecko|pump\.fun/.test(c.url))).toEqual([]);
 
     const report = await loadHolderYieldReport(w.db, config);
     const rep = report.incomeStatement!; // Task 11b: the v2 statement (v1 retired)

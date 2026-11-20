@@ -23,7 +23,7 @@ revenue line and a partner cost.
 - Where the burn happens (the sink, and the sender that sends each burn).
 - Where the partner split is stated by the protocol itself (an app constant, a contract), never a stats page that
   applies it (a circular check).
-- The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary, for an exchange token usually its own first-party venue (LIT: the Lighter spot order book x USDC/USD), and a check on another venue (LIT: the Uniswap v4 LIT/USDC pool). CoinGecko id (CoinGecko for circulating supply only (until R3), never a price).
+- The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary, for an exchange token usually its own first-party venue (LIT: the Lighter spot order book x USDC/USD), and a check on another venue (LIT: the Uniswap v4 LIT/USDC pool). CoinGecko id (an identifier only: no CoinGecko field loads since Phase 3 R3).
 
 ## Checks
 
@@ -78,14 +78,15 @@ metrics:
     staleness_days: 7
     critical: true
     source: { type: erc20_supply, token: token, subtract_balances: [ dead ] }
-    cross_checks:
-      - { tolerance_pct: 2.5, source: { type: coingecko, id: {{coingecko_id}}, field: total_supply } }
 
+  # On chain (Phase 3 R3: no CoinGecko field loads): start from total_supply's read and subtract every holder that is
+  # not circulating (a treasury, an unvested allocation, a cited locked_schedule), each a named `contracts:` entry with
+  # its citation (chain.view_sum terms; on Solana, solana.supply_less_owners). Staking with an exit stays circulating.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: {{coingecko_id}}, field: circulating_supply }
+    source: { type: erc20_supply, token: token, subtract_balances: [ dead ] }
 
   staked_supply:
     type: level
@@ -212,6 +213,6 @@ lp_not_measured: "liquidity pool share of fees: not in the fee metrics read"
 4. `not_measured` lines and why: LP/vault share, builder fees, referral rebates, deployer shares unless the API states
    them.
 5. Checks: the `revision` depth equals the adapter's re-read depth; the partner split read at its source.
-6. Supply: total = minted less dead; circulating from CoinGecko; unlocks as `dilution` (a cited schedule).
+6. Supply: total = minted less dead; circulating on chain (total less the non-circulating holders); unlocks as `dilution` (a cited schedule).
 7. Imminent events: fee changes, new instances, token migrations.
 8. Expected figures re-measured once by hand: 91 days of fees by kind, the fills, the burns.

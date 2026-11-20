@@ -24,8 +24,8 @@ users' deposits earn; stakers' share and node operators are the cost of revenue.
 - The fee read (total fee, treasury share, operator share), as fractions.
 - The oracle that reports rewards (for the Phase 3 `state_delta`).
 - The protocol token and any buyback route (a `holders` line if one exists). `prices.yaml` entries (Phase 3 R2) for
-  the protocol token and the LST or base asset the fee is priced in. CoinGecko ids (circulating supply only, until R3,
-  never a price).
+  the protocol token and the LST or base asset the fee is priced in. CoinGecko ids (identifiers only: no CoinGecko
+  field loads since Phase 3 R3).
 
 ## Checks
 
@@ -79,14 +79,15 @@ metrics:
     staleness_days: 7
     critical: true
     source: { type: erc20_supply, token: token }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: coingecko, id: {{coingecko_id}}, field: total_supply } }
 
+  # On chain (Phase 3 R3: no CoinGecko field loads): start from total_supply's read and subtract every holder that is
+  # not circulating (a treasury, an unvested allocation, a cited locked_schedule), each a named `contracts:` entry with
+  # its citation (chain.view_sum terms; on Solana, solana.supply_less_owners). Staking with an exit stays circulating.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: {{coingecko_id}}, field: circulating_supply }
+    source: { type: erc20_supply, token: token }
 
   staked_supply:
     type: level
@@ -174,6 +175,6 @@ node_operator_fee_share: 0.05
 3. Licence: the RPC's row; any first-party API (validator sets, MEV reports).
 4. `not_measured` lines and why: MEV/priority-fee shares if reported apart.
 5. Checks: both fee shares equal the configured ones today.
-6. Supply: total from `totalSupply()`; circulating from CoinGecko; treasury programs as `dilution`.
+6. Supply: total from `totalSupply()`; circulating on chain (total less the non-circulating holders); treasury programs as `dilution`.
 7. Imminent events: fee-split votes, new staking modules, withdrawal-queue changes.
 8. Expected figures re-measured once by hand: 30 days of fee mints vs the oracle reports.

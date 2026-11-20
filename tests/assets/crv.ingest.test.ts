@@ -40,6 +40,9 @@ function wednesdays(): string[] {
   return out;
 }
 const PAYOUT = 98_566n;
+/** circulating_supply on this fixture's total: less veCRV, the Community Fund, the pre-CRV LP vest, the token, the Minter and the Treasury. */
+const CIRC = 2_424_321_556n - 841_816_658n - 845_144n - 4_731_149n - 78_040n - 2_188n - 5_731_819n;
+const CURVE_CIRC = CIRC + 5_731_819n;
 
 function world() {
   const http = fakeHttp({
@@ -61,6 +64,15 @@ function world() {
       [callKey(C.token, 'decimals')]: 18n,
       [callKey(C.crvusd, 'decimals')]: 18n,
       [callKey(C.ve, 'supply')]: 840_614_647n * E18,
+      // circulating_supply's terms (Phase 3 R3, N1b): the balances measured 2026-11-19 (crv-wrappers.md), over this total.
+      [callKey(C.token, 'balanceOf', [C.ve])]: 841_816_658n * E18,
+      [callKey(C.token, 'balanceOf', [C.community_fund])]: 845_144n * E18,
+      [callKey(C.token, 'balanceOf', [C.vest_prelp])]: 4_731_149n * E18,
+      [callKey(C.token, 'balanceOf', [C.token])]: 78_040n * E18,
+      [callKey(C.token, 'balanceOf', [C.minter])]: 2_188n * E18,
+      [callKey(C.token, 'balanceOf', [C.curve_treasury])]: 5_731_819n * E18,
+      // Curve's own circulating_supply(): the same total less its list (the first five), the Treasury inside.
+      [callKey(C.circ_contract, 'circulating_supply')]: CURVE_CIRC * E18,
       // The liquid lockers (monitor-only), read live 2026-10-09 at block 26153692.
       [callKey(C.ve, 'totalSupply')]: 773_693_863n * E18,
       [callKey(C.ve, 'balanceOf', [C.locker_convex])]: 418_311_184n * E18,
@@ -89,6 +101,10 @@ describe('assets/crv.yaml', () => {
     expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     // Every metric has a source, and none is manual: a bootstrap run has nothing to research and the grade can be A.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
+    // Phase 3 R3 Task 4: circulating on chain, Curve's own list less the Treasury (7 terms), and the N5 check.
+    const circ = config.metrics.circulating_supply.source as { type: string; name?: string; params?: { terms?: unknown[] } };
+    expect([circ.type, circ.name, circ.params?.terms?.length]).toEqual(['adapter', 'chain.view_sum', 7]);
+    expect(config.metrics.circulating_gap_curve).toMatchObject({ monitor_only: true, watch: { outside: [-1.5, 0.5] }, source: { type: 'derived', name: 'level_gap_pct', params: { a: 'circulating_supply', b: 'curve_circulating' } } });
     for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/crv.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
@@ -99,7 +115,8 @@ describe('assets/crv.yaml', () => {
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its check; entriesFor reads refs (R11).
     // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): no fetch-time price cross-check (its check runs hourly in the writer).
-    expect(loadAsset(ROOT, 'crv').hash).toBe('c25e7423726715544eb4d3649a857f781b2bfee24bd7467721cc7e743049940d');
+    // Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+    expect(loadAsset(ROOT, 'crv').hash).toBe('55b52e1fa4f5b1e336add007a1637d6a8924629bb63d020843ef3c1e06be33b3');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -127,19 +144,19 @@ describe('assets/crv.yaml', () => {
       [
         'chain_levels',
         [
-          'primary:total_supply', 'primary:staked_supply', 'primary:locked_supply', 'primary:ve_power_total',
+          'primary:total_supply', 'primary:curve_circulating', 'primary:staked_supply', 'primary:locked_supply', 'primary:ve_power_total',
           'primary:ve_power.convex', 'primary:ve_power.stakedao', 'primary:ve_power.yearn',
           'primary:ve_locked.convex', 'primary:ve_locked.stakedao', 'primary:ve_locked.yearn',
         ],
       ],
-      ['coingecko', ['primary:circulating_supply']],
+      ['adapter:chain.view_sum', ['primary:circulating_supply']], // on chain since Phase 3 R3 (no coingecko batch)
       ['constant', ['primary:staker_emission_share']],
       ['adapter:crv.emission_rate_annual', ['primary:emission_rate_annual']],
       [`http_json:${BRIBES}`, ['primary:vote_incentive_run_rate_usd', 'cross_check:vote_incentive_run_rate_usd']],
     ]);
     // The holder flow, then the report-only income lines: Curve's 10 percent (Treasury) and every fee into the FeeAllocator.
     expect(plan.flowGroups.map((g) => g.members.map((m) => [m.metricKey, m.unit]))).toEqual([[['flow_usd.fees', 'usd']], [['flow_usd.curve_treasury', 'usd']], [['flow_usd.protocol_revenue', 'usd']]]);
-    expect(plan.derived).toEqual([]);
+    expect(plan.derived.map((d) => d.metricKey)).toEqual(['circulating_gap_curve']); // the N5 check (Phase 3 R3)
     expect(plan.needsRpc).toBe(true);
   });
 
@@ -155,6 +172,13 @@ describe('assets/crv.yaml', () => {
     expect(await value('total_supply')).toBe(2_424_321_556);
     expect(await value('staked_supply')).toBe(840_614_647);
     expect(await value('locked_supply')).toBe(840_614_647);
+    // On chain (Phase 3 R3): Curve's list less the Treasury; the N5 check: the gap to Curve's own figure, the Treasury's -0.36%.
+    expect(await value('circulating_supply')).toBe(Number(CIRC));
+    expect(await value('curve_circulating')).toBe(Number(CURVE_CIRC));
+    expect(await value('circulating_gap_curve')).toBeCloseTo((Number(CIRC) / Number(CURVE_CIRC) - 1) * 100, 9);
+    expect(await value('circulating_gap_curve')).toBeCloseTo(-0.363, 3);
+    expect(r.watch).toEqual([]); // inside [-1.5, 0.5]
+    expect(w.http.calls.filter((c) => /coingecko/.test(c.url))).toEqual([]);
     expect(await value('staker_emission_share')).toBe(0);
     expect((await rows('emission_rate_annual')).map((o) => [o.observedAt > NOW.toISOString(), Math.round(o.value)])).toEqual([[false, 97_161_875], [true, 81_703_072]]);
     expect((await rows('emission_rate_annual'))[1].observedAt).toBe('2027-08-12T22:17:28.000Z');

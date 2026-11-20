@@ -13,6 +13,9 @@ contracts:
   dead: "0x000000000000000000000000000000000000dEaD"
   burner: "0xceba60280fb0ecd9a5a26a1552b90944770a4a0e" # the weekly burn (Mondays): receives the converters' and chef's CAKE, sends it all to dead
   masterchef_v2: "0xa5f8c5dbd5f286960b9d90548680ae5ebff07652" # MasterChef v2: the emission rates; returns its burn share to the burner
+  # Not circulating (Phase 3 R3, decision N1e option B): the retired staking contracts' CAKE, locked forever or never redeemed.
+  cake_pool: "0x45c54210128a065de780C4B0Df3d16664f7f859e" # legacy CAKE pool (CakeVault v2), closed: PancakeSwap blog 2025-04-21 "Implementation of CAKE Tokenomics 3.0": "The 5.29 million CAKE delegated from the CAKE Pool is now permanently locked in the original CAKE pool"
+  vecake: "0x5692DB8177a81A6c6afc8084C2976C9933EC1bAB" # veCAKE, retired: same post, "Starting April 23, 2025 ... veCAKE and Gauges Voting will officially be retired"; unredeemed stakes only (5.14M on 2026-11-19)
   treasury: "0x5ebc62b5c6d92cf6e6d0f9166cb3ac60e9c4ac84" # the converters' treasury share (~27 percent): an EOA that forwards it on
   # Fee converters (owner 0x21835332…): swap fee tokens to CAKE and split burner / treasury. Senders of every fee-funded burn.
   converter_a: "0x518d9643160cfd6fe469bfbd3ba66fc8035a68a3" # 4.1M CAKE to the burner over 100 days
@@ -62,12 +65,24 @@ metrics:
     critical: true
     source: { type: erc20_supply, token: token, subtract_balances: [ dead, burner, masterchef_v2 ] }
 
-  # CoinGecko's own definition; display only, the report's market cap basis (FDV uses total_supply).
+  # On chain (Phase 3 R3, decision N1e option B): total_supply's netting (dead, the burner, MasterChef v2) less the CAKE
+  # in the retired legacy CAKE pool and in veCAKE (locked forever, or unredeemed since the 2025-04-23 sunset): 315,730,969
+  # on 2026-11-20. Display only, the report's market cap basis (FDV uses total_supply).
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: pancakeswap-token, field: circulating_supply }
+    source:
+      type: adapter
+      name: chain.view_sum
+      params:
+        terms:
+          - { contract: token, function: totalSupply }
+          - { contract: token, function: balanceOf, args: [ dead ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ burner ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ masterchef_v2 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ cake_pool ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ vecake ], sign: -1 }
 
   # No fee-funded staking since the veCAKE sunset (Tokenomics 3.0, 2025-05-07): pool stakers earn emissions, not fees.
   staked_supply:

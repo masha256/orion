@@ -53,6 +53,13 @@ function chart(): { totalDataChart: [number, number][] } {
 function world(now: Date = NOW) {
   const fixtures: Record<string, unknown> = { spotMetaAndAssetCtxs: recorded('spotMetaAndAssetCtxs'), validatorSummaries: recorded('validatorSummaries') };
   for (const name of ['assistance_fund', 'zero', 'dead']) fixtures[`spotClearinghouseState:${config.contracts[name]}`] = recorded(`spotClearinghouseState-${config.contracts[name]}`);
+  // circulating_supply's two genesis wallets (Phase 3 R3, N1g), as measured 2026-11-20 (hype-pump.md): nearly all staked.
+  const wallet = (name: string, spot: string, delegated: string) => {
+    fixtures[`spotClearinghouseState:${config.contracts[name]}`] = { balances: [{ coin: 'HYPE', token: 150, total: spot, hold: '0.0', entryNtl: '0.0' }] };
+    fixtures[`delegatorSummary:${config.contracts[name]}`] = { delegated, undelegated: '0.0', totalPendingWithdrawal: '0.0', nPendingWithdrawals: 0 };
+  };
+  wallet('hyper_foundation', '0.00000044', '60642286.11');
+  wallet('community_grants', '105001.0', '2874877.37');
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'hyperliquid', symbol: 'hype', current_price: 92.36, market_cap: 20545976252, circulating_supply: 222445714.07414138, total_supply: 955307079.4341414 }],
     'https://api.llama.fi/summary/fees/hyperliquid': chart(),
@@ -98,6 +105,9 @@ describe('assets/hype.yaml', () => {
     expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     // One manual metric: the staker share, 1.0 by construction, which the bootstrap researches and the user confirms.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual(['staker_emission_share']);
+    // Phase 3 R3 Task 4: circulating from Hyperliquid's own figure less the two genesis wallets (2 terms).
+    const circ = config.metrics.circulating_supply.source as { type: string; name?: string; params?: { subtract?: unknown[] } };
+    expect([circ.type, circ.name, circ.params?.subtract]).toEqual(['adapter', 'hype.circulating_supply', ['hyper_foundation', 'community_grants']]);
     for (const key of ['dominance_share', 'dominance_share_1y', 'revenue_run_rate_usd']) expect(config.metrics[key], key).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply); then revenue streams (trading + the USDC reserve yield). A deliberate edit of assets/hype.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-10-17: dominance_share / dominance_share_1y (monitor-only category share).
@@ -108,7 +118,8 @@ describe('assets/hype.yaml', () => {
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
     // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): no fetch-time price cross-check (its check runs hourly in the writer).
-    expect(loadAsset(ROOT, 'hype').hash).toBe('74c59b28b4d619a0915ab4cf5cbe5f335849b8503c2a180bfaaef3bdbbf80c4a');
+    // Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+    expect(loadAsset(ROOT, 'hype').hash).toBe('d0142eb0bb5a21c73b5f8f2bced176b1fbbccbb2baad2b29aa162ad04c5b1a5a');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -132,7 +143,7 @@ describe('assets/hype.yaml', () => {
       ['adapter:price.token', ['primary:price_usd']],
       // No price.token_check cross-check (Ruling R22): the check runs hourly in the price writer (ORION WATCH).
       ['adapter:hype.total_supply', ['primary:total_supply']],
-      ['coingecko', ['primary:circulating_supply']],
+      ['adapter:hype.circulating_supply', ['primary:circulating_supply']], // first party since Phase 3 R3 (no coingecko batch)
       ['adapter:hype.staked_supply', ['primary:staked_supply']],
       ['adapter:hype.emission_rate_annual', ['primary:emission_rate_annual']],
       ['defillama:hyperliquid:dailyHoldersRevenue', ['primary:flow_usd.af_buyback']],
@@ -153,7 +164,9 @@ describe('assets/hype.yaml', () => {
     expect(r.outcome).toBe('ok');
     const value = async (metric: string) => (await listActiveObservations(w.db, 'hype', metric)).at(-1)!.value;
     expect(await value('price_usd')).toBe(92.36);
-    expect(await value('circulating_supply')).toBeCloseTo(222445714.07414138, 3);
+    // Hyperliquid's own figure in the recorded reply (@107's circulatingSupply) less the two genesis wallets (Phase 3 R3).
+    expect(await value('circulating_supply')).toBeCloseTo(298_644_001.7157304883 - 60_642_286.11000044 - 2_979_878.37, 3);
+    expect(w.http.calls.filter((c) => /coingecko/.test(c.url))).toEqual([]);
     expect(await value('total_supply')).toBeGreaterThan(950e6);
     expect(await value('total_supply')).toBeLessThan(953e6);
     expect(await value('staked_supply')).toBeGreaterThan(430e6);
@@ -174,7 +187,11 @@ describe('assets/hype.yaml', () => {
     // adapters share the cached reply); plus the report-only fills, one per day of the 14.
     const posts = w.http.calls.filter((c) => c.url === INFO).map((c) => (c.body as { type: string }).type);
     // allMids once: price.token's read (Task 6b; no fetch-time check since R22).
-    expect(posts.filter((t) => t !== 'userFillsByTime').sort()).toEqual(['allMids', 'spotClearinghouseState', 'spotClearinghouseState', 'spotClearinghouseState', 'spotMetaAndAssetCtxs', 'userNonFundingLedgerUpdates', 'validatorSummaries']);
+    // Phase 3 R3: circulating_supply adds a clearinghouse state and a delegator summary per genesis wallet (the meta is shared).
+    expect(posts.filter((t) => t !== 'userFillsByTime').sort()).toEqual([
+      'allMids', 'delegatorSummary', 'delegatorSummary', 'spotClearinghouseState', 'spotClearinghouseState', 'spotClearinghouseState', 'spotClearinghouseState',
+      'spotClearinghouseState', 'spotMetaAndAssetCtxs', 'userNonFundingLedgerUpdates', 'validatorSummaries',
+    ]);
     // The reserve yield's first period (2026-08-26 .. 09-24) is not over on 09-24: nothing stored, nothing due.
     expect(await listActiveObservations(w.db, 'hype', 'flow_usd.reserve_yield')).toEqual([]);
     expect(posts.filter((t) => t === 'userFillsByTime')).toHaveLength(14);

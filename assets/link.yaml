@@ -14,6 +14,42 @@ contracts:
   # The quarterly releases from Chainlink's non-circulating Safes land in these two wallets (2026-10-16, traced on chain):
   release_hub: "0x9b1c1752b6b6eaf62a8c491a8681b32c1f7ecde9" # EOA: forwards every release to an exchange wallet within hours (253.8M since 2022-08)
   release_rewards: "0xD50f074Ec5c7997cE1DaacB513Ec194C480878Af" # Safe: drips about 0.5M LINK a week onward (rewards); funded each quarter
+  # Not circulating (Phase 3 R3): the 33 wallets Chainlink lists, in its own order. https://chain.link/circulating-supply
+  # "Non-Circulating Supply Wallets — Legacy Wallet Addresses / New Wallet Addresses"; the machine-readable copy is the
+  # balances[] of https://supply.chain.link/supply. Empty and drained ones are kept (Chainlink's definition, and history).
+  nc_01: "0x98C63b7B319dFBDF3d811530F2ab9DfE4983Af9D" # Chainlink non-circulating wallet 1 of 33 (supply.chain.link balances[]); 27.00 LINK on 2026-11-20
+  nc_02: "0x75398564ce69B7498dA10a11ab06Fd8fF549001c" # Chainlink non-circulating wallet 2 of 33 (supply.chain.link balances[]); 0.78 LINK on 2026-11-20
+  nc_03: "0x5560d001f977df5e49ead7ab0bdd437c4ee3a99e" # Chainlink non-circulating wallet 3 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_04: "0xbe6977e08d4479c0a6777539ae0e8fa27be4e9d6" # Chainlink non-circulating wallet 4 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_05: "0xdAD22a85ef8310eF582b70e4051E543F3153e11F" # Chainlink non-circulating wallet 5 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_06: "0xe0362f7445e3203a496f6f8b3d51cbb413b69be2" # Chainlink non-circulating wallet 6 of 33 (supply.chain.link balances[]); 1.70 LINK on 2026-11-20
+  nc_07: "0x5A8e77bC30948cc9A51aE4E042d96e145648BB4C" # Chainlink non-circulating wallet 7 of 33 (supply.chain.link balances[]); 30,000,000.00 LINK on 2026-11-20
+  nc_08: "0xe0b66bFc7344a80152BfeC954942E2926A6FcA80" # Chainlink non-circulating wallet 8 of 33 (supply.chain.link balances[]); 29,400,000.00 LINK on 2026-11-20
+  nc_09: "0xa42D0A18B834F52e41bEDdEaA2940165db3DA9a3" # Chainlink non-circulating wallet 9 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_10: "0x276F695b3B2C7f24E7CF5b9d24e416a7f357aDb7" # Chainlink non-circulating wallet 10 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_11: "0x5Eab1966D5F61E52C22D0279F06f175e36A7181E" # Chainlink non-circulating wallet 11 of 33 (supply.chain.link balances[]); 3,000,000.00 LINK on 2026-11-20
+  nc_12: "0x959815462EeC5fFf387A2e8a6871d94323D371de" # Chainlink non-circulating wallet 12 of 33 (supply.chain.link balances[]); 0.08 LINK on 2026-11-20
+  nc_13: "0xb9b012cad0A7C1b10CbE33a1B3F623b06fAD1c7C" # Chainlink non-circulating wallet 13 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_14: "0xfB682b0dE4e0093835EA21cfABb5449cA9ac9e5e" # Chainlink non-circulating wallet 14 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_15: "0x3264225f2Fd3bb8D5DC50587EA7506aA8638B966" # Chainlink non-circulating wallet 15 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_16: "0x8d34d66bDb2d1d6ACd788A2d73d68e62282332e7" # Chainlink non-circulating wallet 16 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_17: "0x4a87ecE3eFffCb012fbE491AA028032e07B6F6cF" # Chainlink non-circulating wallet 17 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_18: "0x57Ec4745258e5A4C73d1A82636dc0FE291e3eE9F" # Chainlink non-circulating wallet 18 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_19: "0x37398A324d35c942574650B9eD2987BC640BAD76" # Chainlink non-circulating wallet 19 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_20: "0xD321948212663366503E8dCCDE39cc8e71C267c0" # Chainlink non-circulating wallet 20 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_21: "0x55b0ba1994d68C2AB0C01C3332eC9473de296137" # Chainlink non-circulating wallet 21 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_22: "0xD48133C96C5FE8d41D0cbD598F65bf4548941e27" # Chainlink non-circulating wallet 22 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_23: "0x9c17f630DBde24eECe8fd248fAA2E51f690FF79B" # Chainlink non-circulating wallet 23 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_24: "0x35a5dc3FD1210Fe7173aDD3C01144Cf1693B5E45" # Chainlink non-circulating wallet 24 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_25: "0x0DFfD343C2D3460a7EAD2797a687304Beb394ce0" # Chainlink non-circulating wallet 25 of 33 (supply.chain.link balances[]); 28,750,000.00 LINK on 2026-11-20
+  nc_26: "0x76287e0F7b107d1C9f8f01D5aFac314Ea8461a04" # Chainlink non-circulating wallet 26 of 33 (supply.chain.link balances[]); 30,000,000.00 LINK on 2026-11-20
+  nc_27: "0x9BBb46637A1Df7CADec2AFcA19C2920CdDCc8Db8" # Chainlink non-circulating wallet 27 of 33 (supply.chain.link balances[]); 30,000,000.00 LINK on 2026-11-20
+  nc_28: "0x7594Eb0ca0a7f313bEFD59AfE9e95c2201a443e4" # Chainlink non-circulating wallet 28 of 33 (supply.chain.link balances[]); 30,000,000.00 LINK on 2026-11-20
+  nc_29: "0x8652Fb672253607c0061677bDCaFb77a324DE081" # Chainlink non-circulating wallet 29 of 33 (supply.chain.link balances[]); 30,000,000.00 LINK on 2026-11-20
+  nc_30: "0x157235A3cc6011d9C26A010875c2550246aAbcCA" # Chainlink non-circulating wallet 30 of 33 (supply.chain.link balances[]); 22,000,000.00 LINK on 2026-11-20
+  nc_31: "0xa71bbBd288a4e288CfDC08bb2E70DCd74Da4486D" # Chainlink non-circulating wallet 31 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_32: "0xEc640A90e9A30072158115B7C0253f2689ee6547" # Chainlink non-circulating wallet 32 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
+  nc_33: "0x2a6AB3B0C96377bd20AE47E50ae426A8546A4Ae9" # Chainlink non-circulating wallet 33 of 33 (supply.chain.link balances[]); 0.00 LINK on 2026-11-20
 
 ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
 
@@ -21,7 +57,7 @@ external_ids:
   coingecko: chainlink
   defillama: chainlink
 
-# Every metric is fetched on chain except the circulating supply (CoinGecko): no DefiLlama (Mike, 2026-10-11:
+# Every metric is fetched on chain (the circulating supply too, since Phase 3 R3): no DefiLlama (Mike, 2026-10-11:
 # the Reserve flow and the releases are all readable on Ethereum).
 metrics:
   price_usd:
@@ -44,12 +80,69 @@ metrics:
     critical: true
     source: { type: erc20_supply, token: token }
 
-  # CoinGecko's own definition (767M on 2026-10-16); display only, the report's market cap basis.
+  # On chain (Phase 3 R3): the total less Chainlink's 33 listed non-circulating wallets (233,150,029.58 LINK), so
+  # 766,849,970.42 on 2026-11-20, equal to Chainlink's own circulatingSupply to the wei. Staked LINK (v0.2, a 28-day
+  # cooldown), the Reserve and the release wallets stay in (Chainlink's definition). Display only, the market cap basis.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: chainlink, field: circulating_supply }
+    source:
+      type: adapter
+      name: chain.view_sum
+      params:
+        terms:
+          - { contract: token, function: totalSupply }
+          - { contract: token, function: balanceOf, args: [ nc_01 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_02 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_03 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_04 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_05 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_06 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_07 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_08 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_09 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_10 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_11 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_12 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_13 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_14 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_15 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_16 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_17 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_18 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_19 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_20 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_21 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_22 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_23 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_24 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_25 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_26 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_27 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_28 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_29 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_30 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_31 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_32 ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ nc_33 ], sign: -1 }
+
+  # The N5 check (Phase 3 R3): Chainlink's own figure (first party) and the gap of ours to it, in percent, 0 on
+  # 2026-11-20. Outside [-0.5, 0.5] is an ORION WATCH: Chainlink moved LINK to a wallet not listed here yet (add it from
+  # balances[]), or the API lags a release.
+  chainlink_circulating:
+    type: level
+    unit: tokens
+    staleness_days: 3
+    monitor_only: true
+    source: { type: http_json, url: "https://supply.chain.link/supply", path: circulatingSupply, decimals: 18 }
+  circulating_gap_chainlink:
+    type: level
+    unit: pct
+    staleness_days: 3
+    monitor_only: true
+    source: { type: derived, name: level_gap_pct, params: { a: circulating_supply, b: chainlink_circulating } }
+    watch: { outside: [ -0.5, 0.5 ] }
 
   # Staking v0.2 pays rewards from Chainlink's own allocation, not from fees: not a holder flow, and the Reserve's buys
   # reach every holder alike.

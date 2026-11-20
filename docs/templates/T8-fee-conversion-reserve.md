@@ -20,7 +20,7 @@ reserve that holds them (buy-and-hold). Fees paid off chain are revenue only by 
 - The service contracts that collect fees before conversion (for the Phase 3 cost lines).
 - Wallets that release non-circulating supply (for `dilution`).
 - The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary (a Chainlink feed, else the deepest pool's TWAP) and a check on another venue (LINK: the LINK/USD feed, checked against the Uniswap v3 LINK/WETH TWAP). CoinGecko id
-  (CoinGecko for circulating supply only (until R3), never a price).
+  (an identifier only: no CoinGecko field loads since Phase 3 R3).
 
 ## Checks
 
@@ -71,14 +71,15 @@ metrics:
     staleness_days: 7
     critical: true
     source: { type: erc20_supply, token: token }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: coingecko, id: {{coingecko_id}}, field: total_supply } }
 
+  # On chain (Phase 3 R3: no CoinGecko field loads): start from total_supply's read and subtract every holder that is
+  # not circulating (a treasury, an unvested allocation, a cited locked_schedule), each a named `contracts:` entry with
+  # its citation (chain.view_sum terms; on Solana, solana.supply_less_owners). Staking with an exit stays circulating.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: {{coingecko_id}}, field: circulating_supply }
+    source: { type: erc20_supply, token: token }
 
   staked_supply:
     type: level
@@ -169,6 +170,6 @@ hold_haircut: 0.05
 3. Licence: the RPC's row only.
 4. `not_measured` lines and why: node-operator payments; off-chain revenue (disclosure only).
 5. Checks: the `balance` check measured by hand over 30 days (no outflow expected).
-6. Supply: total from `totalSupply()`; circulating from CoinGecko; releases as `dilution`.
+6. Supply: total from `totalSupply()`; circulating on chain (total less the non-circulating holders); releases as `dilution`.
 7. Imminent events: new fee routes into the converter, reserve withdrawals, staking changes.
 8. Expected figures re-measured once by hand: 91 days of reserve inflow, in USD and tokens.

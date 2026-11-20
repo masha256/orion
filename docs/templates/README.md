@@ -42,10 +42,12 @@ measure the checks by hand once, then add `assets/<id>.yaml`. Bespoke adapters o
   export (Phase 5), never ingest.
 - **Flow window 91 days** everywhere (`window_days`, holder flow `window_days`), with `ingest.backfill_days: 100`.
 - **Supply terms.** `total_supply` = on-chain supply less burn addresses (the FDV basis); `circulating_supply` =
-  CoinGecko's (market cap, display only); unlocks of already-minted tokens are `dilution`, never an emission.
+  on chain, total less the non-circulating holders, each a named and cited `contracts:` entry (market cap, display
+  only; Phase 3 R3); unlocks of already-minted tokens are `dilution`, never an emission.
 - **Prices from prices.yaml (Phase 3 R2).** `price_usd` is `{ type: adapter, name: price.token, params: { ref } }`
   naming the token's ref in `prices.yaml` (repo root), whose entry holds the method and the check; add that entry
-  first. A `coingecko` source with `field: price` is refused at load, at a proposal's filing and at its approve, and a
+  first. A `coingecko` source of any field (price, market_cap, circulating_supply, total_supply: Phase 3 R3) is refused at load,
+  at a proposal's filing and at its approve, and a
   usd `transfer_flow` whose token has no entry is refused at load. A fetch-time price cross-check
   (`price.token_check`) only where an asset already had one (ruling R22); otherwise the check runs hourly in the price
   writer (`ORION WATCH`, never an anomaly). `tests/config/templates.test.ts` loads each live-example skeleton against

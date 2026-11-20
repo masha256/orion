@@ -73,6 +73,9 @@ function world() {
       // of 347,302 CAKE and the burner's 0.69 CAKE (rounded to 0 here).
       [callKey(C.token, 'balanceOf', [C.masterchef_v2])]: 347_302n * E18,
       [callKey(C.token, 'balanceOf', [C.burner])]: 0n,
+      // circulating_supply's two retired staking contracts (Phase 3 R3, N1e option B), measured 2026-11-19.
+      [callKey(C.token, 'balanceOf', [C.cake_pool])]: 13_373_184n * E18,
+      [callKey(C.token, 'balanceOf', [C.vecake])]: 5_144_174n * E18,
       [callKey(C.masterchef_v2, 'cakePerBlock', [true])]: 40_000_000n,
       [callKey(C.masterchef_v2, 'cakePerBlock', [false])]: 113_292_343_840_000_000n,
       // price_usd (Phase 3 R2 Task 6b): the CAKE/USD feed at the price CoinGecko gave this test, checked by its pool TWAP at
@@ -101,6 +104,9 @@ describe('assets/cake.yaml', () => {
     expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.burn']);
     expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
+    // Phase 3 R3 Task 4: circulating on chain, total_supply's netting less the two retired staking contracts (6 terms).
+    const circ = config.metrics.circulating_supply.source as { type: string; name?: string; params?: { terms?: unknown[] } };
+    expect([circ.type, circ.name, circ.params?.terms?.length]).toEqual(['adapter', 'chain.view_sum', 6]);
     // No DefiLlama (Phase 3 R1): its gross fees and revenue display series are gone; volume is not_measured.
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama').map(([k]) => k)).toEqual([]);
     expect(config.income_statement!.volume).toEqual({ not_measured: 'gross swap fees: DefiLlama removed (Phase 3 R1); on-chain v2/v3 gross not read yet (Phase 3b)' });
@@ -114,7 +120,8 @@ describe('assets/cake.yaml', () => {
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
-    expect(loadAsset(ROOT, 'cake').hash).toBe('e863393a2a484f097df6815e1874fa438d343ade72d7cf1330b8fda6c88ecea1');
+    // Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+    expect(loadAsset(ROOT, 'cake').hash).toBe('a4da1200171aa5c73b9543b1a92fbe220934b3e9fd06c05f263ac4bcd22cea4b');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -156,6 +163,9 @@ describe('assets/cake.yaml', () => {
     const value = async (metric: string) => (await rows(metric)).at(-1)!.value;
     expect(await value('price_usd')).toBe(PRICE);
     expect(await value('total_supply')).toBe(335_120_997);
+    // On chain (Phase 3 R3): total_supply's netting less the legacy CAKE pool and veCAKE; CoinGecko is not called.
+    expect(await value('circulating_supply')).toBe(335_120_997 - 13_373_184 - 5_144_174);
+    expect(w.http.calls.filter((c) => /coingecko/.test(c.url))).toEqual([]);
     expect(await value('emission_rate_annual') / 1e6).toBeCloseTo(7.9396, 3);
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
     expect(w.http.calls.filter((c) => /llama\.fi/.test(new URL(c.url).host)).map((c) => c.url)).toEqual([]); // Phase 3 R1

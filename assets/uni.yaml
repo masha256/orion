@@ -9,6 +9,9 @@ contracts:
   dead: "0x000000000000000000000000000000000000dEaD" # every fee burn ends here (Firepit / L2 burns bridged back)
   timelock: "0x1a9C8182C09F50C8318d769245beA52c32BE35BC" # DAO Timelock: the treasury (262.2M UNI), the 100M one-off burn (2025-12-27)
   vesting: "0xca046a83edb78f74ae338bb5a291bf6fdac9e1d2" # UNIVesting: 5M UNI a quarter from the Timelock to Uniswap Labs
+  # Not circulating (Phase 3 R3, decision N1h), besides dead and the Timelock: the DAO's two funded programs.
+  uf_grants: "0x5069A64BC6616dEC1584eE0500B7813A9B680F7E" # Uniswap Foundation grants/ops wallet: Proposal 83 "Uniswap Unleashed" transfer(0x5069...f7e, 20,320,405 UNI), https://www.tally.xyz/gov/uniswap/proposal/83
+  aera_incentives: "0x7c8406384f7a5c147a6ADd16407803BE146147E4" # AeraVaultV2 "Uniswap Incentives", owner() = the Timelock (measured): Proposal 82 approve(0x7c84..., 7,588,532 UNI)
 
 ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
 
@@ -39,12 +42,23 @@ metrics:
     critical: true
     source: { type: erc20_supply, token: token, subtract_balances: [ dead ] }
 
-  # CoinGecko's own definition; display only, the report's market cap basis (FDV uses total_supply).
+  # On chain (Phase 3 R3, decision N1h): the total less dead, the DAO Timelock (the treasury), the Uniswap Foundation's
+  # grants wallet and the Aera incentives vault, the same set CoinGecko excludes since 2026-11-03. Vested UNI with Labs
+  # stays in. Display only, the report's market cap basis (FDV uses total_supply).
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: uniswap, field: circulating_supply }
+    source:
+      type: adapter
+      name: chain.view_sum
+      params:
+        terms:
+          - { contract: token, function: totalSupply }
+          - { contract: token, function: balanceOf, args: [ dead ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ timelock ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ uf_grants ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ aera_incentives ], sign: -1 }
 
   # No staking: UNI pays no one for staking, and the burn reaches every holder.
   staked_supply:

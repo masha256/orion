@@ -1729,6 +1729,11 @@
   "document": null,
   "adapter_params": [
    {
+    "metric": "circulating_supply",
+    "adapter": "chain.view_sum",
+    "params_doc": "terms: [{ contract, function, args?: contract names, sign?: 1 | -1, times?: { contract, function, decimals } (the term x that view / 10^decimals, read in the same multicall) }], decimals? (18), scale?: number, plus_share?: { contract, function, denominator }, locked_schedule?: { amount (tokens), first_tranche: YYYY-MM-DD, tranches, every_months, citation: URL } (subtracts amount x the tranches not yet out at the run block's time, 00:00Z each; not with scale or plus_share). The signed sum of uint256 views at the run block (refused when negative), x scale, x (1 + share), less the locked schedule (refused when negative). A view that reverts fails the level."
+   },
+   {
     "metric": "price_usd",
     "adapter": "price.token",
     "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
@@ -1765,7 +1770,7 @@
   },
   "observations_in_force": [
    {
-    "id": 194,
+    "id": 196,
     "metric": "flow_usd.fees",
     "value": 191,
     "observed_at": "2026-08-04T00:00:00.000Z",
@@ -1773,7 +1778,7 @@
     "status": "confirmed"
    },
    {
-    "id": 193,
+    "id": 195,
     "metric": "flow_usd.fees",
     "value": 190,
     "observed_at": "2026-08-05T00:00:00.000Z",
@@ -1781,7 +1786,7 @@
     "status": "confirmed"
    },
    {
-    "id": 192,
+    "id": 194,
     "metric": "flow_usd.fees",
     "value": 189,
     "observed_at": "2026-08-06T00:00:00.000Z",
@@ -1789,7 +1794,7 @@
     "status": "confirmed"
    },
    {
-    "id": 191,
+    "id": 193,
     "metric": "flow_usd.fees",
     "value": 188,
     "observed_at": "2026-08-07T00:00:00.000Z",
@@ -1797,7 +1802,7 @@
     "status": "confirmed"
    },
    {
-    "id": 190,
+    "id": 192,
     "metric": "flow_usd.fees",
     "value": 187,
     "observed_at": "2026-08-08T00:00:00.000Z",
@@ -1805,7 +1810,7 @@
     "status": "confirmed"
    },
    {
-    "id": 189,
+    "id": 191,
     "metric": "flow_usd.fees",
     "value": 186,
     "observed_at": "2026-08-09T00:00:00.000Z",
@@ -1813,7 +1818,7 @@
     "status": "confirmed"
    },
    {
-    "id": 188,
+    "id": 190,
     "metric": "flow_usd.fees",
     "value": 185,
     "observed_at": "2026-08-10T00:00:00.000Z",
@@ -1821,7 +1826,7 @@
     "status": "confirmed"
    },
    {
-    "id": 187,
+    "id": 189,
     "metric": "flow_usd.fees",
     "value": 184,
     "observed_at": "2026-08-11T00:00:00.000Z",
@@ -1829,7 +1834,7 @@
     "status": "confirmed"
    },
    {
-    "id": 186,
+    "id": 188,
     "metric": "flow_usd.fees",
     "value": 183,
     "observed_at": "2026-08-12T00:00:00.000Z",
@@ -1837,7 +1842,7 @@
     "status": "confirmed"
    },
    {
-    "id": 185,
+    "id": 187,
     "metric": "flow_usd.fees",
     "value": 182,
     "observed_at": "2026-08-13T00:00:00.000Z",
@@ -1845,7 +1850,7 @@
     "status": "confirmed"
    },
    {
-    "id": 184,
+    "id": 186,
     "metric": "flow_usd.fees",
     "value": 181,
     "observed_at": "2026-08-14T00:00:00.000Z",
@@ -1853,7 +1858,7 @@
     "status": "confirmed"
    },
    {
-    "id": 183,
+    "id": 185,
     "metric": "flow_usd.fees",
     "value": 180,
     "observed_at": "2026-08-15T00:00:00.000Z",
@@ -1861,7 +1866,7 @@
     "status": "confirmed"
    },
    {
-    "id": 182,
+    "id": 184,
     "metric": "flow_usd.fees",
     "value": 179,
     "observed_at": "2026-08-16T00:00:00.000Z",
@@ -1869,7 +1874,7 @@
     "status": "confirmed"
    },
    {
-    "id": 181,
+    "id": 183,
     "metric": "flow_usd.fees",
     "value": 178,
     "observed_at": "2026-08-17T00:00:00.000Z",
@@ -1877,7 +1882,7 @@
     "status": "confirmed"
    },
    {
-    "id": 180,
+    "id": 182,
     "metric": "flow_usd.fees",
     "value": 177,
     "observed_at": "2026-08-18T00:00:00.000Z",
@@ -1885,7 +1890,7 @@
     "status": "confirmed"
    },
    {
-    "id": 179,
+    "id": 181,
     "metric": "flow_usd.fees",
     "value": 176,
     "observed_at": "2026-08-19T00:00:00.000Z",
@@ -1893,7 +1898,7 @@
     "status": "confirmed"
    },
    {
-    "id": 178,
+    "id": 180,
     "metric": "flow_usd.fees",
     "value": 175,
     "observed_at": "2026-08-20T00:00:00.000Z",
@@ -1901,7 +1906,7 @@
     "status": "confirmed"
    },
    {
-    "id": 177,
+    "id": 179,
     "metric": "flow_usd.fees",
     "value": 174,
     "observed_at": "2026-08-21T00:00:00.000Z",
@@ -1909,7 +1914,7 @@
     "status": "confirmed"
    },
    {
-    "id": 176,
+    "id": 178,
     "metric": "flow_usd.fees",
     "value": 173,
     "observed_at": "2026-08-22T00:00:00.000Z",
@@ -1917,7 +1922,7 @@
     "status": "confirmed"
    },
    {
-    "id": 175,
+    "id": 177,
     "metric": "flow_usd.fees",
     "value": 172,
     "observed_at": "2026-08-23T00:00:00.000Z",
@@ -1925,7 +1930,7 @@
     "status": "confirmed"
    },
    {
-    "id": 174,
+    "id": 176,
     "metric": "flow_usd.fees",
     "value": 171,
     "observed_at": "2026-08-24T00:00:00.000Z",
@@ -1933,7 +1938,7 @@
     "status": "confirmed"
    },
    {
-    "id": 173,
+    "id": 175,
     "metric": "flow_usd.fees",
     "value": 170,
     "observed_at": "2026-08-25T00:00:00.000Z",
@@ -1941,7 +1946,7 @@
     "status": "confirmed"
    },
    {
-    "id": 172,
+    "id": 174,
     "metric": "flow_usd.fees",
     "value": 169,
     "observed_at": "2026-08-26T00:00:00.000Z",
@@ -1949,7 +1954,7 @@
     "status": "confirmed"
    },
    {
-    "id": 171,
+    "id": 173,
     "metric": "flow_usd.fees",
     "value": 168,
     "observed_at": "2026-08-27T00:00:00.000Z",
@@ -1957,7 +1962,7 @@
     "status": "confirmed"
    },
    {
-    "id": 170,
+    "id": 172,
     "metric": "flow_usd.fees",
     "value": 167,
     "observed_at": "2026-08-28T00:00:00.000Z",
@@ -1965,7 +1970,7 @@
     "status": "confirmed"
    },
    {
-    "id": 169,
+    "id": 171,
     "metric": "flow_usd.fees",
     "value": 166,
     "observed_at": "2026-08-29T00:00:00.000Z",
@@ -1973,7 +1978,7 @@
     "status": "confirmed"
    },
    {
-    "id": 168,
+    "id": 170,
     "metric": "flow_usd.fees",
     "value": 165,
     "observed_at": "2026-08-30T00:00:00.000Z",
@@ -1981,7 +1986,7 @@
     "status": "confirmed"
    },
    {
-    "id": 167,
+    "id": 169,
     "metric": "flow_usd.fees",
     "value": 164,
     "observed_at": "2026-08-31T00:00:00.000Z",
@@ -1989,7 +1994,7 @@
     "status": "confirmed"
    },
    {
-    "id": 166,
+    "id": 168,
     "metric": "flow_usd.fees",
     "value": 163,
     "observed_at": "2026-09-01T00:00:00.000Z",
@@ -1997,7 +2002,7 @@
     "status": "confirmed"
    },
    {
-    "id": 165,
+    "id": 167,
     "metric": "flow_usd.fees",
     "value": 162,
     "observed_at": "2026-09-02T00:00:00.000Z",
@@ -2005,7 +2010,7 @@
     "status": "confirmed"
    },
    {
-    "id": 164,
+    "id": 166,
     "metric": "flow_usd.fees",
     "value": 161,
     "observed_at": "2026-09-03T00:00:00.000Z",
@@ -2013,7 +2018,7 @@
     "status": "confirmed"
    },
    {
-    "id": 163,
+    "id": 165,
     "metric": "flow_usd.fees",
     "value": 160,
     "observed_at": "2026-09-04T00:00:00.000Z",
@@ -2021,7 +2026,7 @@
     "status": "confirmed"
    },
    {
-    "id": 162,
+    "id": 164,
     "metric": "flow_usd.fees",
     "value": 159,
     "observed_at": "2026-09-05T00:00:00.000Z",
@@ -2029,7 +2034,7 @@
     "status": "confirmed"
    },
    {
-    "id": 161,
+    "id": 163,
     "metric": "flow_usd.fees",
     "value": 158,
     "observed_at": "2026-09-06T00:00:00.000Z",
@@ -2037,7 +2042,7 @@
     "status": "confirmed"
    },
    {
-    "id": 160,
+    "id": 162,
     "metric": "flow_usd.fees",
     "value": 157,
     "observed_at": "2026-09-07T00:00:00.000Z",
@@ -2045,7 +2050,7 @@
     "status": "confirmed"
    },
    {
-    "id": 159,
+    "id": 161,
     "metric": "flow_usd.fees",
     "value": 156,
     "observed_at": "2026-09-08T00:00:00.000Z",
@@ -2053,7 +2058,7 @@
     "status": "confirmed"
    },
    {
-    "id": 158,
+    "id": 160,
     "metric": "flow_usd.fees",
     "value": 155,
     "observed_at": "2026-09-09T00:00:00.000Z",
@@ -2061,7 +2066,7 @@
     "status": "confirmed"
    },
    {
-    "id": 157,
+    "id": 159,
     "metric": "flow_usd.fees",
     "value": 154,
     "observed_at": "2026-09-10T00:00:00.000Z",
@@ -2069,7 +2074,7 @@
     "status": "confirmed"
    },
    {
-    "id": 156,
+    "id": 158,
     "metric": "flow_usd.fees",
     "value": 153,
     "observed_at": "2026-09-11T00:00:00.000Z",
@@ -2077,7 +2082,7 @@
     "status": "confirmed"
    },
    {
-    "id": 155,
+    "id": 157,
     "metric": "flow_usd.fees",
     "value": 152,
     "observed_at": "2026-09-12T00:00:00.000Z",
@@ -2085,7 +2090,7 @@
     "status": "confirmed"
    },
    {
-    "id": 154,
+    "id": 156,
     "metric": "flow_usd.fees",
     "value": 151,
     "observed_at": "2026-09-13T00:00:00.000Z",
@@ -2093,7 +2098,7 @@
     "status": "confirmed"
    },
    {
-    "id": 153,
+    "id": 155,
     "metric": "flow_usd.fees",
     "value": 150,
     "observed_at": "2026-09-14T00:00:00.000Z",
@@ -2101,7 +2106,7 @@
     "status": "confirmed"
    },
    {
-    "id": 152,
+    "id": 154,
     "metric": "flow_usd.fees",
     "value": 149,
     "observed_at": "2026-09-15T00:00:00.000Z",
@@ -2109,7 +2114,7 @@
     "status": "confirmed"
    },
    {
-    "id": 151,
+    "id": 153,
     "metric": "flow_usd.fees",
     "value": 148,
     "observed_at": "2026-09-16T00:00:00.000Z",
@@ -2117,7 +2122,7 @@
     "status": "confirmed"
    },
    {
-    "id": 150,
+    "id": 152,
     "metric": "flow_usd.fees",
     "value": 147,
     "observed_at": "2026-09-17T00:00:00.000Z",
@@ -2125,7 +2130,7 @@
     "status": "confirmed"
    },
    {
-    "id": 149,
+    "id": 151,
     "metric": "flow_usd.fees",
     "value": 146,
     "observed_at": "2026-09-18T00:00:00.000Z",
@@ -2133,7 +2138,7 @@
     "status": "confirmed"
    },
    {
-    "id": 148,
+    "id": 150,
     "metric": "flow_usd.fees",
     "value": 145,
     "observed_at": "2026-09-19T00:00:00.000Z",
@@ -2141,7 +2146,7 @@
     "status": "confirmed"
    },
    {
-    "id": 147,
+    "id": 149,
     "metric": "flow_usd.fees",
     "value": 144,
     "observed_at": "2026-09-20T00:00:00.000Z",
@@ -2149,7 +2154,7 @@
     "status": "confirmed"
    },
    {
-    "id": 146,
+    "id": 148,
     "metric": "flow_usd.fees",
     "value": 143,
     "observed_at": "2026-09-21T00:00:00.000Z",
@@ -2157,7 +2162,7 @@
     "status": "confirmed"
    },
    {
-    "id": 145,
+    "id": 147,
     "metric": "flow_usd.fees",
     "value": 142,
     "observed_at": "2026-09-22T00:00:00.000Z",
@@ -2165,7 +2170,7 @@
     "status": "confirmed"
    },
    {
-    "id": 144,
+    "id": 146,
     "metric": "flow_usd.fees",
     "value": 141,
     "observed_at": "2026-09-23T00:00:00.000Z",
@@ -2173,7 +2178,7 @@
     "status": "confirmed"
    },
    {
-    "id": 143,
+    "id": 145,
     "metric": "flow_usd.fees",
     "value": 140,
     "observed_at": "2026-09-24T00:00:00.000Z",
@@ -2181,7 +2186,7 @@
     "status": "confirmed"
    },
    {
-    "id": 142,
+    "id": 144,
     "metric": "flow_usd.fees",
     "value": 139,
     "observed_at": "2026-09-25T00:00:00.000Z",
@@ -2189,7 +2194,7 @@
     "status": "confirmed"
    },
    {
-    "id": 141,
+    "id": 143,
     "metric": "flow_usd.fees",
     "value": 138,
     "observed_at": "2026-09-26T00:00:00.000Z",
@@ -2197,7 +2202,7 @@
     "status": "confirmed"
    },
    {
-    "id": 140,
+    "id": 142,
     "metric": "flow_usd.fees",
     "value": 137,
     "observed_at": "2026-09-27T00:00:00.000Z",
@@ -2205,7 +2210,7 @@
     "status": "confirmed"
    },
    {
-    "id": 139,
+    "id": 141,
     "metric": "flow_usd.fees",
     "value": 136,
     "observed_at": "2026-09-28T00:00:00.000Z",
@@ -2213,7 +2218,7 @@
     "status": "confirmed"
    },
    {
-    "id": 138,
+    "id": 140,
     "metric": "flow_usd.fees",
     "value": 135,
     "observed_at": "2026-09-29T00:00:00.000Z",
@@ -2221,7 +2226,7 @@
     "status": "confirmed"
    },
    {
-    "id": 137,
+    "id": 139,
     "metric": "flow_usd.fees",
     "value": 134,
     "observed_at": "2026-09-30T00:00:00.000Z",
@@ -2229,7 +2234,7 @@
     "status": "confirmed"
    },
    {
-    "id": 136,
+    "id": 138,
     "metric": "flow_usd.fees",
     "value": 133,
     "observed_at": "2026-10-01T00:00:00.000Z",
@@ -2237,7 +2242,7 @@
     "status": "confirmed"
    },
    {
-    "id": 135,
+    "id": 137,
     "metric": "flow_usd.fees",
     "value": 132,
     "observed_at": "2026-10-02T00:00:00.000Z",
@@ -2245,7 +2250,7 @@
     "status": "confirmed"
    },
    {
-    "id": 134,
+    "id": 136,
     "metric": "flow_usd.fees",
     "value": 131,
     "observed_at": "2026-10-03T00:00:00.000Z",
@@ -2253,7 +2258,7 @@
     "status": "confirmed"
    },
    {
-    "id": 133,
+    "id": 135,
     "metric": "flow_usd.fees",
     "value": 130,
     "observed_at": "2026-10-04T00:00:00.000Z",
@@ -2261,7 +2266,7 @@
     "status": "confirmed"
    },
    {
-    "id": 132,
+    "id": 134,
     "metric": "flow_usd.fees",
     "value": 129,
     "observed_at": "2026-10-05T00:00:00.000Z",
@@ -2269,7 +2274,7 @@
     "status": "confirmed"
    },
    {
-    "id": 131,
+    "id": 133,
     "metric": "flow_usd.fees",
     "value": 128,
     "observed_at": "2026-10-06T00:00:00.000Z",
@@ -2277,7 +2282,7 @@
     "status": "confirmed"
    },
    {
-    "id": 130,
+    "id": 132,
     "metric": "flow_usd.fees",
     "value": 127,
     "observed_at": "2026-10-07T00:00:00.000Z",
@@ -2285,7 +2290,7 @@
     "status": "confirmed"
    },
    {
-    "id": 129,
+    "id": 131,
     "metric": "flow_usd.fees",
     "value": 126,
     "observed_at": "2026-10-08T00:00:00.000Z",
@@ -2293,7 +2298,7 @@
     "status": "confirmed"
    },
    {
-    "id": 128,
+    "id": 130,
     "metric": "flow_usd.fees",
     "value": 125,
     "observed_at": "2026-10-09T00:00:00.000Z",
@@ -2301,7 +2306,7 @@
     "status": "confirmed"
    },
    {
-    "id": 127,
+    "id": 129,
     "metric": "flow_usd.fees",
     "value": 124,
     "observed_at": "2026-10-10T00:00:00.000Z",
@@ -2309,7 +2314,7 @@
     "status": "confirmed"
    },
    {
-    "id": 126,
+    "id": 128,
     "metric": "flow_usd.fees",
     "value": 123,
     "observed_at": "2026-10-11T00:00:00.000Z",
@@ -2317,7 +2322,7 @@
     "status": "confirmed"
    },
    {
-    "id": 125,
+    "id": 127,
     "metric": "flow_usd.fees",
     "value": 122,
     "observed_at": "2026-10-12T00:00:00.000Z",
@@ -2325,7 +2330,7 @@
     "status": "confirmed"
    },
    {
-    "id": 124,
+    "id": 126,
     "metric": "flow_usd.fees",
     "value": 121,
     "observed_at": "2026-10-13T00:00:00.000Z",
@@ -2333,7 +2338,7 @@
     "status": "confirmed"
    },
    {
-    "id": 123,
+    "id": 125,
     "metric": "flow_usd.fees",
     "value": 120,
     "observed_at": "2026-10-14T00:00:00.000Z",
@@ -2341,7 +2346,7 @@
     "status": "confirmed"
    },
    {
-    "id": 122,
+    "id": 124,
     "metric": "flow_usd.fees",
     "value": 119,
     "observed_at": "2026-10-15T00:00:00.000Z",
@@ -2349,7 +2354,7 @@
     "status": "confirmed"
    },
    {
-    "id": 121,
+    "id": 123,
     "metric": "flow_usd.fees",
     "value": 118,
     "observed_at": "2026-10-16T00:00:00.000Z",
@@ -2357,7 +2362,7 @@
     "status": "confirmed"
    },
    {
-    "id": 120,
+    "id": 122,
     "metric": "flow_usd.fees",
     "value": 117,
     "observed_at": "2026-10-17T00:00:00.000Z",
@@ -2365,7 +2370,7 @@
     "status": "confirmed"
    },
    {
-    "id": 119,
+    "id": 121,
     "metric": "flow_usd.fees",
     "value": 116,
     "observed_at": "2026-10-18T00:00:00.000Z",
@@ -2373,7 +2378,7 @@
     "status": "confirmed"
    },
    {
-    "id": 118,
+    "id": 120,
     "metric": "flow_usd.fees",
     "value": 115,
     "observed_at": "2026-10-19T00:00:00.000Z",
@@ -2381,7 +2386,7 @@
     "status": "confirmed"
    },
    {
-    "id": 117,
+    "id": 119,
     "metric": "flow_usd.fees",
     "value": 114,
     "observed_at": "2026-10-20T00:00:00.000Z",
@@ -2389,7 +2394,7 @@
     "status": "confirmed"
    },
    {
-    "id": 116,
+    "id": 118,
     "metric": "flow_usd.fees",
     "value": 113,
     "observed_at": "2026-10-21T00:00:00.000Z",
@@ -2397,7 +2402,7 @@
     "status": "confirmed"
    },
    {
-    "id": 115,
+    "id": 117,
     "metric": "flow_usd.fees",
     "value": 112,
     "observed_at": "2026-10-22T00:00:00.000Z",
@@ -2405,7 +2410,7 @@
     "status": "confirmed"
    },
    {
-    "id": 114,
+    "id": 116,
     "metric": "flow_usd.fees",
     "value": 111,
     "observed_at": "2026-10-23T00:00:00.000Z",
@@ -2413,7 +2418,7 @@
     "status": "confirmed"
    },
    {
-    "id": 113,
+    "id": 115,
     "metric": "flow_usd.fees",
     "value": 110,
     "observed_at": "2026-10-24T00:00:00.000Z",
@@ -2421,7 +2426,7 @@
     "status": "confirmed"
    },
    {
-    "id": 112,
+    "id": 114,
     "metric": "flow_usd.fees",
     "value": 109,
     "observed_at": "2026-10-25T00:00:00.000Z",
@@ -2429,7 +2434,7 @@
     "status": "confirmed"
    },
    {
-    "id": 111,
+    "id": 113,
     "metric": "flow_usd.fees",
     "value": 108,
     "observed_at": "2026-10-26T00:00:00.000Z",
@@ -2437,7 +2442,7 @@
     "status": "confirmed"
    },
    {
-    "id": 110,
+    "id": 112,
     "metric": "flow_usd.fees",
     "value": 107,
     "observed_at": "2026-10-27T00:00:00.000Z",
@@ -2445,7 +2450,7 @@
     "status": "confirmed"
    },
    {
-    "id": 109,
+    "id": 111,
     "metric": "flow_usd.fees",
     "value": 106,
     "observed_at": "2026-10-28T00:00:00.000Z",
@@ -2453,7 +2458,7 @@
     "status": "confirmed"
    },
    {
-    "id": 108,
+    "id": 110,
     "metric": "flow_usd.fees",
     "value": 105,
     "observed_at": "2026-10-29T00:00:00.000Z",
@@ -2461,7 +2466,7 @@
     "status": "confirmed"
    },
    {
-    "id": 107,
+    "id": 109,
     "metric": "flow_usd.fees",
     "value": 104,
     "observed_at": "2026-10-30T00:00:00.000Z",
@@ -2469,7 +2474,7 @@
     "status": "confirmed"
    },
    {
-    "id": 106,
+    "id": 108,
     "metric": "flow_usd.fees",
     "value": 103,
     "observed_at": "2026-10-31T00:00:00.000Z",
@@ -2477,7 +2482,7 @@
     "status": "confirmed"
    },
    {
-    "id": 105,
+    "id": 107,
     "metric": "flow_usd.fees",
     "value": 102,
     "observed_at": "2026-11-01T00:00:00.000Z",
@@ -2486,7 +2491,7 @@
    },
    {
     "id": 1,
-    "metric": "circulating_supply",
+    "metric": "circulating_gap_curve",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
     "source": "api",
@@ -2494,6 +2499,22 @@
    },
    {
     "id": 2,
+    "metric": "circulating_supply",
+    "value": 7,
+    "observed_at": "2026-11-02T00:00:00.000Z",
+    "source": "api",
+    "status": "confirmed"
+   },
+   {
+    "id": 3,
+    "metric": "curve_circulating",
+    "value": 7,
+    "observed_at": "2026-11-02T00:00:00.000Z",
+    "source": "api",
+    "status": "confirmed"
+   },
+   {
+    "id": 4,
     "metric": "emission_rate_annual",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -2501,7 +2522,7 @@
     "status": "confirmed"
    },
    {
-    "id": 104,
+    "id": 106,
     "metric": "flow_usd.fees",
     "value": 101,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -2509,7 +2530,7 @@
     "status": "confirmed"
    },
    {
-    "id": 303,
+    "id": 305,
     "metric": "locked_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -2517,7 +2538,7 @@
     "status": "confirmed"
    },
    {
-    "id": 304,
+    "id": 306,
     "metric": "price_usd",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -2525,7 +2546,7 @@
     "status": "confirmed"
    },
    {
-    "id": 305,
+    "id": 307,
     "metric": "staked_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -2533,7 +2554,7 @@
     "status": "confirmed"
    },
    {
-    "id": 306,
+    "id": 308,
     "metric": "staker_emission_share",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -2541,7 +2562,7 @@
     "status": "confirmed"
    },
    {
-    "id": 307,
+    "id": 309,
     "metric": "total_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -2549,7 +2570,7 @@
     "status": "confirmed"
    },
    {
-    "id": 308,
+    "id": 310,
     "metric": "ve_locked.convex",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -2557,7 +2578,7 @@
     "status": "confirmed"
    },
    {
-    "id": 309,
+    "id": 311,
     "metric": "ve_locked.stakedao",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -2565,7 +2586,7 @@
     "status": "confirmed"
    },
    {
-    "id": 310,
+    "id": 312,
     "metric": "ve_locked.yearn",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -2573,7 +2594,7 @@
     "status": "confirmed"
    },
    {
-    "id": 311,
+    "id": 313,
     "metric": "ve_power.convex",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -2581,7 +2602,7 @@
     "status": "confirmed"
    },
    {
-    "id": 312,
+    "id": 314,
     "metric": "ve_power.stakedao",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -2589,7 +2610,7 @@
     "status": "confirmed"
    },
    {
-    "id": 313,
+    "id": 315,
     "metric": "ve_power.yearn",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -2597,7 +2618,7 @@
     "status": "confirmed"
    },
    {
-    "id": 314,
+    "id": 316,
     "metric": "ve_power_total",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -2605,7 +2626,7 @@
     "status": "confirmed"
    },
    {
-    "id": 315,
+    "id": 317,
     "metric": "vote_incentive_run_rate_usd",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -2613,7 +2634,7 @@
     "status": "confirmed"
    },
    {
-    "id": 103,
+    "id": 105,
     "metric": "flow_usd.fees",
     "value": 100,
     "observed_at": "2026-11-03T00:00:00.000Z",
@@ -2634,6 +2655,11 @@
   "source_failures": [],
   "document": null,
   "adapter_params": [
+   {
+    "metric": "circulating_supply",
+    "adapter": "chain.view_sum",
+    "params_doc": "terms: [{ contract, function, args?: contract names, sign?: 1 | -1, times?: { contract, function, decimals } (the term x that view / 10^decimals, read in the same multicall) }], decimals? (18), scale?: number, plus_share?: { contract, function, denominator }, locked_schedule?: { amount (tokens), first_tranche: YYYY-MM-DD, tranches, every_months, citation: URL } (subtracts amount x the tranches not yet out at the run block's time, 00:00Z each; not with scale or plus_share). The signed sum of uint256 views at the run block (refused when negative), x scale, x (1 + share), less the locked schedule (refused when negative). A view that reverts fails the level."
+   },
    {
     "metric": "price_usd",
     "adapter": "price.token",
@@ -4936,6 +4962,11 @@
   "document": null,
   "adapter_params": [
    {
+    "metric": "circulating_supply",
+    "adapter": "chain.view_sum",
+    "params_doc": "terms: [{ contract, function, args?: contract names, sign?: 1 | -1, times?: { contract, function, decimals } (the term x that view / 10^decimals, read in the same multicall) }], decimals? (18), scale?: number, plus_share?: { contract, function, denominator }, locked_schedule?: { amount (tokens), first_tranche: YYYY-MM-DD, tranches, every_months, citation: URL } (subtracts amount x the tranches not yet out at the run block's time, 00:00Z each; not with scale or plus_share). The signed sum of uint256 views at the run block (refused when negative), x scale, x (1 + share), less the locked schedule (refused when negative). A view that reverts fails the level."
+   },
+   {
     "metric": "price_usd",
     "adapter": "price.token",
     "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
@@ -5777,6 +5808,11 @@
   "document": null,
   "adapter_params": [
    {
+    "metric": "circulating_supply",
+    "adapter": "hype.circulating_supply",
+    "params_doc": "subtract: contract names (the wallets to take out), url?: the info API (default the asset's external_ids.hyperliquid_info, else https://api.hyperliquid.xyz/info). Hyperliquid's circulatingSupply of the HYPE/USDC pair less each wallet's spot total (spotClearinghouseState) and stake (delegatorSummary: delegated + undelegated + totalPendingWithdrawal); refused when not positive."
+   },
+   {
     "metric": "price_usd",
     "adapter": "price.token",
     "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
@@ -5814,7 +5850,7 @@
   ],
   "observations_in_force": [
    {
-    "id": 394,
+    "id": 396,
     "metric": "flow_usd.reserve",
     "value": 191,
     "observed_at": "2026-08-04T00:00:00.000Z",
@@ -5822,7 +5858,7 @@
     "status": "confirmed"
    },
    {
-    "id": 393,
+    "id": 395,
     "metric": "flow_usd.reserve",
     "value": 190,
     "observed_at": "2026-08-05T00:00:00.000Z",
@@ -5830,7 +5866,7 @@
     "status": "confirmed"
    },
    {
-    "id": 392,
+    "id": 394,
     "metric": "flow_usd.reserve",
     "value": 189,
     "observed_at": "2026-08-06T00:00:00.000Z",
@@ -5838,7 +5874,7 @@
     "status": "confirmed"
    },
    {
-    "id": 391,
+    "id": 393,
     "metric": "flow_usd.reserve",
     "value": 188,
     "observed_at": "2026-08-07T00:00:00.000Z",
@@ -5846,7 +5882,7 @@
     "status": "confirmed"
    },
    {
-    "id": 390,
+    "id": 392,
     "metric": "flow_usd.reserve",
     "value": 187,
     "observed_at": "2026-08-08T00:00:00.000Z",
@@ -5854,7 +5890,7 @@
     "status": "confirmed"
    },
    {
-    "id": 389,
+    "id": 391,
     "metric": "flow_usd.reserve",
     "value": 186,
     "observed_at": "2026-08-09T00:00:00.000Z",
@@ -5862,7 +5898,7 @@
     "status": "confirmed"
    },
    {
-    "id": 388,
+    "id": 390,
     "metric": "flow_usd.reserve",
     "value": 185,
     "observed_at": "2026-08-10T00:00:00.000Z",
@@ -5870,7 +5906,7 @@
     "status": "confirmed"
    },
    {
-    "id": 387,
+    "id": 389,
     "metric": "flow_usd.reserve",
     "value": 184,
     "observed_at": "2026-08-11T00:00:00.000Z",
@@ -5878,7 +5914,7 @@
     "status": "confirmed"
    },
    {
-    "id": 386,
+    "id": 388,
     "metric": "flow_usd.reserve",
     "value": 183,
     "observed_at": "2026-08-12T00:00:00.000Z",
@@ -5886,7 +5922,7 @@
     "status": "confirmed"
    },
    {
-    "id": 385,
+    "id": 387,
     "metric": "flow_usd.reserve",
     "value": 182,
     "observed_at": "2026-08-13T00:00:00.000Z",
@@ -5894,7 +5930,7 @@
     "status": "confirmed"
    },
    {
-    "id": 384,
+    "id": 386,
     "metric": "flow_usd.reserve",
     "value": 181,
     "observed_at": "2026-08-14T00:00:00.000Z",
@@ -5902,7 +5938,7 @@
     "status": "confirmed"
    },
    {
-    "id": 383,
+    "id": 385,
     "metric": "flow_usd.reserve",
     "value": 180,
     "observed_at": "2026-08-15T00:00:00.000Z",
@@ -5910,7 +5946,7 @@
     "status": "confirmed"
    },
    {
-    "id": 382,
+    "id": 384,
     "metric": "flow_usd.reserve",
     "value": 179,
     "observed_at": "2026-08-16T00:00:00.000Z",
@@ -5918,7 +5954,7 @@
     "status": "confirmed"
    },
    {
-    "id": 381,
+    "id": 383,
     "metric": "flow_usd.reserve",
     "value": 178,
     "observed_at": "2026-08-17T00:00:00.000Z",
@@ -5926,7 +5962,7 @@
     "status": "confirmed"
    },
    {
-    "id": 380,
+    "id": 382,
     "metric": "flow_usd.reserve",
     "value": 177,
     "observed_at": "2026-08-18T00:00:00.000Z",
@@ -5934,7 +5970,7 @@
     "status": "confirmed"
    },
    {
-    "id": 379,
+    "id": 381,
     "metric": "flow_usd.reserve",
     "value": 176,
     "observed_at": "2026-08-19T00:00:00.000Z",
@@ -5942,7 +5978,7 @@
     "status": "confirmed"
    },
    {
-    "id": 378,
+    "id": 380,
     "metric": "flow_usd.reserve",
     "value": 175,
     "observed_at": "2026-08-20T00:00:00.000Z",
@@ -5950,7 +5986,7 @@
     "status": "confirmed"
    },
    {
-    "id": 377,
+    "id": 379,
     "metric": "flow_usd.reserve",
     "value": 174,
     "observed_at": "2026-08-21T00:00:00.000Z",
@@ -5958,7 +5994,7 @@
     "status": "confirmed"
    },
    {
-    "id": 376,
+    "id": 378,
     "metric": "flow_usd.reserve",
     "value": 173,
     "observed_at": "2026-08-22T00:00:00.000Z",
@@ -5966,7 +6002,7 @@
     "status": "confirmed"
    },
    {
-    "id": 375,
+    "id": 377,
     "metric": "flow_usd.reserve",
     "value": 172,
     "observed_at": "2026-08-23T00:00:00.000Z",
@@ -5974,7 +6010,7 @@
     "status": "confirmed"
    },
    {
-    "id": 374,
+    "id": 376,
     "metric": "flow_usd.reserve",
     "value": 171,
     "observed_at": "2026-08-24T00:00:00.000Z",
@@ -5982,7 +6018,7 @@
     "status": "confirmed"
    },
    {
-    "id": 373,
+    "id": 375,
     "metric": "flow_usd.reserve",
     "value": 170,
     "observed_at": "2026-08-25T00:00:00.000Z",
@@ -5990,7 +6026,7 @@
     "status": "confirmed"
    },
    {
-    "id": 372,
+    "id": 374,
     "metric": "flow_usd.reserve",
     "value": 169,
     "observed_at": "2026-08-26T00:00:00.000Z",
@@ -5998,7 +6034,7 @@
     "status": "confirmed"
    },
    {
-    "id": 371,
+    "id": 373,
     "metric": "flow_usd.reserve",
     "value": 168,
     "observed_at": "2026-08-27T00:00:00.000Z",
@@ -6006,7 +6042,7 @@
     "status": "confirmed"
    },
    {
-    "id": 370,
+    "id": 372,
     "metric": "flow_usd.reserve",
     "value": 167,
     "observed_at": "2026-08-28T00:00:00.000Z",
@@ -6014,7 +6050,7 @@
     "status": "confirmed"
    },
    {
-    "id": 369,
+    "id": 371,
     "metric": "flow_usd.reserve",
     "value": 166,
     "observed_at": "2026-08-29T00:00:00.000Z",
@@ -6022,7 +6058,7 @@
     "status": "confirmed"
    },
    {
-    "id": 368,
+    "id": 370,
     "metric": "flow_usd.reserve",
     "value": 165,
     "observed_at": "2026-08-30T00:00:00.000Z",
@@ -6030,7 +6066,7 @@
     "status": "confirmed"
    },
    {
-    "id": 367,
+    "id": 369,
     "metric": "flow_usd.reserve",
     "value": 164,
     "observed_at": "2026-08-31T00:00:00.000Z",
@@ -6038,7 +6074,7 @@
     "status": "confirmed"
    },
    {
-    "id": 366,
+    "id": 368,
     "metric": "flow_usd.reserve",
     "value": 163,
     "observed_at": "2026-09-01T00:00:00.000Z",
@@ -6046,7 +6082,7 @@
     "status": "confirmed"
    },
    {
-    "id": 365,
+    "id": 367,
     "metric": "flow_usd.reserve",
     "value": 162,
     "observed_at": "2026-09-02T00:00:00.000Z",
@@ -6054,7 +6090,7 @@
     "status": "confirmed"
    },
    {
-    "id": 364,
+    "id": 366,
     "metric": "flow_usd.reserve",
     "value": 161,
     "observed_at": "2026-09-03T00:00:00.000Z",
@@ -6062,7 +6098,7 @@
     "status": "confirmed"
    },
    {
-    "id": 363,
+    "id": 365,
     "metric": "flow_usd.reserve",
     "value": 160,
     "observed_at": "2026-09-04T00:00:00.000Z",
@@ -6070,7 +6106,7 @@
     "status": "confirmed"
    },
    {
-    "id": 362,
+    "id": 364,
     "metric": "flow_usd.reserve",
     "value": 159,
     "observed_at": "2026-09-05T00:00:00.000Z",
@@ -6078,7 +6114,7 @@
     "status": "confirmed"
    },
    {
-    "id": 361,
+    "id": 363,
     "metric": "flow_usd.reserve",
     "value": 158,
     "observed_at": "2026-09-06T00:00:00.000Z",
@@ -6086,7 +6122,7 @@
     "status": "confirmed"
    },
    {
-    "id": 360,
+    "id": 362,
     "metric": "flow_usd.reserve",
     "value": 157,
     "observed_at": "2026-09-07T00:00:00.000Z",
@@ -6094,7 +6130,7 @@
     "status": "confirmed"
    },
    {
-    "id": 359,
+    "id": 361,
     "metric": "flow_usd.reserve",
     "value": 156,
     "observed_at": "2026-09-08T00:00:00.000Z",
@@ -6102,7 +6138,7 @@
     "status": "confirmed"
    },
    {
-    "id": 358,
+    "id": 360,
     "metric": "flow_usd.reserve",
     "value": 155,
     "observed_at": "2026-09-09T00:00:00.000Z",
@@ -6110,7 +6146,7 @@
     "status": "confirmed"
    },
    {
-    "id": 357,
+    "id": 359,
     "metric": "flow_usd.reserve",
     "value": 154,
     "observed_at": "2026-09-10T00:00:00.000Z",
@@ -6118,7 +6154,7 @@
     "status": "confirmed"
    },
    {
-    "id": 356,
+    "id": 358,
     "metric": "flow_usd.reserve",
     "value": 153,
     "observed_at": "2026-09-11T00:00:00.000Z",
@@ -6126,7 +6162,7 @@
     "status": "confirmed"
    },
    {
-    "id": 355,
+    "id": 357,
     "metric": "flow_usd.reserve",
     "value": 152,
     "observed_at": "2026-09-12T00:00:00.000Z",
@@ -6134,7 +6170,7 @@
     "status": "confirmed"
    },
    {
-    "id": 354,
+    "id": 356,
     "metric": "flow_usd.reserve",
     "value": 151,
     "observed_at": "2026-09-13T00:00:00.000Z",
@@ -6142,7 +6178,7 @@
     "status": "confirmed"
    },
    {
-    "id": 353,
+    "id": 355,
     "metric": "flow_usd.reserve",
     "value": 150,
     "observed_at": "2026-09-14T00:00:00.000Z",
@@ -6150,7 +6186,7 @@
     "status": "confirmed"
    },
    {
-    "id": 352,
+    "id": 354,
     "metric": "flow_usd.reserve",
     "value": 149,
     "observed_at": "2026-09-15T00:00:00.000Z",
@@ -6158,7 +6194,7 @@
     "status": "confirmed"
    },
    {
-    "id": 351,
+    "id": 353,
     "metric": "flow_usd.reserve",
     "value": 148,
     "observed_at": "2026-09-16T00:00:00.000Z",
@@ -6166,7 +6202,7 @@
     "status": "confirmed"
    },
    {
-    "id": 350,
+    "id": 352,
     "metric": "flow_usd.reserve",
     "value": 147,
     "observed_at": "2026-09-17T00:00:00.000Z",
@@ -6174,7 +6210,7 @@
     "status": "confirmed"
    },
    {
-    "id": 349,
+    "id": 351,
     "metric": "flow_usd.reserve",
     "value": 146,
     "observed_at": "2026-09-18T00:00:00.000Z",
@@ -6182,7 +6218,7 @@
     "status": "confirmed"
    },
    {
-    "id": 348,
+    "id": 350,
     "metric": "flow_usd.reserve",
     "value": 145,
     "observed_at": "2026-09-19T00:00:00.000Z",
@@ -6190,7 +6226,7 @@
     "status": "confirmed"
    },
    {
-    "id": 347,
+    "id": 349,
     "metric": "flow_usd.reserve",
     "value": 144,
     "observed_at": "2026-09-20T00:00:00.000Z",
@@ -6198,7 +6234,7 @@
     "status": "confirmed"
    },
    {
-    "id": 346,
+    "id": 348,
     "metric": "flow_usd.reserve",
     "value": 143,
     "observed_at": "2026-09-21T00:00:00.000Z",
@@ -6206,7 +6242,7 @@
     "status": "confirmed"
    },
    {
-    "id": 345,
+    "id": 347,
     "metric": "flow_usd.reserve",
     "value": 142,
     "observed_at": "2026-09-22T00:00:00.000Z",
@@ -6214,7 +6250,7 @@
     "status": "confirmed"
    },
    {
-    "id": 344,
+    "id": 346,
     "metric": "flow_usd.reserve",
     "value": 141,
     "observed_at": "2026-09-23T00:00:00.000Z",
@@ -6222,7 +6258,7 @@
     "status": "confirmed"
    },
    {
-    "id": 343,
+    "id": 345,
     "metric": "flow_usd.reserve",
     "value": 140,
     "observed_at": "2026-09-24T00:00:00.000Z",
@@ -6230,7 +6266,7 @@
     "status": "confirmed"
    },
    {
-    "id": 342,
+    "id": 344,
     "metric": "flow_usd.reserve",
     "value": 139,
     "observed_at": "2026-09-25T00:00:00.000Z",
@@ -6238,7 +6274,7 @@
     "status": "confirmed"
    },
    {
-    "id": 341,
+    "id": 343,
     "metric": "flow_usd.reserve",
     "value": 138,
     "observed_at": "2026-09-26T00:00:00.000Z",
@@ -6246,7 +6282,7 @@
     "status": "confirmed"
    },
    {
-    "id": 340,
+    "id": 342,
     "metric": "flow_usd.reserve",
     "value": 137,
     "observed_at": "2026-09-27T00:00:00.000Z",
@@ -6254,7 +6290,7 @@
     "status": "confirmed"
    },
    {
-    "id": 339,
+    "id": 341,
     "metric": "flow_usd.reserve",
     "value": 136,
     "observed_at": "2026-09-28T00:00:00.000Z",
@@ -6262,7 +6298,7 @@
     "status": "confirmed"
    },
    {
-    "id": 338,
+    "id": 340,
     "metric": "flow_usd.reserve",
     "value": 135,
     "observed_at": "2026-09-29T00:00:00.000Z",
@@ -6270,7 +6306,7 @@
     "status": "confirmed"
    },
    {
-    "id": 337,
+    "id": 339,
     "metric": "flow_usd.reserve",
     "value": 134,
     "observed_at": "2026-09-30T00:00:00.000Z",
@@ -6278,7 +6314,7 @@
     "status": "confirmed"
    },
    {
-    "id": 336,
+    "id": 338,
     "metric": "flow_usd.reserve",
     "value": 133,
     "observed_at": "2026-10-01T00:00:00.000Z",
@@ -6286,7 +6322,7 @@
     "status": "confirmed"
    },
    {
-    "id": 335,
+    "id": 337,
     "metric": "flow_usd.reserve",
     "value": 132,
     "observed_at": "2026-10-02T00:00:00.000Z",
@@ -6294,7 +6330,7 @@
     "status": "confirmed"
    },
    {
-    "id": 334,
+    "id": 336,
     "metric": "flow_usd.reserve",
     "value": 131,
     "observed_at": "2026-10-03T00:00:00.000Z",
@@ -6302,7 +6338,7 @@
     "status": "confirmed"
    },
    {
-    "id": 333,
+    "id": 335,
     "metric": "flow_usd.reserve",
     "value": 130,
     "observed_at": "2026-10-04T00:00:00.000Z",
@@ -6310,7 +6346,7 @@
     "status": "confirmed"
    },
    {
-    "id": 332,
+    "id": 334,
     "metric": "flow_usd.reserve",
     "value": 129,
     "observed_at": "2026-10-05T00:00:00.000Z",
@@ -6318,7 +6354,7 @@
     "status": "confirmed"
    },
    {
-    "id": 331,
+    "id": 333,
     "metric": "flow_usd.reserve",
     "value": 128,
     "observed_at": "2026-10-06T00:00:00.000Z",
@@ -6326,7 +6362,7 @@
     "status": "confirmed"
    },
    {
-    "id": 330,
+    "id": 332,
     "metric": "flow_usd.reserve",
     "value": 127,
     "observed_at": "2026-10-07T00:00:00.000Z",
@@ -6334,7 +6370,7 @@
     "status": "confirmed"
    },
    {
-    "id": 329,
+    "id": 331,
     "metric": "flow_usd.reserve",
     "value": 126,
     "observed_at": "2026-10-08T00:00:00.000Z",
@@ -6342,7 +6378,7 @@
     "status": "confirmed"
    },
    {
-    "id": 328,
+    "id": 330,
     "metric": "flow_usd.reserve",
     "value": 125,
     "observed_at": "2026-10-09T00:00:00.000Z",
@@ -6350,7 +6386,7 @@
     "status": "confirmed"
    },
    {
-    "id": 327,
+    "id": 329,
     "metric": "flow_usd.reserve",
     "value": 124,
     "observed_at": "2026-10-10T00:00:00.000Z",
@@ -6358,7 +6394,7 @@
     "status": "confirmed"
    },
    {
-    "id": 326,
+    "id": 328,
     "metric": "flow_usd.reserve",
     "value": 123,
     "observed_at": "2026-10-11T00:00:00.000Z",
@@ -6366,7 +6402,7 @@
     "status": "confirmed"
    },
    {
-    "id": 325,
+    "id": 327,
     "metric": "flow_usd.reserve",
     "value": 122,
     "observed_at": "2026-10-12T00:00:00.000Z",
@@ -6374,7 +6410,7 @@
     "status": "confirmed"
    },
    {
-    "id": 324,
+    "id": 326,
     "metric": "flow_usd.reserve",
     "value": 121,
     "observed_at": "2026-10-13T00:00:00.000Z",
@@ -6382,7 +6418,7 @@
     "status": "confirmed"
    },
    {
-    "id": 323,
+    "id": 325,
     "metric": "flow_usd.reserve",
     "value": 120,
     "observed_at": "2026-10-14T00:00:00.000Z",
@@ -6390,7 +6426,7 @@
     "status": "confirmed"
    },
    {
-    "id": 322,
+    "id": 324,
     "metric": "flow_usd.reserve",
     "value": 119,
     "observed_at": "2026-10-15T00:00:00.000Z",
@@ -6398,7 +6434,7 @@
     "status": "confirmed"
    },
    {
-    "id": 321,
+    "id": 323,
     "metric": "flow_usd.reserve",
     "value": 118,
     "observed_at": "2026-10-16T00:00:00.000Z",
@@ -6406,7 +6442,7 @@
     "status": "confirmed"
    },
    {
-    "id": 320,
+    "id": 322,
     "metric": "flow_usd.reserve",
     "value": 117,
     "observed_at": "2026-10-17T00:00:00.000Z",
@@ -6414,7 +6450,7 @@
     "status": "confirmed"
    },
    {
-    "id": 319,
+    "id": 321,
     "metric": "flow_usd.reserve",
     "value": 116,
     "observed_at": "2026-10-18T00:00:00.000Z",
@@ -6422,7 +6458,7 @@
     "status": "confirmed"
    },
    {
-    "id": 318,
+    "id": 320,
     "metric": "flow_usd.reserve",
     "value": 115,
     "observed_at": "2026-10-19T00:00:00.000Z",
@@ -6430,7 +6466,7 @@
     "status": "confirmed"
    },
    {
-    "id": 317,
+    "id": 319,
     "metric": "flow_usd.reserve",
     "value": 114,
     "observed_at": "2026-10-20T00:00:00.000Z",
@@ -6438,7 +6474,7 @@
     "status": "confirmed"
    },
    {
-    "id": 316,
+    "id": 318,
     "metric": "flow_usd.reserve",
     "value": 113,
     "observed_at": "2026-10-21T00:00:00.000Z",
@@ -6446,7 +6482,7 @@
     "status": "confirmed"
    },
    {
-    "id": 315,
+    "id": 317,
     "metric": "flow_usd.reserve",
     "value": 112,
     "observed_at": "2026-10-22T00:00:00.000Z",
@@ -6454,7 +6490,7 @@
     "status": "confirmed"
    },
    {
-    "id": 314,
+    "id": 316,
     "metric": "flow_usd.reserve",
     "value": 111,
     "observed_at": "2026-10-23T00:00:00.000Z",
@@ -6462,7 +6498,7 @@
     "status": "confirmed"
    },
    {
-    "id": 313,
+    "id": 315,
     "metric": "flow_usd.reserve",
     "value": 110,
     "observed_at": "2026-10-24T00:00:00.000Z",
@@ -6470,7 +6506,7 @@
     "status": "confirmed"
    },
    {
-    "id": 312,
+    "id": 314,
     "metric": "flow_usd.reserve",
     "value": 109,
     "observed_at": "2026-10-25T00:00:00.000Z",
@@ -6478,7 +6514,7 @@
     "status": "confirmed"
    },
    {
-    "id": 311,
+    "id": 313,
     "metric": "flow_usd.reserve",
     "value": 108,
     "observed_at": "2026-10-26T00:00:00.000Z",
@@ -6486,7 +6522,7 @@
     "status": "confirmed"
    },
    {
-    "id": 310,
+    "id": 312,
     "metric": "flow_usd.reserve",
     "value": 107,
     "observed_at": "2026-10-27T00:00:00.000Z",
@@ -6494,7 +6530,7 @@
     "status": "confirmed"
    },
    {
-    "id": 309,
+    "id": 311,
     "metric": "flow_usd.reserve",
     "value": 106,
     "observed_at": "2026-10-28T00:00:00.000Z",
@@ -6502,7 +6538,7 @@
     "status": "confirmed"
    },
    {
-    "id": 308,
+    "id": 310,
     "metric": "flow_usd.reserve",
     "value": 105,
     "observed_at": "2026-10-29T00:00:00.000Z",
@@ -6510,7 +6546,7 @@
     "status": "confirmed"
    },
    {
-    "id": 307,
+    "id": 309,
     "metric": "flow_usd.reserve",
     "value": 104,
     "observed_at": "2026-10-30T00:00:00.000Z",
@@ -6518,7 +6554,7 @@
     "status": "confirmed"
    },
    {
-    "id": 306,
+    "id": 308,
     "metric": "flow_usd.reserve",
     "value": 103,
     "observed_at": "2026-10-31T00:00:00.000Z",
@@ -6526,7 +6562,7 @@
     "status": "confirmed"
    },
    {
-    "id": 305,
+    "id": 307,
     "metric": "flow_usd.reserve",
     "value": 102,
     "observed_at": "2026-11-01T00:00:00.000Z",
@@ -6535,7 +6571,7 @@
    },
    {
     "id": 1,
-    "metric": "circulating_supply",
+    "metric": "chainlink_circulating",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
     "source": "api",
@@ -6543,6 +6579,22 @@
    },
    {
     "id": 2,
+    "metric": "circulating_gap_chainlink",
+    "value": 7,
+    "observed_at": "2026-11-02T00:00:00.000Z",
+    "source": "api",
+    "status": "confirmed"
+   },
+   {
+    "id": 3,
+    "metric": "circulating_supply",
+    "value": 7,
+    "observed_at": "2026-11-02T00:00:00.000Z",
+    "source": "api",
+    "status": "confirmed"
+   },
+   {
+    "id": 4,
     "metric": "emission_rate_annual",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -6550,7 +6602,7 @@
     "status": "confirmed"
    },
    {
-    "id": 304,
+    "id": 306,
     "metric": "flow_usd.reserve",
     "value": 101,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -6558,7 +6610,7 @@
     "status": "confirmed"
    },
    {
-    "id": 403,
+    "id": 405,
     "metric": "price_usd",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -6566,7 +6618,7 @@
     "status": "confirmed"
    },
    {
-    "id": 404,
+    "id": 406,
     "metric": "released_rate",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -6574,7 +6626,7 @@
     "status": "confirmed"
    },
    {
-    "id": 405,
+    "id": 407,
     "metric": "reserve_link",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -6582,7 +6634,7 @@
     "status": "confirmed"
    },
    {
-    "id": 406,
+    "id": 408,
     "metric": "staked_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -6590,7 +6642,7 @@
     "status": "confirmed"
    },
    {
-    "id": 407,
+    "id": 409,
     "metric": "staker_emission_share",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -6598,7 +6650,7 @@
     "status": "confirmed"
    },
    {
-    "id": 408,
+    "id": 410,
     "metric": "total_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -6606,7 +6658,7 @@
     "status": "confirmed"
    },
    {
-    "id": 303,
+    "id": 305,
     "metric": "flow_usd.reserve",
     "value": 100,
     "observed_at": "2026-11-03T00:00:00.000Z",
@@ -6627,6 +6679,11 @@
   "source_failures": [],
   "document": null,
   "adapter_params": [
+   {
+    "metric": "circulating_supply",
+    "adapter": "chain.view_sum",
+    "params_doc": "terms: [{ contract, function, args?: contract names, sign?: 1 | -1, times?: { contract, function, decimals } (the term x that view / 10^decimals, read in the same multicall) }], decimals? (18), scale?: number, plus_share?: { contract, function, denominator }, locked_schedule?: { amount (tokens), first_tranche: YYYY-MM-DD, tranches, every_months, citation: URL } (subtracts amount x the tranches not yet out at the run block's time, 00:00Z each; not with scale or plus_share). The signed sum of uint256 views at the run block (refused when negative), x scale, x (1 + share), less the locked schedule (refused when negative). A view that reverts fails the level."
+   },
    {
     "metric": "price_usd",
     "adapter": "price.token",
@@ -7529,6 +7586,11 @@
   "document": null,
   "adapter_params": [
    {
+    "metric": "circulating_supply",
+    "adapter": "chain.view_sum",
+    "params_doc": "terms: [{ contract, function, args?: contract names, sign?: 1 | -1, times?: { contract, function, decimals } (the term x that view / 10^decimals, read in the same multicall) }], decimals? (18), scale?: number, plus_share?: { contract, function, denominator }, locked_schedule?: { amount (tokens), first_tranche: YYYY-MM-DD, tranches, every_months, citation: URL } (subtracts amount x the tranches not yet out at the run block's time, 00:00Z each; not with scale or plus_share). The signed sum of uint256 views at the run block (refused when negative), x scale, x (1 + share), less the locked schedule (refused when negative). A view that reverts fails the level."
+   },
+   {
     "metric": "flow_usd.fees_core",
     "adapter": "lit.exchange_fees_daily",
     "params_doc": "kinds: string[] (required, no duplicates; each one of maker_fee, taker_fee, transfer_fee, withdraw_fee, liquidation_fee, buyback, buyback_usdc): Lighter exchangeMetrics kinds summed per UTC day; api?: string (default https://mainnet.zklighter.elliot.ai/api/v1; the Robinhood instance is https://api.rh.lighter.xyz/api/v1); days?: 1..30 (default 7; the run's --backfill-days overrides it)"
@@ -8375,7 +8437,7 @@
    },
    {
     "id": 306,
-    "metric": "staked_supply",
+    "metric": "reserved_balance",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
     "source": "api",
@@ -8383,7 +8445,7 @@
    },
    {
     "id": 307,
-    "metric": "staker_emission_share",
+    "metric": "staked_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
     "source": "api",
@@ -8391,7 +8453,7 @@
    },
    {
     "id": 308,
-    "metric": "total_supply",
+    "metric": "staker_emission_share",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
     "source": "api",
@@ -8399,6 +8461,14 @@
    },
    {
     "id": 309,
+    "metric": "total_supply",
+    "value": 7,
+    "observed_at": "2026-11-02T00:00:00.000Z",
+    "source": "api",
+    "status": "confirmed"
+   },
+   {
+    "id": 310,
     "metric": "unlocks_next_year",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -8428,6 +8498,11 @@
   "document": null,
   "adapter_params": [
    {
+    "metric": "circulating_supply",
+    "adapter": "solana.supply_less_owners",
+    "params_doc": "mint: contract name, subtract: contract names of owners (not token accounts), rpc_url_env? (ORION_SOL_RPC_URL). getTokenSupply of the mint less each owner's balance over all its token accounts (getTokenAccountsByOwner), finalized, at fetch time; refused when not positive."
+   },
+   {
     "metric": "price_usd",
     "adapter": "price.token",
     "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
@@ -8436,6 +8511,11 @@
     "metric": "price_usd",
     "adapter": "price.token_check",
     "params_doc": "ref: a token ref in prices.yaml. The same read as price.token, by its prices.yaml check: the check method's USD value; for a bound check, the primary inside the band and the nearer bound (in USD) outside it."
+   },
+   {
+    "metric": "reserved_balance",
+    "adapter": "solana.owners_balance",
+    "params_doc": "mint: contract name, owners: contract names of owners (not token accounts), rpc_url_env? (ORION_SOL_RPC_URL). The sum of each owner's balance of the mint over all its token accounts (getTokenAccountsByOwner), finalized, at fetch time: what solana.supply_less_owners subtracts, as a level."
    },
    {
     "metric": "unlocks_next_year",
@@ -10739,6 +10819,11 @@
   "document": null,
   "adapter_params": [
    {
+    "metric": "circulating_supply",
+    "adapter": "chain.view_sum",
+    "params_doc": "terms: [{ contract, function, args?: contract names, sign?: 1 | -1, times?: { contract, function, decimals } (the term x that view / 10^decimals, read in the same multicall) }], decimals? (18), scale?: number, plus_share?: { contract, function, denominator }, locked_schedule?: { amount (tokens), first_tranche: YYYY-MM-DD, tranches, every_months, citation: URL } (subtracts amount x the tranches not yet out at the run block's time, 00:00Z each; not with scale or plus_share). The signed sum of uint256 views at the run block (refused when negative), x scale, x (1 + share), less the locked schedule (refused when negative). A view that reverts fails the level."
+   },
+   {
     "metric": "price_usd",
     "adapter": "price.token",
     "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
@@ -12330,6 +12415,11 @@
   "document": null,
   "adapter_params": [
    {
+    "metric": "circulating_supply",
+    "adapter": "chain.view_sum",
+    "params_doc": "terms: [{ contract, function, args?: contract names, sign?: 1 | -1, times?: { contract, function, decimals } (the term x that view / 10^decimals, read in the same multicall) }], decimals? (18), scale?: number, plus_share?: { contract, function, denominator }, locked_schedule?: { amount (tokens), first_tranche: YYYY-MM-DD, tranches, every_months, citation: URL } (subtracts amount x the tranches not yet out at the run block's time, 00:00Z each; not with scale or plus_share). The signed sum of uint256 views at the run block (refused when negative), x scale, x (1 + share), less the locked schedule (refused when negative). A view that reverts fails the level."
+   },
+   {
     "metric": "price_usd",
     "adapter": "price.token",
     "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
@@ -13188,6 +13278,11 @@
   "source_failures": [],
   "document": null,
   "adapter_params": [
+   {
+    "metric": "circulating_supply",
+    "adapter": "chain.view_sum",
+    "params_doc": "terms: [{ contract, function, args?: contract names, sign?: 1 | -1, times?: { contract, function, decimals } (the term x that view / 10^decimals, read in the same multicall) }], decimals? (18), scale?: number, plus_share?: { contract, function, denominator }, locked_schedule?: { amount (tokens), first_tranche: YYYY-MM-DD, tranches, every_months, citation: URL } (subtracts amount x the tranches not yet out at the run block's time, 00:00Z each; not with scale or plus_share). The signed sum of uint256 views at the run block (refused when negative), x scale, x (1 + share), less the locked schedule (refused when negative). A view that reverts fails the level."
+   },
    {
     "metric": "price_usd",
     "adapter": "price.token",
@@ -14081,6 +14176,11 @@
   "document": null,
   "adapter_params": [
    {
+    "metric": "circulating_supply",
+    "adapter": "chain.view_sum",
+    "params_doc": "terms: [{ contract, function, args?: contract names, sign?: 1 | -1, times?: { contract, function, decimals } (the term x that view / 10^decimals, read in the same multicall) }], decimals? (18), scale?: number, plus_share?: { contract, function, denominator }, locked_schedule?: { amount (tokens), first_tranche: YYYY-MM-DD, tranches, every_months, citation: URL } (subtracts amount x the tranches not yet out at the run block's time, 00:00Z each; not with scale or plus_share). The signed sum of uint256 views at the run block (refused when negative), x scale, x (1 + share), less the locked schedule (refused when negative). A view that reverts fails the level."
+   },
+   {
     "metric": "diem_price_usd",
     "adapter": "price.token",
     "params_doc": "ref: a token ref in prices.yaml (eip155:<chain>/<address>, solana:mainnet/<mint>, hyperliquid:spot/@<index>). The live USD price by its prices.yaml primary: an EVM method at the run block (TWAPs over the last hour), quote refs priced the same way; an off-chain venue read now x the Ethereum USDC/USD feed."
@@ -14919,6 +15019,11 @@
   "source_failures": [],
   "document": null,
   "adapter_params": [
+   {
+    "metric": "circulating_supply",
+    "adapter": "chain.view_sum",
+    "params_doc": "terms: [{ contract, function, args?: contract names, sign?: 1 | -1, times?: { contract, function, decimals } (the term x that view / 10^decimals, read in the same multicall) }], decimals? (18), scale?: number, plus_share?: { contract, function, denominator }, locked_schedule?: { amount (tokens), first_tranche: YYYY-MM-DD, tranches, every_months, citation: URL } (subtracts amount x the tranches not yet out at the run block's time, 00:00Z each; not with scale or plus_share). The signed sum of uint256 views at the run block (refused when negative), x scale, x (1 + share), less the locked schedule (refused when negative). A view that reverts fails the level."
+   },
    {
     "metric": "price_usd",
     "adapter": "price.token",

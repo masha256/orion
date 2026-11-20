@@ -27,7 +27,8 @@ contracts:
   splitter: "0x05fc8174050f0a41deb7e562187911d45cd5e401" # YCRVSplitter (reference; not read)
   crvusd: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E"
   fee_burner: "0xb911fcce8d5afcec73e072653107260bb23c1ee8" # Yearn FeeBurner: auctions the vote incentives into crvUSD for the splitter
-  yearn_treasury: "0x044f9c86a0da637a235e83564215dc271bc0defc" # SimpleTreasuryVault: the splitter's 20 percent and the Receiver's 10
+  yearn_treasury: "0x044f9c86a0da637a235e83564215dc271bc0defc" # SimpleTreasuryVault: the splitter's 20 percent and the Receiver's 10; its st-yCRV is not circulating (decision N1c)
+  yearn_treasury_vault: "0x93A62dA5a14C80f265DAbC077fCEE437B1a0Efde" # Yearn Treasury Vault (treasury.ychad.eth): docs.yearn.fi/developers/addresses/core-contracts "Treasury | treasury.ychad.eth | 0x93A62dA5..."; its st-yCRV is not circulating (decision N1c)
   # st-yCRV (yVault 0.4.3, auto-compounding yCRV): 10 percent performance fee, paid to the treasury in its own shares.
   st_ycrv: "0x27b5739e22ad9033bcbf192059122d163b60349d"
   # YCrvRevenueSwapper (owner 0x4444aaaacdba5580282365e25b16309bd770ce4a): since ~2026-10-07 it sells st-yCRV fee shares the
@@ -60,13 +61,21 @@ metrics:
     critical: true
     source: { type: erc20_supply, token: token }
 
-  # CoinGecko has no circulating supply for this wrapper (Mike, 2026-10-12): every token is in circulation, so it is
-  # the on-chain total. Display basis for market cap only.
+  # On chain (Phase 3 R3, decision N1c): the total less the yCRV inside the st-yCRV the two Yearn treasuries hold (shares
+  # x pricePerShare, 2.681874 on 2026-11-20: 1,674,049 + 741,365). Staked yCRV (YBS, st-yCRV) is the holders' and stays
+  # in, as does the treasury's pool liquidity. Display basis for market cap only.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: erc20_supply, token: token }
+    source:
+      type: adapter
+      name: chain.view_sum
+      params:
+        terms:
+          - { contract: token, function: totalSupply }
+          - { contract: st_ycrv, function: balanceOf, args: [ yearn_treasury_vault ], times: { contract: st_ycrv, function: pricePerShare, decimals: 18 }, sign: -1 }
+          - { contract: st_ycrv, function: balanceOf, args: [ yearn_treasury ], times: { contract: st_ycrv, function: pricePerShare, decimals: 18 }, sign: -1 }
 
   staked_supply:
     type: level

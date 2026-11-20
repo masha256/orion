@@ -57,7 +57,8 @@ describe('orion data fetch', () => {
   it('fetches one asset, writes observations, and reports each source', async () => {
     const result = JSON.parse(await orion('data', 'fetch', 'mini', '--json'));
     expect(result.outcome).toBe('ok');
-    expect(result.sources.map((s: { sourceId: string }) => s.sourceId)).toContain('coingecko'); // circulating_supply
+    expect(result.sources.map((s: { sourceId: string }) => s.sourceId)).toContain('chain_levels'); // circulating_supply (on chain in a priced root since Phase 3 R3)
+    expect(result.sources.map((s: { sourceId: string }) => s.sourceId)).not.toContain('coingecko');
     expect(result.sources.map((s: { sourceId: string }) => s.sourceId)).toContain('adapter:price.token');
     const shown = JSON.parse(await orion('data', 'show', 'mini', 'price_usd', '--json'));
     expect(shown[0]).toMatchObject({ value: 10, source: 'onchain' }); // price.token: the feed read at the run block
@@ -67,7 +68,7 @@ describe('orion data fetch', () => {
   it('prints a readable summary', async () => {
     const text = await orion('data', 'fetch', 'mini');
     expect(text).toMatch(/^MINI fetch ok$/m);
-    expect(text).toMatch(/ok\s+coingecko\s+wrote circulating_supply/);
+    expect(text).toMatch(/ok\s+chain_levels\s+wrote [^\n]*circulating_supply/);
     expect(text).toMatch(/ok\s+adapter:price\.token\s+wrote price_usd/);
     expect(text).toMatch(/check price_usd vs http_json:.*10 vs 10\.1 \(1\.00% within 2%\)/);
   });

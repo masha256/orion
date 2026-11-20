@@ -27,7 +27,7 @@ Timelock's one-off treasury burn).
 - The contract and function that states the protocol's share of swap fees, as a fraction (a `contract_read`; use
   `decimals`/`scale` to turn bps into a fraction).
 - The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary (a Chainlink feed, else the deepest pool's TWAP) and a check on another venue (UNI: the UNI/USD feed, checked against the Uniswap v3 UNI/WETH TWAP).
-- CoinGecko id (CoinGecko for circulating supply only (until R3), never a price).
+- CoinGecko id (an identifier only: no CoinGecko field loads since Phase 3 R3).
 
 ## Checks
 
@@ -83,14 +83,15 @@ metrics:
     staleness_days: 7
     critical: true
     source: { type: erc20_supply, token: token, subtract_balances: [ burn_sink ] }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: coingecko, id: {{coingecko_id}}, field: total_supply } }
 
+  # On chain (Phase 3 R3: no CoinGecko field loads): start from total_supply's read and subtract every holder that is
+  # not circulating (a treasury, an unvested allocation, a cited locked_schedule), each a named `contracts:` entry with
+  # its citation (chain.view_sum terms; on Solana, solana.supply_less_owners). Staking with an exit stays circulating.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: {{coingecko_id}}, field: circulating_supply }
+    source: { type: erc20_supply, token: token, subtract_balances: [ burn_sink ] }
 
   staked_supply:
     type: level
@@ -187,6 +188,6 @@ supply_tolerance_tokens: 1
 3. Licence: no first-party API; the RPC's row in `docs/ops/sources-register.md`.
 4. `not_measured` lines and why (variant (b): LP fees until a `pool_scan` or `event_sum` exists).
 5. Checks: `supply` and `price` measured by hand over 30 days; the share read equals the assumed share today.
-6. Supply: total = on-chain less the sink; circulating from CoinGecko; treasury vests as `dilution`.
+6. Supply: total = on-chain less the sink; circulating on chain (total less the non-circulating holders); treasury vests as `dilution`.
 7. Imminent events: fee-switch votes, new pool versions, burn-route changes.
 8. Expected figures re-measured once by hand (the 91-day burn, in USD and tokens) before launch.

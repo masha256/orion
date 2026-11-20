@@ -84,6 +84,9 @@ function world() {
       [callKey(C.usds, 'decimals')]: 18n,
       [callKey(C.lssky, 'totalSupply')]: BigInt(STAKED) * E18,
       [callKey(C.splitter, 'burn')]: 55n * 10n ** 16n,
+      // circulating_supply's terms (Phase 3 R3, N1i), measured 2026-11-19 (sky-lit.md): the Pause Proxy, the converter's take().
+      [callKey(C.token, 'balanceOf', [C.pause_proxy])]: 39_602_953n * E18,
+      [callKey(C.mkr_sky, 'take')]: 39_984_240n * E18,
     },
   });
   const rpc = {
@@ -109,6 +112,9 @@ describe('assets/sky.yaml', () => {
     // Both halves of the surplus reach staked SKY, as cash (Mike, 2026-10-16).
     expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.stakers', 'flow_usd.buyback']);
     expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
+    // Phase 3 R3 Task 4: circulating on chain, the total less the Pause Proxy and the converter's take() (3 terms).
+    const circ = config.metrics.circulating_supply.source as { type: string; name?: string; params?: { terms?: unknown[] } };
+    expect([circ.type, circ.name, circ.params?.terms?.length]).toEqual(['adapter', 'chain.view_sum', 3]);
     expect(config.income_statement!.holders!.map((h) => [h.id, h.bucket, h.capture_rule, h.recipient_base])).toEqual([['stakers', 'cash', 'programmatic', 'staked'], ['buyback', 'cash', 'programmatic', 'staked']]);
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
     // No DefiLlama (Mike, 2026-10-11): every flow is read on chain.
@@ -124,7 +130,8 @@ describe('assets/sky.yaml', () => {
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
     // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): no fetch-time price cross-check (its check runs hourly in the writer).
-    expect(loadAsset(ROOT, 'sky').hash).toBe('215dfdf1f0709ce084a77c57d9b847fcd86ea94c338803bea21bceab02b382b9');
+    // Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+    expect(loadAsset(ROOT, 'sky').hash).toBe('33fda1251d993c36003b17c959dac48269d2ca7ed3683d2018e68d0c21478ed9');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -147,7 +154,7 @@ describe('assets/sky.yaml', () => {
       ['adapter:price.token', ['primary:price_usd']],
       // No price.token_check cross-check (Ruling R22): the check runs hourly in the price writer (ORION WATCH).
       ['chain_levels', ['primary:total_supply', 'primary:staked_supply', 'primary:splitter_burn_share']],
-      ['coingecko', ['primary:circulating_supply']],
+      ['adapter:chain.view_sum', ['primary:circulating_supply']], // on chain since Phase 3 R3 (no coingecko batch)
       ['constant', ['primary:staker_emission_share', 'primary:emission_rate_annual']],
     ]);
     expect(plan.flowGroups.map((g) => [g.sourceId, g.members.map((m) => m.metricKey)])).toEqual([
@@ -174,6 +181,9 @@ describe('assets/sky.yaml', () => {
     const value = async (metric: string) => (await rows(metric)).at(-1)!.value;
     expect(await value('price_usd')).toBeCloseTo(PRICE, 12); // a TWAP: the cumulative arithmetic, not a stored answer
     expect(await value('staked_supply')).toBe(STAKED);
+    // On chain (Phase 3 R3): the total less the Pause Proxy and the converter's take(); lsSKY stays in.
+    expect(await value('circulating_supply')).toBe(SUPPLY - 39_602_953 - 39_984_240);
+    expect(w.http.calls.filter((c) => /coingecko/.test(c.url))).toEqual([]);
     expect(await value('splitter_burn_share')).toBe(0.55);
 
     const usdsScan = r.sources.find((s) => s.sourceId.startsWith('transfer_flow:usds>usds_farm'))!;

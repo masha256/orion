@@ -12,8 +12,8 @@ contracts:
   token: "0x232CE3bd40fCd6f80f3d55A522d03f25Df784Ee2" # LIT (ERC-20, 1B minted); burns go to dead
   dead: "0x000000000000000000000000000000000000dEaD" # 18.09M LIT on 2026-10-16: the two quarterly burns
   burn_safe: "0x3dd7c834eaa70c98e1c224808a3c62163b344dae" # Safe (2 of 3): sends each quarter's burn from the reserve to dead
-  ecosystem_reserve: "0xe554dcb002e4f3546d67e6deed84323eed989d62" # 231.8M LIT on 2026-10-16: the burns are drawn from here
-  buyback_wallet: "0x1a51016fad47de690d1f48adf2f6407f3cdc160d" # the bought LIT, withdrawn from the L2; funds staking rewards
+  ecosystem_reserve: "0xe554dcb002e4f3546d67e6deed84323eed989d62" # 231.8M LIT on 2026-10-16: the burns are drawn from here; not circulating (Phase 3 R3): https://x.com/Lighter_xyz/status/2005862687331303804 "The remaining 25% of the ecosystem allocation will be used for future points seasons and, to a lesser degree, partnerships and growth initiatives."
+  buyback_wallet: "0x1a51016fad47de690d1f48adf2f6407f3cdc160d" # the bought LIT, withdrawn from the L2; funds staking rewards; not circulating (Phase 3 R3: Lighter's own, not yet paid out; onboarding note 2026-10-16)
   prime_passthrough: "0xab00e8f5f76e0522d9599b8735d4f6cfdc6e5f48" # holds nothing: forwards each transfer to Coinbase Prime 1 (0xcd53…ca7b) within minutes
 
 ingest: { chain_id: 1, rpc_url_env: ORION_ETH_RPC_URL, backfill_days: 100 }
@@ -49,12 +49,25 @@ metrics:
     critical: true
     source: { type: erc20_supply, token: token, subtract_balances: [ dead ] }
 
-  # CoinGecko's own definition (250M on 2026-10-16: the airdrop); display only, the report's market cap basis.
+  # On chain plus the cited schedule (Phase 3 R3, decision N1f): the total less dead, the ecosystem reserve and the
+  # buyback wallet, less the team and investor tokens still locked (500M: a 1-year lock, then 36 monthly tranches from
+  # 2027-01-29; Lighter: "The team and investors all have a 1-year unlock and 3-year linear vesting after. The breakdown
+  # is 26% team, 24% investor."): 245,112,910 on 2026-11-20. Staked LIT and the L2's user LIT stay in (staking has an
+  # exit, decision N1a). Display only, the report's market cap basis.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: lighter, field: circulating_supply }
+    source:
+      type: adapter
+      name: chain.view_sum
+      params:
+        terms:
+          - { contract: token, function: totalSupply }
+          - { contract: token, function: balanceOf, args: [ dead ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ ecosystem_reserve ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ buyback_wallet ], sign: -1 }
+        locked_schedule: { amount: 500000000, first_tranche: "2027-01-29", tranches: 36, every_months: 1, citation: "https://x.com/Lighter_xyz/status/2005862687331303804" }
 
   # LIT staking pays rewards in bought LIT (redistribution), not a fee share the model values: the burn reaches every holder.
   staked_supply:

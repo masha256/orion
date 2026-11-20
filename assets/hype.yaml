@@ -7,6 +7,9 @@ name: Hyperliquid
 contracts:
   assistance_fund: "0xfefefefefefefefefefefefefefefefefefefefe" # converts about 99 percent of protocol fees to HYPE inside L1 execution; listed as non-circulating
   unvested: "0x43e9abea1910387c4292bca4b94de81462f8a251" # unvested contributor and foundation tokens (attribution unconfirmed); inside the total supply; read by nothing, documentation only
+  # Not circulating (Phase 3 R3, decision N1g): the two genesis wallets Hyperliquid's own circulatingSupply still counts.
+  hyper_foundation: "0xd57ecca444a9acb7208d286be439de12dd09de5d" # Hyper Foundation budget (genesis exactly 60,000,000): hyperfnd.medium.com/hype-genesis-1830a4dc2e3f "60,000,000 HYPE are allocated to the Hyper Foundation budget, 3,000,000 HYPE to grants"
+  community_grants: "0xa20fcfa0507fe762011962cc581b95bbbc3bbdba" # community grants (genesis exactly 3,000,000, the same post; matched by genesis amount, no explorer label)
   zero: "0x0000000000000000000000000000000000000000"
   dead: "0x000000000000000000000000000000000000dead"
   # USDC reserve yield (AQAv2): the system interest address for USDC (0x50..00 + token index 0) pays the Assistance Fund each
@@ -43,13 +46,14 @@ metrics:
     critical: true
     source: { type: adapter, name: hype.total_supply, params: { subtract: [assistance_fund, zero, dead] } }
 
-  # CoinGecko's own definition (222M against the API's 299M); display only, the report's market cap basis; no consistent
-  # cross-check.
+  # First party (Phase 3 R3, decision N1g): Hyperliquid's own circulatingSupply (spotMetaAndAssetCtxs) less the Hyper
+  # Foundation's and the community grants' HYPE, spot and staked: 301,557,370 - 60,642,286 - 2,979,878 on 2026-11-20.
+  # Staked HYPE stays in (staking has an exit, decision N1a). Display only, the report's market cap basis.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: hyperliquid, field: circulating_supply }
+    source: { type: adapter, name: hype.circulating_supply, params: { subtract: [ hyper_foundation, community_grants ] } }
 
   # The sum of validator stake (about 441M).
   staked_supply:

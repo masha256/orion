@@ -159,8 +159,13 @@ describe('provenance builders', () => {
     const price = locatorOfSource(crv, 'price_usd', crv.metrics.price_usd.source!);
     expect(price).toEqual({ adapter: 'price.token', params: { ref: 'eip155:1/0xd533a949740bb3306d119cc777fa900ba034cd52' } });
     expect(chainOfSource(crv, crv.metrics.price_usd.source!)).toBe('eip155:1');
+    // circulating_supply is on chain since Phase 3 R3 (chain.view_sum); the market-data locator stays until R8 (a coingecko
+    // source no config can name any more, shaped here by hand).
     const circ = locatorOfSource(crv, 'circulating_supply', crv.metrics.circulating_supply.source!);
-    expect(circ).toMatchObject({ provider: 'coingecko', endpoint: '/coins/markets', field: 'circulating_supply' });
+    expect(circ).toMatchObject({ adapter: 'chain.view_sum' });
+    expect(chainOfSource(crv, crv.metrics.circulating_supply.source!)).toBe('eip155:1');
+    const market = locatorOfSource(crv, 'circulating_supply', { type: 'coingecko', id: 'curve-dao-token', field: 'circulating_supply' });
+    expect(market).toMatchObject({ provider: 'coingecko', endpoint: '/coins/markets', field: 'circulating_supply' });
     const pump = loadAsset(ROOT, 'pump').config;
     expect(chainOfSource(pump, pump.metrics.total_supply.source!)).toBe('solana:mainnet');
     const hype = loadAsset(ROOT, 'hype').config;

@@ -18,7 +18,7 @@ of its own take buying its token, which is burned (supply drop) or held.
 
 - The mint (Solana) or token (EVM), and whether the mint authority is revoked (then every supply fall is a burn).
 - The wallets that buy and burn, and every fee-recipient account (bonding curve, AMM protocol fee, creator vaults).
-- The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary, for a Solana token usually its deepest pool's reserves read through our own Solana RPC (PUMP: the PumpSwap PUMP/USDC vaults x USDC/USD), and a check on another venue (PUMP: the Meteora DLMM PUMP/USDC active bin). CoinGecko id (CoinGecko for circulating supply only (until R3), never a price).
+- The token's `prices.yaml` entry (Phase 3 R2; the file's header documents the methods): a primary, for a Solana token usually its deepest pool's reserves read through our own Solana RPC (PUMP: the PumpSwap PUMP/USDC vaults x USDC/USD), and a check on another venue (PUMP: the Meteora DLMM PUMP/USDC active bin). CoinGecko id (an identifier only: no CoinGecko field loads since Phase 3 R3).
 - The unlock schedule of already-minted team/investor tokens (a cited schedule: `dilution`).
 
 ## Checks
@@ -71,14 +71,15 @@ metrics:
     staleness_days: 7
     critical: true
     source: { type: adapter, name: solana.token_supply, params: { mint: token } }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: coingecko, id: {{coingecko_id}}, field: total_supply } }
 
+  # On chain (Phase 3 R3: no CoinGecko field loads): start from total_supply's read and subtract every holder that is
+  # not circulating (a treasury, an unvested allocation, a cited locked_schedule), each a named `contracts:` entry with
+  # its citation (chain.view_sum terms; on Solana, solana.supply_less_owners). Staking with an exit stays circulating.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: {{coingecko_id}}, field: circulating_supply }
+    source: { type: adapter, name: solana.token_supply, params: { mint: token } }
 
   staked_supply:
     type: level
@@ -154,7 +155,7 @@ capture_rule: discretionary
 4. `not_measured` lines and why. **Revenue `not_measured` means the asset is deferred** until `balance_delta` ships
    (or an EVM fee recipient can be scanned with `transfer_flow`).
 5. Checks: `price`; plan the Phase 3 `balance` check on the burn wallets.
-6. Supply: total = mint supply (burns included); circulating from CoinGecko; unlocks as `dilution` with a cited
+6. Supply: total = mint supply (burns included); circulating on chain (total less the non-circulating holders); unlocks as `dilution` with a cited
    schedule.
 7. Imminent events: fee-share changes (PUMP's cut from 100 to 50 percent), new products.
 8. Expected figures re-measured once by hand: 30 days of supply fall vs the wallets' burn instructions.

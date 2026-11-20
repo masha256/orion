@@ -13,6 +13,13 @@ contracts:
   token: "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn" # PUMP mint (Token-2022, 6 decimals, mint authority null)
   burn_wallet_a: "99mRw3EzdJZWEUjgp1nrU4WeHsukUBjbh7gYE7pm4F3c" # buys and burns; 0 PUMP held on 2026-10-16
   burn_wallet_b: "9jHrTCwpDANHLNQz5cem6XLUBM8KiTWKe766Br6KVCXM" # buys and burns; 3.2k PUMP held on 2026-10-16 (between burns)
+  # Not circulating (Phase 3 R3, decision N1d option B): pump.fun's custody and the vaults it funded that never moved.
+  token_custodian: "Cfq1ts1iFr1eUWWBm8eFxUzm5R3YA3UvMZznwiShbgZt" # Solscan "Pump.fun: Token Custodian", Arkham "pump.fun: Squads Vault 'Token Custodian'"; received the whole 1T supply 2025-07-10; holds the still-locked team/investor tokens
+  dormant_a: "8UhbNoBXmGoxJr2TeWW8wmSMoWmjS2rTT2tVJxzuTogC" # funded 80.0B by token_custodian 2025-07-14, no outflow since (on-chain provenance; no label)
+  dormant_b: "9pkFKCR1mdS31JxjKdtmWg2awZUg6vJUYVY722DAcXzv" # funded 35.0B by token_custodian 2025-07-14, no outflow since
+  dormant_c: "BBvQteuawKB2UtExfevL8HYLjWWsgmWXsp922vFbvCfT" # funded 25.0B by token_custodian 2025-07-14, no outflow since
+  dormant_d: "GTeSSwovPiVirpvWJpThUWiLDSLsuApmJw621Yom3MhB" # funded 25.0B by token_custodian 2025-07-14, no outflow since
+  dormant_e: "AvqFxKNrYZNvxsj2oWhLW8det68HzCXBqswshoD2TdT6" # funded 24.0B by token_custodian 2025-07-14 (the published 2.4 percent ecosystem fund), no outflow since
 
 external_ids:
   coingecko: pump-fun
@@ -42,12 +49,25 @@ metrics:
     critical: true
     source: { type: adapter, name: solana.token_supply, params: { mint: token } }
 
-  # CoinGecko's own definition (462.8B on 2026-10-16); the report's market cap.
+  # On chain (Phase 3 R3, decision N1d option B): the mint's supply less the Token Custodian and the five dormant vaults
+  # it funded (issuer-controlled, untouched since 2025-07-14: treasury, as for UNI, VVV and CRV): about 403.51B on
+  # 2026-11-20. Read through our own Solana RPC only (never a pump.fun host). The report's market cap.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: pump-fun, field: circulating_supply }
+    source: { type: adapter, name: solana.supply_less_owners, params: { mint: token, subtract: [ token_custodian, dormant_a, dormant_b, dormant_c, dormant_d, dormant_e ] } }
+
+  # The N5 check (Phase 3 R3, Ruling R4): what the line above subtracts, as its own level. A move of more than 1 percent
+  # (418.26B on 2026-11-20) is an ORION WATCH: tokens left the custodian or a dormant vault, which is what would make
+  # option B wrong. The Blockworks schedule floor is not built.
+  reserved_balance:
+    type: level
+    unit: tokens
+    staleness_days: 3
+    monitor_only: true
+    source: { type: adapter, name: solana.owners_balance, params: { mint: token, owners: [ token_custodian, dormant_a, dormant_b, dormant_c, dormant_d, dormant_e ] } }
+    watch: { change_pct: 1 }
 
   staked_supply:
     type: level

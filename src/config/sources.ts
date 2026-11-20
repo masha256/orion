@@ -163,22 +163,28 @@ const FLOW_CHECK: ReadonlySet<string> = new Set(['defillama', 'adapter']);
 
 /**
  * The CoinGecko `/coins/markets` fields that carry its price: `price`, and `market_cap` (its price times its supply).
- * Phase 3 R2 (Ruling R24): a config that reads one, as primary or cross-check, is refused by name (coingeckoPriceIssues).
- * `circulating_supply` (R3 removes it) and `total_supply` still load.
+ * Phase 3 R2 (Ruling R24) refused them first; since R3 every field is refused (COINGECKO_FIELDS).
  */
 export const COINGECKO_PRICE_FIELDS: ReadonlySet<string> = new Set(['price', 'market_cap']);
 
+/** Every `coingecko` field a source can name. Phase 3 R3: all of them are refused (coingeckoIssues). */
+export const COINGECKO_FIELDS: ReadonlySet<string> = new Set(['price', 'market_cap', 'circulating_supply', 'total_supply']);
+
 /**
- * Every coingecko source of `asset` reading a COINGECKO_PRICE_FIELDS field, as `metrics.<key>.source` or
+ * Every coingecko source of `asset`, whatever its field, as `metrics.<key>.source` or
  * `metrics.<key>.cross_checks.<i>.source`, so no config (a hand edit, a proposal at filing or at approve) brings a
- * CoinGecko price back: a token's USD price comes from prices.yaml.
+ * CoinGecko read back: a token's USD price comes from prices.yaml (Phase 3 R2), its supply from the chain or the issuer
+ * (Phase 3 R3). The `coingecko` source type and its code stay until R8 (spec §3.5); no config can name it.
  */
-export function coingeckoPriceIssues(asset: Pick<SourceBearingAsset, 'metrics'>): string[] {
+export function coingeckoIssues(asset: Pick<SourceBearingAsset, 'metrics'>): string[] {
   const issues: string[] = [];
   const check = (where: string, s: SourceConfig | undefined) => {
-    if (s?.type === 'coingecko' && COINGECKO_PRICE_FIELDS.has(s.field)) {
-      issues.push(`${where}: coingecko field "${s.field}" is refused: no CoinGecko price is read (Phase 3 R2); a token's USD price comes from prices.yaml (adapter price.token)`);
-    }
+    if (s?.type !== 'coingecko') return;
+    issues.push(
+      COINGECKO_PRICE_FIELDS.has(s.field)
+        ? `${where}: coingecko field "${s.field}" is refused: no CoinGecko price is read (Phase 3 R2); a token's USD price comes from prices.yaml (adapter price.token)`
+        : `${where}: coingecko field "${s.field}" is refused: no CoinGecko read (Phase 3 R3); a supply comes from the chain or the issuer (chain.view_sum, an adapter, a cited schedule)`,
+    );
   };
   for (const [key, def] of Object.entries(asset.metrics)) {
     check(`metrics.${key}.source`, def.source);

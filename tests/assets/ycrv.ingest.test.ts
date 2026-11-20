@@ -60,6 +60,10 @@ function world(extraLogs: { iso: string; from: string; tokens: bigint }[] = []) 
       [callKey(C.yv_crvusd, 'pricePerShare')]: PPS,
       [callKey(C.crvusd, 'decimals')]: 18n, // the report-only gross scan
       [callKey(C.st_ycrv, 'decimals')]: 18n, // the report-only st-yCRV fee scan
+      // circulating_supply's terms (Phase 3 R3, N1c): the two Yearn treasuries' st-yCRV shares x pricePerShare, 2026-11-20.
+      [callKey(C.st_ycrv, 'balanceOf', [C.yearn_treasury_vault])]: 624_209n * E18,
+      [callKey(C.st_ycrv, 'balanceOf', [C.yearn_treasury])]: 276_435n * E18,
+      [callKey(C.st_ycrv, 'pricePerShare')]: 2_681_874n * 10n ** 12n,
     },
     logs: [
       ...saturdays().map((iso, i) => ({ blockNumber: blockAt(iso), logIndex: 0, txHash: `0x${i.toString(16)}`, from: C.receiver, value: PAYOUT * E18 })),
@@ -81,6 +85,9 @@ describe('assets/ycrv.yaml', () => {
     expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.fees']);
     expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
+    // Phase 3 R3 Task 4: circulating on chain, the total less the two treasuries' st-yCRV x pricePerShare (3 terms, 2 with times).
+    const circ = config.metrics.circulating_supply.source as { type: string; name?: string; params?: { terms?: { times?: unknown }[] } };
+    expect([circ.type, circ.name, circ.params?.terms?.length, circ.params?.terms?.filter((t) => t.times !== undefined).length]).toEqual(['adapter', 'chain.view_sum', 3, 2]);
     expect(config.metrics.revenue_run_rate_usd).toBeUndefined(); // valuation-only: left with the valuation layer (Phase 1)
     // Re-pinned on 2026-10-12: effective_supply renamed total_supply, CoinGecko total_supply cross-check (wrappers: + circulating_supply). A deliberate edit of assets/ycrv.yaml moves it; update the pin on purpose.
     // Re-pinned 2026-11-01: the valuation keys (supply_basis, modules, scenario_probabilities, assumptions, agent budgets, review_triggers, peer_set) and the valuation-only metrics (dominance_share*, revenue_run_rate_usd) left (Phase 1).
@@ -92,7 +99,8 @@ describe('assets/ycrv.yaml', () => {
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members (share_price.underlying on the shares).
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
     // Re-pinned (Phase 3 R2 Task 6 fix wave, F/R22): no fetch-time price cross-check (its check runs hourly in the writer).
-    expect(loadAsset(ROOT, 'ycrv').hash).toBe('9d7e62d3b7b00d7d54b4b7eeb4db0fc250a0b43585d0789ce7bae1b24ad8200d');
+    // Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+    expect(loadAsset(ROOT, 'ycrv').hash).toBe('a3b3aa21136813bc61e68ea0c740af3e23315ef123782feeaf9b7e78c952f9a9');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -142,7 +150,8 @@ describe('assets/ycrv.yaml', () => {
       // No total_supply check: CoinGecko's yCRV supply is a 2022 snapshot (Mike, 2026-10-12). The price is its prices.yaml
       // method (Task 6b): no CoinGecko read is left. Its check runs hourly in the writer, never at fetch (Ruling R22).
       ['adapter:price.token', ['primary:price_usd']],
-      ['chain_levels', ['primary:total_supply', 'primary:circulating_supply', 'primary:staked_supply']], // circulating = the on-chain total
+      ['chain_levels', ['primary:total_supply', 'primary:staked_supply']],
+      ['adapter:chain.view_sum', ['primary:circulating_supply']], // the total less the treasuries' st-yCRV (Phase 3 R3)
       ['constant', ['primary:staker_emission_share', 'primary:emission_rate_annual']],
     ]);
     expect(plan.flowGroups.map((g) => g.members)).toEqual([
@@ -169,6 +178,9 @@ describe('assets/ycrv.yaml', () => {
     const value = async (metric: string) => (await rows(metric)).at(-1)!.value;
     expect(await value('price_usd')).toBeCloseTo(0.18345, 12);
     expect(await value('total_supply')).toBe(71_960_697);
+    // On chain (Phase 3 R3): the total less the treasuries' st-yCRV in yCRV (1,674,049 + 741,365 on 2026-11-20).
+    expect(await value('circulating_supply')).toBeCloseTo(71_960_697 - (624_209 + 276_435) * 2.681874, 6);
+    expect(w.http.calls.filter((c) => /coingecko/.test(c.url))).toEqual([]);
     expect(await value('staked_supply')).toBe(63_328_341);
     expect(await value('staker_emission_share')).toBe(0);
     expect((await rows('emission_rate_annual')).map((o) => o.value)).toEqual([0]);

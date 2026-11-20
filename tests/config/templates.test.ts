@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 import { parseAssetObject } from '../../src/config/load.js';
-import { coingeckoPriceIssues } from '../../src/config/sources.js';
+import { coingeckoIssues } from '../../src/config/sources.js';
 import { loadPrices } from '../../src/prices/config.js';
 
 /**
@@ -53,7 +53,7 @@ describe('onboarding templates (docs/templates)', () => {
         const filled = skeleton.replace(PLACEHOLDER, (_m, k: string) => String(values[k]));
         const { config } = parseAssetObject(parseYaml(filled));
         // The loader refuses a CoinGecko price only in a root with prices.yaml (Ruling R25); a template is checked here.
-        expect(coingeckoPriceIssues(config)).toEqual([]);
+        expect(coingeckoIssues(config)).toEqual([]);
         const price = config.metrics.price_usd?.source as { type?: string; name?: string; params?: { ref?: unknown } } | undefined;
         expect(price?.type).toBe('adapter');
         expect(price?.name).toBe('price.token');

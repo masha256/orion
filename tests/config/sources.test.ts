@@ -3,9 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { loadAsset, parseAssetYaml } from '../../src/config/load.js';
+import { listAssetIds, loadAsset, parseAssetYaml } from '../../src/config/load.js';
+import { coingeckoIds, levelMetricKeys } from '../../src/levels/levels.js';
 import { loadPrices } from '../../src/prices/config.js';
-import { contractNames, isChainSource } from '../../src/config/sources.js';
+import { COINGECKO_FIELDS, coingeckoIssues, contractNames, isChainSource } from '../../src/config/sources.js';
 import { MINI_ASSET_YAML, MINI_HOLDER_YAML } from '../helpers/assets.js';
 import { REVENUE_STALE_MOVE_PCT } from '../../src/ingest/alerts.js';
 import { INGEST_ASSET_YAML, ingestAsset } from '../helpers/ingestAsset.js';
@@ -162,7 +163,7 @@ describe('declarative sources in the asset config', () => {
   });
 });
 
-describe('no CoinGecko price comes back through a config (Phase 3 R2, Ruling R24)', () => {
+describe('no CoinGecko read comes back through a config (Phase 3 R2, Ruling R24; every field since R3)', () => {
   const ROOT = fileURLToPath(new URL('../..', import.meta.url));
   const PRICES = loadPrices(ROOT);
   const PRICE = 'price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }';
@@ -186,10 +187,14 @@ describe('no CoinGecko price comes back through a config (Phase 3 R2, Ruling R24
     expect(refusal(asCheck)).toMatch(/metrics\.price_usd\.cross_checks\.0\.source: coingecko field "price" is refused/);
   });
 
-  it('still loads a coingecko circulating_supply (R3 removes it) and total_supply', () => {
+  it('refuses every other coingecko field too, circulating_supply and total_supply, as primary or cross-check (Phase 3 R3)', () => {
     const supply = (field: string) => MINI_HOLDER_YAML.replace(SUPPLY, `staked_supply: { type: level, unit: tokens, staleness_days: 7, source: { type: coingecko, id: mini, field: ${field} } }`);
-    expect(refusal(supply('circulating_supply'))).toBe('');
-    expect(refusal(supply('total_supply'))).toBe('');
+    expect(refusal(supply('circulating_supply'))).toMatch(/^invalid_asset_config: .*metrics\.staked_supply\.source: coingecko field "circulating_supply" is refused: no CoinGecko read \(Phase 3 R3\)/);
+    expect(refusal(supply('total_supply'))).toMatch(/metrics\.staked_supply\.source: coingecko field "total_supply" is refused: no CoinGecko read/);
+    const asCheck = MINI_HOLDER_YAML.replace(SUPPLY, 'staked_supply: { type: level, unit: tokens, staleness_days: 7, source: { type: constant, value: 0, note: "none" }, cross_checks: [ { source: { type: coingecko, id: mini, field: total_supply } } ] }');
+    expect(refusal(asCheck)).toMatch(/metrics\.staked_supply\.cross_checks\.0\.source: coingecko field "total_supply" is refused/);
+    // Every field, by name: the list the loader refuses is the schema's whole field enum.
+    expect([...COINGECKO_FIELDS].sort()).toEqual(['circulating_supply', 'market_cap', 'price', 'total_supply']);
   });
 
   it('loadAsset refuses it from a config root with prices.yaml (every release); a test home without one has no price rules', () => {
@@ -199,5 +204,18 @@ describe('no CoinGecko price comes back through a config (Phase 3 R2, Ruling R24
     expect(() => loadAsset(home, 'mini')).not.toThrow();
     copyFileSync(join(ROOT, 'prices.yaml'), join(home, 'prices.yaml'));
     expect(() => loadAsset(home, 'mini')).toThrow(/metrics\.price_usd\.source: coingecko field "price" is refused/);
+    writeFileSync(join(home, 'assets', 'mini.yaml'), MINI_HOLDER_YAML.replace(SUPPLY, 'staked_supply: { type: level, unit: tokens, staleness_days: 7, source: { type: coingecko, id: mini, field: circulating_supply } }'));
+    expect(() => loadAsset(home, 'mini')).toThrow(/metrics\.staked_supply\.source: coingecko field "circulating_supply" is refused/);
+  });
+
+  it('every shipped asset loads with no coingecko source left, and its hourly read asks CoinGecko for nothing (Phase 3 R3)', () => {
+    const ids = listAssetIds(ROOT);
+    expect(ids).toHaveLength(13);
+    for (const id of ids) {
+      const { config } = loadAsset(ROOT, id);
+      expect(coingeckoIssues(config), id).toEqual([]);
+      expect(coingeckoIds(config, levelMetricKeys(config)), id).toEqual([]);
+      expect(coingeckoIds(config, Object.keys(config.metrics).filter((k) => config.metrics[k].source !== undefined)), id).toEqual([]);
+    }
   });
 });

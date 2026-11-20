@@ -35,6 +35,11 @@ const lc = (a: string) => a.toLowerCase();
 const blockAt = (iso: string) => BigInt(Math.ceil((Date.parse(iso) / 1000 - GENESIS_TS) / BLOCK_SEC));
 const RELEASE_SAFE = '0xa42d0a18b834f52e41beddeaa2940165db3da9a3'; // one of Chainlink's non-circulating Safes
 const STRANGER = '0x7630c870da0f44308a2676898010bed93bd89c19';
+/** Chainlink's 33 listed non-circulating wallets' LINK in cents, nc_01..nc_33 (task-4-values.md, read 2026-11-20). */
+const NC_CENTS = [2700n, 78n, 0n, 0n, 0n, 170n, 3_000_000_000n, 2_940_000_000n, 0n, 0n, 300_000_000n, 8n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 2_875_000_000n, 3_000_000_000n, 3_000_000_000n, 3_000_000_000n, 3_000_000_000n, 2_200_000_000n, 0n, 0n, 0n];
+const NC_SUM = NC_CENTS.reduce((s, c) => s + c, 0n); // 233,150,029.56 LINK
+/** supply.chain.link's circulatingSupply (wei) on 2026-11-20. */
+const CHAINLINK_CIRC = '766849970424883961240529443';
 
 /**
  * Into the Reserve: 100,000 LINK every Thursday from the fee converter (2026-10-15 back 15 weeks), a 5-LINK test send
@@ -64,6 +69,8 @@ const logsTo: Record<string, Omit<TransferLog, 'timestamp'>[]> = {
 function world() {
   const http = fakeHttp({
     'https://api.coingecko.com/api/v3/coins/markets': [{ id: 'chainlink', symbol: 'link', current_price: PRICE, market_cap: 9.6e9, circulating_supply: 766_849_970, total_supply: 1_000_000_000 }],
+    // The N5 check's first-party figure (Phase 3 R3): the shape of GET https://supply.chain.link/supply, balances trimmed.
+    'https://supply.chain.link/supply': { circulatingSupply: CHAINLINK_CIRC, totalSupply: (1_000_000_000n * E18).toString(), balances: [] },
   });
   const base = fakeRpc({
     genesisTs: GENESIS_TS,
@@ -75,6 +82,8 @@ function world() {
       [callKey(C.token, 'totalSupply')]: 1_000_000_000n * E18,
       [callKey(C.token, 'decimals')]: 18n,
       [callKey(C.token, 'balanceOf', [C.reserve])]: 6_293_843n * E18,
+      // circulating_supply's 33 terms (Phase 3 R3): Chainlink's listed wallets.
+      ...Object.fromEntries(NC_CENTS.map((c, i) => [callKey(C.token, 'balanceOf', [C[`nc_${String(i + 1).padStart(2, '0')}`]]), c * 10n ** 16n])),
       // price_usd (Phase 3 R2 Task 6b): the LINK/USD feed at the price CoinGecko gave this test, checked by its pool TWAP at
       // the old Chainlink cross-check's answer.
       ...liveEvmCalls({ [priceRef('LINK')]: { usd: PRICE, checkUsd: 12.44185063 } }, { endTs: LATEST_TS, startTs: LATEST_TS - 3600 }).end,
@@ -101,6 +110,11 @@ describe('assets/link.yaml', () => {
     expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     // Every metric has a source (the one manual metric, the category share, left with the valuation layer).
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
+    // Phase 3 R3 Task 4: circulating on chain, the total less Chainlink's 33 listed wallets (34 terms), and the N5 check.
+    const circ = config.metrics.circulating_supply.source as { type: string; name?: string; params?: { terms?: unknown[] } };
+    expect([circ.type, circ.name, circ.params?.terms?.length]).toEqual(['adapter', 'chain.view_sum', 34]);
+    expect(Object.keys(C).filter((k) => /^nc_\d\d$/.test(k))).toHaveLength(33);
+    expect(config.metrics.circulating_gap_chainlink).toMatchObject({ monitor_only: true, watch: { outside: [-0.5, 0.5] }, source: { type: 'derived', name: 'level_gap_pct', params: { a: 'circulating_supply', b: 'chainlink_circulating' } } });
     // No DefiLlama at all (Mike, 2026-10-11): the Reserve flow and the releases are read on chain.
     expect(Object.entries(config.metrics).filter(([, d]) => d.source?.type === 'defillama' || d.cross_checks?.some((c) => c.source.type === 'defillama')).map(([k]) => k)).toEqual([]);
     // The hold bucket's overhang haircut (Mike, 2026-10-16: 5 percent).
@@ -114,7 +128,8 @@ describe('assets/link.yaml', () => {
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
-    expect(loadAsset(ROOT, 'link').hash).toBe('5fc85808ea6308c8b76238e32a6a9d9819ec6ab75aba9abe1e4cbc10d5897031');
+    // Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+    expect(loadAsset(ROOT, 'link').hash).toBe('f0994df56fb7ab98837ebce2f8d83bb8503efefd3c3af723d8689806bb11c2c7');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -138,7 +153,8 @@ describe('assets/link.yaml', () => {
       ['adapter:price.token', ['primary:price_usd']],
       ['adapter:price.token_check', ['cross_check:price_usd']],
       ['chain_levels', ['primary:total_supply', 'primary:reserve_link']],
-      ['coingecko', ['primary:circulating_supply']],
+      ['adapter:chain.view_sum', ['primary:circulating_supply']], // on chain since Phase 3 R3 (no coingecko batch)
+      ['http_json:https://supply.chain.link/supply', ['primary:chainlink_circulating']], // the N5 check's first-party figure
       ['constant', ['primary:staked_supply', 'primary:staker_emission_share', 'primary:emission_rate_annual']],
     ]);
     expect(plan.flowGroups.map((g) => [g.sourceId, g.members.map((m) => m.metricKey)])).toEqual([
@@ -146,7 +162,7 @@ describe('assets/link.yaml', () => {
       [expect.stringMatching(/^transfer_flow:token>release_hub/), ['flow_tokens.released_hub']],
       [expect.stringMatching(/^transfer_flow:token>release_rewards/), ['flow_tokens.released_rewards']],
     ]);
-    expect(plan.derived.map((r) => r.metricKey).sort()).toEqual(['released_rate']);
+    expect(plan.derived.map((r) => r.metricKey).sort()).toEqual(['circulating_gap_chainlink', 'released_rate']);
   });
 
   it('fetches every metric, counts only the fee converter, and flags the stranger', async () => {
@@ -162,6 +178,13 @@ describe('assets/link.yaml', () => {
     expect(await value('price_usd')).toBe(PRICE);
     expect(await value('total_supply')).toBe(1_000_000_000);
     expect(await value('reserve_link')).toBe(6_293_843);
+    // On chain (Phase 3 R3): the total less the 33 listed wallets, Chainlink's own figure; the N5 gap to it is ~0.
+    expect(await value('circulating_supply')).toBeCloseTo(1_000_000_000 - Number(NC_SUM) / 100, 6);
+    expect(await value('circulating_supply')).toBeCloseTo(766_849_970.42, 1);
+    expect(await value('chainlink_circulating')).toBeCloseTo(766_849_970.424884, 5);
+    expect(Math.abs(await value('circulating_gap_chainlink'))).toBeLessThan(1e-8);
+    expect(r.watch).toEqual([]); // inside [-0.5, 0.5]
+    expect(w.http.calls.filter((c) => /coingecko/.test(c.url))).toEqual([]);
     expect(await value('emission_rate_annual')).toBe(0);
 
     // The stranger's 2,000 LINK is an unlisted sender (an alert on the holder flow), never counted; the 5-LINK test is dust.
@@ -189,7 +212,7 @@ describe('assets/link.yaml', () => {
     expect(rep.holderFlow.byBucket.burn).toBeNull();
     const fdv = 1_000_000_000 * PRICE;
     expect(report.fdv).toBeCloseTo(fdv, 0);
-    expect(report.marketCap).toBeCloseTo(766_849_970 * PRICE, 0);
+    expect(report.marketCap).toBeCloseTo((1_000_000_000 - Number(NC_SUM) / 100) * PRICE, 0); // on chain since Phase 3 R3 (was CoinGecko's 766,849,970)
     expect(rep.yields.buyback).toBeCloseTo((gross * 0.95) / fdv, 6);
     expect(rep.yields.dilutionLines).toEqual([{ id: 'releases', tokensPerYear: 70_000_000, yield: expect.closeTo(0.07, 6) }]);
     expect(rep.yields.dilution).toBeCloseTo(0.07, 6);

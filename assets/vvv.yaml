@@ -9,10 +9,14 @@ contracts:
   diem: "0xF4d97F2da56e8c3098f3a8D538DB630A2606a024"
   burn_sink: "0x0000000000000000000000000000000000000000"
   # An emissions recipient, not a burner (the 2026-09-19 research pass corrected the earlier "treasury Safe" label).
-  treasury: "0x2D8CB8DC596daD0e1E34E2042E7ae6Df93B11524"
+  treasury: "0x2D8CB8DC596daD0e1E34E2042E7ae6Df93B11524" # Venice SafeL2 (owners = buyback_safe's); not circulating (Phase 3 R3): Venice launch post "35 million (35%) granted to Venice.ai"
   # The only two addresses that sent VVV to the zero address over 120 days. Any other sender raises a degrading anomaly.
   aerodrome_pool: "0x01784ef301D79e4B2DF3a21ad9a536d4cF09A5Ce" # programmatic: per-subscription and credit-purchase burns, each under 1 VVV
   buyback_safe: "0x35FB3b67C57849bF57eB24B061EeF0b5e560DC57" # discretionary: roughly monthly buybacks of 9k to 27k VVV
+  # Not circulating (Phase 3 R3, decision N1j): the Venice Safes and the team vesting; with treasury, Venice's own set.
+  venice_safe_b: "0x4665883F3Adb708F301BA75764D39AD0cD2a4D84" # Venice SafeL2 3-of-6, the same owner set as treasury and buyback_safe (getOwners(), measured)
+  venice_safe_c: "0xb3c89592D84ae6Adb6A1aa41515ac14eC822B175" # Venice SafeL2 3-of-6, the same owner set (measured)
+  sablier_linear: "0x4CB16D4153123A74Bc724d161050959754f378D8" # Sablier V2 LockupLinear (Blockscout tag): the team streams, launch post "10m (10%) granted to Team, 25% unlocked upfront and remainder streaming over 24 months"
 
 # ORION_BASE_RPC_URL is optional: https://mainnet.base.org is the default for Base.
 ingest: { chain_id: 8453, rpc_url_env: ORION_BASE_RPC_URL, backfill_days: 100 }
@@ -53,11 +57,24 @@ metrics:
     cross_checks:
       - { tolerance_pct: 0.1, source: { type: http_json, url: "https://outerface.venice.ai/api/app/vvv/vvv_stats", path: totalSupplyCryptoBaseUnit, decimals: 18 } }
 
+  # On chain (Phase 3 R3, decision N1j): the total less the burns, the three Venice Safes and the team's Sablier streams,
+  # which equals Venice's own vvv_stats figure at the same minute (kept below as the check at 2 percent). Staked VVV stays
+  # in (a 7-day cooldown, decision N1a). Display only, the report's market cap basis.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: venice-token, field: circulating_supply }
+    source:
+      type: adapter
+      name: chain.view_sum
+      params:
+        terms:
+          - { contract: token, function: totalSupply }
+          - { contract: token, function: balanceOf, args: [ burn_sink ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ treasury ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ venice_safe_b ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ venice_safe_c ], sign: -1 }
+          - { contract: token, function: balanceOf, args: [ sablier_linear ], sign: -1 }
     cross_checks:
       - { tolerance_pct: 2, source: { type: http_json, url: "https://outerface.venice.ai/api/app/vvv/vvv_stats", path: circulatingSupplyCryptoBaseUnit, decimals: 18 } }
 

@@ -23,7 +23,7 @@ revenue (spec §11 D2).
   treasury that receives bought tokens.
 - Treasury top-ups that are not buybacks (ignore them). For Phase 3: the Vat (or controllers), every ilk, the savings
   vault.
-- `prices.yaml` entries for the token and the stablecoin (Phase 3 R2). CoinGecko ids (CoinGecko for circulating supply only (until R3), never a price).
+- `prices.yaml` entries for the token and the stablecoin (Phase 3 R2). CoinGecko ids (identifiers only: no CoinGecko field loads since Phase 3 R3).
 
 ## Checks
 
@@ -79,14 +79,15 @@ metrics:
     staleness_days: 7
     critical: true
     source: { type: erc20_supply, token: token }
-    cross_checks:
-      - { tolerance_pct: 2, source: { type: coingecko, id: {{coingecko_id}}, field: total_supply } }
 
+  # On chain (Phase 3 R3: no CoinGecko field loads): start from total_supply's read and subtract every holder that is
+  # not circulating (a treasury, an unvested allocation, a cited locked_schedule), each a named `contracts:` entry with
+  # its citation (chain.view_sum terms; on Solana, solana.supply_less_owners). Staking with an exit stays circulating.
   circulating_supply:
     type: level
     unit: tokens
     staleness_days: 14
-    source: { type: coingecko, id: {{coingecko_id}}, field: circulating_supply }
+    source: { type: erc20_supply, token: token }
 
   staked_supply:
     type: level
@@ -176,7 +177,7 @@ splitter_burn_share: 0.55
 3. Licence: the RPC's row only.
 4. `not_measured` lines and why: the savings rate (and the gross) until `state_delta`.
 5. Checks: the splitter share equals the configured one today; plan the Phase 3 gross-vs-surplus check.
-6. Supply: total from `totalSupply()` (incl. tokens still in a converter, said in the YAML comment); circulating from
-   CoinGecko; treasury payouts beyond buys as `dilution`.
+6. Supply: total from `totalSupply()` (incl. tokens still in a converter, said in the YAML comment); circulating on chain (total less the
+   non-circulating holders); treasury payouts beyond buys as `dilution`.
 7. Imminent events: splitter share votes, savings-rate changes, token migrations (MKR → SKY).
 8. Expected figures re-measured once by hand: 91 days of farm mints and buybacks.

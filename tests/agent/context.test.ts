@@ -220,6 +220,7 @@ describe('the disclosure pack', () => {
     expect(getAdapter('schedule.unlocks_next_year').paramsDoc).toMatch(/^citation: \{ url: http\(s\) URL, quote: /);
     // Since 2026-10-23 the Lighter-API adapters (revenue, the Robinhood watch, staked LIT) document their params too.
     expect(p.adapter_params.map((a: { metric: string; adapter: string }) => [a.metric, a.adapter])).toEqual([
+      ['circulating_supply', 'chain.view_sum'], // on chain with its locked_schedule (Phase 3 R3)
       ['flow_usd.fees_core', 'lit.exchange_fees_daily'],
       ['flow_usd.fees_rh', 'lit.exchange_fees_daily'],
       ['flow_usd.rh_buyback', 'lit.exchange_fees_daily'],

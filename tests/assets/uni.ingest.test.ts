@@ -64,6 +64,9 @@ function world() {
       [callKey(C.token, 'decimals')]: 18n,
       [callKey(C.token, 'balanceOf', [C.dead])]: 112_783_581n * E18,
       [callKey(C.token, 'balanceOf', [C.timelock])]: 262_247_996n * E18,
+      // circulating_supply's two DAO programs (Phase 3 R3, N1h), measured 2026-11-19 (link-uni.md).
+      [callKey(C.token, 'balanceOf', [C.uf_grants])]: 13_314_112n * E18,
+      [callKey(C.token, 'balanceOf', [C.aera_incentives])]: 2_698_414n * E18,
       [callKey(C.token, 'allowance', [C.timelock, C.vesting])]: 20_000_000n * E18,
       [callKey(C.vesting, 'quarterlyVestingAmount')]: 5_000_000n * E18,
       // price_usd (Phase 3 R2 Task 6b): the UNI/USD feed at the price CoinGecko gave this test, checked by its pool TWAP at
@@ -82,6 +85,9 @@ describe('assets/uni.yaml', () => {
   it('loads, validates, and keeps its config hash', () => {
     expect(config).toMatchObject({ id: 'uni', symbol: 'UNI', chain: 'ethereum', ingest: { chain_id: 1, rpc_url_env: 'ORION_ETH_RPC_URL', backfill_days: 100 } });
     expect(holderFlowMetrics(config.income_statement)).toEqual(['flow_usd.burn']);
+    // Phase 3 R3 Task 4: circulating on chain, the total less dead, the Timelock, UF grants and the Aera vault (5 terms).
+    const circ = config.metrics.circulating_supply.source as { type: string; name?: string; params?: { terms?: unknown[] } };
+    expect([circ.type, circ.name, circ.params?.terms?.length]).toEqual(['adapter', 'chain.view_sum', 5]);
     expect('holder_flows' in config || 'reporting' in config).toBe(false); // retired (Task 11)
     // Every metric has a source, and none is manual: a bootstrap run has nothing to research and the grade can be A.
     expect(Object.entries(config.metrics).filter(([, def]) => def.source === undefined).map(([key]) => key)).toEqual([]);
@@ -97,7 +103,8 @@ describe('assets/uni.yaml', () => {
     // Re-pinned (Phase 3 R2 Task 1): the production hash (loadAsset) now includes the asset's prices.yaml entries.
     // Re-pinned (Phase 3 R2 Task 6a): price_coingecko_id retired from the transfer_flow members.
     // Re-pinned (Phase 3 R2 Task 6b): price_usd reads price.token with its prices.yaml check; entriesFor reads refs (R11).
-    expect(loadAsset(ROOT, 'uni').hash).toBe('5c1d9cf48fe8db9387e7dbccfecdaefcf20d02da02306b4d0734edc1f57ba706');
+    // Re-pinned (Phase 3 R3 Task 4): circulating_supply on chain (contracts, the new source, the N5 checks); no CoinGecko field loads.
+    expect(loadAsset(ROOT, 'uni').hash).toBe('78c1f3e011f86b601cc0d36843c222b231457de5509333691413ab2afe9b8d44');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {
@@ -121,7 +128,7 @@ describe('assets/uni.yaml', () => {
       ['adapter:price.token', ['primary:price_usd']],
       ['adapter:price.token_check', ['cross_check:price_usd']],
       ['chain_levels', ['primary:total_supply', 'primary:labs_vest_rate', 'primary:labs_vest_approved', 'primary:treasury_uni']],
-      ['coingecko', ['primary:circulating_supply']],
+      ['adapter:chain.view_sum', ['primary:circulating_supply']], // on chain since Phase 3 R3 (no coingecko batch)
       ['constant', ['primary:staked_supply', 'primary:staker_emission_share', 'primary:emission_rate_annual']],
     ]);
     expect(plan.flowGroups).toHaveLength(1);
@@ -149,6 +156,9 @@ describe('assets/uni.yaml', () => {
     expect(await value('labs_vest_rate')).toBe(20_000_000);
     expect(await value('labs_vest_approved')).toBe(20_000_000);
     expect(await value('treasury_uni')).toBe(262_247_996);
+    // On chain (Phase 3 R3): the total less dead, the Timelock, the UF grants wallet and the Aera vault.
+    expect(await value('circulating_supply')).toBe(1_000_000_000 - 112_783_581 - 262_247_996 - 13_314_112 - 2_698_414);
+    expect(w.http.calls.filter((c) => /coingecko/.test(c.url))).toEqual([]);
     expect(r.sources.flatMap((s) => s.crossChecks).map((c) => [c.metricKey, c.ok])).toEqual([['price_usd', true]]);
     expect(w.http.calls.filter((c) => /llama\.fi/.test(new URL(c.url).host)).map((c) => c.url)).toEqual([]); // Phase 3 R1
 

@@ -140,14 +140,6 @@ function priceEndpoints(name: PriceAdapterName, p: AdapterParams): Endpoint[] {
  * quotes the terms; `checked` is set only on those rows. Edit this table after reading a terms page, then regenerate.
  */
 export const TERMS: Record<string, Terms> = {
-  'api.coingecko.com': {
-    label: 'CoinGecko API', kind: 'market_data', operator: 'CoinGecko',
-    commercial: 'yes',
-    terms: 'paid Basic plan: commercial licence, attribution required, no redistribution of raw data, stored data deleted if the plan lapses (roadmap rule 5)',
-    until: 'the paid Basic plan is bought (roadmap rule 5: before launch)',
-    checked: '2026-11-05',
-    note: 'circulating supply only since Phase 3 R2 (prices are the prices.yaml chain and venue methods; spec §2 rung market_data); a paid key moves to pro-api.coingecko.com (COINGECKO_PLAN=pro)',
-  },
   'api.llama.fi': {
     label: 'DefiLlama API', kind: 'third_party', operator: 'DefiLlama',
     commercial: 'no',
@@ -197,6 +189,11 @@ export const TERMS: Record<string, Terms> = {
     label: 'Venice app API', kind: 'first_party_api', operator: 'Venice',
     commercial: 'unknown',
     note: 'VVV supply, staking and burn-history cross-checks',
+  },
+  'supply.chain.link': {
+    label: 'Chainlink supply API', kind: 'first_party_api', operator: 'Chainlink',
+    commercial: 'unknown',
+    note: 'LINK circulating supply, the N5 check of the on-chain figure (Phase 3 R3, monitor-only); chain.link/circulating-supply\'s machine-readable copy',
   },
   'rpc:eip155:1:ORION_ETH_RPC_URL': {
     label: 'Ethereum RPC', kind: 'rpc', operator: 'the provider ORION_ETH_RPC_URL names (chains.ts sizes its log range on Alchemy)',
