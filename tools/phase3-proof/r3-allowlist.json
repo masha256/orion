@@ -1,0 +1,1051 @@
+{
+ "_comment": "Phase 3 R3 release gate (Task 7, signed by Mike 2026-11-21 'all proofs approved'). Class S: ratio band = the asset's new/old circulating range over every stored day on the prod copy +/- 0.01 (inverted for perToken per-circulating paths); HYPE/PUMP new: null (history starts on the release day, R21); class L: exact value pins on source labels. No other entry: growth, PEG, yields, flows, prices must be byte-identical (R43: any growth entry would carry abs + rel).",
+ "cake": [
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.burn",
+   "ratio": [
+    0.828377,
+    1.005574
+   ],
+   "reason": "R3 class S: CAKE circulating new/old 0.8384..0.9956 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.total",
+   "ratio": [
+    0.828377,
+    1.005574
+   ],
+   "reason": "R3 class S: CAKE circulating new/old 0.8384..0.9956 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToRevenue",
+   "ratio": [
+    0.828377,
+    1.005574
+   ],
+   "reason": "R3 class S: CAKE circulating new/old 0.8384..0.9956 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.circulatingSupply",
+   "ratio": [
+    0.828377,
+    1.005574
+   ],
+   "reason": "R3 class S: CAKE circulating new/old 0.8384..0.9956 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.dilution",
+   "ratio": [
+    0.994457,
+    1.207179
+   ],
+   "reason": "R3 class S: CAKE circulating new/old 0.8384..0.9956 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.byBucket.burn",
+   "ratio": [
+    0.994457,
+    1.207179
+   ],
+   "reason": "R3 class S: CAKE circulating new/old 0.8384..0.9956 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.netOfDilution",
+   "ratio": [
+    0.994457,
+    1.207179
+   ],
+   "reason": "R3 class S: CAKE circulating new/old 0.8384..0.9956 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.total",
+   "ratio": [
+    0.994457,
+    1.207179
+   ],
+   "reason": "R3 class S: CAKE circulating new/old 0.8384..0.9956 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.revenue",
+   "ratio": [
+    0.994457,
+    1.207179
+   ],
+   "reason": "R3 class S: CAKE circulating new/old 0.8384..0.9956 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "marketCap",
+   "ratio": [
+    0.828377,
+    1.005574
+   ],
+   "reason": "R3 class S: CAKE circulating new/old 0.8384..0.9956 over every stored day on the prod copy, +/-0.01"
+  }
+ ],
+ "crv": [
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.cash",
+   "ratio": [
+    0.986358,
+    1.006472
+   ],
+   "reason": "R3 class S: CRV circulating new/old 0.9964..0.9965 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.total",
+   "ratio": [
+    0.986358,
+    1.006472
+   ],
+   "reason": "R3 class S: CRV circulating new/old 0.9964..0.9965 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToRevenue",
+   "ratio": [
+    0.986358,
+    1.006472
+   ],
+   "reason": "R3 class S: CRV circulating new/old 0.9964..0.9965 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.circulatingSupply",
+   "ratio": [
+    0.986358,
+    1.006472
+   ],
+   "reason": "R3 class S: CRV circulating new/old 0.9964..0.9965 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.dilution",
+   "ratio": [
+    0.99357,
+    1.013831
+   ],
+   "reason": "R3 class S: CRV circulating new/old 0.9964..0.9965 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.byBucket.cash",
+   "ratio": [
+    0.99357,
+    1.013831
+   ],
+   "reason": "R3 class S: CRV circulating new/old 0.9964..0.9965 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.netOfDilution",
+   "ratio": [
+    0.99357,
+    1.013831
+   ],
+   "reason": "R3 class S: CRV circulating new/old 0.9964..0.9965 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.total",
+   "ratio": [
+    0.99357,
+    1.013831
+   ],
+   "reason": "R3 class S: CRV circulating new/old 0.9964..0.9965 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.revenue",
+   "ratio": [
+    0.99357,
+    1.013831
+   ],
+   "reason": "R3 class S: CRV circulating new/old 0.9964..0.9965 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "marketCap",
+   "ratio": [
+    0.986358,
+    1.006472
+   ],
+   "reason": "R3 class S: CRV circulating new/old 0.9964..0.9965 over every stored day on the prod copy, +/-0.01"
+  }
+ ],
+ "cvxcrv": [
+  {
+   "glob": "incomeStatement.multiples.mcapToGrossProfit",
+   "ratio": [
+    0.978529,
+    0.998577
+   ],
+   "reason": "R3 class S: CVXCRV circulating new/old 0.9885..0.9886 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.cash",
+   "ratio": [
+    0.978529,
+    0.998577
+   ],
+   "reason": "R3 class S: CVXCRV circulating new/old 0.9885..0.9886 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.total",
+   "ratio": [
+    0.978529,
+    0.998577
+   ],
+   "reason": "R3 class S: CVXCRV circulating new/old 0.9885..0.9886 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToRevenue",
+   "ratio": [
+    0.978529,
+    0.998577
+   ],
+   "reason": "R3 class S: CVXCRV circulating new/old 0.9885..0.9886 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.circulatingSupply",
+   "ratio": [
+    0.978529,
+    0.998577
+   ],
+   "reason": "R3 class S: CVXCRV circulating new/old 0.9885..0.9886 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.dilution",
+   "ratio": [
+    1.001425,
+    1.021943
+   ],
+   "reason": "R3 class S: CVXCRV circulating new/old 0.9885..0.9886 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.grossProfit",
+   "ratio": [
+    1.001425,
+    1.021943
+   ],
+   "reason": "R3 class S: CVXCRV circulating new/old 0.9885..0.9886 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.byBucket.cash",
+   "ratio": [
+    1.001425,
+    1.021943
+   ],
+   "reason": "R3 class S: CVXCRV circulating new/old 0.9885..0.9886 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.netOfDilution",
+   "ratio": [
+    1.001425,
+    1.021943
+   ],
+   "reason": "R3 class S: CVXCRV circulating new/old 0.9885..0.9886 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.total",
+   "ratio": [
+    1.001425,
+    1.021943
+   ],
+   "reason": "R3 class S: CVXCRV circulating new/old 0.9885..0.9886 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.revenue",
+   "ratio": [
+    1.001425,
+    1.021943
+   ],
+   "reason": "R3 class S: CVXCRV circulating new/old 0.9885..0.9886 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "marketCap",
+   "ratio": [
+    0.978529,
+    0.998577
+   ],
+   "reason": "R3 class S: CVXCRV circulating new/old 0.9885..0.9886 over every stored day on the prod copy, +/-0.01"
+  }
+ ],
+ "hype": [
+  {
+   "glob": "incomeStatement.multiples.mcapToGrossProfit",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.burn",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.cash",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.hold",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.total",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToRevenue",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.circulatingSupply",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.dilution",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.grossProfit",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.byBucket.burn",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.byBucket.cash",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.byBucket.hold",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.netOfDilution",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.total",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.revenue",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "marketCap",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  }
+ ],
+ "link": [
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.hold",
+   "ratio": [
+    0.99,
+    1.01
+   ],
+   "reason": "R3 class S: LINK circulating new/old 1.0000..1.0000 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.total",
+   "ratio": [
+    0.99,
+    1.01
+   ],
+   "reason": "R3 class S: LINK circulating new/old 1.0000..1.0000 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToRevenue",
+   "ratio": [
+    0.99,
+    1.01
+   ],
+   "reason": "R3 class S: LINK circulating new/old 1.0000..1.0000 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.circulatingSupply",
+   "ratio": [
+    0.99,
+    1.01
+   ],
+   "reason": "R3 class S: LINK circulating new/old 1.0000..1.0000 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.dilution",
+   "ratio": [
+    0.990099,
+    1.010101
+   ],
+   "reason": "R3 class S: LINK circulating new/old 1.0000..1.0000 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.byBucket.hold",
+   "ratio": [
+    0.990099,
+    1.010101
+   ],
+   "reason": "R3 class S: LINK circulating new/old 1.0000..1.0000 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.netOfDilution",
+   "ratio": [
+    0.990099,
+    1.010101
+   ],
+   "reason": "R3 class S: LINK circulating new/old 1.0000..1.0000 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.total",
+   "ratio": [
+    0.990099,
+    1.010101
+   ],
+   "reason": "R3 class S: LINK circulating new/old 1.0000..1.0000 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.revenue",
+   "ratio": [
+    0.990099,
+    1.010101
+   ],
+   "reason": "R3 class S: LINK circulating new/old 1.0000..1.0000 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "marketCap",
+   "ratio": [
+    0.99,
+    1.01
+   ],
+   "reason": "R3 class S: LINK circulating new/old 1.0000..1.0000 over every stored day on the prod copy, +/-0.01"
+  }
+ ],
+ "lit": [
+  {
+   "glob": "incomeStatement.multiples.mcapToGrossProfit",
+   "ratio": [
+    0.939694,
+    0.990798
+   ],
+   "reason": "R3 class S: LIT circulating new/old 0.9497..0.9808 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.burn",
+   "ratio": [
+    0.939694,
+    0.990798
+   ],
+   "reason": "R3 class S: LIT circulating new/old 0.9497..0.9808 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.total",
+   "ratio": [
+    0.939694,
+    0.990798
+   ],
+   "reason": "R3 class S: LIT circulating new/old 0.9497..0.9808 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToRevenue",
+   "ratio": [
+    0.939694,
+    0.990798
+   ],
+   "reason": "R3 class S: LIT circulating new/old 0.9497..0.9808 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.circulatingSupply",
+   "ratio": [
+    0.939694,
+    0.990798
+   ],
+   "reason": "R3 class S: LIT circulating new/old 0.9497..0.9808 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.dilution",
+   "ratio": [
+    1.009288,
+    1.064176
+   ],
+   "reason": "R3 class S: LIT circulating new/old 0.9497..0.9808 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.grossProfit",
+   "ratio": [
+    1.009288,
+    1.064176
+   ],
+   "reason": "R3 class S: LIT circulating new/old 0.9497..0.9808 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.byBucket.burn",
+   "ratio": [
+    1.009288,
+    1.064176
+   ],
+   "reason": "R3 class S: LIT circulating new/old 0.9497..0.9808 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.netOfDilution",
+   "ratio": [
+    1.009288,
+    1.064176
+   ],
+   "reason": "R3 class S: LIT circulating new/old 0.9497..0.9808 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.total",
+   "ratio": [
+    1.009288,
+    1.064176
+   ],
+   "reason": "R3 class S: LIT circulating new/old 0.9497..0.9808 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.revenue",
+   "ratio": [
+    1.009288,
+    1.064176
+   ],
+   "reason": "R3 class S: LIT circulating new/old 0.9497..0.9808 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "marketCap",
+   "ratio": [
+    0.939694,
+    0.990798
+   ],
+   "reason": "R3 class S: LIT circulating new/old 0.9497..0.9808 over every stored day on the prod copy, +/-0.01"
+  }
+ ],
+ "pump": [
+  {
+   "glob": "incomeStatement.multiples.mcapToGrossProfit",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.burn",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.cash",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.hold",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.total",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToRevenue",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.circulatingSupply",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.dilution",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.grossProfit",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.byBucket.burn",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.byBucket.cash",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.byBucket.hold",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.netOfDilution",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.total",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "incomeStatement.perToken.revenue",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  },
+  {
+   "glob": "marketCap",
+   "new": null,
+   "reason": "R21: no circulating row at or before D after the purge (history starts on the release day)"
+  }
+ ],
+ "sdcrv": [
+  {
+   "glob": "incomeStatement.multiples.mcapToGrossProfit",
+   "ratio": [
+    0.976488,
+    0.996488
+   ],
+   "reason": "R3 class S: SDCRV circulating new/old 0.9865..0.9865 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.cash",
+   "ratio": [
+    0.976488,
+    0.996488
+   ],
+   "reason": "R3 class S: SDCRV circulating new/old 0.9865..0.9865 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.total",
+   "ratio": [
+    0.976488,
+    0.996488
+   ],
+   "reason": "R3 class S: SDCRV circulating new/old 0.9865..0.9865 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToRevenue",
+   "ratio": [
+    0.976488,
+    0.996488
+   ],
+   "reason": "R3 class S: SDCRV circulating new/old 0.9865..0.9865 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.circulatingSupply",
+   "ratio": [
+    0.976488,
+    0.996488
+   ],
+   "reason": "R3 class S: SDCRV circulating new/old 0.9865..0.9865 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.dilution",
+   "ratio": [
+    1.003524,
+    1.024078
+   ],
+   "reason": "R3 class S: SDCRV circulating new/old 0.9865..0.9865 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.grossProfit",
+   "ratio": [
+    1.003524,
+    1.024078
+   ],
+   "reason": "R3 class S: SDCRV circulating new/old 0.9865..0.9865 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.byBucket.cash",
+   "ratio": [
+    1.003524,
+    1.024078
+   ],
+   "reason": "R3 class S: SDCRV circulating new/old 0.9865..0.9865 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.netOfDilution",
+   "ratio": [
+    1.003524,
+    1.024078
+   ],
+   "reason": "R3 class S: SDCRV circulating new/old 0.9865..0.9865 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.total",
+   "ratio": [
+    1.003524,
+    1.024078
+   ],
+   "reason": "R3 class S: SDCRV circulating new/old 0.9865..0.9865 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.revenue",
+   "ratio": [
+    1.003524,
+    1.024078
+   ],
+   "reason": "R3 class S: SDCRV circulating new/old 0.9865..0.9865 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "marketCap",
+   "ratio": [
+    0.976488,
+    0.996488
+   ],
+   "reason": "R3 class S: SDCRV circulating new/old 0.9865..0.9865 over every stored day on the prod copy, +/-0.01"
+  }
+ ],
+ "sky": [
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.cash",
+   "ratio": [
+    0.98827,
+    1.008625
+   ],
+   "reason": "R3 class S: SKY circulating new/old 0.9983..0.9986 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.total",
+   "ratio": [
+    0.98827,
+    1.008625
+   ],
+   "reason": "R3 class S: SKY circulating new/old 0.9983..0.9986 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToRevenue",
+   "ratio": [
+    0.98827,
+    1.008625
+   ],
+   "reason": "R3 class S: SKY circulating new/old 0.9983..0.9986 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.circulatingSupply",
+   "ratio": [
+    0.98827,
+    1.008625
+   ],
+   "reason": "R3 class S: SKY circulating new/old 0.9983..0.9986 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.dilution",
+   "ratio": [
+    0.991448,
+    1.01187
+   ],
+   "reason": "R3 class S: SKY circulating new/old 0.9983..0.9986 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.byBucket.cash",
+   "ratio": [
+    0.991448,
+    1.01187
+   ],
+   "reason": "R3 class S: SKY circulating new/old 0.9983..0.9986 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.netOfDilution",
+   "ratio": [
+    0.991448,
+    1.01187
+   ],
+   "reason": "R3 class S: SKY circulating new/old 0.9983..0.9986 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.total",
+   "ratio": [
+    0.991448,
+    1.01187
+   ],
+   "reason": "R3 class S: SKY circulating new/old 0.9983..0.9986 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.revenue",
+   "ratio": [
+    0.991448,
+    1.01187
+   ],
+   "reason": "R3 class S: SKY circulating new/old 0.9983..0.9986 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "marketCap",
+   "ratio": [
+    0.98827,
+    1.008625
+   ],
+   "reason": "R3 class S: SKY circulating new/old 0.9983..0.9986 over every stored day on the prod copy, +/-0.01"
+  }
+ ],
+ "uni": [
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.burn",
+   "ratio": [
+    0.961924,
+    1.01
+   ],
+   "reason": "R3 class S: UNI circulating new/old 0.9719..1.0000 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.total",
+   "ratio": [
+    0.961924,
+    1.01
+   ],
+   "reason": "R3 class S: UNI circulating new/old 0.9719..1.0000 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToRevenue",
+   "ratio": [
+    0.961924,
+    1.01
+   ],
+   "reason": "R3 class S: UNI circulating new/old 0.9719..1.0000 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.circulatingSupply",
+   "ratio": [
+    0.961924,
+    1.01
+   ],
+   "reason": "R3 class S: UNI circulating new/old 0.9719..1.0000 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.dilution",
+   "ratio": [
+    0.990099,
+    1.039584
+   ],
+   "reason": "R3 class S: UNI circulating new/old 0.9719..1.0000 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.byBucket.burn",
+   "ratio": [
+    0.990099,
+    1.039584
+   ],
+   "reason": "R3 class S: UNI circulating new/old 0.9719..1.0000 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.netOfDilution",
+   "ratio": [
+    0.990099,
+    1.039584
+   ],
+   "reason": "R3 class S: UNI circulating new/old 0.9719..1.0000 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.total",
+   "ratio": [
+    0.990099,
+    1.039584
+   ],
+   "reason": "R3 class S: UNI circulating new/old 0.9719..1.0000 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.revenue",
+   "ratio": [
+    0.990099,
+    1.039584
+   ],
+   "reason": "R3 class S: UNI circulating new/old 0.9719..1.0000 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "marketCap",
+   "ratio": [
+    0.961924,
+    1.01
+   ],
+   "reason": "R3 class S: UNI circulating new/old 0.9719..1.0000 over every stored day on the prod copy, +/-0.01"
+  }
+ ],
+ "vvv": [
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.burn",
+   "ratio": [
+    0.995355,
+    1.016761
+   ],
+   "reason": "R3 class S: VVV circulating new/old 1.0054..1.0068 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.total",
+   "ratio": [
+    0.995355,
+    1.016761
+   ],
+   "reason": "R3 class S: VVV circulating new/old 1.0054..1.0068 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToRevenue",
+   "ratio": [
+    0.995355,
+    1.016761
+   ],
+   "reason": "R3 class S: VVV circulating new/old 1.0054..1.0068 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.circulatingSupply",
+   "ratio": [
+    0.995355,
+    1.016761
+   ],
+   "reason": "R3 class S: VVV circulating new/old 1.0054..1.0068 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.dilution",
+   "ratio": [
+    0.983515,
+    1.004667
+   ],
+   "reason": "R3 class S: VVV circulating new/old 1.0054..1.0068 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.byBucket.burn",
+   "ratio": [
+    0.983515,
+    1.004667
+   ],
+   "reason": "R3 class S: VVV circulating new/old 1.0054..1.0068 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.netOfDilution",
+   "ratio": [
+    0.983515,
+    1.004667
+   ],
+   "reason": "R3 class S: VVV circulating new/old 1.0054..1.0068 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.total",
+   "ratio": [
+    0.983515,
+    1.004667
+   ],
+   "reason": "R3 class S: VVV circulating new/old 1.0054..1.0068 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.revenue",
+   "ratio": [
+    0.983515,
+    1.004667
+   ],
+   "reason": "R3 class S: VVV circulating new/old 1.0054..1.0068 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "marketCap",
+   "ratio": [
+    0.995355,
+    1.016761
+   ],
+   "reason": "R3 class S: VVV circulating new/old 1.0054..1.0068 over every stored day on the prod copy, +/-0.01"
+  }
+ ],
+ "ycrv": [
+  {
+   "glob": "incomeStatement.multiples.mcapToGrossProfit",
+   "ratio": [
+    0.95643,
+    0.978301
+   ],
+   "reason": "R3 class S: YCRV circulating new/old 0.9664..0.9683 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.cash",
+   "ratio": [
+    0.95643,
+    0.978301
+   ],
+   "reason": "R3 class S: YCRV circulating new/old 0.9664..0.9683 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToHolderFlow.total",
+   "ratio": [
+    0.95643,
+    0.978301
+   ],
+   "reason": "R3 class S: YCRV circulating new/old 0.9664..0.9683 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.multiples.mcapToRevenue",
+   "ratio": [
+    0.95643,
+    0.978301
+   ],
+   "reason": "R3 class S: YCRV circulating new/old 0.9664..0.9683 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.circulatingSupply",
+   "ratio": [
+    0.95643,
+    0.978301
+   ],
+   "reason": "R3 class S: YCRV circulating new/old 0.9664..0.9683 over every stored day on the prod copy, +/-0.01"
+  },
+  {
+   "glob": "incomeStatement.perToken.dilution",
+   "ratio": [
+    1.02218,
+    1.045555
+   ],
+   "reason": "R3 class S: YCRV circulating new/old 0.9664..0.9683 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.grossProfit",
+   "ratio": [
+    1.02218,
+    1.045555
+   ],
+   "reason": "R3 class S: YCRV circulating new/old 0.9664..0.9683 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.byBucket.cash",
+   "ratio": [
+    1.02218,
+    1.045555
+   ],
+   "reason": "R3 class S: YCRV circulating new/old 0.9664..0.9683 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.netOfDilution",
+   "ratio": [
+    1.02218,
+    1.045555
+   ],
+   "reason": "R3 class S: YCRV circulating new/old 0.9664..0.9683 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.holderFlow.total",
+   "ratio": [
+    1.02218,
+    1.045555
+   ],
+   "reason": "R3 class S: YCRV circulating new/old 0.9664..0.9683 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "incomeStatement.perToken.revenue",
+   "ratio": [
+    1.02218,
+    1.045555
+   ],
+   "reason": "R3 class S: YCRV circulating new/old 0.9664..0.9683 over every stored day on the prod copy, +/-0.01 (inverted: per circulating token)"
+  },
+  {
+   "glob": "marketCap",
+   "ratio": [
+    0.95643,
+    0.978301
+   ],
+   "reason": "R3 class S: YCRV circulating new/old 0.9664..0.9683 over every stored day on the prod copy, +/-0.01"
+  }
+ ]
+}
