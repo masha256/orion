@@ -3,7 +3,7 @@ r"""DEV-ONLY acceptance check of Phase 3 R4 (spec sections 1 and 9): AERO's on-c
 holders revenue, per UTC day, from two SAVED files. It never fetches anything and nothing in Orion runs it: DefiLlama is
 a dev-time reference only (Phase 3: no live DefiLlama / CoinGecko in src/). Stdlib only.
 
-    r4_acceptance.py <orion json> <defillama json> [--to YYYY-MM-DD] [--dl-stamp end|start] [--tolerance 0.03] [--json]
+    r4_acceptance.py <orion json> <defillama json> --dl-stamp start|end [--to YYYY-MM-DD] [--tolerance 0.03] [--json]
     r4_acceptance.py --print-sql      the sql-ro query whose saved result is an accepted <orion json>
 
 Per day d from 2026-10-23 to D: orion(d) = flow_usd.voter_fees + flow_usd.vote_incentives + flow_usd.protocol_subsidy
@@ -18,9 +18,12 @@ price for the new AERO on the launch day). D = --to, else the last day all three
 - `{"<metric>": {"YYYY-MM-DD": value}}` keyed by the covered day.
 <defillama json>, a saved dev-only download of DefiLlama's daily holders revenue for Aero (e.g. its
 `summary/fees/<slug>?dataType=dailyHoldersRevenue` reply): `{"totalDataChart": [[unix s, value], ...]}`, a bare list of
-`[unix s, value]` pairs, or `{"YYYY-MM-DD": value}`. --dl-stamp end (the default, the controller's ruling): the row stamped
-D+1 covers day D, as Orion's own stored DefiLlama rows were; --dl-stamp start: the row stamped D covers D (what the R4
-scoping measured on api.llama.fi's `aero-protocol` chart: check which one the saved file is before trusting a FAIL).
+`[unix s, value]` pairs, or `{"YYYY-MM-DD": value}`. --dl-stamp is REQUIRED (no default: a wrong one shifts every day by
+one and fails falsely):
+- `start` for a raw api.llama.fi summary chart download: the row stamped D covers day D (measured by the R4 scoping on
+  the `aero-protocol` chart: Ink 11-01 tape $788 vs row 11-01 $787 vs row 11-02 $2,295);
+- `end` for Orion's own stored DefiLlama rows (`flow_usd.fees`, or the R4 purge export of them): the row stamped D+1
+  covers day D (a daily flow row is stamped at the end of its day).
 
 Exit 0 pass, 1 fail, 2 bad input.
 """
@@ -175,7 +178,8 @@ def main(argv):
     ap.add_argument("orion", nargs="?")
     ap.add_argument("defillama", nargs="?")
     ap.add_argument("--to")
-    ap.add_argument("--dl-stamp", choices=("end", "start"), default="end")
+    ap.add_argument("--dl-stamp", choices=("start", "end"),
+                    help="REQUIRED: start = raw api.llama.fi chart (stamp D covers D); end = Orion's stored DefiLlama rows / the prod export (stamp D+1 covers D)")
     ap.add_argument("--tolerance", type=float, default=TOLERANCE)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--print-sql", action="store_true")
@@ -186,6 +190,9 @@ def main(argv):
     if not a.orion or not a.defillama:
         ap.print_usage(sys.stderr)
         return 2
+    if a.dl_stamp is None:
+        ap.error("--dl-stamp is required: start = a raw api.llama.fi chart (the row stamped D covers day D); "
+                 "end = Orion's stored DefiLlama rows or the prod purge export (the row stamped D+1 covers day D)")
     try:
         if a.to is not None and not is_day(a.to):
             raise Bad(f"--to {a.to!r} is not YYYY-MM-DD")

@@ -1248,7 +1248,10 @@ coverage >= 99% on all 8 chains (each row's `slice.chains.<id>.pricedPct`; under
 `pool_scan:coverage:<chain>` anomaly), and no drift warning without a stated cause. The soak cron's "known queue" line
 names AERO's moves (revenue, holder flow, below-line, window label, priceBasis `onchain_usd`); the 12 others must match
 prod. **Acceptance (dev-only, offline, controller):** `tools/phase3-proof/r4_acceptance.py <saved AERO rows>
-<saved DefiLlama holders revenue>`: every day 2026-10-23 -> D within ±3% (2026-10-22 exempt); it reads files only.
+<saved DefiLlama holders revenue> --dl-stamp start|end`: every day 2026-10-23 -> D within ±3% (2026-10-22 exempt); it
+reads files only. `--dl-stamp` is required and names the file's convention: `start` for a raw api.llama.fi summary
+chart download (the row stamped D covers day D), `end` for Orion's stored DefiLlama rows or the prod purge export of
+`flow_usd.fees` (the row stamped D+1 covers day D). The wrong one shifts every day by one and fails falsely.
 
 **Rollback** (section 5): allowed (no migration), but `orion-2026.11.21.1` reads DefiLlama again for `flow_usd.fees`:
 with the rows and the cursor purged, its first fetch re-imports the DefiLlama window (up to `ingest.backfill_days`,

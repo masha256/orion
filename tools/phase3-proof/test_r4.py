@@ -49,7 +49,7 @@ class Acceptance(unittest.TestCase):
             self.assertNotIn(f"import {word}", src)
 
     def test_pass_with_sql_rows_and_the_launch_day_exempt(self):
-        rc, out, _ = self.run_cli(FIX / "orion-sqlro.json", FIX / "dl-holders.json")
+        rc, out, _ = self.run_cli(FIX / "orion-sqlro.json", FIX / "dl-holders.json", "--dl-stamp", "end")
         self.assertEqual(rc, 0, out)
         self.assertIn("2026-10-22     100,000     20,000      5,000     125,000     100,000  +25.00%  exempt", out)
         self.assertIn("-2.90%  ok", out)
@@ -63,13 +63,34 @@ class Acceptance(unittest.TestCase):
         self.assertEqual(a, b)
         self.assertEqual(a["to"], "2026-10-25")
 
-    def test_the_stamp_rule_d_plus_1_covers_d_by_default(self):
+    def test_both_stamp_conventions(self):
         dl = r4_acceptance.dl_days({"totalDataChart": [[1792800000, 5.0]]}, "end", "x")  # 2026-10-24T00:00Z
         self.assertEqual(dl, {"2026-10-23": 5.0})
         self.assertEqual(r4_acceptance.dl_days({"totalDataChart": [[1792800000, 5.0]]}, "start", "x"), {"2026-10-24": 5.0})
         self.assertEqual(r4_acceptance.dl_days({"2026-10-24": 5}, "end", "x"), {"2026-10-23": 5.0})
+        # dl-holders.json is stamped D+1 (Orion-row convention): read as `start` it is one day off and fails falsely.
         rc, out, _ = self.run_cli(FIX / "orion-sqlro.json", FIX / "dl-holders.json", "--dl-stamp", "start")
-        self.assertEqual(rc, 1, out)  # one day off: the comparison fails, as it should
+        self.assertEqual(rc, 1, out)
+        # The same values stamped D (a raw api.llama.fi chart) pass with `start`.
+        chart = json.loads((FIX / "dl-holders.json").read_text())["totalDataChart"]
+        d = Path(tempfile.mkdtemp(prefix="r4-stamp-"))
+        try:
+            (d / "raw.json").write_text(json.dumps({"totalDataChart": [[t - 86400, v] for t, v in chart]}))
+            rc, out, _ = self.run_cli(FIX / "orion-sqlro.json", d / "raw.json", "--dl-stamp", "start")
+            self.assertEqual(rc, 0, out)
+            self.assertIn("(--dl-stamp start)", out)
+            rc, out, _ = self.run_cli(FIX / "orion-sqlro.json", d / "raw.json", "--dl-stamp", "end")
+            self.assertEqual(rc, 1, out)
+        finally:
+            shutil.rmtree(d)
+
+    def test_dl_stamp_is_required(self):
+        rc, out, err = self.run_cli(FIX / "orion-sqlro.json", FIX / "dl-holders.json")
+        self.assertEqual(rc, 2, out)
+        self.assertIn("--dl-stamp is required", err)
+        self.assertIn("raw api.llama.fi chart (the row stamped D covers day D)", err)
+        self.assertIn("Orion's stored DefiLlama rows or the prod purge export (the row stamped D+1 covers day D)", err)
+        self.assertEqual(out, "")
 
     def test_a_gap_over_3_percent_fails_and_exactly_3_passes(self):
         orion = {m: {"2026-10-23": 0.0} for m in r4_acceptance.METRICS}
@@ -101,7 +122,7 @@ class Acceptance(unittest.TestCase):
                          [("2026-10-22", "exempt"), ("2026-10-25", "FAIL")])
 
     def test_to_limits_the_days(self):
-        rc, out, _ = self.run_cli(FIX / "orion-sqlro.json", FIX / "dl-holders.json", "--to", "2026-10-23")
+        rc, out, _ = self.run_cli(FIX / "orion-sqlro.json", FIX / "dl-holders.json", "--dl-stamp", "end", "--to", "2026-10-23")
         self.assertEqual(rc, 0, out)
         self.assertNotIn("2026-10-24", out)
 
@@ -109,19 +130,19 @@ class Acceptance(unittest.TestCase):
         d = Path(tempfile.mkdtemp(prefix="r4-acc-"))
         try:
             (d / "report.json").write_text(json.dumps({"asset": "aero", "windowDays": 91, "incomeStatement": {}}))
-            rc, _, err = self.run_cli(d / "report.json", FIX / "dl-holders.json")
+            rc, _, err = self.run_cli(d / "report.json", FIX / "dl-holders.json", "--dl-stamp", "end")
             self.assertEqual(rc, 2)
             self.assertIn("a report carries window totals", err)
             (d / "dup.json").write_text(json.dumps({"rows": [{"metric_key": "flow_usd.voter_fees", "day": "2026-10-23", "value": 1},
                                                              {"metric_key": "flow_usd.voter_fees", "day": "2026-10-23", "value": 2}]}))
-            rc, _, err = self.run_cli(d / "dup.json", FIX / "dl-holders.json")
+            rc, _, err = self.run_cli(d / "dup.json", FIX / "dl-holders.json", "--dl-stamp", "end")
             self.assertEqual(rc, 2)
             self.assertIn("two rows of flow_usd.voter_fees", err)
             (d / "dl.json").write_text(json.dumps({"totalDataChart": [[1792800001, 1]]}))
-            rc, _, err = self.run_cli(FIX / "orion-sqlro.json", d / "dl.json")
+            rc, _, err = self.run_cli(FIX / "orion-sqlro.json", d / "dl.json", "--dl-stamp", "start")
             self.assertEqual(rc, 2)
             self.assertIn("not at 00:00 UTC", err)
-            rc, _, _ = self.run_cli(d / "nope.json", FIX / "dl-holders.json")
+            rc, _, _ = self.run_cli(d / "nope.json", FIX / "dl-holders.json", "--dl-stamp", "end")
             self.assertEqual(rc, 2)
         finally:
             shutil.rmtree(d)
