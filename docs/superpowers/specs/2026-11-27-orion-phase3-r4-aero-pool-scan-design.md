@@ -134,14 +134,18 @@ AERO itself is priced by step 2 through AERO/USDC on Base, consistent with `chai
   migration).
 - **Chunked multicall**: `readAll`/`readAt` gain chunking (default 400 inner calls) and a struct-return decode, each chunk
   under the 20 s request timeout.
-- **`started` on below-line lines**, with the same zero-fill and short-window annualizing as revenue lines.
+- **`started` on below-line lines**, with the same zero-fill and short-window annualizing as revenue lines; and
+  **`in_holder_flow: false`** on a below-line line (default true; requires a `note`): shown in the statement, left out
+  of holder flow gross/net and yields.
 - **Window label and growth** (Q5): the statement carries `window: { days_measured, window_days }` rendered
   "N of 91 days"; growth is `not meaningful` until the prior window is entirely on or after every line's `started`.
   Applies to every asset; assets with full history render unchanged (proven by flatdiff).
 
 ## 5. AERO income statement (`assets/aero.yaml`)
 
-`scope` changes from `protocol_share_only` to `gross`. Every line has `started: 2026-10-22`.
+`scope` changes from `protocol_share_only` to `complete` (every fee users pay is now measured; the schema's scopes are
+`complete | protocol_share_only | partial`). Revenue and below-line lines carry `started: 2026-10-22`; cost and holder
+lines inherit it through `of`.
 
 | section | id | source | treatment |
 |---|---|---|---|
@@ -150,7 +154,7 @@ AERO itself is priced by step 2 through AERO/USDC on Base, consistent with `chai
 | cost_of_revenue | `lp_fees` | of `lp_rev`, share 1 | |
 | holders | `voter_fees` | of `voter_rev` | cash, haircut 2% (unchanged), recipient_base locked, capture_rule contractual |
 | below_line | `vote_incentives` | `flow_usd.vote_incentives` | to holders, cash, haircut 3%, recipient_base locked, capture_rule programmatic |
-| below_line | `protocol_subsidy` | `flow_usd.protocol_subsidy` | Aero's own money recycled (0x7269, 0x42255); shown, not holder flow |
+| below_line | `protocol_subsidy` | `flow_usd.protocol_subsidy` | `to: holders`, `in_holder_flow: false`: Aero's own money recycled (0x7269, 0x42255); shown, not holder flow |
 | dilution | `aero_upgrade`, `velo_upgrade` | unchanged | |
 
 Two revenue lines instead of gross − cost metric: the zero-fill before `started` and the short-window annualizing apply
