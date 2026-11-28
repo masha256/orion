@@ -138,6 +138,12 @@ export interface SourceContext {
    * on another chain than the asset's, and the off-chain venues (and their Ethereum USD feed), through them.
    */
   priceDeps?: PriceDeps;
+  /**
+   * A transport on any chain of chains.ts, for an adapter that reads chains other than the asset's: the RPC URL from
+   * that chain's CHAIN_RPC_ENV var, made through the run's RPC factory on first use and cached per chain for the run.
+   * Throws no_rpc_url, naming the env var, when it is unset (and the chain has no keyless default).
+   */
+  rpcFor?: (chainId: number) => RpcTransport;
 }
 
 /**

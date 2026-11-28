@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { firstBlockAtOrAfter, getLogsChunked, type TransferLog } from '../../src/ingest/transport/rpc.js';
 import { DEFAULT_RPC_URLS } from '../../src/ingest/run.js';
 import { CHAINS } from '../../src/ingest/transport/chains.js';
+import { CHAIN_RPC_ENV } from '../../src/ingest/transport/chainRpcEnv.js';
 import { cleanRpcErrorMessage, createViemRpc, pickValue } from '../../src/ingest/transport/viemRpc.js';
 import type { OrionError } from '../../src/types.js';
 import { fakeRpc } from '../helpers/fakeRpc.js';
@@ -109,12 +110,19 @@ describe('createViemRpc', () => {
     expect(createViemRpc('http://localhost:1', 56)).toMatchObject({ maxLogRange: 50_000n, blockTimeSec: 0.45 });
     let err: OrionError | undefined;
     try {
-      createViemRpc('http://localhost:1', 10);
+      createViemRpc('http://localhost:1', 137);
     } catch (e) {
       err = e as OrionError;
     }
     expect(err?.code).toBe('unsupported_chain');
-    expect(err?.message).toMatch(/supported: 1, 56, 8453/);
+    expect(err?.message).toMatch(/supported: 1, 10, 56, 4663, 5042, 8453, 42161, 57073, 99901/);
+  });
+
+  it('supports OP, Arbitrum, Ink, Robinhood, Arc and Elysium (Elysium through defineChain), each from its chain row', () => {
+    for (const id of [10, 42161, 57073, 4663, 5042, 99901]) {
+      const info = CHAINS[id]!;
+      expect(createViemRpc('http://localhost:1', id)).toMatchObject({ maxLogRange: info.maxLogRange, blockTimeSec: info.blockTimeSec, confirmations: info.confirmations });
+    }
   });
 });
 
@@ -124,6 +132,23 @@ describe('the chain table', () => {
     expect(CHAINS[1]).toMatchObject({ name: 'Ethereum', maxLogRange: 10_000n, blockTimeSec: 12, defaultRpcUrl: null });
     expect(CHAINS[56]).toMatchObject({ name: 'BNB Chain', maxLogRange: 50_000n, blockTimeSec: 0.45, defaultRpcUrl: null });
     expect(DEFAULT_RPC_URLS).toEqual({ 8453: 'https://mainnet.base.org' });
+  });
+
+  it('holds the six R4 chains with their measured values and no keyless default', () => {
+    expect(CHAINS[10]).toEqual({ id: 10, name: 'optimism', maxLogRange: 1_000_000n, blockTimeSec: 2, defaultRpcUrl: null, confirmations: 900n });
+    expect(CHAINS[42161]).toEqual({ id: 42161, name: 'arbitrum', maxLogRange: 1_000_000n, blockTimeSec: 0.3, defaultRpcUrl: null, confirmations: 7200n });
+    expect(CHAINS[57073]).toEqual({ id: 57073, name: 'ink', maxLogRange: 10_000n, blockTimeSec: 1, defaultRpcUrl: null, confirmations: 1800n });
+    expect(CHAINS[4663]).toEqual({ id: 4663, name: 'robinhood', maxLogRange: 1_000_000n, blockTimeSec: 0.11, defaultRpcUrl: null, confirmations: 18_000n });
+    expect(CHAINS[5042]).toEqual({ id: 5042, name: 'arc', maxLogRange: 1_000_000n, blockTimeSec: 0.5, defaultRpcUrl: null, confirmations: 3600n });
+    expect(CHAINS[99901]).toEqual({ id: 99901, name: 'elysium', maxLogRange: 1_000_000n, blockTimeSec: 0.15, defaultRpcUrl: null, confirmations: 12_000n });
+  });
+
+  it('names one RPC env var per chain', () => {
+    expect(CHAIN_RPC_ENV).toEqual({
+      1: 'ORION_ETH_RPC_URL', 10: 'ORION_OP_RPC_URL', 56: 'ORION_BNB_RPC_URL', 4663: 'ORION_ROBINHOOD_RPC_URL', 5042: 'ORION_ARC_RPC_URL',
+      8453: 'ORION_BASE_RPC_URL', 42161: 'ORION_ARB_RPC_URL', 57073: 'ORION_INK_RPC_URL', 99901: 'ORION_ELYSIUM_RPC_URL',
+    });
+    expect(Object.keys(CHAIN_RPC_ENV).map(Number).sort((a, b) => a - b)).toEqual(Object.keys(CHAINS).map(Number).sort((a, b) => a - b));
   });
 });
 

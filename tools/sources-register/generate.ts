@@ -19,11 +19,11 @@ import type { AssetConfig } from '../../src/config/schema.js';
 import type { SourceConfig } from '../../src/config/sources.js';
 import { COINGECKO_API } from '../../src/ingest/sources/coingecko.js';
 import { DEFILLAMA_API } from '../../src/ingest/sources/defillama.js';
+import { CHAIN_RPC_ENV } from '../../src/ingest/transport/chainRpcEnv.js';
 import { chainInfo } from '../../src/ingest/transport/chains.js';
 import { DEFAULT_SOL_RPC_ENV } from '../../src/ingest/transport/solana.js';
 import { loadPrices } from '../../src/prices/config.js';
 import type { PriceAdapterName } from '../../src/prices/venue.js';
-import { PRICE_RPC_ENV } from '../../src/prices/writer.js';
 
 export const REGISTER_PATH = 'docs/ops/sources-register.md';
 
@@ -120,7 +120,7 @@ export const ADAPTER_ENDPOINTS: Record<string, (params: AdapterParams, asset: As
 
 /** The repo's prices.yaml: the price adapters' endpoints follow their ref's method. */
 const REPO_PRICES = loadPrices(resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
-const ethRpc = (): Endpoint => ({ kind: 'rpc', chainId: 1, env: PRICE_RPC_ENV[1]! });
+const ethRpc = (): Endpoint => ({ kind: 'rpc', chainId: 1, env: CHAIN_RPC_ENV[1]! });
 function priceEndpoints(name: PriceAdapterName, p: AdapterParams): Endpoint[] {
   const entry = REPO_PRICES.get(str(p, 'ref', ''));
   if (entry === undefined) throw new Error(`adapter ${name}: ref ${String(p.ref)} is not in prices.yaml`);
@@ -135,7 +135,7 @@ function priceEndpoints(name: PriceAdapterName, p: AdapterParams): Endpoint[] {
       return [{ kind: 'solana_rpc', env: DEFAULT_SOL_RPC_ENV }, ethRpc()];
     default: {
       const chainId = Number(/^eip155:(\d+)\//.exec(entry.ref)![1]);
-      const env = PRICE_RPC_ENV[chainId];
+      const env = CHAIN_RPC_ENV[chainId];
       if (env === undefined) throw new Error(`adapter ${name}: ${entry.ref} is on chain ${chainId}, which has no price RPC`);
       return [{ kind: 'rpc', chainId, env }];
     }

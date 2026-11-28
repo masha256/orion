@@ -32,6 +32,18 @@ export const CHAINS: Readonly<Record<number, ChainInfo>> = {
    * endpoint tried on 2026-10-12 capped ranged logs or refused archive reads, so ORION_BNB_RPC_URL must be set.
    */
   56: { id: 56, name: 'BNB Chain', maxLogRange: 50_000n, blockTimeSec: 0.45, defaultRpcUrl: null, confirmations: 2000n }, // ~15 min
+  /**
+   * The Aero chains read by pool tape (Phase 3 R4). Measured 2026-11-27 on Alchemy (eth_chainId, mean block time over
+   * 200k blocks, eth_getLogs span): every one spans at least 1M blocks per call except Ink (10,000). None has a keyless
+   * default: the reads are archive eth_calls, so each chain's env var (chainRpcEnv.ts) must be set. Confirmations are
+   * 30-36 min of blocks at the nominal block time.
+   */
+  10: { id: 10, name: 'optimism', maxLogRange: 1_000_000n, blockTimeSec: 2, defaultRpcUrl: null, confirmations: 900n },
+  42161: { id: 42161, name: 'arbitrum', maxLogRange: 1_000_000n, blockTimeSec: 0.3, defaultRpcUrl: null, confirmations: 7200n },
+  57073: { id: 57073, name: 'ink', maxLogRange: 10_000n, blockTimeSec: 1, defaultRpcUrl: null, confirmations: 1800n },
+  4663: { id: 4663, name: 'robinhood', maxLogRange: 1_000_000n, blockTimeSec: 0.11, defaultRpcUrl: null, confirmations: 18_000n },
+  5042: { id: 5042, name: 'arc', maxLogRange: 1_000_000n, blockTimeSec: 0.5, defaultRpcUrl: null, confirmations: 3600n },
+  99901: { id: 99901, name: 'elysium', maxLogRange: 1_000_000n, blockTimeSec: 0.15, defaultRpcUrl: null, confirmations: 12_000n },
 };
 
 export function chainInfo(chainId: number): ChainInfo | undefined {

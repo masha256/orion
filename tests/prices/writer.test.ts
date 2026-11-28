@@ -2,11 +2,12 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { dbHourBlocks } from '../../src/db/hourBlocks.js';
 import { upsertPrices, upsertToken } from '../../src/db/prices.js';
+import { CHAIN_RPC_ENV } from '../../src/ingest/transport/chainRpcEnv.js';
 import type { BlockRef, RpcTransport } from '../../src/ingest/transport/rpc.js';
 import { loadPrices, type PriceEntry } from '../../src/prices/config.js';
 import { withCheck } from '../../src/prices/evmMethods.js';
 import type { PriceDeps } from '../../src/prices/types.js';
-import { findHourBlock, makePriceDeps, PRICE_CHAIN_METHODS, writeChainPrices, type PriceChainMethod } from '../../src/prices/writer.js';
+import { findHourBlock, makePriceDeps, PRICE_CHAIN_METHODS, PRICE_RPC_ENV, writeChainPrices, type PriceChainMethod } from '../../src/prices/writer.js';
 import { useTestDb } from '../helpers/db.js';
 import { callKey, fakeRpc, type FakeRpc } from '../helpers/fakeRpc.js';
 
@@ -486,6 +487,11 @@ describe('off-chain chains: the registry, and chain 1\'s feeds handed on (R4, R5
 });
 
 describe('makePriceDeps', () => {
+  it('keeps PRICE_RPC_ENV as the shared chain RPC env table (Base still ORION_BASE_RPC_URL)', () => {
+    expect(PRICE_RPC_ENV).toBe(CHAIN_RPC_ENV);
+    expect(PRICE_RPC_ENV[8453]).toBe('ORION_BASE_RPC_URL');
+  });
+
   it('builds rpcFor from the env RPC URLs through the RpcFactory (one transport per chain); Base falls back to its public URL', () => {
     const made: [string, number][] = [];
     const factory = (url: string, chainId: number) => {

@@ -1,6 +1,7 @@
 import type { Db } from '../db/connection.js';
 import { dbHourBlocks, type HourBlockCache } from '../db/hourBlocks.js';
 import { MS_PER_HOUR, upsertPrices, upsertToken, type PriceRow } from '../db/prices.js';
+import { CHAIN_RPC_ENV } from '../ingest/transport/chainRpcEnv.js';
 import { CHAINS } from '../ingest/transport/chains.js';
 import { DEFAULT_SOL_RPC_ENV, solanaPriceTransport } from '../ingest/transport/solana.js';
 import type { HttpTransport } from '../ingest/transport/http.js';
@@ -496,8 +497,8 @@ async function breachesOf(db: Db, entry: PriceEntry, writtenMs: number[]): Promi
 
 // ---- dependencies from the environment -------------------------------------------------------------------------------
 
-/** The env var naming each EVM price chain's RPC URL (Base falls back to its keyless public endpoint). */
-export const PRICE_RPC_ENV: Readonly<Record<number, string>> = { 1: 'ORION_ETH_RPC_URL', 56: 'ORION_BNB_RPC_URL', 8453: 'ORION_BASE_RPC_URL' };
+/** The env var naming each EVM price chain's RPC URL (Base falls back to its keyless public endpoint): the shared table. */
+export const PRICE_RPC_ENV: Readonly<Record<number, string>> = CHAIN_RPC_ENV;
 
 export interface PriceFactories {
   rpcFactory: RpcFactory;

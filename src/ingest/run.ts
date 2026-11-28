@@ -28,6 +28,7 @@ import { buildPlan, hasSources, type FlowGroup, type SourceBatch } from './plan.
 import { sourceId } from './sourceId.js';
 import { getSourceHandler } from './sources/registry.js';
 import { addDays, monthOf, utcDay } from './time.js';
+import { chainRpcFor } from './transport/chainRpcEnv.js';
 import { CHAINS } from './transport/chains.js';
 import { withRunCache, type HttpTransport } from './transport/http.js';
 import type { BlockRef, RpcFactory, RpcTransport } from './transport/rpc.js';
@@ -280,6 +281,8 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     // The price.* adapters: prices.yaml and the price chains' transports (a ref off the asset's chain, the off-chain venues).
     ...(loaded.prices ? { prices: loaded.prices, priceDeps: makePriceDeps(deps.env, { rpcFactory: deps.priceRpcFactory ?? deps.rpcFactory, prices: loaded.prices, http: runHttp, now }) } : {}),
     ...(historyDays !== undefined ? { backfillDays: historyDays } : {}),
+    // Any chain's transport through the run's own RPC factory (the one ctx.rpc comes from), one per chain.
+    rpcFor: chainRpcFor(deps.env, deps.rpcFactory),
   };
 
   const outcomes = new Map<string, SourceOutcome>();

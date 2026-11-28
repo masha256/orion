@@ -1,12 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { parseAssetYaml } from '../../src/config/load.js';
 import { decideAnomaly, listAnomalies } from '../../src/db/anomalies.js';
 import type { Db } from '../../src/db/connection.js';
 import { listFetchRuns } from '../../src/db/fetchRuns.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
+import { registerAdapter } from '../../src/ingest/adapters/registry.js';
 import { fetchAsset, validateReading, type FetchResult } from '../../src/ingest/run.js';
+import type { RpcTransport } from '../../src/ingest/transport/rpc.js';
+import type { SourceContext } from '../../src/ingest/types.js';
 import type { OrionError } from '../../src/types.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
+import { fakeRpc } from '../helpers/fakeRpc.js';
 import { CG_MARKETS, GENESIS_TS, harness, LATEST, NOW, STATS } from '../helpers/fetchHarness.js';
 import { ingestAsset as ingestAssetLoaded, INGEST_ASSET_YAML } from '../helpers/ingestAsset.js';
 import { useTestDb } from '../helpers/db.js';
@@ -226,5 +230,50 @@ describe('fetchAsset: levels', () => {
     expect(await codeOf(fetchAsset(otherChain.db, otherChain.loaded, NOW, otherChain.deps))).toBe('missing_rpc_url');
     const fallback = harness(testDb(), { env: {} }); // Base has a default public RPC URL
     expect((await fetchAsset(fallback.db, fallback.loaded, NOW, fallback.deps)).outcome).toBe('ok');
+  });
+});
+
+describe('fetchAsset: ctx.rpcFor', () => {
+  // A test adapter that keeps the context it ran with, on an asset whose one sourced metric reads it (then fails, so
+  // the run writes nothing for it).
+  let seen: SourceContext | undefined;
+  registerAdapter({ name: 'test.keep_ctx', needsRpc: false, run: async (ctx) => { seen = ctx; throw new Error('kept the context'); } });
+  afterEach(() => { seen = undefined; });
+  const yaml = MINI_ASSET_YAML.replace(
+    'price_usd: { type: level, unit: usd, staleness_days: 3, critical: true }',
+    'price_usd: { type: level, unit: usd, staleness_days: 3, critical: true, source: { type: adapter, name: test.keep_ctx, params: {} } }',
+  );
+  const run = async (env: Record<string, string | undefined>) => {
+    const h = harness(testDb(), { loaded: parseAssetYaml(yaml), env });
+    const made: [string, number][] = [];
+    const rpcs = new Map<number, RpcTransport>();
+    h.deps.rpcFactory = (url, chainId) => {
+      made.push([url, chainId]);
+      const rpc = fakeRpc({ genesisTs: GENESIS_TS, latest: LATEST });
+      rpcs.set(chainId, rpc);
+      return rpc;
+    };
+    await fetchAsset(h.db, h.loaded, NOW, h.deps);
+    expect(seen).toBeDefined();
+    return { ctx: seen!, made, rpcs };
+  };
+
+  it('rpcFor resolves ORION_OP_RPC_URL and caches one transport per chain', async () => {
+    expect(yaml).not.toBe(MINI_ASSET_YAML);
+    const { ctx, made, rpcs } = await run({ ORION_OP_RPC_URL: 'https://op.test/k', ORION_ARB_RPC_URL: 'https://arb.test/k' });
+    const op = ctx.rpcFor!(10);
+    expect(ctx.rpcFor!(10)).toBe(op);
+    expect(op).toBe(rpcs.get(10));
+    expect(ctx.rpcFor!(42161)).not.toBe(op);
+    // Base has a keyless default, as the price chains' rpcFor gives it.
+    ctx.rpcFor!(8453);
+    expect(made).toEqual([['https://op.test/k', 10], ['https://arb.test/k', 42161], ['https://mainnet.base.org', 8453]]);
+  });
+
+  it('rpcFor names the missing env var', async () => {
+    const { ctx, made } = await run({});
+    expect(() => ctx.rpcFor!(57073)).toThrow(expect.objectContaining({ code: 'no_rpc_url', message: expect.stringContaining('ORION_INK_RPC_URL') }));
+    expect(() => ctx.rpcFor!(137)).toThrow(expect.objectContaining({ code: 'no_rpc_url' }));
+    expect(made).toEqual([]);
   });
 });

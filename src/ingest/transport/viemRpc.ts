@@ -1,10 +1,24 @@
-import { createPublicClient, http, parseAbi, parseAbiItem, type Address, type Chain } from 'viem';
-import { base, bsc, mainnet } from 'viem/chains';
+import { createPublicClient, defineChain, http, parseAbi, parseAbiItem, type Address, type Chain } from 'viem';
+import { arbitrum, arc, base, bsc, ink, mainnet, optimism, robinhood } from 'viem/chains';
 import { OrionError } from '../../types.js';
 import { chainInfo, supportedChainIds } from './chains.js';
 import type { CallResult, RpcFactory } from './rpc.js';
 
-const VIEM_CHAINS: Record<number, Chain> = { [base.id]: base, [mainnet.id]: mainnet, [bsc.id]: bsc };
+/**
+ * Elysium (99901) is not in the vendored viem. Only multicall3 matters to Orion's reads; there is no default RPC URL
+ * (ORION_ELYSIUM_RPC_URL is always passed), and the native currency is a placeholder defineChain requires.
+ */
+const elysium = defineChain({
+  id: 99901,
+  name: 'Elysium',
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: { default: { http: [] } },
+  contracts: { multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' } },
+});
+
+const VIEM_CHAINS: Record<number, Chain> = Object.fromEntries(
+  [base, mainnet, bsc, optimism, arbitrum, ink, robinhood, arc, elysium].map((c): [number, Chain] => [c.id, c]),
+);
 
 const TRANSFER = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');
 
