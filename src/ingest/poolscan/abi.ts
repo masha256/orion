@@ -56,6 +56,27 @@ export const FACTORY_REGISTRY_ABI = parseAbi([
 /** V2Gauge / CLGauge (IGauge.votingRewardsManager): the VRM that emits the gauge's FeesCollected. */
 export const GAUGE_ABI = parseAbi(['function votingRewardsManager() view returns (address)']);
 
+/** LeafVoter (ILeafVoter.FACTORY_REGISTRY, an immutable): the chain's FactoryRegistry, the root of VRM discovery. */
+export const LEAF_VOTER_ABI = parseAbi(['function FACTORY_REGISTRY() view returns (address _factoryRegistry)']);
+
+/**
+ * VotingRewardsManager incentive streams (metadex-public V3/src): IIncentiveStreaming.incentiveCount / incentive(id) with
+ * the IncentiveProgram struct in declaration order (rate = amount × PRECISION 1e18 / duration,
+ * RewardsLogicLibrary.createIncentiveProgram), and the supply history the zero-allocation seconds come from:
+ * IVotingCheckpoints.getPriorSupplyIndex / supplyAt / globalRewardPointHistory with the GlobalPoint struct in
+ * declaration order (incentives-and-events.md §2 read the same getters). viem decodes uint48 (start, end, ts,
+ * zeroSupplySeconds) as numbers, the rest as bigint.
+ */
+export const VRM_ABI = parseAbi([
+  'struct IncentiveProgram { address token; uint256 amount; uint256 rate; uint48 start; uint48 end; address creator; }',
+  'struct GlobalPoint { int128 bias; int128 slope; uint48 ts; uint128 permanentStakeBalance; uint48 zeroSupplySeconds; }',
+  'function incentiveCount() view returns (uint256)',
+  'function incentive(uint256 _programId) view returns (IncentiveProgram)',
+  'function getPriorSupplyIndex(uint256 _timestamp) view returns (uint256)',
+  'function supplyAt(uint256 _timestamp) view returns (uint256)',
+  'function globalRewardPointHistory(uint256 _index) view returns (GlobalPoint)',
+]);
+
 /** The root Voter on Base (IVoter.chains / VoterStorageBase.chains). */
 export const ROOT_VOTER_ABI = parseAbi(['function chains() view returns (uint256[] _chainIds)']);
 
