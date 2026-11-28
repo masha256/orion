@@ -60,6 +60,42 @@ export const GAUGE_ABI = parseAbi(['function votingRewardsManager() view returns
 export const ROOT_VOTER_ABI = parseAbi(['function chains() view returns (uint256[] _chainIds)']);
 
 /**
+ * Pricing reads (pricing.ts). CL: slot0 (ICLPoolState.slot0) and observe (ICLPoolDerivedState.observe) from
+ * metadex-slipstream-public; V2: Pool.getReserves from metadex-public V3/src/pools/Pool.sol. The scoping read the same
+ * three (scripts/measure.py) plus `balanceOf(pool)` of both tokens. viem decodes slot0's sqrtPriceX96 and observe's
+ * int56 tickCumulatives as bigint.
+ */
+export const CL_POOL_PRICE_ABI = parseAbi([
+  'function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, bool unlocked)',
+  'function observe(uint32[] secondsAgos) view returns (int56[] tickCumulatives, uint160[] secondsPerLiquidityCumulativeX128s)',
+]);
+export const V2_POOL_PRICE_ABI = parseAbi(['function getReserves() view returns (uint256 _reserve0, uint256 _reserve1, uint256 _blockTimestampLast)']);
+
+/** ERC-20 reads (viem's erc20Abi): a token's decimals and a pool's balance of it. */
+export const ERC20_ABI = parseAbi([
+  'function decimals() view returns (uint8)',
+  'function balanceOf(address account) view returns (uint256)',
+]);
+
+/**
+ * Chainlink AggregatorV3Interface (the feed proxy): latestRoundData as src/prices/evmMethods.ts reads it, plus the
+ * `description()` and `decimals()` the scoping read on every anchor feed (onchain-revenue.md §3.1).
+ */
+export const CHAINLINK_FEED_ABI = parseAbi([
+  'function description() view returns (string)',
+  'function decimals() view returns (uint8)',
+  'function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)',
+]);
+
+/**
+ * Multicall3 (same address on all 8 chains, `eth_getCode` MEASURED, onchain-revenue.md §10; viem's chain config).
+ * `getCurrentBlockTimestamp()` (viem's multicall3Abi) at e−1 gives that block's timestamp: feed staleness is measured
+ * at it, and Elysium's cross-chain anchors find their Base block from it.
+ */
+export const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11';
+export const MULTICALL3_ABI = parseAbi(['function getCurrentBlockTimestamp() view returns (uint256 timestamp)']);
+
+/**
  * IVotingRewardsManager `FeesCollected(address indexed _gauge, address indexed _token, uint256 _amount)`, emitted by the
  * VRM when it collects its gauge's fees (VotingRewardsManager.sol). measure.py keys it by (log address = VRM, topics[2] =
  * token) and reads the amount from the first data word.
