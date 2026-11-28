@@ -76,16 +76,57 @@ describe('poolscan scanChainDay (2026-11-26 scoping fixtures)', () => {
     const f = fx.factories.find((q) => q.address === p.factory)!;
     expect(f.pools.indexOf(mid)).toBeGreaterThanOrEqual(f.length_s);
     // Synthetic: the real mid-day pools were unregistered with $0 of tape fees (onchain-revenue.md §8), so give this one a
-    // registration and an e−1 accumulator. At s−1 the tape returns its zero struct (the pool did not exist yet), or reverts.
+    // registration and an e−1 accumulator. At s−1 the tape returns its zero struct for the not-yet-existing pool (a public
+    // mapping read: every new_in_day pool of the 45 scoping chain-days has an all-zero acc_s, none a failed read).
     const registeredMid: PoolscanFixture = structuredClone(fx);
     Object.assign(registeredMid.pools[mid], { allowed_caller: f.hook, acc_s: null, acc_e: { fee0: '12345', fee1: '678', last: 1795737000, swaps: 3 } });
-    for (const revertAtS of [false, true]) {
-      const reader = fixtureReader(registeredMid, {
-        override: (c, at) => (revertAtS && at === 's' && c.functionName === 'accumulators' && c.args?.[0] === mid ? null : undefined),
+    const scan = await scanChainDay(fixtureReader(registeredMid), fixtureConfig(registeredMid), DAY);
+    expect(poolOf(scan, mid)).toMatchObject({ fee0: 12345n, fee1: 678n, registered: true, newInDay: true });
+    expect(scan.counts.newInDay).toBe(1);
+    // A reverted s−1 accumulator is a failed read, even for a mid-day pool: never "absent" (it would book a lifetime).
+    const reverting = fixtureReader(registeredMid, {
+      override: (c, at) => (at === 's' && c.functionName === 'accumulators' && c.args?.[0] === mid ? null : undefined),
+    });
+    await expect(scanChainDay(reverting, fixtureConfig(registeredMid), DAY)).rejects.toMatchObject({ code: 'pool_scan_read_failed', message: expect.stringContaining(`accumulators(${mid}) at s−1`) });
+  });
+
+  it('a gauged pool created during the day may answer no pending at s-1 (no code yet)', async () => {
+    const fx: PoolscanFixture = structuredClone(loadPoolscanFixture('base'));
+    const [mid, p] = Object.entries(fx.pools).find(([, q]) => q.new_in_day)!;
+    // Synthetic: gauge the mid-day CL pool; its pool has no code at s−1, so gaugeFees() returns no data (null).
+    const gauge = '0x2222222222222222222222222222222222222222';
+    const vrm = '0x3333333333333333333333333333333333333333';
+    Object.assign(p, { gauge, vrm, pend_s: null, pend_e: ['40', '50'], collected: ['0', '0'] });
+    fx.registry.factory_to_gauges['0xf437f62053acb121665b8fdbfea8f214fb8e589d'].push(gauge);
+    const reader = fixtureReader(fx, { override: (c, at) => (at === 's' && c.address === mid && c.functionName === 'gaugeFees' ? null : undefined) });
+    const scan = await scanChainDay(reader, fixtureConfig(fx), DAY);
+    expect(scan.allocatorByPool.get(mid)).toEqual(new Map([[p.token0, 40n], [p.token1, 50n]]));
+  });
+
+  describe('a failed read fails the scan (never a benign default)', () => {
+    const fx = loadPoolscanFixture('base');
+    const entries = Object.entries(fx.pools);
+    const [regPool, rp] = entries.find(([, p]) => registered(p) && p.gauge && !p.new_in_day && fx.factories.find((f) => f.address === p.factory)!.kind === 'cl')!;
+    const [v2Pool] = entries.find(([, p]) => registered(p) && p.gauge && fx.factories.find((f) => f.address === p.factory)!.kind !== 'cl')!;
+    const cases: [string, 's' | 'e', (c: { address: string; functionName: string; args?: readonly unknown[] }) => boolean, string][] = [
+      ['allowedCaller', 'e', (c) => c.functionName === 'allowedCaller' && c.args?.[0] === regPool, `allowedCaller(${regPool}) at e−1`],
+      ['gaugeToTarget', 'e', (c) => c.functionName === 'gaugeToTarget' && c.args?.[0] === rp.gauge, `gaugeToTarget(${rp.gauge}) at e−1`],
+      ['accumulators at s−1', 's', (c) => c.functionName === 'accumulators' && c.args?.[0] === regPool, `accumulators(${regPool}) at s−1`],
+      ['accumulators at e−1', 'e', (c) => c.functionName === 'accumulators' && c.args?.[0] === regPool, `accumulators(${regPool}) at e−1`],
+      ['CL pending at s−1', 's', (c) => c.functionName === 'gaugeFees' && c.address === regPool, `pending fees of ${regPool} at s−1`],
+      ['CL pending at e−1', 'e', (c) => c.functionName === 'gaugeFees' && c.address === regPool, `pending fees of ${regPool} at e−1`],
+      ['V2 pending at s−1', 's', (c) => c.functionName === 'pendingFees' && c.address === v2Pool, `pending fees of ${v2Pool} at s−1`],
+      ['a factory tape getter', 'e', (c) => c.functionName === 'clPoolTape', 'clPoolTape() at e−1'],
+      ['votingRewardsManager', 'e', (c) => c.functionName === 'votingRewardsManager' && c.address === rp.gauge, `${rp.gauge}.votingRewardsManager()`],
+    ];
+    for (const [what, when, hit, msg] of cases) {
+      it(what, async () => {
+        const reader = fixtureReader(fx, { override: (c, at) => (at === when && hit(c) ? null : undefined) });
+        const err = await scanChainDay(reader, fixtureConfig(fx), DAY).catch((x: unknown) => x);
+        expect(err).toMatchObject({ code: 'pool_scan_read_failed' });
+        expect((err as Error).message).toContain('chain 8453 2026-11-26');
+        expect((err as Error).message).toContain(msg);
       });
-      const scan = await scanChainDay(reader, fixtureConfig(registeredMid), DAY);
-      expect(poolOf(scan, mid)).toMatchObject({ fee0: 12345n, fee1: 678n, registered: true, newInDay: true });
-      expect(scan.counts.newInDay).toBe(1);
     }
   });
 
@@ -190,26 +231,48 @@ describe('poolscan scanChainDay (2026-11-26 scoping fixtures)', () => {
     expect(scan.allocatorByPool.size).toBe(0);
   });
 
-  it('a factory tape, a CL hook or a registry factory that differs from config raises drift', async () => {
+  it('a CL hook or a registry factory that differs from config raises drift', async () => {
     const fx = loadPoolscanFixture('base');
-    const cfg = fixtureConfig(fx);
     const cl = fx.factories.find((f) => f.kind === 'cl')!;
     const clPool = cl.pools[0];
     const stranger = '0x1111111111111111111111111111111111111111';
     const reader = fixtureReader(fx, {
       override: (c, at) => {
         if (at !== 'e') return undefined;
-        if (c.address === cl.address && c.functionName === 'clPoolTape') return stranger;
         if (c.address === cl.address && c.functionName === 'getPoolSwapHook' && c.args?.[0] === clPool) return stranger;
         if (c.functionName === 'targetFactories') return [...fx.registry.target_factories, stranger];
         return undefined;
       },
     });
-    const scan = await scanChainDay(reader, cfg, DAY);
-    expect(scan.drift.map(driftKey).sort()).toEqual([`factory:${stranger}`, `hook:${clPool}`, `tape:${cl.address}`].sort());
-    expect(scan.drift.find((d) => d.kind === 'tape')!.detail).toEqual({ configured: cl.tape, actual: stranger });
-    // The configured tape is still the one read: drift warns, it does not re-route the scan.
+    const scan = await scanChainDay(reader, fixtureConfig(fx), DAY);
+    expect(scan.drift.map(driftKey).sort()).toEqual([`factory:${stranger}`, `hook:${clPool}`].sort());
     expect(poolOf(scan, clPool).fee0).toBe(BigInt(fx.pools[clPool].expect.fee0));
+  });
+
+  it("pools are read from the factory's live tape getter; a config tape that differs raises drift", async () => {
+    const fx: PoolscanFixture = structuredClone(loadPoolscanFixture('base'));
+    const cfg = fixtureConfig(fx); // keeps the configured CLPoolTape
+    const cl = fx.factories.find((f) => f.kind === 'cl')!;
+    const moved = '0x4444444444444444444444444444444444444444';
+    cl.tape = moved; // synthetic: the factory's clPoolTape() now names another tape, which holds these pools' accumulators
+    const reader = fixtureReader(fx);
+    const scan = await scanChainDay(reader, cfg, DAY);
+    expect(scan.drift.map(driftKey)).toEqual([`tape:${cl.address}`]);
+    expect(scan.drift[0].detail).toEqual({ configured: CL_TAPE, actual: moved });
+    const tapeReads = reader.stats.calls.filter((c) => (c.functionName === 'accumulators' || c.functionName === 'allowedCaller') && cl.pools.includes(c.args[0] as string));
+    expect(tapeReads.length).toBeGreaterThan(0);
+    expect(new Set(tapeReads.map((c) => c.address))).toEqual(new Set([moved]));
+    for (const a of cl.pools) expect([poolOf(scan, a).fee0, poolOf(scan, a).fee1], a).toEqual([BigInt(fx.pools[a].expect.fee0), BigInt(fx.pools[a].expect.fee1)]);
+  });
+
+  it('a falling accumulator raises negative_gross and counts 0 for that token', async () => {
+    const fx: PoolscanFixture = structuredClone(loadPoolscanFixture('base'));
+    const [a, p] = Object.entries(fx.pools).find(([, q]) => registered(q) && BigInt(q.expect.fee0) > 0n && q.acc_s && q.acc_s.last !== 0)!;
+    p.acc_e = { ...p.acc_e!, fee0: (BigInt(p.acc_s!.fee0) - 1n).toString() }; // synthetic: the tape was reset below its s−1 value
+    const scan = await scanChainDay(fixtureReader(fx), fixtureConfig(fx), DAY);
+    expect(poolOf(scan, a)).toMatchObject({ fee0: 0n, fee1: BigInt(p.expect.fee1) });
+    expect(scan.drift.map(driftKey)).toEqual([`negative_gross:${a}`]);
+    expect(scan.drift[0].detail).toEqual({ token: p.token0, delta: '-1' });
   });
 
   it('an RPC answer missing where the scan needs it fails the scan', async () => {

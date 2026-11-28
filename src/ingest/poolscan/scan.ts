@@ -13,20 +13,25 @@ import type { ChainDayScan, ChainScan, Drift, PoolFees, ScanFactory, TokenAmount
  * 1. Day blocks: s = first block at or after D 00:00Z, e = first block at or after D+1 00:00Z (reader.blockAt). A call at
  *    block N returns the state after N, so every read is at s−1 and e−1 and the day covers exactly [s, e).
  * 2. Pools: per configured factory `allPoolsLength` / `allPools(i)` at e−1 (at s−1 only the length, to mark pools created
- *    during the day); the factory's own `poolTape()` / `clPoolTape()`; per CL pool its swap hook.
- * 3. Registration: the configured tape's `allowedCaller(pool)` at e−1; 0 = unregistered, so the tape never recorded it:
- *    counted and listed with zero gross, its accumulators not read.
- * 4. Gross: `accumulators(pool)` on the configured tape at e−1 minus at s−1. Absent at s−1 (a revert, or the tape's zero
- *    struct), or still the registration's 1-wei sentinel (lastSwapTimestamp 0): the start is 0. lastSwapTimestamp 0 at
- *    e−1: no swap yet, the day's fee is 0.
+ *    during the day); the factory's own `poolTape()` / `clPoolTape()` at e−1, which is the tape its pools are read from
+ *    (the configured tape is only compared: a mismatch is `tape` drift); per CL pool its swap hook.
+ * 3. Registration: that tape's `allowedCaller(pool)` at e−1; 0 = unregistered, so the tape never recorded it: counted and
+ *    listed with zero gross, its accumulators not read.
+ * 4. Gross: `accumulators(pool)` on that tape at e−1 minus at s−1. A pool absent at s−1 comes back as the mapping's zero
+ *    struct (a public mapping read never reverts; every scoping chain-day confirms it), and a pool still on the
+ *    registration's 1-wei sentinel has lastSwapTimestamp 0: either way the start is 0. lastSwapTimestamp 0 at e−1: no swap
+ *    yet, the day's fee is 0. A null accumulator at either block is a failed read and fails the scan.
  * 5. Allocator, per gauged pool (FactoryRegistry gaugeFactories → factoryToGauges → gaugeToTarget): Δ raw pending
  *    (CL `pool.gaugeFees()`, V2 `pool.pendingFees(gauge)`) between s−1 and e−1 plus Σ VRM `FeesCollected` in [s, e−1]
  *    (one eth_getLogs per log-range window over all the chain's VRMs, topic0 only).
  * 6. Drift (warn only): a factory's tape getter ≠ configured tape, a CL pool's hook ≠ configured hook, a registry target
  *    factory not configured, a gauge on an unregistered pool, a negative per-pool accrual (taken as 0).
  *
- * Any read the scan cannot do without (a factory length or pool, a pool's tokens, a registered pool's e−1 accumulator, a
- * gauge's VRM or e−1 pending) failing throws: a partial chain-day is never returned.
+ * Every read the result depends on fails the scan when it reverts or does not decode (OrionError
+ * `pool_scan_read_failed`, naming the chain, day, contract and read): factory lengths, tape getters and pools, registry
+ * lists, pool tokens, `allowedCaller`, `gaugeToTarget`, VRMs, accumulators at both blocks and pending at both blocks. The
+ * one null accepted is a pool's pending at s−1 when the pool was created during the day (no code at s−1, so the call
+ * returns no data). A partial chain-day is never returned.
  */
 export async function scanChainDay(reader: ChainReader, cfg: ChainScan, day: string): Promise<ChainDayScan> {
   if (reader.chainId !== cfg.chain_id) throw new OrionError('pool_scan_config', `reader is chain ${reader.chainId}, config is chain ${cfg.chain_id}`);
@@ -70,8 +75,10 @@ export async function scanChainDay(reader: ChainReader, cfg: ChainScan, day: str
   const lenS = await read<bigint>(factories.map((f) => ({ address: f.address, abi: FACTORY_ABI, functionName: 'allPoolsLength' })), atS);
   const lengths = factories.map((f, i) => Number(need(r1[2 * i] as bigint | null, `${f.address}.allPoolsLength() at e−1`)));
   factories.forEach((f, i) => {
-    const actual = r1[2 * i + 1] as string | null;
-    if (actual === null || lc(actual) !== f.tape) warn('tape', f.address, { configured: f.tape, actual: actual === null ? null : lc(actual) });
+    // The factory's live getter names the tape its pools record on; the config value is only compared.
+    const live = lc(need(r1[2 * i + 1] as string | null, `${f.address}.${tapeGetter(f)}() at e−1`));
+    if (live !== f.tape) warn('tape', f.address, { configured: f.tape, actual: live });
+    f.tape = live;
   });
   const targets = need(r1[2 * factories.length] as readonly string[] | null, `${registry}.targetFactories()`).map(lc);
   const gaugeFactories = need(r1[2 * factories.length + 1] as readonly string[] | null, `${registry}.gaugeFactories()`).map(lc);
@@ -117,7 +124,7 @@ export async function scanChainDay(reader: ChainReader, cfg: ChainScan, day: str
   const info = pools.map((p, i) => {
     const slot = r3.slice(at, at + poolCalls3[i].length);
     at += poolCalls3[i].length;
-    const caller = slot[2];
+    const caller = need(slot[2], `${p.factory.tape}.allowedCaller(${p.pool}) at e−1`);
     if (p.factory.kind === 'cl' && p.factory.hook) {
       const hook = slot[3] === null ? null : lc(slot[3]);
       if (hook !== p.factory.hook) warn('hook', p.pool, { factory: p.factory.address, configured: p.factory.hook, actual: hook });
@@ -126,15 +133,15 @@ export async function scanChainDay(reader: ChainReader, cfg: ChainScan, day: str
       ...p,
       token0: lc(need(slot[0], `${p.pool}.token0()`)),
       token1: lc(need(slot[1], `${p.pool}.token1()`)),
-      registered: caller !== null && BigInt(caller) !== 0n,
+      registered: BigInt(caller) !== 0n,
       gauge: null as string | null,
       vrm: null as string | null,
     };
   });
   const byPool = new Map(info.map((p) => [p.pool, p]));
   gauges.forEach((g, i) => {
-    const target = r3[at + 2 * i];
-    const p = target === null ? undefined : byPool.get(lc(target));
+    const target = need(r3[at + 2 * i], `${registry}.gaugeToTarget(${g}) at e−1`);
+    const p = byPool.get(lc(target));
     if (!p) return; // a gauge on a pool of a factory the config does not scan (that factory raised `factory` drift)
     p.gauge = g;
     p.vrm = lc(need(r3[at + 2 * i + 1], `${g}.votingRewardsManager()`));
@@ -160,10 +167,10 @@ export async function scanChainDay(reader: ChainReader, cfg: ChainScan, day: str
   const gross = new Map<string, [bigint, bigint]>();
   registeredPools.forEach((p, i) => {
     const end = decodeAcc(p.factory, need(r4e[i], `${p.factory.tape}.accumulators(${p.pool}) at e−1`));
-    const start = r4s[i] === null ? null : decodeAcc(p.factory, r4s[i]);
+    const start = decodeAcc(p.factory, need(r4s[i], `${p.factory.tape}.accumulators(${p.pool}) at s−1`));
     const fees: [bigint, bigint] = [0n, 0n];
     if (end.last !== 0n) {
-      const base = start === null || start.last === 0n ? [0n, 0n] : start.fees;
+      const base = start.last === 0n ? [0n, 0n] : start.fees;
       for (const k of [0, 1]) {
         const d = end.fees[k] - base[k];
         if (d < 0n) warn('negative_gross', p.pool, { token: k === 0 ? p.token0 : p.token1, delta: d.toString() });
@@ -191,7 +198,8 @@ export async function scanChainDay(reader: ChainReader, cfg: ChainScan, day: str
   const off = registeredPools.length;
   gauged.forEach((p, i) => {
     const pe = pair(need(r4e[off + i], `pending fees of ${p.pool} at e−1`));
-    const ps = r4s[off + i] === null ? [0n, 0n] : pair(r4s[off + i]);
+    // Only a pool created during the day may answer nothing at s−1 (no code there yet): its pending started at 0.
+    const ps = r4s[off + i] === null && p.newInDay ? [0n, 0n] : pair(need(r4s[off + i], `pending fees of ${p.pool} at s−1`));
     const amounts: TokenAmounts = new Map();
     [p.token0, p.token1].forEach((token, k) => {
       const v = pe[k] - ps[k] + (collected.get(`${p.vrm}:${token}`) ?? 0n);
