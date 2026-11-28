@@ -73,7 +73,7 @@ is copied from those files, never typed from memory.**
 
 ---
 
-### Task 1: Six chains and a per-chain RPC on every adapter context
+### Task 1: Six chains and a per-chain RPC on every adapter context — RET-196
 
 **Files:**
 - Modify: `src/ingest/transport/chains.ts` (rows), `src/ingest/transport/viemRpc.ts` (`VIEM_CHAINS`; Elysium via
@@ -103,7 +103,7 @@ is copied from those files, never typed from memory.**
   every golden and hash pin unchanged.
 - [ ] **Step 5: Commit** `feat(chains): OP, Arbitrum, Ink, Robinhood, Arc, Elysium + ctx.rpcFor (<T1 ID>)`.
 
-### Task 2: Core ingest: raw multicall, logs, stored days, warnings, origin fix
+### Task 2: Core ingest: raw multicall, logs, stored days, warnings, origin fix — RET-197
 
 **Files:**
 - Modify: `src/ingest/transport/rpc.ts` (types), `src/ingest/transport/viemRpc.ts`, `tests/helpers/fakeRpc.ts`
@@ -142,7 +142,7 @@ is copied from those files, never typed from memory.**
 - [ ] **Step 4: Full suite + typecheck green; goldens unchanged.**
 - [ ] **Step 5: Commit** `feat(ingest): multicallData, getLogs, storedFlowDays, adapter warnings, series origin from provenance (<T2 ID>)`.
 
-### Task 3: Report: `onchain_usd`, below-line `started` and `in_holder_flow`, window label, growth guard
+### Task 3: Report: `onchain_usd`, below-line `started` and `in_holder_flow`, window label, growth guard — RET-198
 
 **Files:**
 - Modify: `src/db/prices.ts:218-245` (`PriceBasis`, `listFlowUsd`), `src/report/incomeStatement.ts` (:42 basis doc,
@@ -176,7 +176,7 @@ is copied from those files, never typed from memory.**
 - [ ] **Step 4: Full suite + typecheck green; non-AERO goldens unchanged.**
 - [ ] **Step 5: Commit** `feat(report): onchain_usd basis, below-line started, window label, growth guard (<T3 ID>)`.
 
-### Task 4: `poolscan` engine: day blocks, pools, gross, allocator, drift
+### Task 4: `poolscan` engine: day blocks, pools, gross, allocator, drift — RET-199
 
 **Files:**
 - Create: `src/ingest/poolscan/types.ts`, `src/ingest/poolscan/abi.ts`, `src/ingest/poolscan/reader.ts`,
@@ -215,7 +215,7 @@ is copied from those files, never typed from memory.**
 - [ ] **Step 4: Tests + typecheck green.**
 - [ ] **Step 5: Commit** `feat(poolscan): day scan engine (<T4 ID>)`.
 
-### Task 5: `poolscan` pricing
+### Task 5: `poolscan` pricing — RET-200
 
 **Files:**
 - Create: `src/ingest/poolscan/pricing.ts`
@@ -248,7 +248,7 @@ is copied from those files, never typed from memory.**
 - [ ] **Step 4: Tests + typecheck green.**
 - [ ] **Step 5: Commit** `feat(poolscan): on-chain price graph (<T5 ID>)`.
 
-### Task 6: `poolscan` incentives
+### Task 6: `poolscan` incentives — RET-201
 
 **Files:**
 - Create: `src/ingest/poolscan/incentives.ts`
@@ -276,7 +276,7 @@ is copied from those files, never typed from memory.**
 - [ ] **Step 4: Tests + typecheck green.**
 - [ ] **Step 5: Commit** `feat(poolscan): VRM incentive streams (<T6 ID>)`.
 
-### Task 7: Adapters `pool.tape_fees_daily` and `pool.vrm_incentives_daily`
+### Task 7: Adapters `pool.tape_fees_daily` and `pool.vrm_incentives_daily` — RET-202
 
 **Files:**
 - Create: `src/ingest/adapters/pool.ts`
@@ -312,7 +312,7 @@ is copied from those files, never typed from memory.**
 - [ ] **Step 4: Full suite + typecheck green.**
 - [ ] **Step 5: Commit** `feat(adapters): pool.tape_fees_daily, pool.vrm_incentives_daily (<T7 ID>)`.
 
-### Task 8: AERO config and the re-pins
+### Task 8: AERO config and the re-pins — RET-203
 
 **Files:**
 - Modify: `assets/aero.yaml`
@@ -344,7 +344,7 @@ is copied from those files, never typed from memory.**
   `external_ids.defillama`.
 - [ ] **Step 4: Commit** `feat(aero): revenue on chain via pool_scan; flow_usd.fees retired (<T8 ID>)`.
 
-### Task 9: Live golden, backfill runner, release docs
+### Task 9: Live golden, backfill runner, release docs — RET-204
 
 **Files:**
 - Create: `tests/live/aeroPoolScan.live.test.ts` (skipped unless `ORION_LIVE_RPC=1`), `tools/phase3-proof/r4-backfill.sh`,
@@ -369,7 +369,7 @@ is copied from those files, never typed from memory.**
 - [ ] **Step 4: Full suite + typecheck green.**
 - [ ] **Step 5: Commit** `tools/docs(r4): live golden, backfill runner, acceptance, deploy notes (<T9 ID>)`.
 
-### Task 10: Proof on a prod copy and the sign-off table (controller)
+### Task 10: Proof on a prod copy and the sign-off table (controller) — RET-205
 
 **Files:**
 - Create: `~/.hermes/profiles/raymond/workspace/orion/phase3-r4-sdd/proof/` (outputs), fill `tools/phase3-proof/r4-allowlist.json`
