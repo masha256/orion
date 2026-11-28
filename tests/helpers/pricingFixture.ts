@@ -48,7 +48,7 @@ export function pricingScan(fx: PricingFixture): ChainDayScan {
   for (const [pool, p] of Object.entries(fx.pools)) {
     pools.push({
       pool, factory: fx.factories[p.kind], token0: p.tokens[0], token1: p.tokens[1], fee0: BigInt(p.fee[0]), fee1: BigInt(p.fee[1]),
-      registered: true, newInDay: false, gauge: p.alloc ? pool : null,
+      credit0: 0n, credit1: 0n, registered: true, newInDay: false, gauge: p.alloc ? pool : null,
     });
     if (p.alloc) allocatorByPool.set(pool, new Map([[p.tokens[0], BigInt(p.alloc[0])], [p.tokens[1], BigInt(p.alloc[1])]]));
   }

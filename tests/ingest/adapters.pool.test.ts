@@ -78,7 +78,7 @@ describe('pool.tape_fees_daily and pool.vrm_incentives_daily', () => {
     expect(Object.keys(slice.chains).sort()).toEqual(['10', '8453']);
     expect(slice.chains['8453']).toEqual({
       s: expect.stringMatching(/^\d+$/), e: expect.stringMatching(/^\d+$/),
-      grossUsd: expect.closeTo(990, 6), allocatorUsd: expect.closeTo(900, 6), unregisteredAllocatorUsd: 0, pricedPct: expect.closeTo(99, 6), unpricedUsd: expect.closeTo(10, 6),
+      grossUsd: expect.closeTo(990, 6), allocatorUsd: expect.closeTo(900, 6), preRegistrationCreditUsd: 0, pricedPct: expect.closeTo(99, 6), unpricedUsd: expect.closeTo(10, 6),
     });
     const inc = await run(world, ctx, POOL_METRICS.vote_incentives);
     expect((inc.points[0].slice as { chains: Record<string, unknown> }).chains['8453']).toMatchObject({ vote_incentives: expect.closeTo(864, 4), protocol_subsidy: expect.closeTo(432, 4), programsActive: 2 });
@@ -168,14 +168,36 @@ describe('pool.tape_fees_daily and pool.vrm_incentives_daily', () => {
     const g = await run(world, ctx, POOL_METRICS.gross);
     expect(value(g, '2026-11-24')).toBeCloseTo(1362 + 1000, 6);
     const c8453 = (g.points[0].slice as { chains: Record<string, Record<string, unknown>> }).chains['8453'];
-    expect(c8453).toMatchObject({ grossUsd: expect.closeTo(1362, 6), allocatorUsd: expect.closeTo(1262, 6), unregisteredAllocatorUsd: expect.closeTo(362, 6) });
-    expect((g.points[0].slice as { chains: Record<string, Record<string, unknown>> }).chains['10']).toMatchObject({ unregisteredAllocatorUsd: 0 });
+    expect(c8453).toMatchObject({ grossUsd: expect.closeTo(1362, 6), allocatorUsd: expect.closeTo(1262, 6), preRegistrationCreditUsd: expect.closeTo(362, 6) });
+    expect((g.points[0].slice as { chains: Record<string, Record<string, unknown>> }).chains['10']).toMatchObject({ preRegistrationCreditUsd: 0 });
     expect(value(await run(world, ctx, POOL_METRICS.allocator), '2026-11-24')).toBeCloseTo(1262 + 900, 6);
     expect(value(await run(world, ctx, POOL_METRICS.lp), '2026-11-24')).toBeCloseTo(100 + 100, 6);
     // The drift warning stays, one per pool.
     expect((g.warnings ?? []).map((w) => w.dedupeKey).filter((k) => k.startsWith('pool_scan:gauged_unregistered:')).sort()).toEqual(
       [0, 1, 2].map((i) => `pool_scan:gauged_unregistered:8453:${unregPool(i)}`).sort(),
     );
+  });
+
+  it('a gauged pool registered during a day (Arbitrum 10-27 shape): gross per token = max(tape delta, allocator); credited only that day', async () => {
+    // Unregistered all 11-24 ($538 on the gauge only), registered mid-11-25 (the tape sees $141 of the gauge's $538),
+    // registered all 11-26 (tape == gauge, $141). Before the fix 11-25 booked tape $141 against allocator $538.
+    const world = poolWorld(two({ unregisteredGauged: [{ alloc: 538, tape: 141, registeredOn: '2026-11-25' }] }), { nowIso: NOW });
+    const ctx = world.ctx();
+    const g = await run(world, ctx, POOL_METRICS.gross);
+    const base = (d: string) => (g.points.find((p) => p.day === d)!.slice as { chains: Record<string, Record<string, unknown>> }).chains['8453'];
+    expect([value(g, '2026-11-24'), value(g, '2026-11-25'), value(g, '2026-11-26')].map((x) => Math.round(x * 1e6) / 1e6)).toEqual([2538, 2538, 2141]);
+    expect(base('2026-11-24')).toMatchObject({ allocatorUsd: expect.closeTo(1438, 6), preRegistrationCreditUsd: expect.closeTo(538, 6) });
+    expect(base('2026-11-25')).toMatchObject({ allocatorUsd: expect.closeTo(1438, 6), preRegistrationCreditUsd: expect.closeTo(397, 6) });
+    expect(base('2026-11-26')).toMatchObject({ allocatorUsd: expect.closeTo(1041, 6), preRegistrationCreditUsd: 0 });
+    expect(value(await run(world, ctx, POOL_METRICS.lp), '2026-11-25')).toBeCloseTo(200, 6);
+  });
+
+  it('a pool registered during the day whose tape delta tops its allocator books the tape delta, credit 0', async () => {
+    const world = poolWorld(two({ unregisteredGauged: [{ alloc: 100, tape: 141, registeredOn: '2026-11-25' }] }), { nowIso: NOW });
+    const g = await run(world, world.ctx(), POOL_METRICS.gross);
+    expect(value(g, '2026-11-25')).toBeCloseTo(1141 + 1000, 6);
+    const c = (g.points.find((p) => p.day === '2026-11-25')!.slice as { chains: Record<string, Record<string, unknown>> }).chains['8453'];
+    expect(c).toMatchObject({ allocatorUsd: expect.closeTo(1000, 6), preRegistrationCreditUsd: 0 });
   });
 
   it('a registered pool whose allocator tops its gross still fails the bound beside gauged unregistered pools', async () => {

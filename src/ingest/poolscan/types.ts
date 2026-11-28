@@ -67,8 +67,9 @@ export type ScanConfig = z.infer<typeof ScanConfigSchema>;
 export type TokenAmounts = Map<string, bigint>;
 
 /**
- * One pool's gross fees for the day, in raw token units: the tape's accumulator delta for a registered pool; for an
- * unregistered one (the tape does not record it) its allocator accrual when gauged, else 0 (scan.ts point 3).
+ * One pool's gross fees for the day, in raw token units (scan.ts point 3): the tape's accumulator delta (0 for a pool
+ * unregistered at e−1: the tape does not record it); for a gauged pool not registered at s−1, per token the max of
+ * that delta and its allocator accrual (the gauge also got fees from before registration, which the tape never saw).
  */
 export interface PoolFees {
   pool: string;
@@ -77,6 +78,10 @@ export interface PoolFees {
   token1: string;
   fee0: bigint;
   fee1: bigint;
+  /** The part of fee0 / fee1 above the tape delta (non-zero only for a gauged pool not registered at s−1). */
+  credit0: bigint;
+  credit1: bigint;
+  /** Registered at e−1. */
   registered: boolean;
   /** Absent from the factory at s−1 (created during the day). */
   newInDay: boolean;

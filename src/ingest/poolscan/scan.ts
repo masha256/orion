@@ -16,10 +16,13 @@ import type { ChainDayScan, ChainScan, Drift, PoolFees, ScanFactory, TokenAmount
  *    during the day; required: a chain is scanned only from its `since`, when its factories exist); the factory's own `poolTape()` / `clPoolTape()` at e−1, which is the tape its pools are read from
  *    (the configured tape is only compared: a mismatch is `tape` drift); per CL pool its swap hook.
  * 3. Registration: that tape's `allowedCaller(pool)` at e−1; 0 = unregistered, so the tape never recorded it: counted and
- *    listed, its accumulators not read. An ungauged one books zero gross. A gauged one books its allocator accrual (point
- *    5) as gross, per token, so its LP is 0: registration lags pool creation (Arbitrum 2026-10-26: six of seven new
- *    pools gauged and unregistered at e−1), and the fees its gauge took before registration are real fees the tape
- *    never saw. Read from the tape alone they would push allocator above gross.
+ *    listed, its accumulators not read, and an ungauged one books zero gross. For a gauged pool registered at e−1 and
+ *    present at s−1, `allowedCaller` at s−1 too. A gauged pool NOT registered at s−1 (absent then, registered during
+ *    the day, or still unregistered at e−1) books per token max(tape delta, allocator accrual (point 5)), the tape
+ *    delta being 0 while unregistered; `credit0/1` keep the excess over the tape delta. Why: registration lags pool
+ *    creation (Arbitrum 2026-10-26/27: new pools gauged at once, registered up to a day later), so the gauge collects
+ *    fees from swaps before registration that the tape never saw. A tape-only gross would put allocator above gross.
+ *    A pool registered at both s−1 and e−1 keeps its tape delta, and the adapter's allocator ≤ gross bound judges it.
  * 4. Gross: `accumulators(pool)` on that tape at e−1 minus at s−1. A pool absent at s−1 comes back as the mapping's zero
  *    struct (a public mapping read never reverts; every scoping chain-day confirms it), and a pool still on the
  *    registration's 1-wei sentinel has lastSwapTimestamp 0: either way the start is 0. lastSwapTimestamp 0 at e−1: no swap
@@ -33,7 +36,7 @@ import type { ChainDayScan, ChainScan, Drift, PoolFees, ScanFactory, TokenAmount
  *
  * Every read the result depends on fails the scan when it reverts or does not decode (OrionError
  * `pool_scan_read_failed`, naming the chain, day, contract and read): factory lengths (at s−1 and e−1), tape getters and pools, registry
- * lists, pool tokens, `allowedCaller`, `gaugeToTarget`, VRMs, accumulators at both blocks and pending at both blocks. The
+ * lists, pool tokens, `allowedCaller` (e−1; s−1 for gauged pools), `gaugeToTarget`, VRMs, accumulators at both blocks and pending at both blocks. The
  * one null accepted is a pool's pending at s−1 when the pool was created during the day (no code at s−1, so the call
  * returns no data). A partial chain-day is never returned.
  */
@@ -160,6 +163,11 @@ export async function scanChainDay(reader: ChainReader, cfg: ChainScan, day: str
   const gauged = info.filter((p) => p.gauge !== null);
   for (const p of gauged) if (!p.registered) warn('gauged_unregistered', p.pool, { gauge: p.gauge, factory: p.factory.address });
 
+  // Round 3b (s−1): registration at the day's start, for gauged pools registered at e−1 that existed then (point 3).
+  const startCheck = gauged.filter((p) => p.registered && !p.newInDay);
+  const r3s = await read<string>(startCheck.map((p): TypedCall => ({ address: p.factory.tape, abi: tapeAbi(p.factory), functionName: 'allowedCaller', args: [p.pool] })), atS);
+  const registeredAtS = new Set(startCheck.filter((p, i) => BigInt(need(r3s[i], `${p.factory.tape}.allowedCaller(${p.pool}) at s−1`)) !== 0n).map((p) => p.pool));
+
   // Round 4 (s−1 and e−1): accumulators of the registered pools, raw pending of the gauged ones.
   const registeredPools = info.filter((p) => p.registered);
   const r4 = (block: bigint) =>
@@ -221,9 +229,15 @@ export async function scanChainDay(reader: ChainReader, cfg: ChainScan, day: str
   });
 
   const out: PoolFees[] = info.map((p) => {
-    // Registration (point 3): a gauged pool the tape never recorded books its allocator accrual as gross.
-    const [fee0, fee1] = p.registered ? gross.get(p.pool)! : p.gauge !== null ? allocatorAsGross(cfg.chain_id, day, p, allocatorByPool.get(p.pool)!) : [0n, 0n];
-    return { pool: p.pool, factory: p.factory.address, token0: p.token0, token1: p.token1, fee0, fee1, registered: p.registered, newInDay: p.newInDay, gauge: p.gauge };
+    const tape = p.registered ? gross.get(p.pool)! : ([0n, 0n] as [bigint, bigint]);
+    // Registration (point 3): a gauged pool not registered at s−1 books max(tape delta, allocator accrual) per token.
+    const credited = p.gauge !== null && !registeredAtS.has(p.pool);
+    const alloc = credited ? allocatorAsGross(cfg.chain_id, day, p, allocatorByPool.get(p.pool)!) : tape;
+    const [fee0, fee1] = [0, 1].map((k) => (alloc[k] > tape[k] ? alloc[k] : tape[k]));
+    return {
+      pool: p.pool, factory: p.factory.address, token0: p.token0, token1: p.token1, fee0, fee1, credit0: fee0 - tape[0], credit1: fee1 - tape[1],
+      registered: p.registered, newInDay: p.newInDay, gauge: p.gauge,
+    };
   });
   return {
     chainId: cfg.chain_id,
@@ -255,7 +269,7 @@ export async function checkRootChains(reader: ChainReader, rootVoter: string, co
 }
 
 /**
- * A gauged unregistered pool's gross (scan point 3): its allocator accrual, mapped onto [token0, token1]. An allocator
+ * A gauged pool's allocator accrual mapped onto [token0, token1], for the max with its tape delta (scan point 3). An allocator
  * token outside the pool's pair is `pool_scan_inconsistent` (the accrual is read per pool token, so it means a bug).
  */
 export function allocatorAsGross(chainId: number, day: string, p: { pool: string; token0: string; token1: string }, amounts: TokenAmounts): [bigint, bigint] {

@@ -264,8 +264,8 @@ export interface ScanValue {
   allocatorUsd: number;
   /** gross − allocator. */
   lpUsd: number;
-  /** The allocator USD of gauged pools unregistered at e−1 (their gross is that accrual, so their LP is 0). */
-  unregisteredAllocatorUsd: number;
+  /** The USD of gross credited above the tape delta (`credit0/1`, gauged pools not registered at s−1); priced as gross. */
+  preRegistrationCreditUsd: number;
   /** 100 × gross priced / (gross priced + coverageEstimateUsd); 100 when nothing is left unpriced or estimable. */
   pricedPct: number;
   /** The unpriced gross fees at the coverage graph's prices (coverage only). */
@@ -283,7 +283,14 @@ export function valueScan(scan: ChainDayScan, book: PriceBook): ScanValue {
   let grossUsd = 0;
   let coverageEstimateUsd = 0;
   const unpriced: UnpricedFee[] = [];
+  let preRegistrationCreditUsd = 0;
   for (const p of scan.pools) {
+    for (const [token, amount] of [[p.token0, p.credit0], [p.token1, p.credit1]] as const) {
+      if (amount <= 0n) continue;
+      const amt = whole(token, amount);
+      const px = amt === null ? null : priceIn(p.pool, token);
+      if (amt !== null && px !== null) preRegistrationCreditUsd += amt * px;
+    }
     for (const [token, amount] of [[p.token0, p.fee0], [p.token1, p.fee1]] as const) {
       if (amount <= 0n) continue;
       const amt = whole(token, amount);
@@ -298,19 +305,15 @@ export function valueScan(scan: ChainDayScan, book: PriceBook): ScanValue {
       unpriced.push({ token: lc(token), amount, pool: p.pool, estimateUsd });
     }
   }
-  const unregistered = new Set(scan.pools.filter((p) => !p.registered && p.gauge !== null).map((p) => p.pool));
   let allocatorUsd = 0;
-  let unregisteredAllocatorUsd = 0;
   for (const [pool, amounts] of scan.allocatorByPool) {
     for (const [token, amount] of amounts) {
       if (amount <= 0n) continue;
       const amt = whole(token, amount);
       const px = amt === null ? null : priceIn(pool, token);
-      if (amt === null || px === null) continue;
-      allocatorUsd += amt * px;
-      if (unregistered.has(pool)) unregisteredAllocatorUsd += amt * px;
+      if (amt !== null && px !== null) allocatorUsd += amt * px;
     }
   }
   const denom = grossUsd + coverageEstimateUsd;
-  return { grossUsd, allocatorUsd, lpUsd: grossUsd - allocatorUsd, unregisteredAllocatorUsd, pricedPct: denom > 0 ? (100 * grossUsd) / denom : 100, coverageEstimateUsd, unpriced };
+  return { grossUsd, allocatorUsd, lpUsd: grossUsd - allocatorUsd, preRegistrationCreditUsd, pricedPct: denom > 0 ? (100 * grossUsd) / denom : 100, coverageEstimateUsd, unpriced };
 }

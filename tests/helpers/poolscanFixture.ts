@@ -21,6 +21,8 @@ export interface FxPool {
   token0: string;
   token1: string;
   allowed_caller: string;
+  /** Synthetic: `allowedCaller` at s−1 when it differs from e−1 (a pool registered during the day); default `allowed_caller`. */
+  allowed_caller_s?: string;
   hook?: string;
   acc_s: FxAcc | null;
   acc_e: FxAcc | null;
@@ -147,7 +149,7 @@ export function fixtureReader(fx: PoolscanFixture, opts: FixtureReaderOptions = 
         const p = fx.pools[arg0 as string];
         // A tape answers only for the pools of the factories that record on it; any other pool is unknown to it.
         const mine = p !== undefined && factories.get(p.factory)?.tape === addr;
-        if (c.functionName === 'allowedCaller') return mine ? p.allowed_caller : ZERO;
+        if (c.functionName === 'allowedCaller') return mine ? (at === 's' ? (p.allowed_caller_s ?? p.allowed_caller) : p.allowed_caller) : ZERO;
         if (c.functionName === 'accumulators') return accValue(tapeKind, mine ? (at === 's' ? p.acc_s : p.acc_e) : null);
       }
       const pool = fx.pools[addr];

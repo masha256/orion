@@ -91,10 +91,14 @@ For each configured chain and UTC day D:
    (`getPoolSwapHook`). Pools absent at `s−1` start at 0.
 3. **Gross.** `accumulators(pool)` at `s−1` and `e−1`; delta per token. Unregistered pools (`allowedCaller` 0 at `e−1`):
    fee estimate from reserves is NOT computed; they are counted and listed in detail (0.04%), and a gauged unregistered
-   pool raises drift. An ungauged one books 0 gross; a gauged one books its allocator accrual (step 4) as gross, per
-   token, so its LP is 0, and the slice records it per chain as `unregisteredAllocatorUsd`. Registration lags pool
-   creation (Arbitrum 2026-10-26: six of seven new pools gauged, unregistered, $362 of gauge fees), so the tape misses
-   real fees the gauge took; tape-only gross put allocator above gross and failed the bound.
+   pool raises drift. An ungauged unregistered pool books 0 gross. A gauged pool NOT registered at `s−1`
+   (`allowedCaller` read at `s−1` too; a pool absent then counts as unregistered) books, per token,
+   max(tape delta, allocator accrual (step 4)); while it is unregistered at `e−1` the tape delta is 0. The excess over
+   the tape delta is recorded per chain in the slice as `preRegistrationCreditUsd`. Pools registered at both `s−1` and
+   `e−1` keep the tape delta, under the allocator ≤ gross bound. Why: registration lags pool creation, and the gauge
+   collects fees from swaps before registration that the tape never saw. Arbitrum 2026-10-26 had six new pools gauged
+   but unregistered, with $362 of gauge fees. On 10-27 they were registered mid-day, and one showed $141 on the tape
+   against $538 on its gauge. A tape-only gross put allocator above gross and failed the bound.
 4. **Allocator.** Gauge per pool (`factoryToGauges` / `gaugeToTarget`), raw pending at both blocks, `FeesCollected` logs
    for the VRMs over `[s, e−1]`, chunked to the chain's log-range limit.
 5. **Incentives.** VRM discovery from state (LeafVoter → FactoryRegistry → gauge factories → `votingRewardsManager()`),

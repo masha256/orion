@@ -165,11 +165,65 @@ describe('poolscan scanChainDay (2026-11-26 scoping fixtures)', () => {
     const scan = await scanChainDay(reader, fixtureConfig(fx), DAY);
     const { token0, token1 } = fx.pools[pool];
     expect(scan.allocatorByPool.get(pool)).toEqual(new Map([[token0, 605n], [token1, 706n]]));
-    expect(poolOf(scan, pool)).toMatchObject({ registered: false, fee0: 605n, fee1: 706n });
+    expect(poolOf(scan, pool)).toMatchObject({ registered: false, fee0: 605n, fee1: 706n, credit0: 605n, credit1: 706n });
     expect(scan.counts.registered).toBe(Object.values(fx.pools).filter(registered).length);
     // Still drift, and the tape is still never read for it.
     expect(scan.drift.map(driftKey)).toEqual([`gauged_unregistered:${pool}`]);
     expect(reader.stats.calls.some((c) => c.functionName === 'accumulators' && c.args[0] === pool)).toBe(false);
+  });
+
+  describe('a gauged pool registered during the day books max(tape delta, allocator accrual) per token', () => {
+    // 0x45ad… (Base V2 stable, gauged, registered at e−1): tape delta a little above its allocator accrual (11-26).
+    const POOL = '0x45adce4be5f602273c6e883a4c94133309af1d09';
+    const lateRegistered = (bump: bigint): PoolscanFixture => {
+      const fx: PoolscanFixture = structuredClone(loadPoolscanFixture('base'));
+      const p = fx.pools[POOL];
+      p.allowed_caller_s = ZERO; // synthetic: unregistered at s−1
+      p.pend_e = [String(BigInt(p.pend_e![0]) + bump), String(BigInt(p.pend_e![1]) + bump)];
+      return fx;
+    };
+
+    it('tape delta below allocator: gross == allocator, the excess credited', async () => {
+      const fx = lateRegistered(10n ** 15n);
+      const scan = await scanChainDay(fixtureReader(fx), fixtureConfig(fx), DAY);
+      const [a0, a1] = expectedAllocator(fx.pools[POOL]);
+      const [t0, t1] = [BigInt(fx.pools[POOL].expect.fee0), BigInt(fx.pools[POOL].expect.fee1)];
+      expect(a0 > t0 && a1 > t1).toBe(true);
+      expect(poolOf(scan, POOL)).toMatchObject({ registered: true, fee0: a0, fee1: a1, credit0: a0 - t0, credit1: a1 - t1 });
+      expect(scan.drift).toEqual([]);
+    });
+
+    it('tape delta above allocator: gross == tape delta, nothing credited', async () => {
+      const fx = lateRegistered(0n);
+      const scan = await scanChainDay(fixtureReader(fx), fixtureConfig(fx), DAY);
+      const [a0, a1] = expectedAllocator(fx.pools[POOL]);
+      const [t0, t1] = [BigInt(fx.pools[POOL].expect.fee0), BigInt(fx.pools[POOL].expect.fee1)];
+      expect(t0 > a0 && t1 > a1).toBe(true);
+      expect(poolOf(scan, POOL)).toMatchObject({ fee0: t0, fee1: t1, credit0: 0n, credit1: 0n });
+    });
+
+    it('registered all day: the tape delta even when the allocator is above it (the adapter bound judges it)', async () => {
+      const fx: PoolscanFixture = structuredClone(loadPoolscanFixture('base'));
+      const p = fx.pools[POOL];
+      p.pend_e = [String(BigInt(p.pend_e![0]) + 10n ** 15n), String(BigInt(p.pend_e![1]) + 10n ** 15n)];
+      const scan = await scanChainDay(fixtureReader(fx), fixtureConfig(fx), DAY);
+      expect(poolOf(scan, POOL)).toMatchObject({ fee0: BigInt(p.expect.fee0), fee1: BigInt(p.expect.fee1), credit0: 0n, credit1: 0n });
+      // Every other scoping pool is registered all day or ungauged: nothing is credited anywhere.
+      expect(scan.pools.filter((q) => q.credit0 > 0n || q.credit1 > 0n).map((q) => q.pool)).toEqual([]);
+    });
+
+    it('allowedCaller at s−1 is read for gauged pools only, and a failed read fails the scan', async () => {
+      const fx = loadPoolscanFixture('base');
+      const reader = fixtureReader(fx);
+      await scanChainDay(reader, fixtureConfig(fx), DAY);
+      const atS = reader.stats.calls.filter((c) => c.block === BigInt(fx.blocks.s) && c.functionName === 'allowedCaller').map((c) => c.args[0]);
+      const expected = Object.entries(fx.pools).filter(([, q]) => q.gauge && registered(q) && !q.new_in_day).map(([a]) => a);
+      expect(new Set(atS)).toEqual(new Set(expected));
+      const failing = fixtureReader(fx, { override: (c, at) => (at === 's' && c.functionName === 'allowedCaller' && c.args?.[0] === POOL ? null : undefined) });
+      const err = await scanChainDay(failing, fixtureConfig(fx), DAY).catch((x: unknown) => x);
+      expect(err).toMatchObject({ code: 'pool_scan_read_failed' });
+      expect((err as Error).message).toContain(`allowedCaller(${POOL}) at s−1`);
+    });
   });
 
   it('allocatorAsGross: an allocator token outside the pool pair is inconsistent', () => {

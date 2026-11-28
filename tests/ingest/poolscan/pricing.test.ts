@@ -287,20 +287,22 @@ describe('poolscan valueScan', () => {
     expect(v.grossUsd).toBeCloseTo(6, 9);
     expect(v.allocatorUsd).toBeCloseTo(4, 9);
     expect(v.unpriced).toEqual([{ token: NODEC, amount: 7n, pool: addr(0x902), estimateUsd: null }]);
-    expect(v.unregisteredAllocatorUsd).toBe(0);
+    expect(v.preRegistrationCreditUsd).toBe(0);
   });
 
-  it('a gauged unregistered pool (gross = its allocator accrual, from the scan) adds 0 LP and is summed in unregisteredAllocatorUsd', async () => {
+  it('a pool credited above its tape delta (gross = its allocator accrual, from the scan) adds 0 LP; the credit is summed in preRegistrationCreditUsd', async () => {
     const fx = usdcChain();
     synthPool(fx, addr(0x901), { kind: 'v2_volatile', t0: X, t1: USDC, price: 2, fee: [1, 4], alloc: [0.5, 3] });
     synthPool(fx, addr(0x903), { kind: 'v2_volatile', t0: X, t1: USDC, price: 2, fee: [2, 10], alloc: [2, 10] });
     const { b, scan } = await book(fx);
-    scan.pools.find((p) => p.pool === addr(0x903))!.registered = false;
+    // As the scan books a gauged pool registered mid-day: tape delta 0.5 X / 4 USDC, allocator 2 X / 10 USDC.
+    const p = scan.pools.find((q) => q.pool === addr(0x903))!;
+    Object.assign(p, { credit0: p.fee0 - 5n * 10n ** 17n, credit1: p.fee1 - 4_000_000n });
     const v = valueScan(scan, b);
     expect(v.grossUsd).toBeCloseTo(6 + 14, 9);
     expect(v.allocatorUsd).toBeCloseTo(4 + 14, 9);
     expect(v.lpUsd).toBeCloseTo(2, 9);
-    expect(v.unregisteredAllocatorUsd).toBeCloseTo(14, 9);
+    expect(v.preRegistrationCreditUsd).toBeCloseTo(1.5 * 2 + 6, 9);
   });
 });
 

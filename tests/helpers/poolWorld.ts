@@ -72,10 +72,12 @@ export interface WorldChain {
   /** The token program 1 (third party) streams; default USDC. */
   voteToken?: string;
   /**
-   * Extra USDC/Z pools after P3, each gauged but NOT registered on the tape (`allowedCaller` 0): entry i is that pool's
-   * allocator accrual in USDC per day (Δ pendingFees). Pool `unregPool(i)`, gauge `unregGauge(i)`, the shared VRM.
+   * Extra gauged USDC/Z pools after P3. A number: never registered on the tape (`allowedCaller` 0), accruing that many
+   * USDC per day to its gauge (Δ pendingFees). An object: registered from mid-`registeredOn` (unregistered at that day's
+   * s−1, registered at its e−1); before that day it accrues `alloc` a day on the gauge only; on that day the tape sees
+   * `tape` of the gauge's `alloc`; after it, tape and gauge both `tape` a day. Pool `unregPool(i)`, gauge `unregGauge(i)`.
    */
-  unregisteredGauged?: number[];
+  unregisteredGauged?: (number | { alloc: number; tape: number; registeredOn: string })[];
 }
 
 /** The i-th gauged unregistered pool of `WorldChain.unregisteredGauged`, and its gauge. */
@@ -139,6 +141,23 @@ export function poolWorld(chains: WorldChain[], o: { nowIso: string; maxScanDays
     const fees = (day: string): DayFees => ({ ...DEFAULT_FEES, ...(c.fees?.(day) ?? {}) });
     const extra = c.unregisteredGauged ?? [];
     const extraIdx = (pool: string): number => extra.findIndex((_, i) => unregPool(i) === pool.toLowerCase());
+    const extraAlloc = (k: number, day: string): number => {
+      const x = extra[k];
+      return typeof x === 'number' ? x : day > x.registeredOn ? x.tape : x.alloc;
+    };
+    const extraTape = (k: number, day: string): number => {
+      const x = extra[k];
+      return typeof x === 'number' || day < x.registeredOn ? 0 : x.tape;
+    };
+    const extraRegistered = (k: number, day: string): boolean => {
+      const x = extra[k];
+      return typeof x !== 'number' && day >= x.registeredOn;
+    };
+    const cumExtra = (day: string, per: (d: string) => number): bigint => {
+      let total = 0n;
+      for (let t = GENESIS; dayOfTs(t) <= day; t += 86_400) total += usdc(per(dayOfTs(t)));
+      return total;
+    };
     /** Σ of a per-day figure from GENESIS's day through `day`. */
     const cum = (day: string, pick: (f: DayFees) => number, unit: (n: number) => bigint): bigint => {
       let total = 0n;
@@ -167,7 +186,10 @@ export function poolWorld(chains: WorldChain[], o: { nowIso: string; maxScanDays
         case 'FACTORY_REGISTRY': return W.registry;
         case 'token0': return extraIdx(address) >= 0 ? W.usdc : { [W.p1]: W.usdc, [W.p2]: W.x, [W.p3]: W.y }[address];
         case 'token1': return extraIdx(address) >= 0 ? W.z : { [W.p1]: W.z, [W.p2]: W.y, [W.p3]: W.usdc }[address];
-        case 'allowedCaller': return extraIdx(String(args[0])) >= 0 ? ZERO_ADDR : W.router;
+        case 'allowedCaller': {
+          const k = extraIdx(String(args[0]));
+          return k < 0 || extraRegistered(k, day) ? W.router : ZERO_ADDR;
+        }
         case 'accumulators': {
           // V2 PoolTape.accumulators: fee0, fee1, 6 volume/MEV words, lastSwapTimestamp, swapCount.
           const v = (f0: bigint) => [f0, 0n, 0n, 0n, 0n, 0n, 0n, 0n, BigInt(t), 1n];
@@ -177,11 +199,13 @@ export function poolWorld(chains: WorldChain[], o: { nowIso: string; maxScanDays
             return v(g < 0n ? 0n : g);
           }
           if (args[0] === W.p2) return v(cum(day, (f) => f.unpriced, tok));
+          const k = extraIdx(String(args[0]));
+          if (k >= 0) return v(cumExtra(day, (d) => extraTape(k, d)));
           return v(0n);
         }
         case 'pendingFees': {
           const k = extraIdx(address);
-          if (k >= 0) return [cum(day, () => extra[k], usdc), 0n];
+          if (k >= 0) return [cumExtra(day, (d) => extraAlloc(k, d)), 0n];
           return [cum(day, (f) => f.alloc, usdc), 0n];
         }
         case 'getCurrentBlockTimestamp': return BigInt(t);
