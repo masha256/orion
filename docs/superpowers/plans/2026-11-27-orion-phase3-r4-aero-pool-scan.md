@@ -229,8 +229,10 @@ is copied from those files, never typed from memory.**
   = 3; twapSec = 1800; feedMaxAgeSec = 93_600 }): Promise<PriceBook>`; `PriceBook = { usd: Map<token, number>; how:
   Map<token, 'anchor' | 'graph' | 'graph_spot_fallback'>; fallback(pool, token): number | null; anchorsDropped: string[] }`.
 - `valueScan(scan, book) → { grossUsd; allocatorUsd; lpUsd; pricedPct; unpriced: { token; amount; pool }[] }`
-  (fees of a token priced only by the own-pool fallback count as priced; `pricedPct` = priced USD over priced + fallback
-  value estimated the same way, as `final_eval.py` computes coverage).
+  (fees priced by anchor, graph or the own-pool fallback count as priced). `pricedPct` = 100 × priced USD / (priced USD
+  + `coverageEstimateUsd`), where `coverageEstimateUsd` values the still-unpriced fees with the same graph run with
+  floor 0 and up to 6 hops (used for coverage only, never stored as value); fees no floorless path reaches count 0 and
+  are listed with their token amounts.
 - Anchor load check: `description()` must equal the configured string, else the run fails (`anchor_feed_mismatch`).
 
 - [ ] **Step 1: Failing tests.**
@@ -357,8 +359,10 @@ is copied from those files, never typed from memory.**
   incentives within 0.5% of `onchain-revenue-data/summary-table.json` / `incentives-data/daily.json` (copied into
   `tests/fixtures/poolscan/live-2026-11-26.json`).
 - `r4-backfill.sh <env>`: purge export + `data purge aero --metric flow_usd.fees` (dry run, then `--yes` on a prompt),
-  then loops `job run-now backfill aero --metric flow_usd.voter_fees --backfill-days <days since 2026-10-22>` until the
-  run detail says `remaining_missing: 0`; refuses to start inside the backfill gate; prints each chunk's days.
+  then loops `job run-now backfill aero` with `--metric` repeated for all five new metrics and `--backfill-days <days
+  since 2026-10-22>`, ceil(missing / 7) + 1 times, waiting for each job; then verifies over `sql-ro` that every metric
+  has one active row for every day 2026-10-22 → yesterday; refuses to start inside the backfill gate; prints each
+  chunk's days.
 - `r4_acceptance.py <orion report json> <dl-devref json>`: per day 10-23 → D, `voter_fees + vote_incentives +
   protocol_subsidy` vs DL holders revenue (stamp D+1 = day D), fails on any |gap| > 3%; 10-22 exempt.
 - `r4-allowlist.json`: AERO paths only, signed values filled by the controller in Task 10.
