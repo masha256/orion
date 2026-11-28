@@ -281,8 +281,9 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     // The price.* adapters: prices.yaml and the price chains' transports (a ref off the asset's chain, the off-chain venues).
     ...(loaded.prices ? { prices: loaded.prices, priceDeps: makePriceDeps(deps.env, { rpcFactory: deps.priceRpcFactory ?? deps.rpcFactory, prices: loaded.prices, http: runHttp, now }) } : {}),
     ...(historyDays !== undefined ? { backfillDays: historyDays } : {}),
-    // Any chain's transport through the run's own RPC factory (the one ctx.rpc comes from), one per chain.
-    rpcFor: chainRpcFor(deps.env, deps.rpcFactory),
+    // Any chain's transport, one per chain, through the unwrapped factory the price reads use: a caller that wraps
+    // rpcFactory to capture the fetch's block (levels, refresh) must never take another chain's head for it.
+    rpcFor: chainRpcFor(deps.env, deps.priceRpcFactory ?? deps.rpcFactory),
   };
 
   const outcomes = new Map<string, SourceOutcome>();

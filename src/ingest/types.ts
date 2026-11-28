@@ -140,8 +140,9 @@ export interface SourceContext {
   priceDeps?: PriceDeps;
   /**
    * A transport on any chain of chains.ts, for an adapter that reads chains other than the asset's: the RPC URL from
-   * that chain's CHAIN_RPC_ENV var, made through the run's RPC factory on first use and cached per chain for the run.
-   * Throws no_rpc_url, naming the env var, when it is unset (and the chain has no keyless default).
+   * that chain's CHAIN_RPC_ENV var, made on first use through the run's unwrapped RPC factory (FetchDeps.priceRpcFactory,
+   * else rpcFactory, so its heads never become the fetch's recorded block) and cached per chain for the run. Throws
+   * no_rpc_url, naming the env var, when it is unset (and the chain has no keyless default).
    */
   rpcFor?: (chainId: number) => RpcTransport;
 }

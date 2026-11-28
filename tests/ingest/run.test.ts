@@ -6,7 +6,7 @@ import { listFetchRuns } from '../../src/db/fetchRuns.js';
 import { insertObservation, listActiveObservations } from '../../src/db/observations.js';
 import { registerAdapter } from '../../src/ingest/adapters/registry.js';
 import { fetchAsset, validateReading, type FetchResult } from '../../src/ingest/run.js';
-import type { RpcTransport } from '../../src/ingest/transport/rpc.js';
+import type { BlockRef, RpcTransport } from '../../src/ingest/transport/rpc.js';
 import type { SourceContext } from '../../src/ingest/types.js';
 import type { OrionError } from '../../src/types.js';
 import { MINI_ASSET_YAML } from '../helpers/assets.js';
@@ -268,6 +268,35 @@ describe('fetchAsset: ctx.rpcFor', () => {
     // Base has a keyless default, as the price chains' rpcFor gives it.
     ctx.rpcFor!(8453);
     expect(made).toEqual([['https://op.test/k', 10], ['https://arb.test/k', 42161], ['https://mainnet.base.org', 8453]]);
+  });
+
+  it('rpcFor reads through the unwrapped priceRpcFactory, so another chain\'s head never becomes the run\'s recorded block', async () => {
+    // Another chain's head, read by an adapter mid-run.
+    registerAdapter({ name: 'test.other_head', needsRpc: false, run: async (ctx) => { seen = ctx; await ctx.rpcFor!(10).latestBlock(); throw new Error('read OP head'); } });
+    const yaml2 = INGEST_ASSET_YAML.replace('source: { type: coingecko, id: mini-token, field: price }', 'source: { type: adapter, name: test.other_head, params: {} }');
+    expect(yaml2).not.toBe(INGEST_ASSET_YAML);
+    const h = harness(testDb(), { loaded: parseAssetYaml(yaml2), env: { TEST_RPC_URL: 'http://rpc.test', ORION_OP_RPC_URL: 'https://op.test/k' } });
+    // As levels.ts and the refresh job wrap it: any latestBlock() through rpcFactory is the block they store.
+    let recorded: BlockRef | null = null;
+    const wrappedMade: number[] = [];
+    const inner = h.deps.rpcFactory;
+    h.deps.rpcFactory = (url, chainId) => {
+      wrappedMade.push(chainId);
+      const rpc = chainId === 10 ? fakeRpc({ genesisTs: GENESIS_TS, latest: LATEST + 999n }) : inner(url, chainId);
+      return { ...rpc, latestBlock: async () => (recorded = await rpc.latestBlock()) };
+    };
+    const priceMade: [string, number][] = [];
+    const op = fakeRpc({ genesisTs: GENESIS_TS, latest: LATEST + 123_456n });
+    h.deps.priceRpcFactory = (url, chainId) => {
+      priceMade.push([url, chainId]);
+      return op;
+    };
+    await fetchAsset(h.db, h.loaded, NOW, h.deps);
+    expect(seen).toBeDefined();
+    expect(recorded!.number).toBe(LATEST);
+    expect(recorded).toEqual(await h.rpc.latestBlock());
+    expect(wrappedMade).toEqual([8453]);
+    expect(priceMade).toEqual([['https://op.test/k', 10]]);
   });
 
   it('rpcFor names the missing env var', async () => {
