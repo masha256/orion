@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { firstBlockAtOrAfter, getLogsChunked, type TransferLog } from '../../src/ingest/transport/rpc.js';
+import { firstBlockAtOrAfter, getLogsChunked, isLogRangeError, type TransferLog } from '../../src/ingest/transport/rpc.js';
 import { DEFAULT_RPC_URLS } from '../../src/ingest/run.js';
 import { CHAINS } from '../../src/ingest/transport/chains.js';
 import { CHAIN_RPC_ENV } from '../../src/ingest/transport/chainRpcEnv.js';
@@ -277,6 +277,26 @@ describe('getLogs (raw logs by address list and topic0, Phase 3 R4)', () => {
     // 10,000 is refused, then each 5,000 half, then each 2,500 quarter is served, in block order.
     expect(ok).toEqual([[0n, 9_999n], [0n, 4_999n], [0n, 2_499n], [2_500n, 4_999n], [5_000n, 9_999n], [5_000n, 7_499n], [7_500n, 9_999n]]);
     expect(logs.map((l) => l.blockNumber)).toEqual([2_499n, 4_999n, 7_499n, 9_999n]);
+  });
+
+  it('a rate limit is never taken for a range error: thrown at once, not halved (429, "Too Many Requests", -32005 rate limited)', async () => {
+    const limits = [
+      'HTTP request failed. Status: 429 URL: https://rpc.example Details: Too Many Requests',
+      'Too Many Requests',
+      'daily request count exceeded, request rate limited -32005',
+      'Your app has exceeded its compute units per second capacity',
+      'rate limit exceeded',
+    ];
+    for (const msg of limits) {
+      expect(isLogRangeError(new Error(msg)), msg).toBe(false);
+      const rpc = fakeRpc({ genesisTs: 0, latest: 10n, maxLogRange: 10_000n, logs: () => { throw new Error(msg); } });
+      await expect(rpc.getLogs!({ address: ADDR, topic0: TOPIC, fromBlock: 0n, toBlock: 9_999n })).rejects.toThrow(msg);
+      expect(rpc.stats.getLogs, msg).toBe(1);
+    }
+    // Real range refusals still halve, -32005 with range wording included (Infura's "more than 10000 results").
+    for (const msg of ['query returned more than 10000 results -32005', 'block range too large', 'exceed maximum block range: 2000', 'Log response size exceeded', 'too many results', '-32005']) {
+      expect(isLogRangeError(new Error(msg)), msg).toBe(true);
+    }
   });
 
   it('throws after 8 halvings, and passes any other error straight on', async () => {

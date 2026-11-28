@@ -65,6 +65,12 @@ export interface WorldChain {
   /** The day whose VRM supply reaches 0 inside an interval (ambiguous point at the day's end). */
   ambiguousDay?: string;
   /** Observe-less pools: none here (V2 only). Extra pools are not modelled. */
+  /** The chain's scan `since` (its contracts' first full day). */
+  since?: string;
+  /** Unix seconds the chain's contracts appeared: every read at an earlier block returns no data (no code yet). */
+  deployedAt?: number;
+  /** The token program 1 (third party) streams; default USDC. */
+  voteToken?: string;
 }
 
 const DEFAULT_FEES: DayFees = { gross: 1000, alloc: 900, unpriced: 0 };
@@ -181,7 +187,7 @@ export function poolWorld(chains: WorldChain[], o: { nowIso: string; maxScanDays
         case 'incentive': {
           const id = Number(args[0]);
           const r = id === 1 ? rate(c.vote ?? 0) : rate(c.subsidy ?? 0);
-          return { token: W.usdc, amount: r * 1000n, rate: r, start: GENESIS, end: GENESIS + 400 * 86_400, creator: id === 1 ? W.voteCreator : W.subsidyCreator };
+          return { token: id === 1 ? (c.voteToken ?? W.usdc) : W.usdc, amount: r * 1000n, rate: r, start: GENESIS, end: GENESIS + 400 * 86_400, creator: id === 1 ? W.voteCreator : W.subsidyCreator };
         }
         case 'getPriorSupplyIndex': {
           const q = Number(args[0]);
@@ -214,6 +220,7 @@ export function poolWorld(chains: WorldChain[], o: { nowIso: string; maxScanDays
         byDay.set(`${fn}@${day}`, (byDay.get(`${fn}@${day}`) ?? 0) + 1);
         if (c.fail?.(fn, day)) throw new Error(`RPC Request failed (world ${c.chainId} ${fn})`);
         if (c.revert?.(fn, day)) return null;
+        if (c.deployedAt !== undefined && ts(block) < c.deployedAt) return null;
         const r = answer(address.toLowerCase(), fn, (args ?? []).map((x) => (typeof x === 'string' ? x.toLowerCase() : x)), block);
         if (r === undefined || r === null) return null;
         return encodeFunctionResult({ abi: [item], functionName: fn, result: r } as Parameters<typeof encodeFunctionResult>[0]);
@@ -225,6 +232,7 @@ export function poolWorld(chains: WorldChain[], o: { nowIso: string; maxScanDays
   const scan: Record<string, unknown> = {
     chains: chains.map((c) => ({
       chain_id: c.chainId,
+      ...(c.since !== undefined ? { since: c.since } : {}),
       factories: [{ address: W.factory, kind: 'v2_volatile', tape: W.tape }],
       factory_registry: W.registry,
       leaf_voter: W.leafVoter,

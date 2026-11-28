@@ -281,6 +281,72 @@ describe('poolscan scanChainDay (2026-11-26 scoping fixtures)', () => {
     await expect(scanChainDay(reader, fixtureConfig(fx), DAY)).rejects.toThrow(/allPoolsLength/);
   });
 
+  it('a failed allPoolsLength at s-1 fails the scan (never counted as 0)', async () => {
+    const fx = loadPoolscanFixture('arc');
+    const reader = fixtureReader(fx, { override: (c, at) => (at === 's' && c.functionName === 'allPoolsLength' ? null : undefined) });
+    const err = await scanChainDay(reader, fixtureConfig(fx), DAY).catch((x: unknown) => x);
+    expect(err).toMatchObject({ code: 'pool_scan_read_failed' });
+    expect((err as Error).message).toMatch(/allPoolsLength\(\) at s−1/);
+  });
+
+  it('a day before the chain\'s since is refused before any read', async () => {
+    const fx = loadPoolscanFixture('arc');
+    const reader = fixtureReader(fx);
+    await expect(scanChainDay(reader, { ...fixtureConfig(fx), since: '2026-11-27' }, DAY)).rejects.toMatchObject({ code: 'pool_scan_config' });
+    expect(reader.stats.blockAt).toEqual([]);
+    expect(reader.stats.calls).toEqual([]);
+    await expect(scanChainDay(fixtureReader(fx), { ...fixtureConfig(fx), since: DAY }, DAY)).resolves.toMatchObject({ day: DAY });
+  });
+
+  it('FeesCollected is keyed by the event gauge: one VRM serving two gauged pools that share a token counts each once', async () => {
+    const fx: PoolscanFixture = structuredClone(loadPoolscanFixture('base'));
+    const gauged = Object.entries(fx.pools).filter(([, p]) => p.gauge && p.vrm && registered(p) && !p.new_in_day);
+    // Two gauged pools sharing a token (synthetic: both get collected amounts on it, and the second's VRM becomes the first's).
+    let pair: [[string, FxPool], [string, FxPool], string] | undefined;
+    for (const [i, a] of gauged.entries()) {
+      for (const b of gauged.slice(i + 1)) {
+        const shared = [a[1].token0, a[1].token1].find((t) => t === b[1].token0 || t === b[1].token1);
+        if (shared) { pair = [a, b, shared]; break; }
+      }
+      if (pair) break;
+    }
+    expect(pair).toBeDefined();
+    const [[aAddr, a], [bAddr, b], shared] = pair!;
+    const addCollected = (p: FxPool, amount: bigint) => {
+      const c: [string, string] = [...(p.collected ?? ['0', '0'])] as [string, string];
+      const k = p.token0 === shared ? 0 : 1;
+      c[k] = (BigInt(c[k]) + amount).toString();
+      p.collected = c;
+    };
+    addCollected(a, 1000n);
+    addCollected(b, 7000n);
+    b.vrm = a.vrm; // one VRM, two gauges: each FeesCollected names its own gauge in topics[1]
+    const scan = await scanChainDay(fixtureReader(fx), fixtureConfig(fx), DAY);
+    for (const [addr, p] of [[aAddr, a], [bAddr, b]] as const) {
+      const [x0, x1] = expectedAllocator(p);
+      expect(scan.allocatorByPool.get(addr), addr).toEqual(new Map([[p.token0, x0], [p.token1, x1]]));
+    }
+  });
+
+  it('two gauges on one pool raise double_gauge drift; the first gauge (registry order) is kept', async () => {
+    const fx: PoolscanFixture = structuredClone(loadPoolscanFixture('base'));
+    const [pool, p] = Object.entries(fx.pools).find(([, q]) => q.gauge && registered(q) && !q.new_in_day)!;
+    const second = '0x5555555555555555555555555555555555555555';
+    fx.registry.factory_to_gauges[p.gauge_factory ?? Object.keys(fx.registry.factory_to_gauges)[0]].push(second);
+    const reader = fixtureReader(fx, {
+      override: (c) => {
+        if (c.functionName === 'gaugeToTarget' && c.args?.[0] === second) return pool;
+        if (c.functionName === 'votingRewardsManager' && c.address === second) return '0x6666666666666666666666666666666666666666';
+        return undefined;
+      },
+    });
+    const scan = await scanChainDay(reader, fixtureConfig(fx), DAY);
+    expect(scan.drift.map(driftKey)).toEqual([`double_gauge:${pool}`]);
+    expect(scan.drift[0].detail).toEqual({ kept: p.gauge, ignored: second });
+    expect(driftDedupeKey(scan.drift[0])).toBe(`pool_scan:double_gauge:8453:${pool}`);
+    expect(poolOf(scan, pool).gauge).toBe(p.gauge);
+  });
+
   it('rejects a malformed day', async () => {
     const fx = loadPoolscanFixture('arc');
     await expect(scanChainDay(fixtureReader(fx), fixtureConfig(fx), '2026-11-31')).rejects.toThrow(/day/);

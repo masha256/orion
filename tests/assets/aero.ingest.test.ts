@@ -103,7 +103,7 @@ describe('assets/aero.yaml', () => {
     // Re-pinned (Phase 3 R3 Task 5, Ruling R6): circulating_supply rebuild_from 2026-11-10.
     // Re-pinned (Phase 3 R4 Task 8, RET-203): revenue on chain via pool_scan (five pool.* metrics, one scan block on 8
     // chains), flow_usd.fees retired, income statement scope complete (voter_rev/lp_rev, lp_fees cost, incentives below).
-    expect(loadAsset(ROOT, 'aero').hash).toBe('41d417dd8eac6aebf194b5ec1c5bec4cb625767f2982b11f64e7a617b5869cb8');
+    expect(loadAsset(ROOT, 'aero').hash).toBe('8b0352283ee83d1d904bf56975dad00ab7c39b8a3b13af91b90ece456879a7b1');
   });
 
   it('v2 block shape: an income_statement with the plan line ids', () => {

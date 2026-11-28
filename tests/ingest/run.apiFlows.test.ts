@@ -303,17 +303,20 @@ describe('fetchAsset: an adapter series on the pool_scan rung (Phase 3 R4)', () 
     expect(await byDay(h)).toEqual({ '2026-09-15': 100, '2026-09-16': 110, '2026-09-18': 130, '2026-09-19': 140 });
   });
 
-  it('storedFlowDays returns the active days of the series', async () => {
+  it('storedFlowDays returns every day an active row of the metric covers, whatever its source (as the writer does)', async () => {
     const h = pool(SERIES_DAYS);
     state.storedSeen = [];
     await fetch(h);
     expect(state.storedSeen).toEqual([new Set()]); // nothing stored before the first run
-    // A row of another origin on a day outside the revision window: not the series' own, so not one of its days.
+    // A row of another origin and a 2-day manual row: the writer treats the days they cover as no gap, so the planner
+    // must too (a foreign-row day counted missing would be re-scanned every run and starve the revision days).
     await insertObservation(h.db, { provenance: testProvenance('api'), assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-11T00:00:00.000Z', periodDays: 1, value: 5, fetchedAt: '2026-09-11T00:00:00Z' });
+    await insertObservation(h.db, { provenance: testProvenance('manual'), assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-10T00:00:00.000Z', periodDays: 2, value: 9, fetchedAt: '2026-09-10T00:00:00Z' });
     await fetch(pool({ ...SERIES_DAYS, '2026-09-18': 141 }, h.db)); // 09-18 revised: superseded, still one active day
     await fetch(pool(SERIES_DAYS, h.db));
-    expect(state.storedSeen[1]).toEqual(new Set(['2026-09-14', '2026-09-15', '2026-09-17', '2026-09-18']));
-    expect(state.storedSeen[2]).toEqual(new Set(['2026-09-14', '2026-09-15', '2026-09-17', '2026-09-18']));
+    const own = ['2026-09-14', '2026-09-15', '2026-09-17', '2026-09-18'];
+    expect(state.storedSeen[1]).toEqual(new Set([...own, '2026-09-10', '2026-09-08', '2026-09-09']));
+    expect(state.storedSeen[2]).toEqual(new Set([...own, '2026-09-10', '2026-09-08', '2026-09-09']));
   });
 
   it('adapter warnings raise one advisory cross_check_mismatch each, deduped', async () => {

@@ -13,7 +13,7 @@ import type { ChainDayScan, ChainScan, Drift, PoolFees, ScanFactory, TokenAmount
  * 1. Day blocks: s = first block at or after D 00:00Z, e = first block at or after D+1 00:00Z (reader.blockAt). A call at
  *    block N returns the state after N, so every read is at s−1 and e−1 and the day covers exactly [s, e).
  * 2. Pools: per configured factory `allPoolsLength` / `allPools(i)` at e−1 (at s−1 only the length, to mark pools created
- *    during the day); the factory's own `poolTape()` / `clPoolTape()` at e−1, which is the tape its pools are read from
+ *    during the day; required: a chain is scanned only from its `since`, when its factories exist); the factory's own `poolTape()` / `clPoolTape()` at e−1, which is the tape its pools are read from
  *    (the configured tape is only compared: a mismatch is `tape` drift); per CL pool its swap hook.
  * 3. Registration: that tape's `allowedCaller(pool)` at e−1; 0 = unregistered, so the tape never recorded it: counted and
  *    listed with zero gross, its accumulators not read.
@@ -25,16 +25,18 @@ import type { ChainDayScan, ChainScan, Drift, PoolFees, ScanFactory, TokenAmount
  *    (CL `pool.gaugeFees()`, V2 `pool.pendingFees(gauge)`) between s−1 and e−1 plus Σ VRM `FeesCollected` in [s, e−1]
  *    (one eth_getLogs per log-range window over all the chain's VRMs, topic0 only).
  * 6. Drift (warn only): a factory's tape getter ≠ configured tape, a CL pool's hook ≠ configured hook, a registry target
- *    factory not configured, a gauge on an unregistered pool, a negative per-pool accrual (taken as 0).
+ *    factory not configured, a gauge on an unregistered pool, a second gauge on one pool (the first is kept), a negative
+ *    per-pool accrual (taken as 0).
  *
  * Every read the result depends on fails the scan when it reverts or does not decode (OrionError
- * `pool_scan_read_failed`, naming the chain, day, contract and read): factory lengths, tape getters and pools, registry
+ * `pool_scan_read_failed`, naming the chain, day, contract and read): factory lengths (at s−1 and e−1), tape getters and pools, registry
  * lists, pool tokens, `allowedCaller`, `gaugeToTarget`, VRMs, accumulators at both blocks and pending at both blocks. The
  * one null accepted is a pool's pending at s−1 when the pool was created during the day (no code at s−1, so the call
  * returns no data). A partial chain-day is never returned.
  */
 export async function scanChainDay(reader: ChainReader, cfg: ChainScan, day: string): Promise<ChainDayScan> {
   if (reader.chainId !== cfg.chain_id) throw new OrionError('pool_scan_config', `reader is chain ${reader.chainId}, config is chain ${cfg.chain_id}`);
+  if (cfg.since !== undefined && day < cfg.since) throw new OrionError('pool_scan_config', `chain ${cfg.chain_id} ${day}: before the chain's since ${cfg.since} (not scanned)`);
   const t0 = dayStartSec(day);
   const rpc = { calls: 0, requests: 0, logs: 0 };
   const read = async <T>(calls: TypedCall[], block: bigint): Promise<(T | null)[]> => {
@@ -89,7 +91,8 @@ export async function scanChainDay(reader: ChainReader, cfg: ChainScan, day: str
   const poolCalls: TypedCall[] = [];
   const poolMeta: { factory: (typeof factories)[number]; index: number; newInDay: boolean }[] = [];
   factories.forEach((f, i) => {
-    const startLen = Number(lenS[i] ?? 0n); // a factory that did not exist at s−1 had no pools
+    // Required at s−1 too: a chain is scanned only from its `since`, when every configured factory already has code.
+    const startLen = Number(need(lenS[i], `${f.address}.allPoolsLength() at s−1`));
     for (let k = 0; k < lengths[i]; k++) {
       poolCalls.push({ address: f.address, abi: FACTORY_ABI, functionName: 'allPools', args: [BigInt(k)] });
       poolMeta.push({ factory: f, index: k, newInDay: k >= startLen });
@@ -143,6 +146,11 @@ export async function scanChainDay(reader: ChainReader, cfg: ChainScan, day: str
     const target = need(r3[at + 2 * i], `${registry}.gaugeToTarget(${g}) at e−1`);
     const p = byPool.get(lc(target));
     if (!p) return; // a gauge on a pool of a factory the config does not scan (that factory raised `factory` drift)
+    if (p.gauge !== null) {
+      // A second gauge on one pool (a legacy gauge reactivated?): keep the first, in registry order, and say so.
+      warn('double_gauge', p.pool, { kept: p.gauge, ignored: g });
+      return;
+    }
     p.gauge = g;
     p.vrm = lc(need(r3[at + 2 * i + 1], `${g}.votingRewardsManager()`));
   });
@@ -181,7 +189,7 @@ export async function scanChainDay(reader: ChainReader, cfg: ChainScan, day: str
   });
 
   // FeesCollected over [s, e−1] for every VRM, one request per log-range window (and per 500 addresses, as measured).
-  const collected = new Map<string, bigint>(); // `${vrm}:${token}` → amount
+  const collected = new Map<string, bigint>(); // `${vrm}:${gauge}:${token}` → amount
   const vrms = [...new Set(gauged.map((p) => p.vrm!))].sort();
   if (vrms.length > 0) {
     const range = BigInt(cfg.log_range ?? Number(chainInfo(cfg.chain_id)?.maxLogRange ?? 2000n));
@@ -202,7 +210,7 @@ export async function scanChainDay(reader: ChainReader, cfg: ChainScan, day: str
     const ps = r4s[off + i] === null && p.newInDay ? [0n, 0n] : pair(need(r4s[off + i], `pending fees of ${p.pool} at s−1`));
     const amounts: TokenAmounts = new Map();
     [p.token0, p.token1].forEach((token, k) => {
-      const v = pe[k] - ps[k] + (collected.get(`${p.vrm}:${token}`) ?? 0n);
+      const v = pe[k] - ps[k] + (collected.get(`${p.vrm}:${p.gauge}:${token}`) ?? 0n);
       if (v < 0n) warn('negative_allocator', p.pool, { token, accrual: v.toString() });
       amounts.set(token, v < 0n ? 0n : v);
     });
@@ -270,10 +278,15 @@ function pair(v: unknown): [bigint, bigint] {
   return [BigInt(a[0]), BigInt(a[1])];
 }
 
-/** FeesCollected(_gauge indexed, _token indexed, _amount): keyed by (emitting VRM, topics[2] token), amount = data word 0. */
+/**
+ * FeesCollected(_gauge indexed, _token indexed, _amount): keyed by (emitting VRM, topics[1] gauge, topics[2] token),
+ * amount = data word 0. The VRM emits it as `FeesCollected(gauge, token0|token1, collected)` with its own gauge
+ * (VotingRewardsManager.sol settle path), so a VRM serving two gauges never books one gauge's fees on the other's pool.
+ */
 function addCollected(into: Map<string, bigint>, log: BlockLog): void {
   if (log.topics[0]?.toLowerCase() !== FEES_COLLECTED_TOPIC || log.topics.length < 3) return;
+  const gauge = `0x${log.topics[1].slice(-40)}`.toLowerCase();
   const token = `0x${log.topics[2].slice(-40)}`.toLowerCase();
-  const key = `${log.address.toLowerCase()}:${token}`;
+  const key = `${log.address.toLowerCase()}:${gauge}:${token}`;
   into.set(key, (into.get(key) ?? 0n) + BigInt(log.data.slice(0, 66)));
 }

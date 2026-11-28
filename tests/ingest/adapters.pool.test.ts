@@ -220,6 +220,80 @@ describe('pool.tape_fees_daily and pool.vrm_incentives_daily', () => {
     expect(count(world, 99901, 'description')).toBe(0);
   });
 
+  describe('a chain with its own `since` (Elysium deployed 2026-11-07 13:07-13:15Z, since 2026-11-08)', () => {
+    const ELY_SINCE = '2026-11-08';
+    const DEPLOY = Date.parse('2026-11-07T13:15:29Z') / 1000;
+    const world2 = () => poolWorld([{ chainId: 8453, vote: 864, rootChains: [8453] }, { chainId: 99901, feedChain: 8453, since: ELY_SINCE, deployedAt: DEPLOY, vote: 86.4 }], { nowIso: NOW, since: '2026-10-22', maxScanDays: 14 });
+    const elyDays = (world: PoolWorld) => [...world.callsByDay.get(99901)!.keys()].map((k) => k.split('@')[1]).sort();
+
+    it('chain-days before its since are not scanned (no read), count 0 and are marked live: false', async () => {
+      const world = world2();
+      const ctx = world.ctx({ backfillDays: 40, stored: {} });
+      const g = await run(world, ctx, POOL_METRICS.gross);
+      expect(days(g)).toEqual(dayRange('2026-10-22', 14)); // ..11-04: Elysium is live on none of them
+      for (const p of g.points) {
+        expect(p.value).toBeCloseTo(1000, 6); // Base only
+        expect((p.slice as { chains: Record<string, unknown> }).chains['99901']).toEqual({ live: false });
+      }
+      const inc = await run(world, ctx, POOL_METRICS.vote_incentives);
+      for (const p of inc.points) expect((p.slice as { chains: Record<string, unknown> }).chains['99901']).toEqual({ live: false });
+      expect(world.callsByDay.get(99901)!.size).toBe(0); // no Elysium read at all
+      expect(world.rpcs.get(99901)!.stats.getLogs).toBe(0);
+      // The root Voter's chains() lacks 99901 (as before 11-09): not drift while Elysium is not live.
+      expect(g.warnings ?? []).toEqual([]);
+    });
+
+    it('a window across its since scans it from that day on, and warns root-Voter drift only on its live days', async () => {
+      const world = world2();
+      const g = await run(world, world.ctx({ backfillDays: 40, stored: { [POOL_METRICS.gross]: dayRange('2026-10-22', 14) } }), POOL_METRICS.gross);
+      expect(days(g)).toEqual(dayRange('2026-11-05', 14)); // ..11-18
+      for (const p of g.points) {
+        const ely = (p.slice as { chains: Record<string, Record<string, unknown>> }).chains['99901'];
+        if (p.day < ELY_SINCE) {
+          expect(ely, p.day).toEqual({ live: false });
+          expect(p.value, p.day).toBeCloseTo(1000, 6);
+        } else {
+          expect(ely, p.day).toMatchObject({ grossUsd: expect.closeTo(1000, 6) });
+          expect(ely.live, p.day).toBeUndefined();
+          expect(p.value, p.day).toBeCloseTo(2000, 6);
+        }
+      }
+      // Elysium was read only for its live days: the reads of 11-08 at s−1 fall on 11-07 23:59Z, after the deploy.
+      expect(elyDays(world)[0]).toBe('2026-11-07');
+      expect(world.callsByDay.get(99901)!.get('targetFactories@2026-11-07')).toBeUndefined(); // no 11-07 chain-day scan
+      const root = g.warnings!.find((w) => w.dedupeKey === 'pool_scan:chain:8453:99901')!;
+      expect(root.detail.days).toEqual(dayRange(ELY_SINCE, 11));
+    });
+
+    it('validates: since a YYYY-MM-DD day, not before the params since', () => {
+      const world = world2();
+      const scan = world.scan as { chains: Record<string, unknown>[] } & Record<string, unknown>;
+      const withSince = (since: unknown) => ({ ...scan, chains: [scan.chains[0], { ...scan.chains[1], since }] });
+      expect(getAdapter(TAPE).validateParams!({ scan, field: 'gross', since: '2026-10-22' })).toEqual([]);
+      expect(getAdapter(TAPE).validateParams!({ scan: withSince('2026-11-31'), field: 'gross' })).toEqual([expect.stringMatching(/scan\.chains\.1\.since/)]);
+      expect(getAdapter(TAPE).validateParams!({ scan: withSince('2026-10-01'), field: 'gross', since: '2026-10-22' })).toEqual(['scan.chains[1].since: 2026-10-01 is before the params since 2026-10-22']);
+    });
+  });
+
+  it('an unpriced incentive token warns pool_scan:incentives_unpriced:<chain> from vote_incentives, with day, tokens and amounts', async () => {
+    // Program 1 streams X (outside the day's price book: X is unpriced there) on chain 10.
+    const world = poolWorld(two({}, { voteToken: W.x }), { nowIso: NOW });
+    const ctx = world.ctx();
+    const v = await run(world, ctx, POOL_METRICS.vote_incentives);
+    expect(v.warnings).toEqual([
+      {
+        dedupeKey: 'pool_scan:incentives_unpriced:10',
+        detail: {
+          chain: 10,
+          days: REVISION.map((day) => ({ day, tokens: [{ token: W.x, class: 'vote_incentives', amount: expect.stringMatching(/^\d+$/) }] })),
+        },
+      },
+    ]);
+    for (const d of REVISION) expect(value(v, d)).toBeCloseTo(864, 4); // chain 10's X is skipped, never imputed
+    expect((await run(world, ctx, POOL_METRICS.protocol_subsidy)).warnings ?? []).toEqual([]);
+    expect((await run(world, ctx, POOL_METRICS.gross)).warnings ?? []).toEqual([]);
+  });
+
   it('an ambiguous incentive point warns from vote_incentives only', async () => {
     const world = poolWorld(two({ ambiguousDay: '2026-11-25' }), { nowIso: NOW });
     const ctx = world.ctx();
@@ -303,11 +377,11 @@ describe('pool.tape_fees_daily in a fetch', () => {
   const LINE = 'source: { type: defillama, slug: hyperliquid, data_type: dailyHoldersRevenue }';
   const METRIC = 'flow_usd.buyback';
   // One database per test (testDb() is the same one within a test): the second run sees the first run's rows.
-  const fetchWith = async (world: PoolWorld, db = testDb()) => {
-    const params = { scan: world.scan, field: 'gross', since: '2026-11-20' };
+  const fetchWith = async (world: PoolWorld, db = testDb(), since = '2026-11-20') => {
+    const params = { scan: world.scan, field: 'gross', since };
     if (!FIXTURE.includes(LINE)) throw new Error('the fixture no longer has the line this test edits');
     const loaded = parseAssetYaml(FIXTURE.replace(LINE, `source: { type: adapter, name: ${TAPE}, params: ${JSON.stringify(params)} }`));
-    const h = harness(db, { loaded, now: new Date(NOW), env: { ORION_BASE_RPC_URL: 'http://base.test', ORION_OP_RPC_URL: 'http://op.test' } });
+    const h = harness(db, { loaded, now: new Date(NOW), env: { ORION_BASE_RPC_URL: 'http://base.test', ORION_OP_RPC_URL: 'http://op.test', ORION_ELYSIUM_RPC_URL: 'http://elysium.test' } });
     h.deps.rpcFactory = (_url, chainId) => world.rpcs.get(chainId)!;
     const r = await fetchAsset(h.db, h.loaded, h.deps.now(), h.deps);
     return { h, r, source: r.sources.find((x) => x.sourceId === `adapter:${TAPE}`)! };
@@ -326,6 +400,36 @@ describe('pool.tape_fees_daily in a fetch', () => {
     const second = await fetchWith(next);
     expect(second.source).toMatchObject({ status: 'ok', metricsWritten: [], conflicts: [] });
     expect(count(next, 8453, 'targetFactories')).toBe(3);
+  });
+
+  it('a negative_gross chain-day fails the source and writes nothing', async () => {
+    const world = poolWorld(two({ fees: (d) => (d === '2026-11-23' ? { negativeGross: true } : {}) }), { nowIso: NOW });
+    const { h, source } = await fetchWith(world);
+    expect(source.status).toBe('failed');
+    expect(source.error).toMatch(/chain 8453 2026-11-23: negative_gross/);
+    expect(await listActiveObservations(h.db, 'hype', METRIC)).toEqual([]);
+  });
+
+  it('a scan planned over 2026-10-22..11-26 with Elysium since 11-08 writes every day and never reads Elysium before its deploy', async () => {
+    const DEPLOY = Date.parse('2026-11-07T13:15:29Z') / 1000;
+    const world = poolWorld([{ chainId: 8453, rootChains: [8453] }, { chainId: 99901, feedChain: 8453, since: '2026-11-08', deployedAt: DEPLOY }], { nowIso: NOW });
+    const db = testDb();
+    let h: Awaited<ReturnType<typeof fetchWith>>['h'] | undefined;
+    for (let i = 0; i < 6; i++) {
+      const r = await fetchWith(world, db, '2026-10-22'); // 7 days a run, oldest missing first: 6 runs reach 11-26
+      expect(r.source.status, `run ${i + 1}: ${r.source.error ?? ''}`).toBe('ok');
+      h = r.h;
+    }
+    const rows = await listActiveObservations(h!.db, 'hype', METRIC);
+    // observed_at = D+1 00:00Z: the covered days 10-22..11-26, one row each.
+    expect(rows.map((o) => o.observedAt.slice(0, 10))).toEqual(dayRange('2026-10-23', 36));
+    for (const o of rows) {
+      const day = new Date(Date.parse(o.observedAt) - 86_400_000).toISOString().slice(0, 10);
+      expect(o.value, day).toBeCloseTo(day < '2026-11-08' ? 1000 : 2000, 6);
+    }
+    // No Elysium read before its contracts existed (every read there would have answered no data and failed the run).
+    const ely = [...world.callsByDay.get(99901)!.keys()].map((k) => k.split('@')[1]).sort();
+    expect(ely[0]).toBe('2026-11-07');
   });
 
   it('a failed chain-day fails the source and writes nothing', async () => {

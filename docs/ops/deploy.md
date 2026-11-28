@@ -1203,8 +1203,9 @@ only, filled by Task 10).
 3. **A normal deploy, staging first**: no `--breaking`, rollback allowed (below). Stage, one scheduled nightly soak, then
    prod on Mike's go.
 
-**Timing.** The backfill runs outside the env's backfill gate (the nightly -4 h / +2 h: prod 00:45 UTC, so 02:45-20:45
-UTC; stage 02:45 UTC, so 04:45-22:45 UTC) and outside the RPC quiet windows 16:30-17:15 and 05:00-06:30 PT;
+**Timing.** The backfill runs outside the env's backfill gate, the nightly -4 h / +2 h (prod nightly 00:45 UTC: allowed
+02:45-20:45 UTC; stage nightly 02:45 UTC: allowed 04:45-22:45 UTC), and outside the RPC quiet windows 16:30-17:15 and
+05:00-06:30 PT;
 `r4-backfill.sh` refuses to start, and to queue each further job, inside either or within 15 min before one opens. ~40
 min for 2026-10-22 -> yesterday (~6 jobs; each ~5-10 min, more while an hourly `levels` job holds the worker).
 

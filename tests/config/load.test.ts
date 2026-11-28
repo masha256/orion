@@ -365,7 +365,7 @@ describe('metric watch', () => {
     // Re-pinned (Phase 3 R2 Task 10 fix wave, A/R36): AERO's prices.yaml entry valid_from 2026-09-23 -> 2026-10-22.
     // Re-pinned (Phase 3 R3 Task 5, Ruling R6): circulating_supply rebuild_from 2026-11-10.
     // Re-pinned (Phase 3 R4 Task 8, RET-203): revenue on chain via pool_scan; flow_usd.fees retired; statement scope complete.
-    expect(asset('aero')).toBe('41d417dd8eac6aebf194b5ec1c5bec4cb625767f2982b11f64e7a617b5869cb8');
+    expect(asset('aero')).toBe('8b0352283ee83d1d904bf56975dad00ab7c39b8a3b13af91b90ece456879a7b1');
   });
 });
 

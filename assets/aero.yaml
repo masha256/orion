@@ -143,7 +143,9 @@ metrics:
   # CLPoolTape) between the day's boundary blocks; allocator = the gauged pools' fees to sAERO allocators; lp = gross less
   # allocator; incentives = VRM programs streamed to allocators, by creator. USD from Chainlink anchors and the pool
   # graph. Fails a day on any failed read, coverage below 95 percent, or allocator above gross (0.5 percent and $1).
-  # `since` is the launch: no earlier day is ever scanned (the contracts do not exist before it).
+  # `since` is the launch: no earlier day is ever scanned (the contracts do not exist before it). Elysium's own chain
+  # `since` is 2026-11-08 (its contracts arrived 2026-11-07 13:07-13:15Z, eth_getCode binary search in
+  # chain-start-probe.log; the other 7 chains have code at 2026-10-22): its earlier days add 0, sliced `live: false`.
   # The scan block below is generated, not typed: tools/phase3-proof/r4-gen-scan.py --scoping <phase3-r4-scoping dir>
   # --indent 10 prints it byte for byte from the R4 scoping files (onchain-revenue-data/scripts/enum_head.json,
   # anchors-chainlink.json, incentives-data/discovery.json, factory_tape_snapshots.json, elysium_discovery.json,
@@ -301,6 +303,7 @@ metrics:
               log_range: 1000000
             # elysium (99901)
             - chain_id: 99901
+              since: "2026-11-08" # first full UTC day after the 2026-11-07 13:07-13:15Z deploy: chain-start-probe.log (eth_getCode, MEASURED)
               factories:
                 # StablePoolFactory: enum_head.json elysium.v2s (in elysium_discovery.json targets); tape: factory_tape_snapshots.json
                 - { address: "0x78589E876edcEbdce72ee3436ab3c9AD3a7cEF2D", kind: v2_stable, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }

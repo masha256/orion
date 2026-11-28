@@ -156,9 +156,9 @@ export interface SourceContext {
    */
   rpcFor?: (chainId: number) => RpcTransport;
   /**
-   * The UTC days ('YYYY-MM-DD') the run's own series of a flow metric already holds: its active one-day rows of the
-   * series' origin (`seriesOrigin` of the metric's provenance), the rows the series writer reads back as stored. For an
-   * adapter that reads only the days still missing (the pool scan).
+   * The UTC days ('YYYY-MM-DD') a flow metric already has: every day an active row of the metric covers, whatever its
+   * source (apiFlow `coveredDays`, the series writer's own no-gap rule; a manual or foreign row's days included, so they
+   * are never re-scanned on every run). For an adapter that reads only the days still missing (the pool scan).
    */
   storedFlowDays?: (metricKey: string) => Promise<Set<string>>;
 }

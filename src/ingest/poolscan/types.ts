@@ -7,6 +7,9 @@ import { z } from 'zod';
 
 const evmAddress = z.string().regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 20-byte 0x address');
 
+/** A UTC calendar day, YYYY-MM-DD (2026-11-31 is refused). */
+const utcDayString = z.string().refine((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) === d, 'must be a YYYY-MM-DD day');
+
 /**
  * A reviewed price anchor: a token address and the Chainlink USD feed proxy that prices it, with the feed's on-chain
  * `description()`. `feed_chain_id` reads the feed on another chain (Elysium's three read Base feeds). Pricing (Task 5)
@@ -31,6 +34,12 @@ export type ScanFactory = z.infer<typeof ScanFactorySchema>;
 
 export const ChainScanSchema = z.strictObject({
   chain_id: z.number().int().positive(),
+  /**
+   * The chain's first scanned day (its contracts' first full UTC day). A chain-day before it is not scanned (no read
+   * at all), adds 0, and the day's slice marks the chain `{ live: false }`; the per-chain gates skip it. Default: the
+   * params' `since` (every day the metric scans).
+   */
+  since: utcDayString.optional(),
   factories: z.array(ScanFactorySchema).min(1),
   factory_registry: evmAddress,
   leaf_voter: evmAddress,
@@ -39,6 +48,11 @@ export const ChainScanSchema = z.strictObject({
   log_range: z.number().int().positive().optional(),
 });
 export type ChainScan = z.infer<typeof ChainScanSchema>;
+
+/** Whether a chain is scanned on `day`: on or after its own `since`, when it has one. */
+export function chainLiveOn(cfg: ChainScan, day: string): boolean {
+  return cfg.since === undefined || day >= cfg.since;
+}
 
 export const ScanConfigSchema = z.strictObject({
   chains: z.array(ChainScanSchema).min(1),
@@ -73,10 +87,11 @@ export interface PoolFees {
  * - `hook`: a CL pool's `getPoolSwapHook` differs from the configured hook (id = pool).
  * - `factory`: a FactoryRegistry target factory is not configured (id = factory).
  * - `gauged_unregistered`: a gauged pool the tape does not record (id = pool).
+ * - `double_gauge`: a second registry gauge whose target is a pool that already has one; the first is kept (id = pool).
  * - `chain`: the root Voter's `chains()` and the configured ids differ (id = chain id).
  * - `negative_allocator` / `negative_gross`: a per-pool per-token accrual came out below 0 and was taken as 0 (id = pool).
  */
-export type DriftKind = 'tape' | 'hook' | 'factory' | 'gauged_unregistered' | 'chain' | 'negative_allocator' | 'negative_gross';
+export type DriftKind = 'tape' | 'hook' | 'factory' | 'gauged_unregistered' | 'double_gauge' | 'chain' | 'negative_allocator' | 'negative_gross';
 export interface Drift {
   kind: DriftKind;
   /** The chain the drift was seen on (for `chain`: the root Voter's chain). */

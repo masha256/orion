@@ -19,7 +19,7 @@ import type { SourceType } from '../report/sourceTypes.js';
 import { MS_PER_DAY, OrionError, STD_METRICS } from '../types.js';
 import { adapterNeedsRpc } from './adapters/registry.js';
 import { checkRevenueStale, REVENUE_STALE_MOVE_PCT, type IndexPoint } from './alerts.js';
-import { DEFAULT_API_FLOW_BACKFILL_DAYS, DEFILLAMA_REVISION_DAYS, seriesOriginOf, storedSeriesDays, writeApiFlow } from './apiFlow.js';
+import { coveredDays, DEFAULT_API_FLOW_BACKFILL_DAYS, DEFILLAMA_REVISION_DAYS, seriesOriginOf, writeApiFlow } from './apiFlow.js';
 import { writePeriodicPayments } from './periodic.js';
 import { compareLevel, compareMonthly } from './crosscheck.js';
 import { derivedFunction, levelGapPct, type DerivedName } from './derived.js';
@@ -286,7 +286,7 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     rpcFor: chainRpcFor(deps.env, deps.priceRpcFactory ?? deps.rpcFactory),
     // The days the series writer reads back as the metric's own (its origin's one-day rows): what a gap-filling adapter
     // (the pool scan) has left to read.
-    storedFlowDays: async (metricKey) => new Set((await storedSeriesDays(db, asset.id, metricKey, seriesOriginOf(loaded, metricKey))).keys()),
+    storedFlowDays: (metricKey) => coveredDays(db, asset.id, metricKey),
   };
 
   const outcomes = new Map<string, SourceOutcome>();

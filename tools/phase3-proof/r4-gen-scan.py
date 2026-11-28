@@ -43,6 +43,11 @@ CHAINS = [('base', 8453), ('ethereum', 1), ('optimism', 10), ('arbitrum', 42161)
 KIND = {'v2s': 'v2_stable', 'v2v': 'v2_volatile', 'cl': 'cl', 'lite_v2s': 'v2_stable', 'lite_v2v': 'v2_volatile', 'lite_cl': 'cl'}
 LABEL = {'v2s': 'StablePoolFactory', 'v2v': 'VolatilePoolFactory', 'cl': 'CLFactory', 'lite_v2s': 'Aero Lite stable factory (0 pools)', 'lite_v2v': 'Aero Lite volatile factory (0 pools)', 'lite_cl': 'Aero Lite CLFactory'}
 ORDER = ['v2s', 'v2v', 'cl', 'lite_v2s', 'lite_v2v', 'lite_cl']
+# A chain's own first scanned day, where its contracts arrived after the metrics' since (2026-10-22). Not in the scoping
+# files, so a reviewed manual override here: MEASURED 2026-11-28 by eth_getCode binary search (chain-start-probe.log).
+# Elysium's FactoryRegistry first has code 2026-11-07T13:07:42Z, its hook last at 13:15:29Z, so 11-08 is the first full
+# UTC day; every address of the other 7 chains (Arc Lite included) has code at 2026-10-22 s-1.
+CHAIN_SINCE = {'elysium': ('2026-11-08', 'first full UTC day after the 2026-11-07 13:07-13:15Z deploy: chain-start-probe.log (eth_getCode, MEASURED)')}
 
 
 def in_text(addr, *texts):
@@ -85,6 +90,10 @@ for name, cid in CHAINS:
     assert in_text(registry, inc_md), (name, registry)
     w(f'          # {name} ({cid})')
     w(f'          - chain_id: {cid}')
+    if name in CHAIN_SINCE:
+        day, why = CHAIN_SINCE[name]
+        w(f'            since: "{day}" # {why}')
+        prov.append((name, 'since', day, 'chain-start-probe.log (manual override in r4-gen-scan.py)'))
     w('            factories:')
     for k in keys:
         f = facs[k]

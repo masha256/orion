@@ -125,6 +125,9 @@ export async function chunkedMulticallData(
 /** How many times one getLogs range is halved on a range refusal before the read fails. */
 export const MAX_LOG_HALVINGS = 8;
 
+/** A provider's throttle, by its wording: checked before the range wording (isLogRangeError). */
+const RATE_LIMIT_TEXT = /status:?\s*429|\bhttp\s*429\b|too many requests|rate[ -]?limit|compute units|capacity/i;
+
 /** A provider's refusal of an eth_getLogs range as too wide or too many results (halving it may succeed). */
 export class LogRangeError extends Error {
   constructor(message: string) {
@@ -136,11 +139,14 @@ export class LogRangeError extends Error {
 /**
  * Whether an eth_getLogs error is a range / result-size refusal, by its wording across providers ("query returned more
  * than 10000 results", "block range too large", "exceed maximum block range", "Log response size exceeded", "limit
- * exceeded", -32005) or by its type. Anything else (a timeout, a reset connection) is not halved.
+ * exceeded", -32005) or by its type. Anything else (a timeout, a reset connection) is not halved. A rate limit is never a
+ * range error, whatever else its text says (HTTP 429 "Too Many Requests", "rate limit(ed)", Infura's -32005 "request rate
+ * limited", "compute units ... capacity"): halving it would multiply the throttled requests, so it is thrown as is.
  */
 export function isLogRangeError(err: unknown): boolean {
   if (err instanceof LogRangeError) return true;
   const text = err instanceof Error ? err.message : String(err);
+  if (RATE_LIMIT_TEXT.test(text)) return false;
   return /too many|more than \d+ results|block range|range (is )?too (large|wide|big)|exceeds? (the )?max(imum)? (block )?range|response size|limit exceeded|-32005/i.test(text);
 }
 

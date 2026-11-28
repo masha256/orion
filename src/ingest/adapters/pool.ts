@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { DEFAULT_API_FLOW_BACKFILL_DAYS } from '../apiFlow.js';
-import { ScanConfigSchema, driftDedupeKey, type ChainDayScan, type ChainScan, type Drift, type ScanConfig } from '../poolscan/types.js';
+import { ScanConfigSchema, chainLiveOn, driftDedupeKey, type ChainDayScan, type ChainScan, type Drift, type ScanConfig } from '../poolscan/types.js';
 import { rpcChainReader, type ChainReader } from '../poolscan/reader.js';
 import { checkRootChains, scanChainDay } from '../poolscan/scan.js';
 import { priceDay, valueScan, type PriceBook, type ScanValue } from '../poolscan/pricing.js';
@@ -28,12 +28,17 @@ import { intIn, isoDate } from './dates.js';
  * chain's VRMs and programs (read once, at the latest scanned day's e−1) and each chain-day's streams; keyed by a hash of
  * `scan` (field/class/max_scan_days/since do not change a chain-day) with the chain and day.
  *
+ * Chains with their own `since` (Elysium: its contracts arrived 2026-11-07): a chain-day before it is not scanned at all
+ * (no read, so no failed read either), adds 0 and its slice is `{ live: false }`; the per-chain gates and warnings skip
+ * it, and the root Voter's `chains()` is compared with the chains live that day.
+ *
  * Failures (the run throws, so the reading is `ok: false` and nothing is written): any failed read (the engine throws),
  * a chain-day priced below 95%, a chain-day with fees and nothing priced, allocator above gross by more than 0.5% and
  * $1, any `negative_gross` / `negative_allocator` drift. Warnings (advisory anomalies, deduped per key): engine drift,
  * root-Voter chain drift, 95-99% coverage, dropped anchors and spot-fallback prices are emitted only by
  * `pool.tape_fees_daily` with `field: gross`, incentive `ambiguous` points only by `class: vote_incentives` (run.ts
- * dedupes warnings per request, so each is posted once per run).
+ * dedupes warnings per request, so each is posted once per run). `pool_scan:incentives_unpriced:<chain>` (incentive
+ * tokens the chain-day's price book does not price: skipped, never imputed) comes from `class: vote_incentives` only.
  */
 
 export const MAX_SCAN_DAYS = 14;
@@ -90,6 +95,12 @@ function validateCommon(p: Record<string, unknown>, keys: string[]): string[] {
   out.push(...validateScan(p.scan));
   if (p.max_scan_days !== undefined && !intIn(p.max_scan_days, 1, MAX_SCAN_DAYS)) out.push(`max_scan_days: an integer 1..${MAX_SCAN_DAYS}, not ${JSON.stringify(p.max_scan_days)}`);
   if (p.since !== undefined && isoDate(p.since) === null) out.push('since: a YYYY-MM-DD day');
+  const chains = (p.scan as { chains?: unknown } | undefined)?.chains;
+  if (typeof p.since === 'string' && isoDate(p.since) !== null && Array.isArray(chains)) {
+    chains.forEach((c: { since?: unknown }, i) => {
+      if (typeof c?.since === 'string' && c.since < (p.since as string)) out.push(`scan.chains[${i}].since: ${c.since} is before the params since ${p.since}`);
+    });
+  }
   return out;
 }
 
@@ -106,9 +117,9 @@ export function validateVrmParams(p: Record<string, unknown>): string[] {
 }
 
 const COMMON_DOC =
-  '`scan`: the pool-scan block (chains: [{ chain_id, factories: [{ address, kind: v2_stable|v2_volatile|cl, tape, hook? }], factory_registry, leaf_voter, anchors: [{ token, feed, description, feed_chain_id? }], log_range? }], subsidy_creators: [address], root_voter?: { chain_id: 8453, address }); ' +
+  '`scan`: the pool-scan block (chains: [{ chain_id, since?, factories: [{ address, kind: v2_stable|v2_volatile|cl, tape, hook? }], factory_registry, leaf_voter, anchors: [{ token, feed, description, feed_chain_id? }], log_range? }], subsidy_creators: [address], root_voter?: { chain_id: 8453, address }); ' +
   'anchor descriptions must be one of ' + ANCHOR_DESCRIPTIONS.join(', ') + '. ' +
-  '`max_scan_days` (1..14, default 7): days scanned per run, oldest missing first, plus the 3 revision days. `since` (YYYY-MM-DD): no day before it is scanned (the contracts\' first day).';
+  '`max_scan_days` (1..14, default 7): days scanned per run, oldest missing first, plus the 3 revision days. `since` (YYYY-MM-DD): no day before it is scanned (the contracts\' first day); a chain\'s own `since` (not before it) starts that chain later: its earlier days add 0, sliced `{ live: false }`.';
 
 // ---- run memo ----------------------------------------------------------------------------------------------------------
 
@@ -310,17 +321,23 @@ async function prepare(ctx: SourceContext, name: string, params: Record<string, 
   return { scan, hash: scanHash(scan), memo: memoOf(ctx), plan: await planDays(ctx, name, params) };
 }
 
-/** Every chain's fees for each day, oldest day first; throws on the first failing day (all its chains' reasons). */
-async function feesByDay(ctx: SourceContext, p: Prepared): Promise<Map<string, Map<number, ChainDayFees>>> {
-  const out = new Map<string, Map<number, ChainDayFees>>();
+/**
+ * Every chain's fees for each day, oldest day first; null for a chain not live that day (before its `since`: never
+ * scanned). Throws on the first failing day (all its live chains' reasons).
+ */
+async function feesByDay(ctx: SourceContext, p: Prepared): Promise<Map<string, Map<number, ChainDayFees | null>>> {
+  const out = new Map<string, Map<number, ChainDayFees | null>>();
   for (const day of p.plan.days) {
-    const list = await Promise.all(p.scan.chains.map((c) => chainDayFees(ctx, p.memo, p.hash, p.scan, c, day)));
-    const failures = list.flatMap((f) => f.failures);
+    const list = await Promise.all(p.scan.chains.map((c) => (chainLiveOn(c, day) ? chainDayFees(ctx, p.memo, p.hash, p.scan, c, day) : Promise.resolve(null))));
+    const failures = list.flatMap((f) => f?.failures ?? []);
     if (failures.length > 0) throw new Error(failures.join('; '));
     out.set(day, new Map(p.scan.chains.map((c, i) => [c.chain_id, list[i]])));
   }
   return out;
 }
+
+/** The slice of a chain-day that was not scanned (before the chain's `since`). */
+const NOT_LIVE: Json = { live: false };
 
 const blocksOf = (s: ChainDayScan) => ({ s: s.blocks.s.toString(), e: s.blocks.e.toString() });
 const span = (days: string[]) => (days.length === 1 ? days[0] : `${days[0]}..${days[days.length - 1]}`);
@@ -336,18 +353,22 @@ async function tapeFeesDaily(ctx: SourceContext, params: Record<string, unknown>
     let value = 0;
     const chains: Record<string, Json> = {};
     for (const c of p.scan.chains) {
-      const f = byChain.get(c.chain_id)!;
+      const f = byChain.get(c.chain_id);
+      if (!f) {
+        chains[String(c.chain_id)] = NOT_LIVE;
+        continue;
+      }
       const v = f.value;
       // LP is what the allocator did not take; inside the bound allocator may top gross by cents, never below 0.
       value += field === 'gross' ? v.grossUsd : field === 'allocator' ? v.allocatorUsd : Math.max(0, v.grossUsd - v.allocatorUsd);
       chains[String(c.chain_id)] = { ...blocksOf(f.scan), grossUsd: v.grossUsd, allocatorUsd: v.allocatorUsd, pricedPct: v.pricedPct, unpricedUsd: v.coverageEstimateUsd };
       if (field === 'gross') feeWarnings(warnings, c, day, f);
     }
-    if (field === 'gross' && p.scan.root_voter) {
-      const base = byChain.get(BASE)!;
-      const drift = await remember(p.memo.roots, `${p.hash}|${day}`, () =>
-        checkRootChains(readerFor(ctx, p.memo, BASE), p.scan.root_voter!.address, p.scan.chains.map((c) => c.chain_id), base.scan.blocks.e - 1n),
-      );
+    const base = byChain.get(BASE);
+    if (field === 'gross' && p.scan.root_voter && base) {
+      // Compared with the chains live that day: a chain before its `since` is not expected in the root Voter yet.
+      const live = p.scan.chains.filter((c) => byChain.get(c.chain_id)).map((c) => c.chain_id);
+      const drift = await remember(p.memo.roots, `${p.hash}|${day}`, () => checkRootChains(readerFor(ctx, p.memo, BASE), p.scan.root_voter!.address, live, base.scan.blocks.e - 1n));
       for (const d of drift) driftWarning(warnings, d, day);
     }
     points.push({ day, value, slice: { chains } });
@@ -364,7 +385,9 @@ async function vrmIncentivesDaily(ctx: SourceContext, params: Record<string, unk
   const latestDay = p.plan.days[p.plan.days.length - 1];
   const progs = new Map<number, Program[]>();
   for (const c of p.scan.chains) {
-    progs.set(c.chain_id, await chainPrograms(ctx, p.memo, p.hash, c, latestDay, fees.get(latestDay)!.get(c.chain_id)!));
+    // A chain not live on the latest day is live on none of the run's days: its programs are never read.
+    const latest = fees.get(latestDay)!.get(c.chain_id);
+    if (latest) progs.set(c.chain_id, await chainPrograms(ctx, p.memo, p.hash, c, latestDay, latest));
   }
   const warnings = new Warnings();
   const points: DailyPoint[] = [];
@@ -373,15 +396,21 @@ async function vrmIncentivesDaily(ctx: SourceContext, params: Record<string, unk
     const chains: Record<string, Json> = {};
     const streams = await Promise.all(
       p.scan.chains.map((c) => {
-        const f = fees.get(day)!.get(c.chain_id)!;
+        const f = fees.get(day)!.get(c.chain_id);
+        if (!f) return Promise.resolve(null);
         return remember(p.memo.streams, `${p.hash}|${c.chain_id}|${day}`, () => streamedDay(readerFor(ctx, p.memo, c.chain_id), progs.get(c.chain_id)!, day, f.scan.blocks, p.scan.subsidy_creators));
       }),
     );
     p.scan.chains.forEach((c, i) => {
-      const f = fees.get(day)!.get(c.chain_id)!;
+      const f = fees.get(day)!.get(c.chain_id);
       const st = streams[i];
+      if (!f || !st) {
+        chains[String(c.chain_id)] = NOT_LIVE;
+        return;
+      }
       const byClass: Record<string, number> = {};
       let unpricedTokens = 0;
+      const unpriced: { token: string; class: IncentiveClass; amount: string }[] = [];
       for (const k of CLASSES) {
         let total = 0;
         for (const [token, amount] of st.byClass[k]) {
@@ -389,6 +418,7 @@ async function vrmIncentivesDaily(ctx: SourceContext, params: Record<string, unk
           const dec = f.book.decimals.get(token.toLowerCase());
           if (px === undefined || dec === undefined) {
             unpricedTokens++;
+            unpriced.push({ token: token.toLowerCase(), class: k, amount: amount.toString() });
             continue;
           }
           total += (Number(amount) / 10 ** dec) * px;
@@ -397,7 +427,11 @@ async function vrmIncentivesDaily(ctx: SourceContext, params: Record<string, unk
       }
       value += byClass[cls];
       chains[String(c.chain_id)] = { ...blocksOf(f.scan), vote_incentives: byClass.vote_incentives, protocol_subsidy: byClass.protocol_subsidy, programsActive: st.programsActive, unpricedTokens };
-      if (cls === 'vote_incentives') for (const a of st.ambiguous) warnings.add(`pool_scan:incentive_ambiguous:${c.chain_id}:${a.vrm}`, day, { chain: c.chain_id, vrm: a.vrm, t: a.t });
+      if (cls === 'vote_incentives') {
+        for (const a of st.ambiguous) warnings.add(`pool_scan:incentive_ambiguous:${c.chain_id}:${a.vrm}`, day, { chain: c.chain_id, vrm: a.vrm, t: a.t });
+        // Skipped, never imputed (spec §7): the held-to-holders line may read low, so say which tokens and how much (raw).
+        if (unpriced.length > 0) warnings.add(`pool_scan:incentives_unpriced:${c.chain_id}`, day, { chain: c.chain_id }, { tokens: unpriced });
+      }
     });
     points.push({ day, value, slice: { chains } });
   }

@@ -88,8 +88,11 @@ export async function storedSeriesDays(db: Db, assetId: string, metricKey: strin
   return days;
 }
 
-/** Every UTC day that an active row of the metric covers, whatever its source: a day here is not a gap. */
-async function coveredDays(db: Db, assetId: string, metricKey: string): Promise<Set<string>> {
+/**
+ * Every UTC day that an active row of the metric covers, whatever its source: a day here is not a gap. The writer's gap
+ * rule and the pool scan's day planner (run.ts `storedFlowDays`) both read it, so they agree on what a gap is.
+ */
+export async function coveredDays(db: Db, assetId: string, metricKey: string): Promise<Set<string>> {
   const days = new Set<string>();
   for (const o of await listActiveObservations(db, assetId, metricKey)) for (const d of observationDays(o.observedAt, o.periodDays)) days.add(d);
   return days;
