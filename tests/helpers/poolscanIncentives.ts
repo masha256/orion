@@ -110,6 +110,8 @@ export interface IncentivesReaderOptions {
   /** Extra supply history: `vrm|t` → [idx, supplyAt(t − 1)], and `vrm|idx` → point (synthetic tests). */
   zero?: Record<string, [number, bigint]>;
   points?: Record<string, Point>;
+  /** Synthetic supplyAt(ts) for a VRM (checked before `zero` and the fixture); undefined = no answer here. */
+  supply?: (vrm: string, ts: number) => bigint | undefined;
 }
 
 /** A fake ChainReader for one fixture chain: discovery getters, VRM programs and supply history; anything else is undefined. */
@@ -154,6 +156,8 @@ export function incentivesReader(fx: IncentivesFixture, chain: string, o: Incent
         }
         case 'supplyAt': {
           // The engine asks supplyAt(t − 1); the fixture keys the answer by t.
+          const fn = o.supply?.(at, Number(arg));
+          if (fn !== undefined) return fn;
           const t = Number(arg) + 1;
           const syn = o.zero?.[`${at}|${t}`];
           if (syn) return syn[1];

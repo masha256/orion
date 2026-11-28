@@ -302,4 +302,62 @@ describe('poolscan VRM incentive streams', () => {
     const [pt] = await reader.call<Record<string, unknown>>([{ address: VRM, abi: VRM_ABI, functionName: 'globalRewardPointHistory', args: [1n] }], 5n);
     expect(pt).toEqual(point);
   });
+
+  describe('a VRM whose last allocation expires at a week boundary w, with no checkpoint after w (SYNTHETIC)', () => {
+    // The contract writes the skipped weekly point at w lazily, pricing [pt.ts, w) from supply(w − 1) > 0 (allocated) and
+    // [w, …) from supply 0 (zero). Thursday 2026-11-26 00:00Z is an epoch start (a multiple of WEEK).
+    const WEEK = 604_800;
+    const w = dayStartSec('2026-11-26');
+    const VRM = '0x6666666666666666666666666666666666666666';
+    const slope = 10n ** 12n;
+    const pt = { bias: slope * 259_200n, slope, ts: w - 259_200, permanentStakeBalance: 0n, zeroSupplySeconds: 500 };
+    const supply = (vrm: string, ts: number) => (vrm !== VRM ? undefined : ts < pt.ts ? 1n : ts >= w ? 0n : pt.bias - slope * BigInt(ts - pt.ts));
+    const prog: Program = { vrm: VRM, id: 1, token: OP_USDC, rate: 10n ** 18n, start: w - 5 * 86_400, end: w + 5 * 86_400, creator: SAFE_80F7 };
+    const reader = (bounds: number[]) =>
+      incentivesReader(fx, 'optimism', { zero: Object.fromEntries(bounds.map((b) => [`${VRM}|${b}`, [5, 0n]])), points: { [`${VRM}|5`]: pt }, supply });
+    const day = (d: number) => new Date(d * 1000).toISOString().slice(0, 10);
+
+    it('Z matches the contract backfill on D = w − 1, w and w + 1, and the run does not throw', async () => {
+      expect(w % WEEK).toBe(0);
+      const got: bigint[] = [];
+      for (const d of [w - 86_400, w, w + 86_400]) {
+        const r = await streamedDay(reader([d, d + 86_400]), [prog], day(d), BLOCKS, SUBSIDY_CREATORS);
+        got.push(r.byClass.vote_incentives.get(OP_USDC) ?? 0n);
+        expect(r.ambiguous, day(d)).toEqual([]);
+        expect(r.programsActive).toBe(1);
+      }
+      // w − 1: allocated all day; w and w + 1: Z(t) = 500 + (t − w), so every second is zero-allocation.
+      expect(got).toEqual([86_400n, 0n, 0n]);
+    });
+
+    it('reads supplyAt(w − 1) at the skipped boundary and counts only [w, t)', async () => {
+      // Program starting mid-day on w + 1: Z(a) = 500 + (a − w), Z(b) = 500 + (b − w); [pt.ts, w) is never zero.
+      const mid: Program = { ...prog, start: w + 86_400 + 43_200 };
+      const r0 = reader([mid.start, w + 2 * 86_400]);
+      const r = await streamedDay(r0, [mid], day(w + 86_400), BLOCKS, SUBSIDY_CREATORS);
+      expect(r.byClass.vote_incentives.size).toBe(0);
+      const supplyArgs = r0.stats.calls.filter((c) => c.functionName === 'supplyAt').map((c) => Number(c.args[0]));
+      expect(supplyArgs).toContain(w - 1);
+      expect(supplyArgs).toContain(w);
+      // A failed boundary read fails the run.
+      const bad = incentivesReader(fx, 'optimism', {
+        zero: { [`${VRM}|${w}`]: [5, 0n], [`${VRM}|${w + 86_400}`]: [5, 0n] }, points: { [`${VRM}|5`]: pt },
+        supply: (v, ts) => (ts === w - 1 ? (null as unknown as bigint) : supply(v, ts)),
+      });
+      await expect(streamedDay(bad, [prog], day(w), BLOCKS, SUBSIDY_CREATORS)).rejects.toThrow(new RegExp(`${VRM}.supplyAt\\(${w - 1}\\)`));
+    });
+
+    it('a decay that reaches 0 inside an interval (not at a boundary) is flagged ambiguous and clamped, not thrown', async () => {
+      // Lock ends are week-aligned, so only rounding gets here: supply hits 0 at w − 1 day, the next boundary is w.
+      const early = { ...pt, bias: slope * 172_800n };
+      const sup = (v: string, ts: number) => (v !== VRM ? undefined : ts >= w - 86_400 ? 0n : early.bias - slope * BigInt(ts - pt.ts));
+      const d = w - 86_400;
+      const r0 = incentivesReader(fx, 'optimism', {
+        zero: { [`${VRM}|${d}`]: [5, 0n], [`${VRM}|${w}`]: [5, 0n] }, points: { [`${VRM}|5`]: early }, supply: sup,
+      });
+      const r = await streamedDay(r0, [prog], day(d), BLOCKS, SUBSIDY_CREATORS);
+      expect(r.byClass.vote_incentives.size).toBe(0);
+      expect(r.ambiguous.map((a) => a.vrm)).toContain(VRM);
+    });
+  });
 });
