@@ -30,7 +30,7 @@ function holderFlowText(c: AssetConfig): string {
   const is = c.income_statement;
   const lines = [
     ...(is?.holders ?? []).map((h) => `${h.id} [${h.bucket}, ${h.capture_rule}, ${h.recipient_base}]`),
-    ...(is?.below_line ?? []).filter((b) => b.to === 'holders').map((b) => (b.bucket === undefined ? `${b.id} [not measured]` : `${b.id} [${b.bucket}, ${b.capture_rule}, ${b.recipient_base}]`)),
+    ...(is?.below_line ?? []).filter((b) => b.to === 'holders' && b.in_holder_flow !== false).map((b) => (b.bucket === undefined ? `${b.id} [not measured]` : `${b.id} [${b.bucket}, ${b.capture_rule}, ${b.recipient_base}]`)),
   ];
   return lines.length > 0 ? lines.join('; ') : 'none';
 }

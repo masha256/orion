@@ -15,10 +15,10 @@ const H = 3_600_000;
 const at = (iso: string) => Date.parse(iso);
 
 /** A flow row for `day` (UTC), with optional token columns. */
-async function flowRow(day: string, value: number, tokens?: { amount: number; hourly: number[] | null; ref?: string }, over: { metricKey?: string; fetchedAt?: string } = {}) {
+async function flowRow(day: string, value: number, tokens?: { amount: number; hourly: number[] | null; ref?: string }, over: { metricKey?: string; fetchedAt?: string; sourceType?: 'pool_scan' } = {}) {
   return await insertObservation(testDb(), {
     assetId: 'crv', metricKey: over.metricKey ?? 'flow_usd.fees', observedAt: new Date(at(`${day}T00:00:00Z`) + 86_400_000).toISOString(), periodDays: 1, value,
-    fetchedAt: over.fetchedAt ?? '2026-11-05T06:00:00Z', provenance: testProvenance('onchain'),
+    fetchedAt: over.fetchedAt ?? '2026-11-05T06:00:00Z', provenance: over.sourceType ? { ...testProvenance('onchain'), sourceType: over.sourceType } : testProvenance('onchain'),
     ...(tokens ? { tokens: { tokenRef: tokens.ref ?? REF, amount: tokens.amount, hourlyAmounts: tokens.hourly } } : {}),
   });
 }
@@ -279,6 +279,15 @@ describe('listFlowUsd / priceBasisOf (the ingest gate removed)', () => {
     expect(got.get(old.id)).toEqual({ usd: 20, basis: 'hourly' });
     expect(got.get(cg.id)).toEqual({ usd: 30, basis: 'legacy' });
     expect(got.get(mean.id)).toEqual({ usd: 30, basis: 'daily_mean' });
+  });
+
+  it('a pool_scan row without token columns has priceBasis onchain_usd', async () => {
+    // Phase 3 R4 (RET-198): the adapter priced hundreds of pool tokens itself, on chain, and stored the USD only.
+    const pool = await flowRow('2026-10-22', 297_000, undefined, { sourceType: 'pool_scan' });
+    const other = await flowRow('2026-10-23', 50, undefined);
+    const got = await listFlowUsd(testDb(), 'crv');
+    expect(got.get(pool.id)).toEqual({ usd: 297_000, basis: 'onchain_usd' });
+    expect(got.get(other.id)).toEqual({ usd: 50, basis: 'legacy' });
   });
 });
 

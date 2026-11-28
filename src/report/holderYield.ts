@@ -134,7 +134,15 @@ export function windowSum(daily: Map<string, Map<string, number>>, metrics: stri
   return sum;
 }
 
-export function growthOf(daily: Map<string, Map<string, number>>, metrics: string[], end: string, days: number, weights?: number[]): Growth {
+/** Growth's note while its prior window starts before the statement's `history_start` (Phase 3 R4, opt-in). */
+export const historyNote = (historyStart: string): string => `not meaningful: the prior window starts before ${historyStart}`;
+
+/**
+ * The latest window over the one before it. With `historyStart` (a statement's `history_start`), not meaningful (change
+ * and annualized null, the note) until the prior window's first day, end - 2 x days + 1, is on or after it: a prior
+ * window partly before the history began would inflate the change.
+ */
+export function growthOf(daily: Map<string, Map<string, number>>, metrics: string[], end: string, days: number, weights?: number[], historyStart?: string): Growth {
   const weighted = (e: string): number | null => {
     if (!weights) return windowSum(daily, metrics, e, days);
     let s = 0;
@@ -147,6 +155,7 @@ export function growthOf(daily: Map<string, Map<string, number>>, metrics: strin
   };
   const current = weighted(end);
   const prior = weighted(addDays(end, -days));
+  if (historyStart !== undefined && addDays(end, -2 * days + 1) < historyStart) return { current, prior, change: null, annualized: null, note: historyNote(historyStart) };
   if (current === null || prior === null) {
     return { current, prior, change: null, annualized: null, note: `needs ${2 * days} complete days of every flow` };
   }
@@ -217,7 +226,7 @@ export function reportHeader(input: ReportInput): ReportHeader {
   const circ = lv.circulatingSupply ?? null;
   const eff = lv.totalSupply;
   const notes: string[] = [];
-  const toHolders = (is.below_line ?? []).filter((b) => b.to === 'holders');
+  const toHolders = (is.below_line ?? []).filter((b) => b.to === 'holders' && b.in_holder_flow !== false);
   const runRates = toHolders.filter((b) => b.run_rate !== undefined).map((b) => b.id);
   if (runRates.length > 0) notes.push(`holder-flow growth excludes ${runRates.join(', ')} (a run rate with no daily series)`);
   const bases = [...(is.holders ?? []).map((h) => h.recipient_base), ...toHolders.flatMap((b) => (b.recipient_base === undefined ? [] : [b.recipient_base]))];

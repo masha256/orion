@@ -215,11 +215,13 @@ export interface UsdComparison extends GapStats {
 /**
  * The basis a report figure is priced on (Phase 3 R2, plan P3), from flow_usd_chain_v: `hourly` (tokens x the chain
  * writer's hourly prices, every hour with an amount priced), `daily_mean` (a day's amount without hourly buckets x the
- * mean of its 24 chain hours), `usd_native` (a first-party API's dollars), else `legacy` (the stored USD: some hour
- * unpriced, no hourly buckets and not 24 chain hours, no tokens, e.g. DefiLlama and derived rows). There is no ingest
- * gate: a row's basis depends on the prices stored now, not on how its `value` was priced when it was written.
+ * mean of its 24 chain hours), `usd_native` (a first-party API's dollars), `onchain_usd` (Phase 3 R4: a `pool_scan` row
+ * with no token columns, whose USD the adapter computed from on-chain prices inside its scan: one row sums hundreds of
+ * pool tokens, so no token_ref can be stored), else `legacy` (the stored USD: some hour unpriced, no hourly buckets and
+ * not 24 chain hours, no tokens, e.g. DefiLlama and derived rows). There is no ingest gate: a row's basis depends on the
+ * prices stored now, not on how its `value` was priced when it was written.
  */
-export type PriceBasis = 'hourly' | 'daily_mean' | 'usd_native' | 'legacy';
+export type PriceBasis = 'hourly' | 'daily_mean' | 'usd_native' | 'onchain_usd' | 'legacy';
 
 /** flow_usd_chain_v's `usd_basis` folded to the report's four labels. */
 export function priceBasisOf(usdBasis: string): PriceBasis {
@@ -229,17 +231,19 @@ export function priceBasisOf(usdBasis: string): PriceBasis {
 
 /**
  * Per active USD flow row of the asset (flow_usd_chain_v), the USD the report's income statement reads and its basis:
- * the view's `usd` where the basis is hourly, daily_mean or usd_native, else the stored `value` (`legacy_usd`). Keyed by
- * observation id, so the caller selects the rows exactly as it selects `value` rows. Read-only.
+ * the view's `usd` where the basis is hourly, daily_mean or usd_native, else the stored `value` (`legacy_usd`), labelled
+ * `onchain_usd` when the row is a `pool_scan` row without token columns (the view's `legacy_no_tokens`; the label is
+ * TypeScript only, no migration). Keyed by observation id, so the caller selects the rows exactly as it selects `value`
+ * rows. Read-only.
  */
 export async function listFlowUsd(db: Db, assetId: string): Promise<Map<number, { usd: number; basis: PriceBasis }>> {
-  const rows = await db.all<{ id: number; usd: number; legacy_usd: number; usd_basis: string }>(
-    'SELECT id, usd, legacy_usd, usd_basis FROM flow_usd_chain_v WHERE asset_id = $1', [assetId],
+  const rows = await db.all<{ id: number; usd: number; legacy_usd: number; usd_basis: string; source_type: string }>(
+    'SELECT v.id, v.usd, v.legacy_usd, v.usd_basis, o.source_type FROM flow_usd_chain_v v JOIN observations o ON o.id = v.id WHERE v.asset_id = $1', [assetId],
   );
   const out = new Map<number, { usd: number; basis: PriceBasis }>();
   for (const r of rows) {
-    const basis = priceBasisOf(r.usd_basis);
-    out.set(Number(r.id), { usd: basis === 'legacy' ? r.legacy_usd : r.usd, basis });
+    const basis = r.usd_basis === 'legacy_no_tokens' && r.source_type === 'pool_scan' ? 'onchain_usd' : priceBasisOf(r.usd_basis);
+    out.set(Number(r.id), { usd: basis === 'legacy' || basis === 'onchain_usd' ? r.legacy_usd : r.usd, basis });
   }
   return out;
 }

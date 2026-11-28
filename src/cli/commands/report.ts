@@ -12,6 +12,7 @@ const pct = (x: number | null, d = 1) => (x === null ? 'n/a' : `${(x * 100).toFi
 const g = (x: Growth) => {
   if (x.annualized !== null) return `${pct(x.annualized)} ann. (${pct(x.change)} per window)`;
   if (x.note?.startsWith('a disclosed')) return `n/a (${x.note})`;
+  if (x.note?.startsWith('not meaningful: the prior window starts before')) return `n/m (${x.note})`;
   if (x.current === null || x.prior === null) return 'pending (needs 2 windows of daily history)';
   return `n/m${x.change !== null ? ` (per window ${pct(x.change)})` : ''}`;
 };
@@ -22,6 +23,8 @@ export function statementLines(is: IsV2): string[] {
   const nm = (x: { notMeasured?: string }) => (x.notMeasured !== undefined ? ` (not measured: ${x.notMeasured})` : '');
   const line = (id: string, annualized: number | null, tag: string) => `      ${id.padEnd(22)} ${usd(annualized)}${tag}`;
   const lines = [`  income statement v2 (annualized, ${is.windowDays}d; scope ${is.scope}, category ${is.category}):`];
+  // history_start (Phase 3 R4): a statement whose history is shorter than its window says so.
+  if (is.window !== undefined && is.window.daysMeasured < is.window.windowDays) lines.push(`  window: ${is.window.daysMeasured} of ${is.window.windowDays} days (since ${is.window.since})`);
   lines.push(`    revenue          ${usd(is.revenue.annualized)}${is.revenue.provisional ? ' (part provisional)' : ''}  growth ${g(is.revenue.growth)}${is.revenue.growthExNew ? `  ex new (${is.revenue.excludedFromExNew.join(', ')}) ${g(is.revenue.growthExNew)}` : ''}`);
   for (const l of is.revenue.lines) lines.push(line(l.id, l.annualized, `  ${l.method}${nm(l)}`));
   if (is.costOfRevenue.lines.length > 0) {
@@ -41,7 +44,7 @@ export function statementLines(is: IsV2): string[] {
   if (is.unreconciled.annualized === null || Math.abs(is.unreconciled.annualized) >= 5_000) lines.push(`    unreconciled     ${usd(is.unreconciled.annualized)} (${pct(is.unreconciled.pct)} of ${is.unreconciled.basis === 'revenue' ? 'revenue less measured costs' : 'gross profit'})`);
   if (is.belowLine.lines.length > 0) {
     lines.push(`    below the line   to holders ${usd(is.belowLine.toHolders)}  to protocol ${usd(is.belowLine.toProtocol)}`);
-    for (const l of is.belowLine.lines) lines.push(line(`${l.to} ${l.id}`, l.annualized, `  ${l.method}${nm(l)}`));
+    for (const l of is.belowLine.lines) lines.push(line(`${l.to} ${l.id}`, l.annualized, `  ${l.method}${nm(l)}${l.inHolderFlow === false ? ' (not in holder flow)' : ''}`));
   }
   const hf = is.holderFlow;
   const buckets = (['burn', 'hold', 'cash'] as const).filter((b) => hf.byBucket[b] !== null).map((b) => `${b} ${usd(hf.byBucket[b]!.net)} (yield ${pct(hf.byBucket[b]!.yield, 2)})`);

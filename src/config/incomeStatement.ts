@@ -84,13 +84,17 @@ export const IsCostLineSchema = z.strictObject({ ...useShape, to: CostToSchema }
 
 /**
  * Income not paid by users: exactly one of `metric` (a flow, optionally apportioned), `run_rate` (a level in USD/yr) or
- * `not_measured`.
+ * `not_measured`. `started` dates a young metric line, as on a revenue line (zero before it, a run rate over its own
+ * days). `in_holder_flow: false` (with a `note` saying why) shows a line to holders that holder flow, its yields and
+ * multiples leave out (Phase 3 R4: AERO's own recycled incentives). Both optional with no default.
  */
 export const IsBelowLineSchema = z.strictObject({
   id: LineId,
   label: z.string().optional(),
   note: z.string().optional(),
   metric: z.string().optional(),
+  started: Day.optional(),
+  in_holder_flow: z.boolean().optional(),
   run_rate: z.string().optional(),
   not_measured: z.string().min(1).optional(),
   apportion: ApportionSchema.optional(),
@@ -121,6 +125,12 @@ export const IncomeStatementBaseSchema = z.strictObject({
   operating_costs: z.array(IsUseLineSchema).min(1).optional(),
   /** The one section closed as revenue less the rest (it lists no line of its own). */
   remainder: z.enum(['protocol', 'operating_costs']).optional(),
+  /**
+   * The first day the statement's history covers (Phase 3 R4, opt-in, no default): the statement then carries `window`
+   * (days measured of the window) and every growth figure is not meaningful until growth's prior window starts on or
+   * after it. Without it the statement is unchanged (a line's own `started` keeps its behaviour).
+   */
+  history_start: Day.optional(),
   below_line: z.array(IsBelowLineSchema).min(1).optional(),
   checks: z.array(IsCheckSchema).min(1).optional(),
 });
@@ -297,8 +307,13 @@ export function incomeStatementIssues(asset: CheckAsset): string[] {
     }
     apportioned(b, w, true);
     if (b.run_rate !== undefined) level(b.run_rate, `${w} run_rate`);
+    if (b.started !== undefined && b.metric === undefined) issue(`${w} takes started only with a metric`);
+    if (b.started !== undefined && b.apportion !== undefined) issue(`${w} takes started only with a metric it reads whole (not with apportion)`);
+    if (b.in_holder_flow !== undefined && b.to !== 'holders') issue(`${w} to protocol takes no in_holder_flow (it is never holder flow)`);
+    if (b.in_holder_flow === false && (b.note === undefined || b.note.trim() === '')) issue(`${w} takes in_holder_flow: false only with a note (why it is not holder flow)`);
     if (b.to === 'holders') {
-      const measured = b.metric !== undefined || b.run_rate !== undefined;
+      // A line shown but left out of holder flow (in_holder_flow: false) is valued by nobody: it needs none of these.
+      const measured = (b.metric !== undefined || b.run_rate !== undefined) && b.in_holder_flow !== false;
       // capture_rule too (correction 6, ruling M3): `asset describe` reads it for the holder-flow text. A not_measured line
       // (AERO bribes) needs none of these.
       if (measured && (b.bucket === undefined || b.haircut === undefined || b.recipient_base === undefined || b.capture_rule === undefined)) {
@@ -392,7 +407,8 @@ export function incomeStatementIssues(asset: CheckAsset): string[] {
 /**
  * The flow metrics holder flow reads at the holders (Task 11, ruling R11.1; the retired `holder_flows` metrics for all
  * 13 assets): each measured holders line's `paid_metric`, else its own `metric`, else the flow of the revenue line it
- * passes on (`of`, or an `estimate` of one), and each measured below_line line to holders with a `metric`. Never an
+ * passes on (`of`, or an `estimate` of one), and each measured below_line line to holders with a `metric` (unless
+ * `in_holder_flow: false`). Never an
  * apportion's by or total series, a run-rate level or a not_measured line. A line passing on a periodic revenue line is
  * left out: its lump payments are reported, never a holder flow the agent's pack or the monitor-only rule counted
  * (HYPE's reserve yield, a report-only stream in v1). The agent pack's flow rows (eligibility) and the monitor-only
@@ -412,7 +428,7 @@ export function holderFlowMetrics(is: IncomeStatementDef | undefined): string[] 
     const m = h.paid_metric ?? h.metric ?? (h.of !== undefined ? passedOn(h.of) : h.estimate !== undefined ? passedOn(h.estimate.of) : undefined);
     if (m !== undefined) out.push(m);
   }
-  for (const b of is.below_line ?? []) if (b.to === 'holders' && b.not_measured === undefined && b.metric !== undefined) out.push(b.metric);
+  for (const b of is.below_line ?? []) if (b.to === 'holders' && b.in_holder_flow !== false && b.not_measured === undefined && b.metric !== undefined) out.push(b.metric);
   return [...new Set(out)];
 }
 

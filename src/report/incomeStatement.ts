@@ -4,7 +4,7 @@ import type { PriceBasis } from '../db/prices.js';
 import { addDays } from '../ingest/time.js';
 import { chainOfSource, locatorOfSource, provenanceLabel, scrubLocator } from '../provenance/locator.js';
 import { DAYS_PER_YEAR, STD_METRICS } from '../types.js';
-import { disclosedGrowthOf, growthOf, NEW_STREAM_DAYS, recipients, windowSum, type Bucket, type DisclosedGrowth, type Growth, type ReportInput, type SupplyFlow, type Yields } from './holderYield.js';
+import { disclosedGrowthOf, growthOf, historyNote, NEW_STREAM_DAYS, recipients, windowSum, type Bucket, type DisclosedGrowth, type Growth, type ReportInput, type SupplyFlow, type Yields } from './holderYield.js';
 import { crossCheckTypesOf, LISTING_RUNGS, sourceLabelOf, sourceTypeOf, type SourceType } from './sourceTypes.js';
 
 /**
@@ -39,7 +39,8 @@ export type IsMethod = 'measured' | 'derived' | 'disclosed' | 'not_measured';
  * Task 8: what a line's USD days are priced on, over every day its figures read: the window and growth's prior window
  * (a line's growth reads the same series as its annualized figure, over both windows). One label when every such day of
  * every USD series the line reads has it (`hourly`: tokens x hourly prices; `daily_mean`: a day amount x the mean
- * of its 24 chain hours; `usd_native`: a first-party API's dollars; `legacy`: the stored USD), `mixed` otherwise, null
+ * of its 24 chain hours; `usd_native`: a first-party API's dollars; `onchain_usd`: USD a pool_scan adapter computed from
+ * on-chain prices, no token columns; `legacy`: the stored USD), `mixed` otherwise, null
  * when the line reads no daily USD series (a level, a line not measured).
  */
 export type LinePriceBasis = PriceBasis | 'mixed' | null;
@@ -177,6 +178,10 @@ export interface IsBelowLineOut {
   notMeasured?: string;
   /** Present only on an apportioned line. */
   apportion?: ApportionOut;
+  /** Present only when the line sets `started` (Phase 3 R4): zero before it, a run rate over its own days. */
+  started?: string;
+  /** Present only as false (`in_holder_flow: false`): shown here, left out of holder flow, yields and multiples. */
+  inHolderFlow?: false;
 }
 
 export interface UseSectionOut<L> {
@@ -202,6 +207,11 @@ export interface IsV2 {
   schema: 2;
   day: string;
   windowDays: number;
+  /**
+   * Present only with `history_start` (Phase 3 R4, opt-in): the days of the window the statement's history covers
+   * (min(windowDays, history_start through day)), and that start. The text shows it while daysMeasured < windowDays.
+   */
+  window?: { windowDays: number; daysMeasured: number; since: string };
   category: IsCategory;
   scope: IncomeStatementDef['scope'];
   revenue: {
@@ -351,10 +361,11 @@ export function incomeStatementV2(input: ReportInput): IsV2 {
   // The disclosed line's levels (the loader reads the metric its `disclosed` key names).
   const disclosedSeries = lv.disclosed;
 
-  // A line is zero before it began: days before `started` are filled with 0 (as v1 did for its revenue streams).
+  // A line is zero before it began: days before `started` are filled with 0 (as v1 did for its revenue streams; below-line
+  // metric lines too since Phase 3 R4).
   const daily = new Map(input.daily);
-  for (const r of is.revenue) {
-    const m = r.metric ?? r.derived?.from;
+  for (const r of [...is.revenue.map((x) => ({ m: x.metric ?? x.derived?.from, started: x.started })), ...(is.below_line ?? []).map((b) => ({ m: b.metric, started: b.started }))]) {
+    const m = r.m;
     if (m === undefined || r.started === undefined) continue;
     const filled = new Map(daily.get(m) ?? new Map<string, number>());
     for (let i = 0; i < 2 * W; i++) {
@@ -383,8 +394,12 @@ export function incomeStatementV2(input: ReportInput): IsV2 {
     }
     return (s * DAYS_PER_YEAR) / W;
   };
+  // history_start (Phase 3 R4, opt-in): every window growth is not meaningful until its prior window starts on or after it.
+  const hs = is.history_start;
+  const guarded = hs !== undefined && addDays(day, -2 * W + 1) < hs;
+  const growthAt = (metrics: string[], weights?: number[]): Growth => growthOf(daily, metrics, day, W, weights, hs);
   const grow = (terms: Term[]): Growth =>
-    terms.length === 0 ? { current: 0, prior: 0, change: null, annualized: null, note: 'no lines' } : growthOf(daily, terms.map((t) => t.metric), day, W, terms.map((t) => t.gw));
+    terms.length === 0 ? { current: 0, prior: 0, change: null, annualized: null, note: 'no lines' } : growthAt(terms.map((t) => t.metric), terms.map((t) => t.gw));
 
   // Revenue lines: their value sources, in YAML order.
   const revValue = new Map<string, Value>();
@@ -549,7 +564,7 @@ export function incomeStatementV2(input: ReportInput): IsV2 {
     revAgg.nm.length > 0 ? noSeries('a revenue line is not measured') : disclosedLine ? valueGrowth(revenueValue(disclosedLine)) : aggGrowth(revAgg, 'a disclosed level: no daily series');
   const newIds = revLines.filter((l) => l.isNew).map((l) => l.id);
   const oldAgg = agg(revItems.filter((x) => !newIds.includes(x.id)));
-  const growthExNew = newIds.length === 0 || revAgg.levels.length > 0 ? null : oldAgg.terms.length === 0 ? noSeries('every line is new') : grow(oldAgg.terms);
+  const growthExNew = newIds.length === 0 || revAgg.levels.length > 0 ? null : oldAgg.terms.length === 0 ? noSeries(guarded ? historyNote(hs!) : 'every line is new') : grow(oldAgg.terms);
 
   // Cost of revenue and gross profit.
   const costItems = (is.cost_of_revenue ?? []).map((l) => ({ id: l.id, v: useValue(l) }));
@@ -674,7 +689,7 @@ export function incomeStatementV2(input: ReportInput): IsV2 {
       id: s.id, section: s.section, fromBelowLine: s.section === 'below_line', bucket: s.bucket, method: s.method, sourceTypes: s.sourceTypes, priceBasis: basisOf(v),
       metric: terms.length === 1 ? terms[0].metric : null, haircut: s.haircut, recipientBase: s.base,
       gross, net, yield: yieldOf(net, s.base),
-      growth: v.kind === 'terms' ? growthOf(daily, terms.map((t) => t.metric), day, W, terms.map((t) => t.gw)) : v.kind === 'level' ? noSeries('a run-rate level: no daily series') : noSeries('not measured'),
+      growth: v.kind === 'terms' ? growthAt(terms.map((t) => t.metric), terms.map((t) => t.gw)) : v.kind === 'level' ? noSeries('a run-rate level: no daily series') : noSeries('not measured'),
       ...(v.kind === 'nm' ? { notMeasured: v.reason } : {}),
       terms,
       ...(s.set ? { set: s.set } : {}),
@@ -699,13 +714,13 @@ export function incomeStatementV2(input: ReportInput): IsV2 {
       : b.metric !== undefined
         ? b.apportion !== undefined
           ? apportionValue(b.metric, b.apportion)
-          : { kind: 'terms', terms: [{ metric: b.metric, w: 1, gw: 1 }] }
+          : { kind: 'terms', terms: [{ metric: b.metric, w: youngWeight(b.started), gw: 1 }] }
         : { kind: 'level', value: lv.extra[b.run_rate!] ?? null, note: 'a run-rate level: no daily series' };
   const belowLines: IsBelowLineOut[] = (is.below_line ?? []).map((b) => {
     const v = belowValue(b);
     const method: IsMethod = b.not_measured !== undefined ? 'not_measured' : b.apportion !== undefined ? 'derived' : 'measured';
     const sourceTypes = typesOf([b.metric, b.run_rate, ...apportionMetrics(b.apportion)]);
-    if (b.to === 'holders') {
+    if (b.to === 'holders' && b.in_holder_flow !== false) {
       holderFlowLines.push(flowLine({ id: b.id, section: 'below_line', v, bucket: b.bucket ?? null, haircut: b.haircut ?? 0, base: b.recipient_base ?? 'all', method, sourceTypes, set: setOf(b.metric, b.apportion) }));
     }
     return {
@@ -713,6 +728,7 @@ export function incomeStatementV2(input: ReportInput): IsV2 {
       annualized: valueAnnual(v), growth: valueGrowth(v), bucket: b.bucket ?? null, haircut: b.haircut ?? null, recipientBase: b.recipient_base ?? null,
       captureRule: b.capture_rule ?? null, ...(b.note ? { note: b.note } : {}), ...(b.not_measured !== undefined ? { notMeasured: b.not_measured } : {}),
       ...(b.apportion !== undefined ? { apportion: mixOf(b.apportion) } : {}),
+      ...(b.started !== undefined ? { started: b.started } : {}), ...(b.in_holder_flow === false ? { inHolderFlow: false as const } : {}),
     };
   });
   /**
@@ -723,7 +739,8 @@ export function incomeStatementV2(input: ReportInput): IsV2 {
     const m = lines.filter(measured);
     return lines.length > 0 && m.length === 0 ? null : sumOrNull(m.map(value));
   };
-  const measuredBelow = (to: 'holders' | 'protocol') => measuredSum(belowLines.filter((b) => b.to === to), (b) => b.method !== 'not_measured', (b) => b.annualized);
+  // To holders: what reaches them, so a line left out of holder flow is not summed there either.
+  const measuredBelow = (to: 'holders' | 'protocol') => measuredSum(belowLines.filter((b) => b.to === to && b.inHolderFlow !== false), (b) => b.method !== 'not_measured', (b) => b.annualized);
   const belowNm = belowLines.filter((b) => b.method === 'not_measured').map((b) => b.id);
 
   // A not_measured holders line leaves holder flow unknown (its totals and its bucket null); a not_measured below-line
@@ -781,7 +798,7 @@ export function incomeStatementV2(input: ReportInput): IsV2 {
   const holderFlowGrowth =
     holdersNm.length > 0
       ? noSeries(`not measured: ${holdersNm.map((f) => f.id).join(', ')}`)
-      : growthOf(daily, series.flatMap((f) => f.terms.map((t) => t.metric)), day, W, series.flatMap((f) => f.terms.map((t) => (1 - f.haircut) * t.gw)));
+      : growthAt(series.flatMap((f) => f.terms.map((t) => t.metric)), series.flatMap((f) => f.terms.map((t) => (1 - f.haircut) * t.gw)));
   const hfNet = holdersNm.length > 0 ? null : sumOrNull(units.map((f) => f.net));
 
   // Yields, dilution and the supply line (spec §7 "as today"): v1's arithmetic, term for term, on the units above (each
@@ -874,7 +891,7 @@ export function incomeStatementV2(input: ReportInput): IsV2 {
       ? { metrics: [], annualized: null, growth: noSeries('not measured'), notMeasured: vol.not_measured }
       : (() => {
           const s = windowSum(daily, vol, day, W);
-          return { metrics: vol, annualized: s === null ? null : (s * DAYS_PER_YEAR) / W, growth: growthOf(daily, vol, day, W) };
+          return { metrics: vol, annualized: s === null ? null : (s * DAYS_PER_YEAR) / W, growth: growthAt(vol) };
         })();
 
   // Tokens a year added (v1's dilution numerator): emissions plus the income_statement.dilution releases (null when one
@@ -970,6 +987,8 @@ export function incomeStatementV2(input: ReportInput): IsV2 {
   const useNm = [...holderItems, ...protocolItems, ...opexItems].filter((x) => x.v.kind === 'nm').map((x) => x.id);
   if (useNm.length > 0) flags.push(`not measured: ${useNm.join(', ')}`);
   if (belowNm.length > 0) flags.push(`below the line not measured: ${belowNm.join(', ')}`);
+  const notInFlow = belowLines.filter((b) => b.inHolderFlow === false).map((b) => b.id);
+  if (notInFlow.length > 0) flags.push(`not in holder flow: ${notInFlow.join(', ')}`);
   // An apportioned line with no mix (Task 7b), by reason: its figure is null, never a division by zero.
   const noMix = new Map<string, string[]>();
   for (const l of [...(is.cost_of_revenue ?? []), ...(is.holders ?? []), ...(is.protocol ?? []), ...(is.operating_costs ?? []), ...(is.below_line ?? [])]) {
@@ -988,7 +1007,9 @@ export function incomeStatementV2(input: ReportInput): IsV2 {
   if (thirdParty.length > 0) flags.push(`third_party: ${thirdParty.join(', ')}`);
 
   return {
-    schema: 2, day, windowDays: W, category: is.category, scope: is.scope,
+    schema: 2, day, windowDays: W,
+    ...(hs !== undefined ? { window: { windowDays: W, daysMeasured: Math.min(W, Math.max(0, Math.round((Date.parse(`${day}T00:00:00Z`) - Date.parse(`${hs}T00:00:00Z`)) / 86_400_000) + 1)), since: hs } } : {}),
+    category: is.category, scope: is.scope,
     revenue: {
       annualized: revenueAnnual, growth: revenueGrowth, growthExNew, excludedFromExNew: newIds,
       provisional: revLines.some((l) => l.provisionalDays > 0), notMeasured: revAgg.nm, lines: revLines,
