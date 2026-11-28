@@ -46,6 +46,9 @@ export const ADAPTER_SOURCE_TYPES: Readonly<Record<string, SourceType>> = {
   'lit.app_fee_share': 'first_party_api',
   'lit.staking_pool': 'first_party_api',
   'lit.unlocks_next_year': 'third_party',
+  // The pool scan (Phase 3 R4): pool tapes, gauges and VRM streams over a curated factory list, priced on chain.
+  'pool.tape_fees_daily': 'pool_scan',
+  'pool.vrm_incentives_daily': 'pool_scan',
   'schedule.unlocks_next_year': 'disclosure',
   'solana.token_supply': 'contract_state',
   'solana.owner_balance': 'contract_state',

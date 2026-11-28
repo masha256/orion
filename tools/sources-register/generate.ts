@@ -116,7 +116,22 @@ export const ADAPTER_ENDPOINTS: Record<string, (params: AdapterParams, asset: As
   // whose USDC/USD feed prices an off-chain venue (Ruling R5).
   'price.token': (p) => priceEndpoints('price.token', p),
   'price.token_check': (p) => priceEndpoints('price.token_check', p),
+  // The pool scan reads every chain of its scan block, each through that chain's CHAIN_RPC_ENV var (ctx.rpcFor).
+  'pool.tape_fees_daily': (p) => scanRpcs('pool.tape_fees_daily', p),
+  'pool.vrm_incentives_daily': (p) => scanRpcs('pool.vrm_incentives_daily', p),
 };
+
+/** One rpc endpoint per chain of a pool-scan block, in config order. */
+function scanRpcs(name: string, p: AdapterParams): Endpoint[] {
+  const chains = (p.scan as { chains?: { chain_id?: unknown }[] } | undefined)?.chains;
+  if (!Array.isArray(chains)) throw new Error(`adapter ${name}: params.scan.chains is not a list`);
+  return chains.map((c) => {
+    const chainId = Number(c.chain_id);
+    const env = CHAIN_RPC_ENV[chainId];
+    if (env === undefined) throw new Error(`adapter ${name}: chain ${String(c.chain_id)} has no RPC env var`);
+    return { kind: 'rpc', chainId, env };
+  });
+}
 
 /** The repo's prices.yaml: the price adapters' endpoints follow their ref's method. */
 const REPO_PRICES = loadPrices(resolve(dirname(fileURLToPath(import.meta.url)), '../..'));

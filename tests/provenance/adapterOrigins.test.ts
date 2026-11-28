@@ -13,6 +13,7 @@ import { fakeHttp } from '../helpers/fakeHttp.js';
 import { callKey, fakeRpc } from '../helpers/fakeRpc.js';
 import { ingestAsset, STAKING } from '../helpers/ingestAsset.js';
 import { fixture, sourceCtx } from '../helpers/sourceCtx.js';
+import { paramsOf, poolWorld, POOL_METRICS } from '../helpers/poolWorld.js';
 
 /**
  * Task 10 fix round 1 (review I-1): since 0006 a row's origin is read back from its provenance (`originOf`), so the origin
@@ -78,6 +79,19 @@ const SERIES_API: Record<string, Stamp> = {
   'lit.exchange_fees_daily': 'api',
   'lit.treasury_buys_daily': 'api',
   'solana.supply_burn_daily': 'api',
+};
+
+/** The pool scan's daily series (Phase 3 R4 Task 7), rung pool_scan: their rows are `onchain`. */
+const SERIES_ONCHAIN: Record<string, Stamp> = {
+  'pool.tape_fees_daily': 'onchain',
+  'pool.vrm_incentives_daily': 'onchain',
+};
+
+/** One synthetic Base chain (tests/helpers/poolWorld.ts) through ctx.rpcFor. */
+const poolSample = async (name: string, metric: string): Promise<SourceValue> => {
+  const world = poolWorld([{ chainId: 8453, vote: 864 }], { nowIso: '2026-11-27T12:00:00.000Z' });
+  const ctx = world.ctx();
+  return getAdapter(name).run(ctx, paramsOf(world, ctx, metric));
 };
 
 // --- fakes, one successful read per adapter (shapes from the adapters' own tests) ---
@@ -276,6 +290,8 @@ const SAMPLES: Record<string, () => Promise<SourceValue>> = {
   },  // An Ethereum ref (LINK: its feed, checked by the v3 LINK/WETH TWAP): contract state, `onchain`.
   'price.token': async () => getAdapter('price.token').run(await linkPriceCtx(), { ref: priceRef('LINK') }),
   'price.token_check': async () => getAdapter('price.token_check').run(await linkPriceCtx(), { ref: priceRef('LINK') }),
+  'pool.tape_fees_daily': () => poolSample('pool.tape_fees_daily', POOL_METRICS.gross),
+  'pool.vrm_incentives_daily': () => poolSample('pool.vrm_incentives_daily', POOL_METRICS.vote_incentives),
 };
 
 async function linkPriceCtx(): Promise<SourceContext> {
@@ -302,7 +318,15 @@ describe('the adapter origin registry (review I-1)', () => {
   });
 
   it('every daily-series adapter registered before R4 still stamps api (the series origin comes from its provenance)', () => {
-    expect(seriesStamps(stamps)).toEqual(SERIES_API);
+    expect(seriesStamps(stamps)).toEqual({ ...SERIES_API, ...SERIES_ONCHAIN });
+  });
+
+  it('both pool-scan adapters stamp onchain (rung pool_scan), the origin their rows read back as', () => {
+    for (const name of Object.keys(SERIES_ONCHAIN)) {
+      expect(ADAPTER_SOURCE_TYPES[name]).toBe('pool_scan');
+      expect(resolve(name, stamps.get(name)!)).toBe('onchain');
+      expect(originOf(fieldsOf(name))).toBe('onchain');
+    }
   });
 
   it('a daily series on the pool_scan rung stamps onchain, the origin its rows read back as', () => {
@@ -344,7 +368,7 @@ describe('the adapter origin registry (review I-1)', () => {
     table[series] = 'onchain';
     try {
       expect(mismatches(stamps)).toEqual([]);
-      expect(seriesStamps(stamps)).toEqual({ ...SERIES_API, [series]: 'onchain' });
+      expect(seriesStamps(stamps)).toEqual({ ...SERIES_API, ...SERIES_ONCHAIN, [series]: 'onchain' });
     } finally {
       table[series] = 'api';
     }
