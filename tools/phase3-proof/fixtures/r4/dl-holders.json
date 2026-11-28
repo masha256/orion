@@ -1,0 +1,21 @@
+{
+ "_comment": "synthetic DefiLlama-shaped holders revenue (rows stamped D+1 cover D); test data, not a download",
+ "totalDataChart": [
+  [
+   1792713600,
+   100000.0
+  ],
+  [
+   1792800000,
+   250495.05
+  ],
+  [
+   1792886400,
+   199794.03
+  ],
+  [
+   1792972800,
+   199004.98
+  ]
+ ]
+}

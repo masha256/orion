@@ -1,0 +1,66 @@
+{
+ "_comment": "Live golden for tests/live/aeroPoolScan.live.test.ts (ORION_LIVE_RPC=1): the R4 scoping figures for UTC day 2026-11-26, copied (not re-measured) from phase3-r4-scoping/onchain-revenue-data/summary-table.json (gross_usd, alloc_usd; whole dollars) and phase3-r4-scoping/incentives-data/daily.json (allocated_usd; vote_incentives = third_party + foundation_signer_safe_80f7, protocol_subsidy = foundation_subsidy + aero_admin_safe_42255; a chain without a 2026-11-26 entry streamed 0). The scoping read at s and e (Orion reads s-1 and e-1, one block earlier at each end) and priced at day-end spot (Orion: 30-min TWAP on CL edges); both move a chain-day by ~0.01%. Tolerance per chain and figure: rel 0.005 of the expected value, or absUsd 1 (the whole-dollar rounding; a 0 figure).",
+ "day": "2026-11-26",
+ "tolerance": {
+  "rel": 0.005,
+  "absUsd": 1
+ },
+ "chains": {
+  "8453": {
+   "chain": "base",
+   "gross": 241793,
+   "allocator": 209333,
+   "vote_incentives": 3034.81,
+   "protocol_subsidy": 0
+  },
+  "1": {
+   "chain": "ethereum",
+   "gross": 17455,
+   "allocator": 16497,
+   "vote_incentives": 0,
+   "protocol_subsidy": 0
+  },
+  "10": {
+   "chain": "optimism",
+   "gross": 1838,
+   "allocator": 1758,
+   "vote_incentives": 554.46,
+   "protocol_subsidy": 0
+  },
+  "42161": {
+   "chain": "arbitrum",
+   "gross": 2228,
+   "allocator": 2177,
+   "vote_incentives": 0,
+   "protocol_subsidy": 0
+  },
+  "57073": {
+   "chain": "ink",
+   "gross": 530,
+   "allocator": 419,
+   "vote_incentives": 0,
+   "protocol_subsidy": 0
+  },
+  "4663": {
+   "chain": "robinhood",
+   "gross": 23601,
+   "allocator": 23122,
+   "vote_incentives": 0,
+   "protocol_subsidy": 0
+  },
+  "5042": {
+   "chain": "arc",
+   "gross": 689,
+   "allocator": 574,
+   "vote_incentives": 0,
+   "protocol_subsidy": 0
+  },
+  "99901": {
+   "chain": "elysium",
+   "gross": 9252,
+   "allocator": 9204,
+   "vote_incentives": 0,
+   "protocol_subsidy": 0
+  }
+ }
+}

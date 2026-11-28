@@ -46,7 +46,9 @@ never on argv or printed).
   (the publisher pushes with it; the self-check prints `git --version`), and (with `--with-watcher`) the watcher venv.
 - Each `~/shared/.env` is filled (Mike): `ORION_DATABASE_URL=postgresql://orion_<env>@/orion_<env>?host=/var/run/postgresql`
   (the role must be named), the RPC URLs (from Phase 3 R2 all four: `ORION_ETH_RPC_URL`, `ORION_BNB_RPC_URL`,
-  `ORION_BASE_RPC_URL`, `ORION_SOL_RPC_URL`; "Phase 3 R2 release"), `COINGECKO_API_KEY` (and `COINGECKO_PLAN=pro` on
+  `ORION_BASE_RPC_URL`, `ORION_SOL_RPC_URL`; "Phase 3 R2 release"; from Phase 3 R4 also the six Aero chains'
+  `ORION_OP_RPC_URL`, `ORION_ARB_RPC_URL`, `ORION_INK_RPC_URL`, `ORION_ROBINHOOD_RPC_URL`, `ORION_ARC_RPC_URL`,
+  `ORION_ELYSIUM_RPC_URL`, archive-capable, no keyless default; "Phase 3 R4 release"), `COINGECKO_API_KEY` (and `COINGECKO_PLAN=pro` on
   prod once it has the Basic key; from R2 it serves `circulating_supply` and supply cross-checks only, until R3), `SLACK_WEBHOOK_URL` (different per env), `ORION_PUBLISH` (`git:git@github.com:masha256/orion-data[-staging].git#main`
   or `off`; the daemon refuses to start without it), `ORION_DEADMAN_NIGHTLY_URL`, prod also `ORION_DEADMAN_URL` and
   `ANTHROPIC_API_KEY`. Staging never gets an Anthropic key (and Orion refuses every agent run on stage regardless:
@@ -1172,6 +1174,87 @@ after rolling forward. Rebuilt rows stay (the old release reads them as stored c
 in the exports. After a rollback and roll-forward: s0 again with a fresh work dir (its counts are the new base), then
 s2-s4. The older orion-remote verbs are unchanged; `data rebuild-supply-levels` fails with Orion's own unknown command
 error on the old release (nothing written).
+
+## Phase 3 R4 release
+
+The release that carries Phase 3 R4, AERO revenue on chain (`ret-20-aero-pool-scan`; spec
+`docs/superpowers/specs/2026-11-27-orion-phase3-r4-aero-pool-scan-design.md` sections 6 and 9, plan
+`docs/superpowers/plans/2026-11-27-orion-phase3-r4-aero-pool-scan.md`): AERO's income statement from the `pool_scan`
+adapters `pool.tape_fees_daily` / `pool.vrm_incentives_daily` on the 8 Aero chains, priced on chain, five new metrics
+(`flow_usd.voter_fees`, `flow_usd.lp_fees`, `flow_usd.pool_fees_gross`, `flow_usd.vote_incentives`,
+`flow_usd.protocol_subsidy`, `since: 2026-10-22`), and DefiLlama's `flow_usd.fees` retired. **No migration**, no new
+orion-remote verb (so no `orion-host.sh` re-run): the block uses `status`, `logs`, `jobs`, `report yield`, `sql-ro` (both
+envs), `data purge <a> --metrics ... [--yes]` and `job run-now backfill <a> --metrics ... --backfill-days <n>`. The 12
+other assets are byte-identical (the Task 10 prod-copy proof; gate `tools/phase3-proof/r4-allowlist.json`, AERO entries
+only, filled by Task 10).
+
+**Prerequisites (once per env, Mike, before that env's deploy):**
+
+1. **The six new RPC URLs in `~/shared/.env`** (`ORION_OP_RPC_URL` OP Mainnet 10, `ORION_ARB_RPC_URL` Arbitrum 42161,
+   `ORION_INK_RPC_URL` Ink 57073, `ORION_ROBINHOOD_RPC_URL` Robinhood 4663, `ORION_ARC_RPC_URL` Arc 5042,
+   `ORION_ELYSIUM_RPC_URL` Elysium 99901; `src/ingest/transport/chainRpcEnv.ts` `CHAIN_RPC_ENV`), next to the existing
+   `ORION_BASE_RPC_URL` and `ORION_ETH_RPC_URL`, which the scan also reads (Base also anchors Elysium's prices). Each must
+   serve archive `eth_call` at past blocks (the scoping used one Alchemy app: `https://<chain>-mainnet.g.alchemy.com/v2/<key>`,
+   Elysium `elysium-mainnet`). None of the six has a keyless default: an unset var fails every AERO pool metric with
+   `no_rpc_url` naming it (the scan never stores a partial-chain sum), so the first nightly after the deploy fails AERO's
+   revenue on that env. The daemon re-reads `.env` per job, so no restart is needed after adding them.
+2. **Merge and tag on `main`**, then `scripts/release/build.sh <tag>` (section 1); the block's scripts run from a
+   checkout of the tag (`T`).
+3. **A normal deploy, staging first**: no `--breaking`, rollback allowed (below). Stage, one scheduled nightly soak, then
+   prod on Mike's go.
+
+**Timing.** The backfill runs outside the env's backfill gate (the nightly -4 h / +2 h: prod 00:45 UTC, so 02:45-20:45
+UTC; stage 02:45 UTC, so 04:45-22:45 UTC) and outside the RPC quiet windows 16:30-17:15 and 05:00-06:30 PT;
+`r4-backfill.sh` refuses to start, and to queue each further job, inside either or within 15 min before one opens. ~40
+min for 2026-10-22 -> yesterday (~6 jobs; each ~5-10 min, more while an hourly `levels` job holds the worker).
+
+**Per-env block** (`<env>` = `stage`, then `prod`; paste every output into the thread):
+
+1. **Save `before/`**: `report yield <a> --day D` for the 13 (D = yesterday UTC) with the release still current
+   (Task 10's gate compares against them).
+2. **Deploy**: `scripts/release/deploy.sh <env> <tag>` from `$T`; the report names the tag with `migrations applied:
+   none`. Then `status` (current = the tag) and `logs 30` (`daemon started: ... release <tag>`, no `ORION ALERT`).
+3. **Purge, backfill, verify (one script, one approval):**
+
+   ```
+   $T/tools/phase3-proof/r4-backfill.sh <env> [--expect-fees <n>]     # prod at scoping: --expect-fees 308
+   ```
+
+   It reads `sql-ro` for AERO's `flow_usd.fees` rows by source type (only `third_party` and `derived`: prod at scoping
+   306 + 2 = 308) and any open anomaly on that metric (one stops it: `data purge` refuses them, `purge_open_anomaly`;
+   resolve each on Mike's go with the note "source removed in R4", then rerun). Then the purge dry run `data purge aero
+   --metrics flow_usd.fees` (must find exactly the `sql-ro` rows, `configured: false`: on the old release the metric is
+   still configured and the purge refuses, `purge_configured_metric`), then asks `Type yes:` on stdin; only `yes` runs
+   `--yes`, whose counts must equal the dry run's. The export file (`~/home/purged/aero-flow_usd.fees-<UTCstamp>.json`
+   on the env) and its sha256 are printed and appended to `~/r4-<env>/exports.txt`: keep them (the only copy of the
+   DefiLlama history besides the nightly dumps). The metric is retired, so its cursor
+   (`defillama:aerodrome:dailyHoldersRevenue>flow_usd.fees`) goes with the last row. Run from a terminal, or after
+   reading a first run's dry-run lines pipe the answer (`echo yes | $T/tools/phase3-proof/r4-backfill.sh <env> ...`;
+   its ssh calls never read stdin). A purge already done is skipped on a rerun.
+   Then `job run-now backfill aero --metrics <the five> --backfill-days <days since 2026-10-22>` at most
+   ceil(missing / 7) + 1 times, one job at a time: each scans the 7 oldest days still missing (plus the 3 revision
+   days), the script prints each chunk's days before queueing it and the job's `remaining_missing` lines after, polls
+   `jobs --since <slot>` every 60 s (at most 3 h a job) and requires the job `done` and at least one missing day
+   stored. A failed job (any chain-day's read failing or coverage under 95%) stops it: read `logs`, fix, rerun (it
+   resumes from the days still missing). Last, `sql-ro`: each of the five metrics has exactly one active one-day row per
+   day 2026-10-22 -> yesterday (`verify ok (5 metrics x N days ...)`).
+4. **Gate**: `report yield <a> --day D` for the 13 into `after/`, then `$T/tools/phase3-proof/flatdiff.py
+   before/<a>.json after/<a>.json --allow $T/tools/phase3-proof/r4-allowlist.json --asset <a>`: the 12 others exit 0
+   with no entry; AERO within the signed entries. A path outside them stops the block (Mike decides; no widening on the
+   spot).
+
+**Soak (stage):** one scheduled nightly on the tag with no failed source, AERO's pool metrics written for yesterday,
+coverage >= 99% on all 8 chains (each row's `slice.chains.<id>.pricedPct`; under 99% posts an advisory
+`pool_scan:coverage:<chain>` anomaly), and no drift warning without a stated cause. The soak cron's "known queue" line
+names AERO's moves (revenue, holder flow, below-line, window label, priceBasis `onchain_usd`); the 12 others must match
+prod. **Acceptance (dev-only, offline, controller):** `tools/phase3-proof/r4_acceptance.py <saved AERO rows>
+<saved DefiLlama holders revenue>`: every day 2026-10-23 -> D within ±3% (2026-10-22 exempt); it reads files only.
+
+**Rollback** (section 5): allowed (no migration), but `orion-2026.11.21.1` reads DefiLlama again for `flow_usd.fees`:
+with the rows and the cursor purged, its first fetch re-imports the DefiLlama window (up to `ingest.backfill_days`,
+100 days, as revised by DefiLlama since; the purged hand-corrected rows only come back from the export), and
+the five pool metrics' rows stay (the old config does not read them). Rolling forward again: run step 3 again (it
+purges the re-fetched rows; the backfill finds nothing missing).
 
 ## The ssh verbs (any release)
 

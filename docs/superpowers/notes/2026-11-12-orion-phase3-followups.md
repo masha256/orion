@@ -211,3 +211,23 @@ Task 7, run by the controller on prod copy `p2proof_20261112t223129z` (120,316 r
   (equivalent: both sides read the same data). Only window D was compared; the D-91 window was not run (it would have
   shown I-3's past-day dilution loss, now a gated decision). The PUMP Blockworks quote could not be checked verbatim
   offline.
+
+## R4 (AERO revenue on chain, RET-20): the carried items
+
+Status at the R4 build (`ret-20-aero-pool-scan`, Task 9 RET-204; release block: docs/ops/deploy.md "Phase 3 R4 release").
+- **Dead API cursor (Task 2 M-6): CLOSED for AERO.** `tools/phase3-proof/r4-backfill.sh` purges `flow_usd.fees` after the
+  deploy, when the metric is no longer configured, so `data purge` deletes its cursor
+  `defillama:aerodrome:dailyHoldersRevenue>flow_usd.fees` with the last row. LIT/PUMP `unlocks_next_year`: still R8.
+- **Purge export files, per env: CARRIED to R8.** R4 adds one per env (`~/home/purged/aero-flow_usd.fees-<UTCstamp>.json`,
+  all 308 rows on prod at scoping: 306 `third_party` + 2 `derived`; path and sha256 in `~/r4-<env>/exports.txt`);
+  retention / a `purged list` verb still open.
+- **Open anomalies keyed to removed sources: CARRIED, guarded for AERO.** r4-backfill.sh stops on any open
+  `flow_usd.fees` anomaly before the purge (`purge_open_anomaly`); each is resolved on Mike's go ("source removed in R4").
+  The general post-deploy sweep for other assets stays open.
+- **R2 note "R4-R7: the DefiLlama revenue series": AERO's part CLOSED by R4** (RET-203 config: five `pool_scan` metrics,
+  `flow_usd.fees` retired; the purge above). HYPE (R5) and CRV (R7) carried.
+- **Pre-merger AERO history: NOT REBUILT (spec section 6, Phase 3 decision 1).** The purge removes it from the DB; the
+  export keeps it. The report shows "N of 91 days" from 2026-10-22 and growth "not meaningful" until ~2027-04-22.
+- **Live golden: OPEN until the controller's run** (`ORION_LIVE_RPC=1 npx vitest run tests/live/aeroPoolScan.live.test.ts`,
+  Task 9 Step 1); the R4 allowlist (`tools/phase3-proof/r4-allowlist.json`, todo placeholders) and the DEV-ONLY acceptance
+  run (`r4_acceptance.py`) are Task 10's.

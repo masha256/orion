@@ -2,8 +2,9 @@
 
 Linear: RET-20
 
-Status: design approved section by section by Mike in the RET-20 thread, 2026-11-27 (Q1-Q5, sections 1-4). Awaiting
-Mike's review of this written spec; then the plan (`docs/superpowers/plans/2026-11-27-orion-phase3-r4-aero-pool-scan.md`).
+Status: Built on ret-20-aero-pool-scan (T1-T9); proof and rollout pending (T10).
+Design approved section by section by Mike in the RET-20 thread, 2026-11-27 (Q1-Q5, sections 1-4); plan
+`docs/superpowers/plans/2026-11-27-orion-phase3-r4-aero-pool-scan.md`.
 
 Parent: Phase 3 spec `2026-11-09-orion-phase3-third-party-removal-design.md` §4 (AERO), §5 (R4), D6/D8. This document
 supersedes §4's AERO line where they differ (8 chains, revenue scope, incentive booking).

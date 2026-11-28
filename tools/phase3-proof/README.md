@@ -15,6 +15,11 @@ fetches, the runs, the purge and backfill rehearsals) are the controller's; this
 | `r2-prod-6to10.sh` | Reference only: the one script prod's R2 steps 6 (`--yes`) to 10 ran as, under Mike's conditional pre-approval (2026-11-18), stopping at the first deviation (below). |
 | `r3-s0.sh` .. `r3-s4.sh`, `r3-lib.sh`, `r3_check.py` | The R3 release block's five scripts (docs/ops/deploy.md "Phase 3 R3 release": s0 steps 0-1, s1 2-4, s2 5-6, s3 7-8, s4 9-10), their shared shell part (arguments, the ssh calls, the `--fake <dir>` mode and its slug rule) and their checks (one subcommand each; expected counts only from step 1's `~/r3-<env>/expected.json`); s2 and s3 take `--resume` after a STOP inside their `--yes` loop. |
 | `test_r3_scripts.py`, `fixtures/r3/` | The scripts in `--fake` mode: a happy path per script, one STOP per artifact (incl. the wrappers' old-locator count, leftovers after `--yes`, the step-4 pre-check), the step-4 levels race, and `--resume`. `python3 -m unittest tools/phase3-proof/test_r3_scripts.py`; `fixtures/r3/generate.py` rewrites the fixtures. |
+| `r4-backfill.sh <stage\|prod> [--expect-fees <n>] [--fake <dir>]`, `r4_check.py` | Phase 3 R4's history step on an env already on the R4 release (docs/ops/deploy.md "Phase 3 R4 release" step 3): the `flow_usd.fees` purge (sql-ro counts, dry run, `--yes` only on a typed `yes`, the export printed), then `job run-now backfill aero` for the five pool metrics in 7-day chunks (at most ceil(missing / 7) + 1 jobs, each waited for), then the sql-ro check of one active row per metric per day 2026-10-22 -> yesterday; refuses the backfill gate and the RPC quiet windows. Its checks are `r4_check.py` subcommands; `--fake` follows r3-lib.sh's slug rule. |
+| `r4_acceptance.py <orion rows> <defillama json> [--to D] [--dl-stamp end\|start]` | DEV-ONLY, offline (saved files only): per day 2026-10-23 -> D, `voter_fees + vote_incentives + protocol_subsidy` vs DefiLlama holders revenue, FAIL past ±3% (2026-10-22 exempt). `--print-sql` prints the sql-ro query whose saved result it reads. |
+| `r4-allowlist.json` | The R4 gate skeleton: AERO paths only, every entry a `todo` placeholder (allows nothing); Task 10 fills it from the prod-copy proof. |
+| `r4-gen-scan.py --scoping <dir> [--indent 10]` | Generates `assets/aero.yaml`'s pool-scan block from the R4 scoping files (`--indent 10` reproduces it byte for byte). |
+| `test_r4.py`, `fixtures/r4/` | All of the above: the acceptance rules, the window and chunk rules, the backfill script in `--fake` mode (happy path, every STOP), the allowlist skeleton, and the generator (`R4_SCOPING_DIR=<scoping dir>` enables the byte-for-byte check). `python3 -m unittest tools/phase3-proof/test_r4.py` |
 
 ## Paths
 
@@ -170,6 +175,19 @@ signed proof's new/old ratio +- 0.01, e.g. `{"glob": "marketCap", "ratio": [1.24
 relative by construction, so a multiple over a near-zero base holds where an abs floor would not; class S has no
 abs-only entry. Class L (source labels) uses exact `old`/`new` pins. The R43 lesson above still binds class G: a
 growth `.change` / `.annualized` entry, should the proof ever force one, carries the abs floor AND a rel alternative.
+
+## R4 (AERO revenue on chain): history and acceptance
+
+`r4-backfill.sh` runs after the deploy (on the old release `data purge` refuses the still-configured `flow_usd.fees`,
+`purge_configured_metric`): purge, backfill, verify in one call. It resumes: a purge already done is skipped, and each
+job scans the oldest missing days, so a STOP mid-loop is fixed and rerun. The purge prompt reads stdin and the ssh
+calls use `-n`, so `echo yes | r4-backfill.sh <env>` works once the dry-run lines were read. `r4_acceptance.py` is the
+spec's ±3% DefiLlama comparison (dev reference only, never in `src/`): save Orion's rows (`data show aero --json`, or
+`sql-ro` with its `--print-sql` query) and a DefiLlama holders-revenue download first; it reads nothing else. Its
+default `--dl-stamp end` reads a row stamped D+1 as day D; the R4 scoping measured `api.llama.fi`'s `aero-protocol`
+chart as stamped D for day D (`--dl-stamp start`), so check the saved file's convention before trusting a FAIL. The
+live golden `tests/live/aeroPoolScan.live.test.ts` (`ORION_LIVE_RPC=1`, RPC URLs from the environment) re-reads
+2026-11-26 against `tests/fixtures/poolscan/live-2026-11-26.json` (0.5% or $1 per chain and figure).
 
 ## Run (controller)
 

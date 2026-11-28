@@ -1,0 +1,65 @@
+{
+ "rows": [
+  {
+   "metric_key": "flow_usd.voter_fees",
+   "day": "2026-10-22",
+   "value": 100000
+  },
+  {
+   "metric_key": "flow_usd.voter_fees",
+   "day": "2026-10-23",
+   "value": 200000
+  },
+  {
+   "metric_key": "flow_usd.voter_fees",
+   "day": "2026-10-24",
+   "value": 180000
+  },
+  {
+   "metric_key": "flow_usd.voter_fees",
+   "day": "2026-10-25",
+   "value": 190000
+  },
+  {
+   "metric_key": "flow_usd.vote_incentives",
+   "day": "2026-10-22",
+   "value": 20000
+  },
+  {
+   "metric_key": "flow_usd.vote_incentives",
+   "day": "2026-10-23",
+   "value": 50000
+  },
+  {
+   "metric_key": "flow_usd.vote_incentives",
+   "day": "2026-10-24",
+   "value": 10000
+  },
+  {
+   "metric_key": "flow_usd.vote_incentives",
+   "day": "2026-10-25",
+   "value": 8000
+  },
+  {
+   "metric_key": "flow_usd.protocol_subsidy",
+   "day": "2026-10-22",
+   "value": 5000
+  },
+  {
+   "metric_key": "flow_usd.protocol_subsidy",
+   "day": "2026-10-23",
+   "value": 3000
+  },
+  {
+   "metric_key": "flow_usd.protocol_subsidy",
+   "day": "2026-10-24",
+   "value": 4000
+  },
+  {
+   "metric_key": "flow_usd.protocol_subsidy",
+   "day": "2026-10-25",
+   "value": 2000
+  }
+ ],
+ "rowCount": 12
+}

@@ -144,9 +144,12 @@ metrics:
   # allocator; incentives = VRM programs streamed to allocators, by creator. USD from Chainlink anchors and the pool
   # graph. Fails a day on any failed read, coverage below 95 percent, or allocator above gross (0.5 percent and $1).
   # `since` is the launch: no earlier day is ever scanned (the contracts do not exist before it).
-  # Every address below was copied from ~/.hermes/profiles/raymond/workspace/orion/phase3-r4-scoping/ (files named per
-  # line); each chain lists every factory its FactoryRegistry returns (Arc: incl. the Aero Lite factories), so a new
-  # one shows as factory drift. log_range 1,000,000 blocks a getLogs, Ink 10,000 (its provider's cap).
+  # The scan block below is generated, not typed: tools/phase3-proof/r4-gen-scan.py --scoping <phase3-r4-scoping dir>
+  # --indent 10 prints it byte for byte from the R4 scoping files (onchain-revenue-data/scripts/enum_head.json,
+  # anchors-chainlink.json, incentives-data/discovery.json, factory_tape_snapshots.json, elysium_discovery.json,
+  # onchain-revenue.md, incentives-and-events.md; the file per line is named in its comment). Each chain lists every
+  # factory its FactoryRegistry returns (Arc: incl. the Aero Lite factories), so a new one shows as factory drift.
+  # log_range 1,000,000 blocks a getLogs, Ink 10,000 (its provider's cap).
   flow_usd.voter_fees:
     type: flow
     unit: usd

@@ -1,0 +1,115 @@
+{
+ "_comment": "Phase 3 R4 release gate (AERO revenue on chain), SKELETON: AERO paths only (the 12 other assets have no entry and must be byte-identical). Every entry is a todo placeholder (inert: allows nothing, listed as WARN todo); Task 10 replaces them with exact paths from the prod-copy proof, each value-pinned or bounded to the table Mike signs. Classes: F flows (revenue, cost, gross profit, holders, holder flow, below-line), Y yields/multiples/per-token over those flows, L labels (scope, priceBasis, provenance, flags, notes), W the window label. Growth figures follow the R43 lesson if any is forced (abs + rel).",
+ "aero": [
+  {
+   "glob": "incomeStatement.revenue.*",
+   "todo": true,
+   "reason": "R4 class F (flows): revenue becomes voter_rev + lp_rev (flow_usd.voter_fees / flow_usd.lp_fees, pool_scan) instead of flow_usd.fees (DefiLlama); annualized over the measured days (\"N of 91\"). TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.costOfRevenue.*",
+   "todo": true,
+   "reason": "R4 class F: the new lp_fees cost line (of lp_rev, share 1). TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.grossProfit.*",
+   "todo": true,
+   "reason": "R4 class F: gross profit = revenue - LP fees. TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.holders.*",
+   "todo": true,
+   "reason": "R4 class F: holders voter_fees now of voter_rev (on-chain allocator fees). TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.holderFlow.*",
+   "todo": true,
+   "reason": "R4 class F: holder flow from voter_fees + vote_incentives (protocol_subsidy shown, in_holder_flow false). TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.belowLine.*",
+   "todo": true,
+   "reason": "R4 class F: below-line vote_incentives and protocol_subsidy (VRM streams, started 2026-10-22). TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.protocol.*",
+   "todo": true,
+   "reason": "R4 class F: protocol section totals follow the new revenue lines. TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.unreconciled.*",
+   "todo": true,
+   "reason": "R4 class F: unreconciled stays 0 by construction (two revenue lines); pin the proof's value. TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.ratios.*",
+   "todo": true,
+   "reason": "R4 class F: payout ratio / take rate over the new revenue. TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.yields.*",
+   "todo": true,
+   "reason": "R4 class Y: yields over the new holder flow (same price and market cap). TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.multiples.*",
+   "todo": true,
+   "reason": "R4 class Y: multiples over the new revenue / gross profit / holder flow. TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.perToken.*",
+   "todo": true,
+   "reason": "R4 class Y: per-token revenue / gross profit / holder flow. TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.scope",
+   "todo": true,
+   "reason": "R4 class L: scope protocol_share_only -> complete (spec section 5); pin old and new. TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.window",
+   "todo": true,
+   "reason": "R4 class W: the window label object appears (history_start 2026-10-22: windowDays, daysMeasured, since); pin new. TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.window.*",
+   "todo": true,
+   "reason": "R4 class W: window.windowDays / daysMeasured / since; pin the signed values. TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.priceBasis.*",
+   "todo": true,
+   "reason": "R4 class L: flows priced onchain_usd (pool_scan) instead of the DefiLlama series; pin labels. TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.provenance.*",
+   "todo": true,
+   "reason": "R4 class L: provenance sources / methods / thirdParty lose DefiLlama and gain pool_scan; pin each entry. TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.flags",
+   "todo": true,
+   "reason": "R4 class L: the third_party flag goes; pin old/new. TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.flags*",
+   "todo": true,
+   "reason": "R4 class L: flags entries (index paths); pin each value. TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "incomeStatement.checks",
+   "todo": true,
+   "reason": "R4 class L: AERO's income_statement checks (if any moved); pin. TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "notes",
+   "todo": true,
+   "reason": "R4 class L: report notes (growth not meaningful until a full prior window, spec Q5); pin. TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  },
+  {
+   "glob": "notes*",
+   "todo": true,
+   "reason": "R4 class L: report notes entries; pin each value. TODO (Task 10, controller): replace with the exact paths the prod-copy proof's first flatdiff run shows, each value-pinned or bounded to the signed table, then drop the todo flag"
+  }
+ ]
+}
