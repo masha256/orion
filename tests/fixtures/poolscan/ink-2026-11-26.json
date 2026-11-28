@@ -1,0 +1,1561 @@
+{
+ "_source": "phase3-r4-scoping onchain-revenue-data/raw/2026-11-26_ink.json + incentives-data/discovery.json, trimmed by trim.py",
+ "_blocks": "s/e are the blocks the scoping READ at (its block_start/block_end); the engine reads at s'-1/e'-1, so the fake answers blockAt(D) = s+1 and blockAt(D+1) = e+1 to land on the same state",
+ "chain": "ink",
+ "day": "2026-11-26",
+ "blocks": {
+  "s": 62152789,
+  "e": 62239189
+ },
+ "scoping_counts": {
+  "pools": 40,
+  "registered": 32,
+  "gauged": 28,
+  "fees_collected_logs": 66
+ },
+ "config": {
+  "chain_id": 57073,
+  "factory_registry": "0xdd1705e23762f4d6e44d8c31bd8ea80c54612239",
+  "leaf_voter": "0x382409fad8503fbcdbb27a4211551fa03e884078",
+  "anchors": [],
+  "factories": [
+   {
+    "address": "0x78589e876edcebdce72ee3436ab3c9ad3a7cef2d",
+    "kind": "v2_stable",
+    "tape": "0x34bdd64b19d8631f936c2d07f19aaa6b83515992"
+   },
+   {
+    "address": "0x8e6a9fcd1d638cc760ffba397605fe3355de76d2",
+    "kind": "v2_volatile",
+    "tape": "0x34bdd64b19d8631f936c2d07f19aaa6b83515992"
+   },
+   {
+    "address": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+    "kind": "cl",
+    "tape": "0x27d5eb73e7406675f6b0cbd037490ec3dba935a4",
+    "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434"
+   }
+  ]
+ },
+ "registry": {
+  "target_factories": [
+   "0x8e6a9fcd1d638cc760ffba397605fe3355de76d2",
+   "0x78589e876edcebdce72ee3436ab3c9ad3a7cef2d",
+   "0x7660bf2adefc687c22906112ca323d60a00358cf"
+  ],
+  "gauge_factories": [
+   "0x1733cd126a227066963e9b636ad49898d1224741",
+   "0xd9ef1acdca62010e93370f5932e3ded127e65396",
+   "0xf437f62053acb121665b8fdbfea8f214fb8e589d"
+  ],
+  "factory_to_gauges": {
+   "0x1733cd126a227066963e9b636ad49898d1224741": [],
+   "0xd9ef1acdca62010e93370f5932e3ded127e65396": [],
+   "0xf437f62053acb121665b8fdbfea8f214fb8e589d": [
+    "0x143b52f32bbd045b5470d120721d1dec97900329",
+    "0x0c9f3e5cb82dc037d09d3f6eddf205f770a7df4b",
+    "0x59b91a95edcd82bae17c6f43768d9a2bc14d85e7",
+    "0xd8a9c4983ec54e2bc25639ef65d3515c45a93467",
+    "0xb26b4c3d774294770c7a5d137bc27f72a95b5de6",
+    "0x65c4fd04882e6a89c652acded8b1cfc18beaaad2",
+    "0x32132364cf59419fb50683d58b3a0d8456a0bb58",
+    "0x8ec1f82f0d8d54f3d9571b78afac04fa93baa32e",
+    "0xb9d0845d6ee57f235943c8dae06398e3f6d3104f",
+    "0x69531f3379a2c38766e1add8789f4d47bf04a286",
+    "0x174131366b9455ff27f511b990677690b42dbe39",
+    "0x06c0f1069acfe6dc5303955b754c9a801d364c33",
+    "0x31a53aa1fdce32b8107e040589c8d860e6178ff2",
+    "0x90c9186f162da6a0c6ac4b076468b35bcc035ff3",
+    "0xd114ad7d61069fcd5b39ad42c7cf91fb297d3705",
+    "0x9cd9b7b2ac472153271890d2344c30bad14b554b",
+    "0xf67304429607556cbe6059228ff5866f2b5c4a33",
+    "0xe3bf1ecc3b5ea2800f2f076352722cfee857891a",
+    "0x6ab6a486c92a2aacaf770512df52b2d966a4dbff",
+    "0x3620602ec3c634b2bca4b0b3c570e2e6dcb14f56",
+    "0xc9bc0458ba01d1458a73e2e64f768b9cb1cb9a7d",
+    "0x8d15ca81d8600984d1c4bcb3e78b41eb4e9bce72",
+    "0xc2498fab0abe1ade0b4ed4d91487feedc354da2b",
+    "0xa1c4a032f8f8c16b3d5fd5b19eed6b154286545c",
+    "0x2aa0ddf7810475fb00d8ddeb9c577420c176bee5",
+    "0x8661b507081f5325f5ecba414fc0f0a285fdfde6",
+    "0xe61c0e6e2c0362b61898e3d287d66b244aea9541",
+    "0xf11b8ef7e24de2bf6767ff33c0bf2bd1483020ff"
+   ]
+  }
+ },
+ "factories": [
+  {
+   "address": "0x78589e876edcebdce72ee3436ab3c9ad3a7cef2d",
+   "kind": "v2_stable",
+   "tape": "0x34bdd64b19d8631f936c2d07f19aaa6b83515992",
+   "raw_kind": "v2s",
+   "length_s": 0,
+   "pools": []
+  },
+  {
+   "address": "0x8e6a9fcd1d638cc760ffba397605fe3355de76d2",
+   "kind": "v2_volatile",
+   "tape": "0x34bdd64b19d8631f936c2d07f19aaa6b83515992",
+   "raw_kind": "v2v",
+   "length_s": 4,
+   "pools": [
+    "0xfcba2f9827f85948742fbc3141323fcd589511c1",
+    "0x4bafee0deb6a6e3df7b107f3c060bb54f2eb7515",
+    "0x1e11a0d52aa9a90df1b1b9d688823932fe5e657b",
+    "0x293453939d8c3068c0744d8296d617105e009140"
+   ]
+  },
+  {
+   "address": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "kind": "cl",
+   "tape": "0x27d5eb73e7406675f6b0cbd037490ec3dba935a4",
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "raw_kind": "cl",
+   "length_s": 35,
+   "pools": [
+    "0xa2f165fa5e3f7bcb481062ac054791707e912a5a",
+    "0xc77159e1f9010eaa10a6a7058b6a843be4bddbed",
+    "0xa7b947ffe3b14e71be2c60e316ea315a24ccc73c",
+    "0xb7bc626637dc18113c3031d9578791e1bfa9c1d6",
+    "0xf3c750ea813ee9e71f801d68a668fcf9f980f5f4",
+    "0x218358d3c7d22dce118573ac027c84e087da60e5",
+    "0x63469b9532e95c3a269d3070a31cf9f5c23204e7",
+    "0x73e9f7eca69d7f2f93477757c4a8f34b8f088d0c",
+    "0x581307abf9eb238c04b3e83de5a53c5d1b144ec7",
+    "0x84b350a6ab6b203c322f3b60df9976d60fbb06f7",
+    "0x62b72f096a2952d0f9209b090af06593bf5c3325",
+    "0x201eaee87176c7c6f42f60e3bc849f2d8829f4e6",
+    "0x9f6437c29256cd8c7e4e9fcae517e145631f0045",
+    "0x4b4400cc500bef917fcff65aa98ca94bee25512e",
+    "0x7bd5da054fa62ad9d9ab14e654a758e7c5a479fa",
+    "0xc761e6674f11601717661d274a9307ebd3213842",
+    "0x785771660234740d14612a9cc5dc1d35ada6f372",
+    "0x4b215f4ab51d489ed64668b8143fbcc7fd0ca98f",
+    "0xff37d48e56f89722fefafb5002bd6829a7e0f550",
+    "0xc05180f3705c631cdb9ec41f0cbef7fc7884c084",
+    "0xc9ff327014baea1ea30fed3157f6f578123a2672",
+    "0x42def0b6667df492da1398f17ca775b626accc79",
+    "0x1e87ca153e7d3b3e844f223fe0c349fe50a26e4c",
+    "0xbd37fd57de9f62ca14951d00f60655fc93b0ca8e",
+    "0x6917fa79785741028db03852b55f971727575bcb",
+    "0xfa08d492840f11c45849c1ccd68b5a34717cd261",
+    "0xe1adc0fae562a2e96f8476429f270e79fd16c727",
+    "0xfca7248ed82aeb52a859d7754522ddddbf8721fa",
+    "0x162d8e980f04f6aec882ca76ec8715039f189866",
+    "0x79a86543ef910086a294e00c3d0513482b54e02d",
+    "0xb06dd0f4f902cddc7d5c710f7d4835ae109aee6a",
+    "0xbd35037dab5604e386bbcb8c91c465da78a89c05",
+    "0x22d91d9d0d629fe4e37f50eb1a6bb25da70bc33b",
+    "0x903f43a70f9b606b7307dabc550d2910b820954f",
+    "0xc7c023f2cd2196b1cdce54325d3766e87f10d24e",
+    "0x6aa90cd22cd311c3f0e5ea05297b86ab57cf949e"
+   ]
+  }
+ ],
+ "pools": {
+  "0xfcba2f9827f85948742fbc3141323fcd589511c1": {
+   "factory": "0x8e6a9fcd1d638cc760ffba397605fe3355de76d2",
+   "token0": "0x11476323d8dfcbafac942588e2f38823d2dd308e",
+   "token1": "0x4200000000000000000000000000000000000006",
+   "allowed_caller": "0x8e6a9fcd1d638cc760ffba397605fe3355de76d2",
+   "acc_s": {
+    "fee0": "2874591634",
+    "fee1": "10897945739",
+    "last": 1795028932,
+    "swaps": 3
+   },
+   "acc_e": {
+    "fee0": "2874591634",
+    "fee1": "10897945739",
+    "last": 1795028932,
+    "swaps": 3
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false
+  },
+  "0x4bafee0deb6a6e3df7b107f3c060bb54f2eb7515": {
+   "factory": "0x8e6a9fcd1d638cc760ffba397605fe3355de76d2",
+   "token0": "0x2d270e6886d130d724215a266106e6832161eaed",
+   "token1": "0x9e148c5716b5aadcfd3b71ceae9ee7a9e22c29e2",
+   "allowed_caller": "0x0000000000000000000000000000000000000000",
+   "acc_s": {
+    "fee0": "0",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "0",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false
+  },
+  "0x1e11a0d52aa9a90df1b1b9d688823932fe5e657b": {
+   "factory": "0x8e6a9fcd1d638cc760ffba397605fe3355de76d2",
+   "token0": "0x2d270e6886d130d724215a266106e6832161eaed",
+   "token1": "0x4200000000000000000000000000000000000006",
+   "allowed_caller": "0x0000000000000000000000000000000000000000",
+   "acc_s": {
+    "fee0": "0",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "0",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false
+  },
+  "0x293453939d8c3068c0744d8296d617105e009140": {
+   "factory": "0x8e6a9fcd1d638cc760ffba397605fe3355de76d2",
+   "token0": "0x0200c29006150606b650577bbe7b6248f58470c1",
+   "token1": "0x4200000000000000000000000000000000000006",
+   "allowed_caller": "0x0000000000000000000000000000000000000000",
+   "acc_s": {
+    "fee0": "0",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "0",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false
+  },
+  "0xa2f165fa5e3f7bcb481062ac054791707e912a5a": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x4200000000000000000000000000000000000006",
+   "token1": "0xa3d68b74bf0528fdd07263c60d6488749044914b",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "366705209587",
+    "fee1": "332995741050",
+    "last": 1795467477,
+    "swaps": 40
+   },
+   "acc_e": {
+    "fee0": "366705209587",
+    "fee1": "332995741050",
+    "last": 1795467477,
+    "swaps": 40
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x143b52f32bbd045b5470d120721d1dec97900329",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0xc3b16c3f4ace88fbfa2f5243f2b820b8c48af215",
+   "emission_cap": "200000000000000",
+   "pend_s": [
+    "366705209590",
+    "337471993172"
+   ],
+   "pend_e": [
+    "366705209590",
+    "337471993172"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0xc77159e1f9010eaa10a6a7058b6a843be4bddbed": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x0200c29006150606b650577bbe7b6248f58470c1",
+   "token1": "0xfc421ad3c883bf9e7c4f42de845c4e4405799e73",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "7943",
+    "fee1": "6077169661124142",
+    "last": 1795490874,
+    "swaps": 28
+   },
+   "acc_e": {
+    "fee0": "7943",
+    "fee1": "6077169661124142",
+    "last": 1795490874,
+    "swaps": 28
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x0c9f3e5cb82dc037d09d3f6eddf205f770a7df4b",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x99cdc7650da1ca7db33ae405bfe52c61679c9a49",
+   "emission_cap": "300000000000000",
+   "pend_s": [
+    "24",
+    "18315038791422"
+   ],
+   "pend_e": [
+    "24",
+    "18315038791422"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0xa7b947ffe3b14e71be2c60e316ea315a24ccc73c": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x0200c29006150606b650577bbe7b6248f58470c1",
+   "token1": "0x2d270e6886d130d724215a266106e6832161eaed",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "297231883",
+    "fee1": "282700163",
+    "last": 1795650911,
+    "swaps": 55153
+   },
+   "acc_e": {
+    "fee0": "304745885",
+    "fee1": "290102915",
+    "last": 1795737260,
+    "swaps": 56484
+   },
+   "expect": {
+    "fee0": "7514002",
+    "fee1": "7402752"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x59b91a95edcd82bae17c6f43768d9a2bc14d85e7",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0xd03949ba6f6777a70bac9d41bc7d224b1d083a3d",
+   "emission_cap": "1557838778517097",
+   "pend_s": [
+    "21009",
+    "4407"
+   ],
+   "pend_e": [
+    "160615",
+    "112121"
+   ],
+   "collected": [
+    "7351045",
+    "7271936"
+   ]
+  },
+  "0xb7bc626637dc18113c3031d9578791e1bfa9c1d6": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x0200c29006150606b650577bbe7b6248f58470c1",
+   "token1": "0xe343167631d89b6ffc58b88d6b7fb0228795491d",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "163019896",
+    "fee1": "153279822",
+    "last": 1795650910,
+    "swaps": 28262
+   },
+   "acc_e": {
+    "fee0": "165297742",
+    "fee1": "155462584",
+    "last": 1795737134,
+    "swaps": 29517
+   },
+   "expect": {
+    "fee0": "2277846",
+    "fee1": "2182762"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0xd8a9c4983ec54e2bc25639ef65d3515c45a93467",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0xb9a876772f9b4ae2229f78c27331a8ae9d07a5bd",
+   "emission_cap": "1900000000000000",
+   "pend_s": [
+    "6364",
+    "1"
+   ],
+   "pend_e": [
+    "124834",
+    "110663"
+   ],
+   "collected": [
+    "1881119",
+    "1789973"
+   ]
+  },
+  "0xf3c750ea813ee9e71f801d68a668fcf9f980f5f4": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x0200c29006150606b650577bbe7b6248f58470c1",
+   "token1": "0x73e0c0d45e048d25fc26fa3159b0aa04bfa4db98",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "4538613477",
+    "fee1": "6933753",
+    "last": 1795651104,
+    "swaps": 47698
+   },
+   "acc_e": {
+    "fee0": "4597861358",
+    "fee1": "7036599",
+    "last": 1795737302,
+    "swaps": 49400
+   },
+   "expect": {
+    "fee0": "59247881",
+    "fee1": "102846"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0xb26b4c3d774294770c7a5d137bc27f72a95b5de6",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x693ba7da5cdcdf1fa48815f63c9df36ca6863231",
+   "emission_cap": "13507925519734075",
+   "pend_s": [
+    "3011122",
+    "1097"
+   ],
+   "pend_e": [
+    "721714",
+    "969"
+   ],
+   "collected": [
+    "51953624",
+    "86469"
+   ]
+  },
+  "0x218358d3c7d22dce118573ac027c84e087da60e5": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x0200c29006150606b650577bbe7b6248f58470c1",
+   "token1": "0x8a76fe7fa6da27f85a626c5c53730b38d13603d7",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x65c4fd04882e6a89c652acded8b1cfc18beaaad2",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x15b8b66c3445ab6bf45817620b11bde7752d913c",
+   "emission_cap": "200000000000000",
+   "pend_s": [
+    "0",
+    "0"
+   ],
+   "pend_e": [
+    "0",
+    "0"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0x63469b9532e95c3a269d3070a31cf9f5c23204e7": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x0200c29006150606b650577bbe7b6248f58470c1",
+   "token1": "0x4200000000000000000000000000000000000006",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "11132081048",
+    "fee1": "4854817053833403019",
+    "last": 1795650914,
+    "swaps": 70875
+   },
+   "acc_e": {
+    "fee0": "11294023008",
+    "fee1": "4956236650394980092",
+    "last": 1795737519,
+    "swaps": 72785
+   },
+   "expect": {
+    "fee0": "161941960",
+    "fee1": "101419596561577073"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x32132364cf59419fb50683d58b3a0d8456a0bb58",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x5aab09d899596f33fc256db45f22b6d3f0fec67b",
+   "emission_cap": "42440225664547605",
+   "pend_s": [
+    "7813231",
+    "264104135712137"
+   ],
+   "pend_e": [
+    "703001",
+    "8416664578593935"
+   ],
+   "collected": [
+    "123226017",
+    "69316907531690576"
+   ]
+  },
+  "0x73e9f7eca69d7f2f93477757c4a8f34b8f088d0c": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x4200000000000000000000000000000000000006",
+   "token1": "0x73e0c0d45e048d25fc26fa3159b0aa04bfa4db98",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "555194874325777615",
+    "fee1": "1599967",
+    "last": 1795651159,
+    "swaps": 18557
+   },
+   "acc_e": {
+    "fee0": "568237886699118162",
+    "fee1": "1635875",
+    "last": 1795736836,
+    "swaps": 19048
+   },
+   "expect": {
+    "fee0": "13043012373340547",
+    "fee1": "35908"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x8ec1f82f0d8d54f3d9571b78afac04fa93baa32e",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0xa6979916390d2e1225bc3c44504710af0833687e",
+   "emission_cap": "2922733594131338",
+   "pend_s": [
+    "659699070542615",
+    "278"
+   ],
+   "pend_e": [
+    "142806303963858",
+    "1"
+   ],
+   "collected": [
+    "13108466994964639",
+    "34874"
+   ]
+  },
+  "0x581307abf9eb238c04b3e83de5a53c5d1b144ec7": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x2d270e6886d130d724215a266106e6832161eaed",
+   "token1": "0x4200000000000000000000000000000000000006",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "471939790",
+    "fee1": "236732686601301207",
+    "last": 1795650909,
+    "swaps": 20041
+   },
+   "acc_e": {
+    "fee0": "476799036",
+    "fee1": "240017534055890047",
+    "last": 1795736258,
+    "swaps": 20380
+   },
+   "expect": {
+    "fee0": "4859246",
+    "fee1": "3284847454588840"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0xb9d0845d6ee57f235943c8dae06398e3f6d3104f",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0xf37d23a68a6395676b0e4839f1b92abe0f235998",
+   "emission_cap": "447014011764221",
+   "pend_s": [
+    "712428",
+    "387459368783914"
+   ],
+   "pend_e": [
+    "2757758",
+    "1844573106825506"
+   ],
+   "collected": [
+    "2498376",
+    "1630298671784597"
+   ]
+  },
+  "0x84b350a6ab6b203c322f3b60df9976d60fbb06f7": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x0200c29006150606b650577bbe7b6248f58470c1",
+   "token1": "0xf1815bd50389c46847f0bda824ec8da914045d14",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "266479",
+    "fee1": "427259",
+    "last": 1795650910,
+    "swaps": 3280
+   },
+   "acc_e": {
+    "fee0": "274032",
+    "fee1": "434424",
+    "last": 1795734270,
+    "swaps": 3342
+   },
+   "expect": {
+    "fee0": "7553",
+    "fee1": "7165"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x69531f3379a2c38766e1add8789f4d47bf04a286",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x466c0b9077ade5394ba014a53e28308fcf9b2866",
+   "emission_cap": "200000000000000",
+   "pend_s": [
+    "51909",
+    "70264"
+   ],
+   "pend_e": [
+    "56119",
+    "74067"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0x62b72f096a2952d0f9209b090af06593bf5c3325": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x73e0c0d45e048d25fc26fa3159b0aa04bfa4db98",
+   "token1": "0xae4efbc7736f963982aacb17efa37fcbab924cb3",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434"
+  },
+  "0x201eaee87176c7c6f42f60e3bc849f2d8829f4e6": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x73e0c0d45e048d25fc26fa3159b0aa04bfa4db98",
+   "token1": "0xe343167631d89b6ffc58b88d6b7fb0228795491d",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "38231",
+    "fee1": "20457112",
+    "last": 1795650910,
+    "swaps": 3057
+   },
+   "acc_e": {
+    "fee0": "38308",
+    "fee1": "20500551",
+    "last": 1795734031,
+    "swaps": 3109
+   },
+   "expect": {
+    "fee0": "77",
+    "fee1": "43439"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x174131366b9455ff27f511b990677690b42dbe39",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x8de2ca38f2a99761eaacceeb4d334f83032c124a",
+   "emission_cap": "500000000000000",
+   "pend_s": [
+    "2070",
+    "977818"
+   ],
+   "pend_e": [
+    "2147",
+    "1021043"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0x9f6437c29256cd8c7e4e9fcae517e145631f0045": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x4200000000000000000000000000000000000006",
+   "token1": "0xf1815bd50389c46847f0bda824ec8da914045d14",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "4074291108248937",
+    "fee1": "6812771",
+    "last": 1795650675,
+    "swaps": 4646
+   },
+   "acc_e": {
+    "fee0": "4076510390845452",
+    "fee1": "6816765",
+    "last": 1795735486,
+    "swaps": 4707
+   },
+   "expect": {
+    "fee0": "2219282596515",
+    "fee1": "3994"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x06c0f1069acfe6dc5303955b754c9a801d364c33",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x4108548b95cd6cbdd5dfbe492ba85490e86de0eb",
+   "emission_cap": "400000000000000",
+   "pend_s": [
+    "76279140041957",
+    "157769"
+   ],
+   "pend_e": [
+    "78112547207488",
+    "161076"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0x4b4400cc500bef917fcff65aa98ca94bee25512e": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x0200c29006150606b650577bbe7b6248f58470c1",
+   "token1": "0xf50258d3c1dd88946c567920b986a12e65b50dac",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "63791",
+    "fee1": "48",
+    "last": 1793380830,
+    "swaps": 14
+   },
+   "acc_e": {
+    "fee0": "63791",
+    "fee1": "48",
+    "last": 1793380830,
+    "swaps": 14
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x31a53aa1fdce32b8107e040589c8d860e6178ff2",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0xecb0e6fcb42ef4376f70e5b8d56aab80efc22275",
+   "emission_cap": "200000000000000",
+   "pend_s": [
+    "1",
+    "8"
+   ],
+   "pend_e": [
+    "1",
+    "8"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0x7bd5da054fa62ad9d9ab14e654a758e7c5a479fa": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x0606fc632ee812ba970af72f8489baaa443c4b98",
+   "token1": "0x4200000000000000000000000000000000000006",
+   "allowed_caller": "0x0000000000000000000000000000000000000000",
+   "acc_s": {
+    "fee0": "0",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "0",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434"
+  },
+  "0xc761e6674f11601717661d274a9307ebd3213842": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x2d270e6886d130d724215a266106e6832161eaed",
+   "token1": "0x9e148c5716b5aadcfd3b71ceae9ee7a9e22c29e2",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434"
+  },
+  "0x785771660234740d14612a9cc5dc1d35ada6f372": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x4200000000000000000000000000000000000006",
+   "token1": "0x9e148c5716b5aadcfd3b71ceae9ee7a9e22c29e2",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "2359124845071056",
+    "fee1": "10394463371480941648",
+    "last": 1795635069,
+    "swaps": 301
+   },
+   "acc_e": {
+    "fee0": "2937691399613401",
+    "fee1": "13103945990308279055",
+    "last": 1795729695,
+    "swaps": 346
+   },
+   "expect": {
+    "fee0": "578566554542345",
+    "fee1": "2709482618827337407"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434"
+  },
+  "0x4b215f4ab51d489ed64668b8143fbcc7fd0ca98f": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x30987adf0b11dc698438a99ba04ec3a1ab2c7eab",
+   "token1": "0xe343167631d89b6ffc58b88d6b7fb0228795491d",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x90c9186f162da6a0c6ac4b076468b35bcc035ff3",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x15b6ea11632b0882380ecda44f4894e41209644b",
+   "emission_cap": "100000000000000",
+   "pend_s": [
+    "0",
+    "0"
+   ],
+   "pend_e": [
+    "0",
+    "0"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0xff37d48e56f89722fefafb5002bd6829a7e0f550": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0xa8ddb5cd96b5222afe198316e9a57caa642850d5",
+   "token1": "0xe343167631d89b6ffc58b88d6b7fb0228795491d",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0xd114ad7d61069fcd5b39ad42c7cf91fb297d3705",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0xf49f1d6318309a5fe7997bb32f03c23375207e5e",
+   "emission_cap": "100000000000000",
+   "pend_s": [
+    "0",
+    "0"
+   ],
+   "pend_e": [
+    "0",
+    "0"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0xc05180f3705c631cdb9ec41f0cbef7fc7884c084": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x4a2df09536f62341c9f946427d16414c04e21342",
+   "token1": "0xe343167631d89b6ffc58b88d6b7fb0228795491d",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x9cd9b7b2ac472153271890d2344c30bad14b554b",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0xe5f03e47520e70fbaa81c9b161990d0e80120cf5",
+   "emission_cap": "100000000000000",
+   "pend_s": [
+    "0",
+    "0"
+   ],
+   "pend_e": [
+    "0",
+    "0"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0xc9ff327014baea1ea30fed3157f6f578123a2672": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x4c1ae29c159838fc1b224636e28e086eb69101f7",
+   "token1": "0xe343167631d89b6ffc58b88d6b7fb0228795491d",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0xf67304429607556cbe6059228ff5866f2b5c4a33",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x2041ebd6975219c2c0aa4c146f4694ed83d07e6b",
+   "emission_cap": "100000000000000",
+   "pend_s": [
+    "0",
+    "0"
+   ],
+   "pend_e": [
+    "0",
+    "0"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0x42def0b6667df492da1398f17ca775b626accc79": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x8e2eed8b8b5e13ea7bf38e50d7821d2c57309072",
+   "token1": "0xe343167631d89b6ffc58b88d6b7fb0228795491d",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0xe3bf1ecc3b5ea2800f2f076352722cfee857891a",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x4b029269fc24d42ff099f28cb1540b7602e82418",
+   "emission_cap": "100000000000000",
+   "pend_s": [
+    "0",
+    "0"
+   ],
+   "pend_e": [
+    "0",
+    "0"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0x1e87ca153e7d3b3e844f223fe0c349fe50a26e4c": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0xe343167631d89b6ffc58b88d6b7fb0228795491d",
+   "token1": "0xe7e553cd128f0011777323a0b44a7b96ea1cb540",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x6ab6a486c92a2aacaf770512df52b2d966a4dbff",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0xb93acaa400239c14b9247c40e73c3a4e6daa741e",
+   "emission_cap": "100000000000000",
+   "pend_s": [
+    "0",
+    "0"
+   ],
+   "pend_e": [
+    "0",
+    "0"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0xbd37fd57de9f62ca14951d00f60655fc93b0ca8e": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0xe343167631d89b6ffc58b88d6b7fb0228795491d",
+   "token1": "0xe7e553cd128f0011777323a0b44a7b96ea1cb540",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x3620602ec3c634b2bca4b0b3c570e2e6dcb14f56",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x569516657294453d39e392feb57b57beaf9cc7fb",
+   "emission_cap": "100000000000000",
+   "pend_s": [
+    "0",
+    "0"
+   ],
+   "pend_e": [
+    "0",
+    "0"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0x6917fa79785741028db03852b55f971727575bcb": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0xc3fdbe3a68ee5de461d30415a8165cf9aefe1171",
+   "token1": "0xe343167631d89b6ffc58b88d6b7fb0228795491d",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0xc9bc0458ba01d1458a73e2e64f768b9cb1cb9a7d",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x16345416ea9660899b18fd124b93684e3d3c158a",
+   "emission_cap": "100000000000000",
+   "pend_s": [
+    "0",
+    "0"
+   ],
+   "pend_e": [
+    "0",
+    "0"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0xfa08d492840f11c45849c1ccd68b5a34717cd261": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x4200000000000000000000000000000000000006",
+   "token1": "0xa10d8ac477c04da695ef3b11fb577bbcac654ebb",
+   "allowed_caller": "0x0000000000000000000000000000000000000000",
+   "acc_s": {
+    "fee0": "0",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "0",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434"
+  },
+  "0xe1adc0fae562a2e96f8476429f270e79fd16c727": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x4200000000000000000000000000000000000006",
+   "token1": "0xa10d8ac477c04da695ef3b11fb577bbcac654ebb",
+   "allowed_caller": "0x0000000000000000000000000000000000000000",
+   "acc_s": {
+    "fee0": "0",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "0",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434"
+  },
+  "0xfca7248ed82aeb52a859d7754522ddddbf8721fa": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x2d270e6886d130d724215a266106e6832161eaed",
+   "token1": "0x9e148c5716b5aadcfd3b71ceae9ee7a9e22c29e2",
+   "allowed_caller": "0x0000000000000000000000000000000000000000",
+   "acc_s": {
+    "fee0": "0",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "0",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434"
+  },
+  "0x162d8e980f04f6aec882ca76ec8715039f189866": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x30987adf0b11dc698438a99ba04ec3a1ab2c7eab",
+   "token1": "0xe343167631d89b6ffc58b88d6b7fb0228795491d",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x8d15ca81d8600984d1c4bcb3e78b41eb4e9bce72",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x8a160bafcbcb966f649767a647ca3265aacd9470",
+   "emission_cap": "100000000000000",
+   "pend_s": [
+    "0",
+    "0"
+   ],
+   "pend_e": [
+    "0",
+    "0"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0x79a86543ef910086a294e00c3d0513482b54e02d": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x30987adf0b11dc698438a99ba04ec3a1ab2c7eab",
+   "token1": "0xe7e553cd128f0011777323a0b44a7b96ea1cb540",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0xc2498fab0abe1ade0b4ed4d91487feedc354da2b",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x98bbad1f5332f84b230b4c227416a1368d854aae",
+   "emission_cap": "100000000000000",
+   "pend_s": [
+    "0",
+    "0"
+   ],
+   "pend_e": [
+    "0",
+    "0"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0xb06dd0f4f902cddc7d5c710f7d4835ae109aee6a": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x7d87fd6a379714194a797c0bbb8b40c30d250856",
+   "token1": "0xe7e553cd128f0011777323a0b44a7b96ea1cb540",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0xa1c4a032f8f8c16b3d5fd5b19eed6b154286545c",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0xb7c1affbf159b9004c0f8af4f13b054aec1ee792",
+   "emission_cap": "100000000000000",
+   "pend_s": [
+    "0",
+    "0"
+   ],
+   "pend_e": [
+    "0",
+    "0"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0xbd35037dab5604e386bbcb8c91c465da78a89c05": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0xa8ddb5cd96b5222afe198316e9a57caa642850d5",
+   "token1": "0xe7e553cd128f0011777323a0b44a7b96ea1cb540",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x2aa0ddf7810475fb00d8ddeb9c577420c176bee5",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x892c3fef54992649611f916e7e677ef1434d8a82",
+   "emission_cap": "100000000000000",
+   "pend_s": [
+    "0",
+    "0"
+   ],
+   "pend_e": [
+    "0",
+    "0"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0x22d91d9d0d629fe4e37f50eb1a6bb25da70bc33b": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x4a2df09536f62341c9f946427d16414c04e21342",
+   "token1": "0xe7e553cd128f0011777323a0b44a7b96ea1cb540",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0x8661b507081f5325f5ecba414fc0f0a285fdfde6",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x2cd9f6cadaa82cd2e509e002d90794e3627e7d7c",
+   "emission_cap": "100000000000000",
+   "pend_s": [
+    "0",
+    "0"
+   ],
+   "pend_e": [
+    "0",
+    "0"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0x903f43a70f9b606b7307dabc550d2910b820954f": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x8e2eed8b8b5e13ea7bf38e50d7821d2c57309072",
+   "token1": "0xe7e553cd128f0011777323a0b44a7b96ea1cb540",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0xe61c0e6e2c0362b61898e3d287d66b244aea9541",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0xfbce93fdd77ea0bfdd38280ed3690d8bc726170c",
+   "emission_cap": "100000000000000",
+   "pend_s": [
+    "0",
+    "0"
+   ],
+   "pend_e": [
+    "0",
+    "0"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0xc7c023f2cd2196b1cdce54325d3766e87f10d24e": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0xc3fdbe3a68ee5de461d30415a8165cf9aefe1171",
+   "token1": "0xe7e553cd128f0011777323a0b44a7b96ea1cb540",
+   "allowed_caller": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "acc_s": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "1",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": false,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434",
+   "gauge": "0xf11b8ef7e24de2bf6767ff33c0bf2bd1483020ff",
+   "gauge_factory": "0xf437f62053acb121665b8fdbfea8f214fb8e589d",
+   "vrm": "0x2ce07404a169d2ef7ba4f222244897339fc39803",
+   "emission_cap": "100000000000000",
+   "pend_s": [
+    "0",
+    "0"
+   ],
+   "pend_e": [
+    "0",
+    "0"
+   ],
+   "collected": [
+    "0",
+    "0"
+   ]
+  },
+  "0x6aa90cd22cd311c3f0e5ea05297b86ab57cf949e": {
+   "factory": "0x7660bf2adefc687c22906112ca323d60a00358cf",
+   "token0": "0x2d270e6886d130d724215a266106e6832161eaed",
+   "token1": "0x4c1ae29c159838fc1b224636e28e086eb69101f7",
+   "allowed_caller": "0x0000000000000000000000000000000000000000",
+   "acc_s": {
+    "fee0": "0",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "acc_e": {
+    "fee0": "0",
+    "fee1": "0",
+    "last": 0,
+    "swaps": 0
+   },
+   "expect": {
+    "fee0": "0",
+    "fee1": "0"
+   },
+   "new_in_day": true,
+   "hook": "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434"
+  }
+ }
+}
