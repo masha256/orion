@@ -6,6 +6,13 @@ import { getPath, PARITY, PARITY_PATHS } from '../../src/report/parity.js';
 import { ALL_ASSETS, repoAsset, syntheticInput } from '../helpers/syntheticReport.js';
 
 const PARITY_ASSETS = ['aero', 'cake', 'crv', 'cvxcrv', 'hype', 'link', 'pump', 'sky', 'uni', 'vvv'];
+/**
+ * Phase 3 R4 (RET-203): AERO's revenue moved on chain (two revenue lines, an LP cost line, incentives below the line), so
+ * its v2 figures no longer equal v1's by design. Its map stays (the new line ids, see PARITY_PATHS.aero) and is checked
+ * for shape below; the rel-1e-12 equality covers the other nine.
+ */
+const R4_CHANGED = ['aero'];
+const PARITY_EQUAL = PARITY_ASSETS.filter((a) => !R4_CHANGED.includes(a));
 const REL = 1e-12;
 const rel = (a: number | null, b: number | null) => (a === null && b === null ? 0 : a === null || b === null ? Infinity : a === b ? 0 : Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b)));
 
@@ -36,7 +43,7 @@ describe('parity map (ruling R7)', () => {
     expect(Object.keys(PARITY).sort()).toEqual(PARITY_ASSETS);
   });
 
-  it.each(PARITY_ASSETS)('%s: every pair is equal at rel 1e-12 on synthetic 200-day series', (id) => {
+  it.each(PARITY_EQUAL)('%s: every pair is equal at rel 1e-12 on synthetic 200-day series', (id) => {
     const { v1, v2 } = reports(id);
     const pairs = PARITY[id](v2, v1);
     expect(pairs.length).toBe(PARITY_PATHS[id].length);
@@ -49,7 +56,7 @@ describe('parity map (ruling R7)', () => {
     }
   });
 
-  it.each(PARITY_ASSETS)('%s: a report whose USD days are on basis daily_mean (Phase 3 R2) reads the same pairs', (id) => {
+  it.each(PARITY_EQUAL)('%s: a report whose USD days are on basis daily_mean (Phase 3 R2) reads the same pairs', (id) => {
     const input = syntheticInput(repoAsset(id));
     const priceBasis = new Map([...input.daily].filter(([m]) => m.startsWith('flow_usd.')).map(([m, days]) => [m, new Map([...days.keys()].map((d) => [d, 'daily_mean' as const]))]));
     const v2 = JSON.parse(JSON.stringify(incomeStatementV2({ ...input, statementDaily: input.daily, priceBasis }))) as IsV2;
@@ -70,9 +77,13 @@ describe('parity map (ruling R7)', () => {
       for (const k of ['cash', 'buyback', 'shareholder', 'dilution', 'netShareholder', 'multiple', 'pegTrailing']) expect(v2Paths).toContain(`incomeStatement.yields.${k}`);
       for (const h of asset.income_statement!.holders ?? []) {
         expect(v2Paths, `${id} holders ${h.id}`).toContain(`incomeStatement.holders.lines[id=${h.id}].annualized`);
-        expect(v2Paths, `${id} holder flow ${h.id}`).toContain(`incomeStatement.holderFlow.lines[id=${h.id}].gross`);
+        // AERO (R4): v1's holder flow was the retired series, and lp_rev has no v1 line (PARITY_PATHS.aero).
+        if (!R4_CHANGED.includes(id)) expect(v2Paths, `${id} holder flow ${h.id}`).toContain(`incomeStatement.holderFlow.lines[id=${h.id}].gross`);
       }
-      for (const r of asset.income_statement!.revenue) expect(v2Paths, `${id} revenue ${r.id}`).toContain(`incomeStatement.revenue.lines[id=${r.id}].annualized`);
+      for (const r of asset.income_statement!.revenue) {
+        if (R4_CHANGED.includes(id) && r.id === 'lp_rev') continue;
+        expect(v2Paths, `${id} revenue ${r.id}`).toContain(`incomeStatement.revenue.lines[id=${r.id}].annualized`);
+      }
     }
   });
 
@@ -88,7 +99,7 @@ describe('parity map (ruling R7)', () => {
       expect(pairs.some((p) => p[1] === 'incomeStatement.revenue.annualized' && p[2] === 'revenue.annualized'), id).toBe(true);
       expect(pairs.some((p) => p[1] === 'incomeStatement.revenue.growth.annualized' && p[2] === 'revenue.growth.annualized'), id).toBe(true);
       if (id !== 'sky') expect(v2Paths, id).toContain('incomeStatement.protocol.growth.annualized');
-      for (const h of asset.income_statement!.holders ?? []) {
+      for (const h of R4_CHANGED.includes(id) ? [] : asset.income_statement!.holders ?? []) {
         for (const k of ['net', 'yield', 'growth.annualized']) expect(v2Paths, `${id} ${h.id} ${k}`).toContain(`incomeStatement.holderFlow.lines[id=${h.id}].${k}`);
       }
       const v1 = V1_GOLDEN[id];
@@ -108,6 +119,32 @@ describe('parity map (ruling R7)', () => {
     expect(vvv.get('incomeStatement.revenue.lines[id=business].growth.annualized')).toBe('revenue.streams[id=business].growth.annualized');
     expect(PARITY_PATHS.cvxcrv.map((p) => p[1])).toContain('incomeStatement.volume.annualized');
     for (const a of ['cake', 'uni']) expect(PARITY_PATHS[a].map((p) => p[1]), a).not.toContain('incomeStatement.volume.annualized');
+  });
+
+  it('AERO (Phase 3 R4): the map names the new line ids, every pair reads a number, and the figures R4 leaves alone still match', () => {
+    const { v1, v2 } = reports('aero');
+    const pairs = PARITY.aero(v2, v1);
+    expect(PARITY_PATHS.aero.map((p) => p[1])).toEqual(expect.arrayContaining([
+      'incomeStatement.revenue.lines[id=voter_rev].annualized', 'incomeStatement.holders.lines[id=voter_fees].annualized',
+    ]));
+    // The retired flow has no pair, and no path names a retired line id.
+    expect(PARITY_PATHS.aero.some((p) => p[2].startsWith('flows[id=fees]') || p[1].includes('[id=fees]') || p[1].includes('[id=bribes]'))).toBe(false);
+    const byLabel = new Map(pairs.map(([l, a, b]) => [l, [a, b]] as const));
+    for (const l of ['revenue', 'holders', 'protocol', 'holder flow total', 'revenue line voter_rev', 'holders line voter_fees']) {
+      expect(byLabel.get(l)![0], `aero ${l}`).toEqual(expect.any(Number));
+      expect(byLabel.get(l)![1], `aero ${l}`).toEqual(expect.any(Number));
+    }
+    // Price, dilution and the empty protocol/operating sections do not read the revenue series.
+    for (const l of ['price', 'dilution pct', 'yield dilution', 'protocol', 'operating costs = v1 costs', 'yield buyback']) {
+      const [a, b] = byLabel.get(l)!;
+      expect(rel(a, b), `aero ${l}`).toBeLessThanOrEqual(REL);
+    }
+    // Below the line to holders is the vote_incentives line alone (protocol_subsidy is shown, in_holder_flow: false).
+    const line = (id: string) => v2.belowLine.lines.find((b) => b.id === id)!;
+    expect(line('protocol_subsidy').annualized).toEqual(expect.any(Number));
+    expect(line('protocol_subsidy').annualized!).toBeGreaterThan(0);
+    expect(v2.belowLine.toHolders).toBe(line('vote_incentives').annualized);
+    expect(v2.holderFlow.lines.map((l) => l.id)).toEqual(['voter_fees', 'vote_incentives']);
   });
 
   it('VVV revenue growth is a number on both sides (I1: the null = null pair is gone)', () => {

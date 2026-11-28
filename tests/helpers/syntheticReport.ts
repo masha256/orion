@@ -14,9 +14,11 @@ export const SYNTHETIC_DAY = '2026-11-02';
  * The flows each repo asset's synthetic input carries, in the order the report read them at cc59fa7 (before Task 11): a
  * series' scale depends on its place, so this frozen list keeps every synthetic input, and the golden reports built on
  * them (tests/report/v2Golden.test.ts), unchanged. yCRV keeps its st-yCRV fee, which no line reads since Task 11.
+ * AERO's list moved on purpose in Phase 3 R4 (RET-203): flow_usd.fees retired for the on-chain pool-scan metrics, in
+ * reportFlowMetrics order.
  */
 const SYNTHETIC_FLOWS: Record<string, string[]> = {
-  aero: ['flow_usd.fees'],
+  aero: ['flow_usd.voter_fees', 'flow_usd.lp_fees', 'flow_usd.vote_incentives', 'flow_usd.protocol_subsidy'],
   cake: ['flow_usd.burn', 'flow_usd.treasury', 'flow_usd.fees', 'flow_tokens.burn'],
   crv: ['flow_usd.fees', 'flow_usd.curve_treasury', 'flow_usd.protocol_revenue'],
   cvxcrv: ['flow_usd.fees', 'flow_usd.crv', 'flow_usd.cvx', 'flow_usd.convex_rev_cvxcrv', 'flow_usd.convex_rev_cvx', 'flow_usd.convex_rev_treasury', 'flow_usd.convex_gross_crv'],
@@ -53,6 +55,8 @@ function wiggle(metric: string, i: number): number {
 export function syntheticInput(asset: AssetConfig, day = SYNTHETIC_DAY): ReportInput {
   const started = new Map<string, string>();
   for (const l of asset.income_statement?.revenue ?? []) if (l.metric && l.started) started.set(l.metric, l.started);
+  // Phase 3 R4: a below-line line's `started` too (AERO's incentives; no other asset dates a below-line line).
+  for (const l of asset.income_statement?.below_line ?? []) if (l.metric && l.started) started.set(l.metric, l.started);
   const periodic = new Set((asset.income_statement?.revenue ?? []).filter((l) => l.settlement === 'periodic').map((l) => l.metric!));
   const daily = new Map<string, Map<string, number>>();
   const provisional = new Map<string, Set<string>>();

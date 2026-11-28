@@ -27,6 +27,11 @@ import { ALL_ASSETS, repoAsset, syntheticInput } from '../helpers/syntheticRepor
  * Phase 3 R2 Task 6b rewrote two paths only: incomeStatement.priceBasis.source and .sourceType in the 60 entries of the
  * 12 assets whose price_usd reads `price.token` (market_data:coingecko -> contract_state:price.token; HYPE and LIT
  * first_party_api:price.token); inputs unchanged, aero's 5 entries and every other path identical.
+ *
+ * Phase 3 R4 Task 8 (RET-203) rewrote aero's 5 entries only, inputs and reports: its revenue moved on chain (the
+ * synthetic flows are the four pool-scan series the statement reads, none before 2026-10-22; voter_rev + lp_rev, the
+ * lp_fees cost line, vote_incentives and protocol_subsidy below the line, the "N of 91 days" window). The 60 entries of
+ * the 12 other assets are byte-identical.
  */
 const GOLDEN = fileURLToPath(new URL('./golden/v2-report-13.json', import.meta.url));
 

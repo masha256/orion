@@ -161,7 +161,8 @@ describe('context', () => {
     // so AERO's metric revenue line without one keeps the pack cc59fa7 wrote: no revenue_streams key.
     it('a metric revenue line with no settlement is not a stream (AERO: no revenue_streams key)', async () => {
       const aero = loadAsset(fileURLToPath(new URL('../..', import.meta.url)), 'aero');
-      expect(aero.config.income_statement!.revenue.map((r) => [r.metric, r.settlement])).toEqual([['flow_usd.fees', undefined]]);
+      // Phase 3 R4 (RET-203): two on-chain revenue lines replace flow_usd.fees; neither names a settlement.
+      expect(aero.config.income_statement!.revenue.map((r) => [r.metric, r.settlement])).toEqual([['flow_usd.voter_fees', undefined], ['flow_usd.lp_fees', undefined]]);
       expect(await packFor(aero, { assetYaml: 'aero' })).not.toHaveProperty('revenue_streams');
     });
   });

@@ -35,6 +35,9 @@ import { ALL_ASSETS } from '../helpers/syntheticReport.js';
  * PUMP also reserved_balance's (solana.owners_balance); CRV, LINK and PUMP gain the seeded rows of their new monitor-only
  * N5 metrics (curve_circulating, circulating_gap_curve, chainlink_circulating, circulating_gap_chainlink,
  * reserved_balance), which shifts the later rows' ids there. Keyed by metric and time, no other row moved; no value.
+ *
+ * Phase 3 R4 Task 8 (RET-203) rewrote aero's pack only: its revenue moved on chain (flow_usd.fees retired for the five
+ * pool.* metrics, the statement's new lines, the pool adapters' adapter_params). The 12 other packs are byte-identical.
  */
 const GOLDEN = fileURLToPath(new URL('./golden/packs-13.json', import.meta.url));
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -90,7 +93,9 @@ describe('context packs, golden at cc59fa7 (Task 11)', () => {
  * `holder_flows` entry had window_days 91, the statement's window).
  */
 const V1_HOLDER_FLOWS: Record<string, string[]> = {
-    aero: ['flow_usd.fees'],
+    // Phase 3 R4 (RET-203): AERO's holder flow moved on purpose, flow_usd.fees retired for the allocator fees and the
+    // vote incentives below the line (protocol_subsidy is in_holder_flow: false).
+    aero: ['flow_usd.voter_fees', 'flow_usd.vote_incentives'],
     cake: ['flow_usd.burn'],
     crv: ['flow_usd.fees'],
     cvxcrv: ['flow_usd.fees', 'flow_usd.crv', 'flow_usd.cvx'],

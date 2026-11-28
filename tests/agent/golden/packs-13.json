@@ -24,720 +24,1440 @@
   },
   "observations_in_force": [
    {
-    "id": 95,
-    "metric": "flow_usd.fees",
+    "id": 395,
+    "metric": "flow_usd.vote_incentives",
     "value": 191,
     "observed_at": "2026-08-04T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 94,
-    "metric": "flow_usd.fees",
+    "id": 495,
+    "metric": "flow_usd.voter_fees",
+    "value": 191,
+    "observed_at": "2026-08-04T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 394,
+    "metric": "flow_usd.vote_incentives",
     "value": 190,
     "observed_at": "2026-08-05T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 93,
-    "metric": "flow_usd.fees",
+    "id": 494,
+    "metric": "flow_usd.voter_fees",
+    "value": 190,
+    "observed_at": "2026-08-05T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 393,
+    "metric": "flow_usd.vote_incentives",
     "value": 189,
     "observed_at": "2026-08-06T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 92,
-    "metric": "flow_usd.fees",
+    "id": 493,
+    "metric": "flow_usd.voter_fees",
+    "value": 189,
+    "observed_at": "2026-08-06T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 392,
+    "metric": "flow_usd.vote_incentives",
     "value": 188,
     "observed_at": "2026-08-07T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 91,
-    "metric": "flow_usd.fees",
+    "id": 492,
+    "metric": "flow_usd.voter_fees",
+    "value": 188,
+    "observed_at": "2026-08-07T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 391,
+    "metric": "flow_usd.vote_incentives",
     "value": 187,
     "observed_at": "2026-08-08T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 90,
-    "metric": "flow_usd.fees",
+    "id": 491,
+    "metric": "flow_usd.voter_fees",
+    "value": 187,
+    "observed_at": "2026-08-08T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 390,
+    "metric": "flow_usd.vote_incentives",
     "value": 186,
     "observed_at": "2026-08-09T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 89,
-    "metric": "flow_usd.fees",
+    "id": 490,
+    "metric": "flow_usd.voter_fees",
+    "value": 186,
+    "observed_at": "2026-08-09T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 389,
+    "metric": "flow_usd.vote_incentives",
     "value": 185,
     "observed_at": "2026-08-10T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 88,
-    "metric": "flow_usd.fees",
+    "id": 489,
+    "metric": "flow_usd.voter_fees",
+    "value": 185,
+    "observed_at": "2026-08-10T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 388,
+    "metric": "flow_usd.vote_incentives",
     "value": 184,
     "observed_at": "2026-08-11T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 87,
-    "metric": "flow_usd.fees",
+    "id": 488,
+    "metric": "flow_usd.voter_fees",
+    "value": 184,
+    "observed_at": "2026-08-11T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 387,
+    "metric": "flow_usd.vote_incentives",
     "value": 183,
     "observed_at": "2026-08-12T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 86,
-    "metric": "flow_usd.fees",
+    "id": 487,
+    "metric": "flow_usd.voter_fees",
+    "value": 183,
+    "observed_at": "2026-08-12T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 386,
+    "metric": "flow_usd.vote_incentives",
     "value": 182,
     "observed_at": "2026-08-13T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 85,
-    "metric": "flow_usd.fees",
+    "id": 486,
+    "metric": "flow_usd.voter_fees",
+    "value": 182,
+    "observed_at": "2026-08-13T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 385,
+    "metric": "flow_usd.vote_incentives",
     "value": 181,
     "observed_at": "2026-08-14T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 84,
-    "metric": "flow_usd.fees",
+    "id": 485,
+    "metric": "flow_usd.voter_fees",
+    "value": 181,
+    "observed_at": "2026-08-14T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 384,
+    "metric": "flow_usd.vote_incentives",
     "value": 180,
     "observed_at": "2026-08-15T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 83,
-    "metric": "flow_usd.fees",
+    "id": 484,
+    "metric": "flow_usd.voter_fees",
+    "value": 180,
+    "observed_at": "2026-08-15T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 383,
+    "metric": "flow_usd.vote_incentives",
     "value": 179,
     "observed_at": "2026-08-16T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 82,
-    "metric": "flow_usd.fees",
+    "id": 483,
+    "metric": "flow_usd.voter_fees",
+    "value": 179,
+    "observed_at": "2026-08-16T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 382,
+    "metric": "flow_usd.vote_incentives",
     "value": 178,
     "observed_at": "2026-08-17T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 81,
-    "metric": "flow_usd.fees",
+    "id": 482,
+    "metric": "flow_usd.voter_fees",
+    "value": 178,
+    "observed_at": "2026-08-17T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 381,
+    "metric": "flow_usd.vote_incentives",
     "value": 177,
     "observed_at": "2026-08-18T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 80,
-    "metric": "flow_usd.fees",
+    "id": 481,
+    "metric": "flow_usd.voter_fees",
+    "value": 177,
+    "observed_at": "2026-08-18T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 380,
+    "metric": "flow_usd.vote_incentives",
     "value": 176,
     "observed_at": "2026-08-19T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 79,
-    "metric": "flow_usd.fees",
+    "id": 480,
+    "metric": "flow_usd.voter_fees",
+    "value": 176,
+    "observed_at": "2026-08-19T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 379,
+    "metric": "flow_usd.vote_incentives",
     "value": 175,
     "observed_at": "2026-08-20T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 78,
-    "metric": "flow_usd.fees",
+    "id": 479,
+    "metric": "flow_usd.voter_fees",
+    "value": 175,
+    "observed_at": "2026-08-20T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 378,
+    "metric": "flow_usd.vote_incentives",
     "value": 174,
     "observed_at": "2026-08-21T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 77,
-    "metric": "flow_usd.fees",
+    "id": 478,
+    "metric": "flow_usd.voter_fees",
+    "value": 174,
+    "observed_at": "2026-08-21T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 377,
+    "metric": "flow_usd.vote_incentives",
     "value": 173,
     "observed_at": "2026-08-22T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 76,
-    "metric": "flow_usd.fees",
+    "id": 477,
+    "metric": "flow_usd.voter_fees",
+    "value": 173,
+    "observed_at": "2026-08-22T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 376,
+    "metric": "flow_usd.vote_incentives",
     "value": 172,
     "observed_at": "2026-08-23T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 75,
-    "metric": "flow_usd.fees",
+    "id": 476,
+    "metric": "flow_usd.voter_fees",
+    "value": 172,
+    "observed_at": "2026-08-23T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 375,
+    "metric": "flow_usd.vote_incentives",
     "value": 171,
     "observed_at": "2026-08-24T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 74,
-    "metric": "flow_usd.fees",
+    "id": 475,
+    "metric": "flow_usd.voter_fees",
+    "value": 171,
+    "observed_at": "2026-08-24T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 374,
+    "metric": "flow_usd.vote_incentives",
     "value": 170,
     "observed_at": "2026-08-25T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 73,
-    "metric": "flow_usd.fees",
+    "id": 474,
+    "metric": "flow_usd.voter_fees",
+    "value": 170,
+    "observed_at": "2026-08-25T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 373,
+    "metric": "flow_usd.vote_incentives",
     "value": 169,
     "observed_at": "2026-08-26T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 72,
-    "metric": "flow_usd.fees",
+    "id": 473,
+    "metric": "flow_usd.voter_fees",
+    "value": 169,
+    "observed_at": "2026-08-26T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 372,
+    "metric": "flow_usd.vote_incentives",
     "value": 168,
     "observed_at": "2026-08-27T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 71,
-    "metric": "flow_usd.fees",
+    "id": 472,
+    "metric": "flow_usd.voter_fees",
+    "value": 168,
+    "observed_at": "2026-08-27T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 371,
+    "metric": "flow_usd.vote_incentives",
     "value": 167,
     "observed_at": "2026-08-28T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 70,
-    "metric": "flow_usd.fees",
+    "id": 471,
+    "metric": "flow_usd.voter_fees",
+    "value": 167,
+    "observed_at": "2026-08-28T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 370,
+    "metric": "flow_usd.vote_incentives",
     "value": 166,
     "observed_at": "2026-08-29T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 69,
-    "metric": "flow_usd.fees",
+    "id": 470,
+    "metric": "flow_usd.voter_fees",
+    "value": 166,
+    "observed_at": "2026-08-29T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 369,
+    "metric": "flow_usd.vote_incentives",
     "value": 165,
     "observed_at": "2026-08-30T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 68,
-    "metric": "flow_usd.fees",
+    "id": 469,
+    "metric": "flow_usd.voter_fees",
+    "value": 165,
+    "observed_at": "2026-08-30T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 368,
+    "metric": "flow_usd.vote_incentives",
     "value": 164,
     "observed_at": "2026-08-31T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 67,
-    "metric": "flow_usd.fees",
+    "id": 468,
+    "metric": "flow_usd.voter_fees",
+    "value": 164,
+    "observed_at": "2026-08-31T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 367,
+    "metric": "flow_usd.vote_incentives",
     "value": 163,
     "observed_at": "2026-09-01T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 66,
-    "metric": "flow_usd.fees",
+    "id": 467,
+    "metric": "flow_usd.voter_fees",
+    "value": 163,
+    "observed_at": "2026-09-01T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 366,
+    "metric": "flow_usd.vote_incentives",
     "value": 162,
     "observed_at": "2026-09-02T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 65,
-    "metric": "flow_usd.fees",
+    "id": 466,
+    "metric": "flow_usd.voter_fees",
+    "value": 162,
+    "observed_at": "2026-09-02T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 365,
+    "metric": "flow_usd.vote_incentives",
     "value": 161,
     "observed_at": "2026-09-03T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 64,
-    "metric": "flow_usd.fees",
+    "id": 465,
+    "metric": "flow_usd.voter_fees",
+    "value": 161,
+    "observed_at": "2026-09-03T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 364,
+    "metric": "flow_usd.vote_incentives",
     "value": 160,
     "observed_at": "2026-09-04T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 63,
-    "metric": "flow_usd.fees",
+    "id": 464,
+    "metric": "flow_usd.voter_fees",
+    "value": 160,
+    "observed_at": "2026-09-04T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 363,
+    "metric": "flow_usd.vote_incentives",
     "value": 159,
     "observed_at": "2026-09-05T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 62,
-    "metric": "flow_usd.fees",
+    "id": 463,
+    "metric": "flow_usd.voter_fees",
+    "value": 159,
+    "observed_at": "2026-09-05T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 362,
+    "metric": "flow_usd.vote_incentives",
     "value": 158,
     "observed_at": "2026-09-06T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 61,
-    "metric": "flow_usd.fees",
+    "id": 462,
+    "metric": "flow_usd.voter_fees",
+    "value": 158,
+    "observed_at": "2026-09-06T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 361,
+    "metric": "flow_usd.vote_incentives",
     "value": 157,
     "observed_at": "2026-09-07T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 60,
-    "metric": "flow_usd.fees",
+    "id": 461,
+    "metric": "flow_usd.voter_fees",
+    "value": 157,
+    "observed_at": "2026-09-07T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 360,
+    "metric": "flow_usd.vote_incentives",
     "value": 156,
     "observed_at": "2026-09-08T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 59,
-    "metric": "flow_usd.fees",
+    "id": 460,
+    "metric": "flow_usd.voter_fees",
+    "value": 156,
+    "observed_at": "2026-09-08T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 359,
+    "metric": "flow_usd.vote_incentives",
     "value": 155,
     "observed_at": "2026-09-09T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 58,
-    "metric": "flow_usd.fees",
+    "id": 459,
+    "metric": "flow_usd.voter_fees",
+    "value": 155,
+    "observed_at": "2026-09-09T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 358,
+    "metric": "flow_usd.vote_incentives",
     "value": 154,
     "observed_at": "2026-09-10T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 57,
-    "metric": "flow_usd.fees",
+    "id": 458,
+    "metric": "flow_usd.voter_fees",
+    "value": 154,
+    "observed_at": "2026-09-10T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 357,
+    "metric": "flow_usd.vote_incentives",
     "value": 153,
     "observed_at": "2026-09-11T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 56,
-    "metric": "flow_usd.fees",
+    "id": 457,
+    "metric": "flow_usd.voter_fees",
+    "value": 153,
+    "observed_at": "2026-09-11T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 356,
+    "metric": "flow_usd.vote_incentives",
     "value": 152,
     "observed_at": "2026-09-12T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 55,
-    "metric": "flow_usd.fees",
+    "id": 456,
+    "metric": "flow_usd.voter_fees",
+    "value": 152,
+    "observed_at": "2026-09-12T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 355,
+    "metric": "flow_usd.vote_incentives",
     "value": 151,
     "observed_at": "2026-09-13T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 54,
-    "metric": "flow_usd.fees",
+    "id": 455,
+    "metric": "flow_usd.voter_fees",
+    "value": 151,
+    "observed_at": "2026-09-13T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 354,
+    "metric": "flow_usd.vote_incentives",
     "value": 150,
     "observed_at": "2026-09-14T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 53,
-    "metric": "flow_usd.fees",
+    "id": 454,
+    "metric": "flow_usd.voter_fees",
+    "value": 150,
+    "observed_at": "2026-09-14T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 353,
+    "metric": "flow_usd.vote_incentives",
     "value": 149,
     "observed_at": "2026-09-15T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 52,
-    "metric": "flow_usd.fees",
+    "id": 453,
+    "metric": "flow_usd.voter_fees",
+    "value": 149,
+    "observed_at": "2026-09-15T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 352,
+    "metric": "flow_usd.vote_incentives",
     "value": 148,
     "observed_at": "2026-09-16T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 51,
-    "metric": "flow_usd.fees",
+    "id": 452,
+    "metric": "flow_usd.voter_fees",
+    "value": 148,
+    "observed_at": "2026-09-16T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 351,
+    "metric": "flow_usd.vote_incentives",
     "value": 147,
     "observed_at": "2026-09-17T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 50,
-    "metric": "flow_usd.fees",
+    "id": 451,
+    "metric": "flow_usd.voter_fees",
+    "value": 147,
+    "observed_at": "2026-09-17T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 350,
+    "metric": "flow_usd.vote_incentives",
     "value": 146,
     "observed_at": "2026-09-18T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 49,
-    "metric": "flow_usd.fees",
+    "id": 450,
+    "metric": "flow_usd.voter_fees",
+    "value": 146,
+    "observed_at": "2026-09-18T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 349,
+    "metric": "flow_usd.vote_incentives",
     "value": 145,
     "observed_at": "2026-09-19T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 48,
-    "metric": "flow_usd.fees",
+    "id": 449,
+    "metric": "flow_usd.voter_fees",
+    "value": 145,
+    "observed_at": "2026-09-19T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 348,
+    "metric": "flow_usd.vote_incentives",
     "value": 144,
     "observed_at": "2026-09-20T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 47,
-    "metric": "flow_usd.fees",
+    "id": 448,
+    "metric": "flow_usd.voter_fees",
+    "value": 144,
+    "observed_at": "2026-09-20T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 347,
+    "metric": "flow_usd.vote_incentives",
     "value": 143,
     "observed_at": "2026-09-21T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 46,
-    "metric": "flow_usd.fees",
+    "id": 447,
+    "metric": "flow_usd.voter_fees",
+    "value": 143,
+    "observed_at": "2026-09-21T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 346,
+    "metric": "flow_usd.vote_incentives",
     "value": 142,
     "observed_at": "2026-09-22T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 45,
-    "metric": "flow_usd.fees",
+    "id": 446,
+    "metric": "flow_usd.voter_fees",
+    "value": 142,
+    "observed_at": "2026-09-22T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 345,
+    "metric": "flow_usd.vote_incentives",
     "value": 141,
     "observed_at": "2026-09-23T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 44,
-    "metric": "flow_usd.fees",
+    "id": 445,
+    "metric": "flow_usd.voter_fees",
+    "value": 141,
+    "observed_at": "2026-09-23T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 344,
+    "metric": "flow_usd.vote_incentives",
     "value": 140,
     "observed_at": "2026-09-24T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 43,
-    "metric": "flow_usd.fees",
+    "id": 444,
+    "metric": "flow_usd.voter_fees",
+    "value": 140,
+    "observed_at": "2026-09-24T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 343,
+    "metric": "flow_usd.vote_incentives",
     "value": 139,
     "observed_at": "2026-09-25T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 42,
-    "metric": "flow_usd.fees",
+    "id": 443,
+    "metric": "flow_usd.voter_fees",
+    "value": 139,
+    "observed_at": "2026-09-25T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 342,
+    "metric": "flow_usd.vote_incentives",
     "value": 138,
     "observed_at": "2026-09-26T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 41,
-    "metric": "flow_usd.fees",
+    "id": 442,
+    "metric": "flow_usd.voter_fees",
+    "value": 138,
+    "observed_at": "2026-09-26T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 341,
+    "metric": "flow_usd.vote_incentives",
     "value": 137,
     "observed_at": "2026-09-27T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 40,
-    "metric": "flow_usd.fees",
+    "id": 441,
+    "metric": "flow_usd.voter_fees",
+    "value": 137,
+    "observed_at": "2026-09-27T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 340,
+    "metric": "flow_usd.vote_incentives",
     "value": 136,
     "observed_at": "2026-09-28T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 39,
-    "metric": "flow_usd.fees",
+    "id": 440,
+    "metric": "flow_usd.voter_fees",
+    "value": 136,
+    "observed_at": "2026-09-28T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 339,
+    "metric": "flow_usd.vote_incentives",
     "value": 135,
     "observed_at": "2026-09-29T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 38,
-    "metric": "flow_usd.fees",
+    "id": 439,
+    "metric": "flow_usd.voter_fees",
+    "value": 135,
+    "observed_at": "2026-09-29T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 338,
+    "metric": "flow_usd.vote_incentives",
     "value": 134,
     "observed_at": "2026-09-30T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 37,
-    "metric": "flow_usd.fees",
+    "id": 438,
+    "metric": "flow_usd.voter_fees",
+    "value": 134,
+    "observed_at": "2026-09-30T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 337,
+    "metric": "flow_usd.vote_incentives",
     "value": 133,
     "observed_at": "2026-10-01T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 36,
-    "metric": "flow_usd.fees",
+    "id": 437,
+    "metric": "flow_usd.voter_fees",
+    "value": 133,
+    "observed_at": "2026-10-01T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 336,
+    "metric": "flow_usd.vote_incentives",
     "value": 132,
     "observed_at": "2026-10-02T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 35,
-    "metric": "flow_usd.fees",
+    "id": 436,
+    "metric": "flow_usd.voter_fees",
+    "value": 132,
+    "observed_at": "2026-10-02T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 335,
+    "metric": "flow_usd.vote_incentives",
     "value": 131,
     "observed_at": "2026-10-03T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 34,
-    "metric": "flow_usd.fees",
+    "id": 435,
+    "metric": "flow_usd.voter_fees",
+    "value": 131,
+    "observed_at": "2026-10-03T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 334,
+    "metric": "flow_usd.vote_incentives",
     "value": 130,
     "observed_at": "2026-10-04T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 33,
-    "metric": "flow_usd.fees",
+    "id": 434,
+    "metric": "flow_usd.voter_fees",
+    "value": 130,
+    "observed_at": "2026-10-04T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 333,
+    "metric": "flow_usd.vote_incentives",
     "value": 129,
     "observed_at": "2026-10-05T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 32,
-    "metric": "flow_usd.fees",
+    "id": 433,
+    "metric": "flow_usd.voter_fees",
+    "value": 129,
+    "observed_at": "2026-10-05T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 332,
+    "metric": "flow_usd.vote_incentives",
     "value": 128,
     "observed_at": "2026-10-06T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 31,
-    "metric": "flow_usd.fees",
+    "id": 432,
+    "metric": "flow_usd.voter_fees",
+    "value": 128,
+    "observed_at": "2026-10-06T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 331,
+    "metric": "flow_usd.vote_incentives",
     "value": 127,
     "observed_at": "2026-10-07T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 30,
-    "metric": "flow_usd.fees",
+    "id": 431,
+    "metric": "flow_usd.voter_fees",
+    "value": 127,
+    "observed_at": "2026-10-07T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 330,
+    "metric": "flow_usd.vote_incentives",
     "value": 126,
     "observed_at": "2026-10-08T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 29,
-    "metric": "flow_usd.fees",
+    "id": 430,
+    "metric": "flow_usd.voter_fees",
+    "value": 126,
+    "observed_at": "2026-10-08T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 329,
+    "metric": "flow_usd.vote_incentives",
     "value": 125,
     "observed_at": "2026-10-09T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 28,
-    "metric": "flow_usd.fees",
+    "id": 429,
+    "metric": "flow_usd.voter_fees",
+    "value": 125,
+    "observed_at": "2026-10-09T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 328,
+    "metric": "flow_usd.vote_incentives",
     "value": 124,
     "observed_at": "2026-10-10T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 27,
-    "metric": "flow_usd.fees",
+    "id": 428,
+    "metric": "flow_usd.voter_fees",
+    "value": 124,
+    "observed_at": "2026-10-10T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 327,
+    "metric": "flow_usd.vote_incentives",
     "value": 123,
     "observed_at": "2026-10-11T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 26,
-    "metric": "flow_usd.fees",
+    "id": 427,
+    "metric": "flow_usd.voter_fees",
+    "value": 123,
+    "observed_at": "2026-10-11T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 326,
+    "metric": "flow_usd.vote_incentives",
     "value": 122,
     "observed_at": "2026-10-12T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 25,
-    "metric": "flow_usd.fees",
+    "id": 426,
+    "metric": "flow_usd.voter_fees",
+    "value": 122,
+    "observed_at": "2026-10-12T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 325,
+    "metric": "flow_usd.vote_incentives",
     "value": 121,
     "observed_at": "2026-10-13T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 24,
-    "metric": "flow_usd.fees",
+    "id": 425,
+    "metric": "flow_usd.voter_fees",
+    "value": 121,
+    "observed_at": "2026-10-13T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 324,
+    "metric": "flow_usd.vote_incentives",
     "value": 120,
     "observed_at": "2026-10-14T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 23,
-    "metric": "flow_usd.fees",
+    "id": 424,
+    "metric": "flow_usd.voter_fees",
+    "value": 120,
+    "observed_at": "2026-10-14T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 323,
+    "metric": "flow_usd.vote_incentives",
     "value": 119,
     "observed_at": "2026-10-15T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 22,
-    "metric": "flow_usd.fees",
+    "id": 423,
+    "metric": "flow_usd.voter_fees",
+    "value": 119,
+    "observed_at": "2026-10-15T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 322,
+    "metric": "flow_usd.vote_incentives",
     "value": 118,
     "observed_at": "2026-10-16T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 21,
-    "metric": "flow_usd.fees",
+    "id": 422,
+    "metric": "flow_usd.voter_fees",
+    "value": 118,
+    "observed_at": "2026-10-16T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 321,
+    "metric": "flow_usd.vote_incentives",
     "value": 117,
     "observed_at": "2026-10-17T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 20,
-    "metric": "flow_usd.fees",
+    "id": 421,
+    "metric": "flow_usd.voter_fees",
+    "value": 117,
+    "observed_at": "2026-10-17T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 320,
+    "metric": "flow_usd.vote_incentives",
     "value": 116,
     "observed_at": "2026-10-18T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 19,
-    "metric": "flow_usd.fees",
+    "id": 420,
+    "metric": "flow_usd.voter_fees",
+    "value": 116,
+    "observed_at": "2026-10-18T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 319,
+    "metric": "flow_usd.vote_incentives",
     "value": 115,
     "observed_at": "2026-10-19T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 18,
-    "metric": "flow_usd.fees",
+    "id": 419,
+    "metric": "flow_usd.voter_fees",
+    "value": 115,
+    "observed_at": "2026-10-19T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 318,
+    "metric": "flow_usd.vote_incentives",
     "value": 114,
     "observed_at": "2026-10-20T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 17,
-    "metric": "flow_usd.fees",
+    "id": 418,
+    "metric": "flow_usd.voter_fees",
+    "value": 114,
+    "observed_at": "2026-10-20T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 317,
+    "metric": "flow_usd.vote_incentives",
     "value": 113,
     "observed_at": "2026-10-21T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 16,
-    "metric": "flow_usd.fees",
+    "id": 417,
+    "metric": "flow_usd.voter_fees",
+    "value": 113,
+    "observed_at": "2026-10-21T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 316,
+    "metric": "flow_usd.vote_incentives",
     "value": 112,
     "observed_at": "2026-10-22T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 15,
-    "metric": "flow_usd.fees",
+    "id": 416,
+    "metric": "flow_usd.voter_fees",
+    "value": 112,
+    "observed_at": "2026-10-22T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 315,
+    "metric": "flow_usd.vote_incentives",
     "value": 111,
     "observed_at": "2026-10-23T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 14,
-    "metric": "flow_usd.fees",
+    "id": 415,
+    "metric": "flow_usd.voter_fees",
+    "value": 111,
+    "observed_at": "2026-10-23T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 314,
+    "metric": "flow_usd.vote_incentives",
     "value": 110,
     "observed_at": "2026-10-24T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 13,
-    "metric": "flow_usd.fees",
+    "id": 414,
+    "metric": "flow_usd.voter_fees",
+    "value": 110,
+    "observed_at": "2026-10-24T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 313,
+    "metric": "flow_usd.vote_incentives",
     "value": 109,
     "observed_at": "2026-10-25T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 12,
-    "metric": "flow_usd.fees",
+    "id": 413,
+    "metric": "flow_usd.voter_fees",
+    "value": 109,
+    "observed_at": "2026-10-25T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 312,
+    "metric": "flow_usd.vote_incentives",
     "value": 108,
     "observed_at": "2026-10-26T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 11,
-    "metric": "flow_usd.fees",
+    "id": 412,
+    "metric": "flow_usd.voter_fees",
+    "value": 108,
+    "observed_at": "2026-10-26T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 311,
+    "metric": "flow_usd.vote_incentives",
     "value": 107,
     "observed_at": "2026-10-27T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 10,
-    "metric": "flow_usd.fees",
+    "id": 411,
+    "metric": "flow_usd.voter_fees",
+    "value": 107,
+    "observed_at": "2026-10-27T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 310,
+    "metric": "flow_usd.vote_incentives",
     "value": 106,
     "observed_at": "2026-10-28T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 9,
-    "metric": "flow_usd.fees",
+    "id": 410,
+    "metric": "flow_usd.voter_fees",
+    "value": 106,
+    "observed_at": "2026-10-28T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 309,
+    "metric": "flow_usd.vote_incentives",
     "value": 105,
     "observed_at": "2026-10-29T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 8,
-    "metric": "flow_usd.fees",
+    "id": 409,
+    "metric": "flow_usd.voter_fees",
+    "value": 105,
+    "observed_at": "2026-10-29T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 308,
+    "metric": "flow_usd.vote_incentives",
     "value": 104,
     "observed_at": "2026-10-30T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 7,
-    "metric": "flow_usd.fees",
+    "id": 408,
+    "metric": "flow_usd.voter_fees",
+    "value": 104,
+    "observed_at": "2026-10-30T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 307,
+    "metric": "flow_usd.vote_incentives",
     "value": 103,
     "observed_at": "2026-10-31T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 6,
-    "metric": "flow_usd.fees",
+    "id": 407,
+    "metric": "flow_usd.voter_fees",
+    "value": 103,
+    "observed_at": "2026-10-31T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 306,
+    "metric": "flow_usd.vote_incentives",
+    "value": 102,
+    "observed_at": "2026-11-01T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 406,
+    "metric": "flow_usd.voter_fees",
     "value": 102,
     "observed_at": "2026-11-01T00:00:00.000Z",
     "source": "onchain",
@@ -768,15 +1488,23 @@
     "status": "confirmed"
    },
    {
-    "id": 5,
-    "metric": "flow_usd.fees",
+    "id": 305,
+    "metric": "flow_usd.vote_incentives",
     "value": 101,
     "observed_at": "2026-11-02T00:00:00.000Z",
     "source": "onchain",
     "status": "confirmed"
    },
    {
-    "id": 104,
+    "id": 405,
+    "metric": "flow_usd.voter_fees",
+    "value": 101,
+    "observed_at": "2026-11-02T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 504,
     "metric": "locked_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -784,7 +1512,7 @@
     "status": "confirmed"
    },
    {
-    "id": 105,
+    "id": 505,
     "metric": "price_usd",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -792,7 +1520,7 @@
     "status": "confirmed"
    },
    {
-    "id": 106,
+    "id": 506,
     "metric": "staked_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -800,7 +1528,7 @@
     "status": "confirmed"
    },
    {
-    "id": 107,
+    "id": 507,
     "metric": "staker_emission_share",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -808,7 +1536,7 @@
     "status": "confirmed"
    },
    {
-    "id": 108,
+    "id": 508,
     "metric": "total_supply",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -816,7 +1544,7 @@
     "status": "confirmed"
    },
    {
-    "id": 109,
+    "id": 509,
     "metric": "upgrade_release_aero",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -824,7 +1552,7 @@
     "status": "confirmed"
    },
    {
-    "id": 110,
+    "id": 510,
     "metric": "upgrade_release_velo",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -832,7 +1560,7 @@
     "status": "confirmed"
    },
    {
-    "id": 111,
+    "id": 511,
     "metric": "upgrade_reserve_aero",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -840,7 +1568,7 @@
     "status": "confirmed"
    },
    {
-    "id": 112,
+    "id": 512,
     "metric": "upgrade_reserve_velo",
     "value": 7,
     "observed_at": "2026-11-02T00:00:00.000Z",
@@ -848,8 +1576,16 @@
     "status": "confirmed"
    },
    {
-    "id": 4,
-    "metric": "flow_usd.fees",
+    "id": 304,
+    "metric": "flow_usd.vote_incentives",
+    "value": 100,
+    "observed_at": "2026-11-03T00:00:00.000Z",
+    "source": "onchain",
+    "status": "confirmed"
+   },
+   {
+    "id": 404,
+    "metric": "flow_usd.voter_fees",
     "value": 100,
     "observed_at": "2026-11-03T00:00:00.000Z",
     "source": "onchain",
@@ -883,6 +1619,31 @@
     "metric": "emission_rate_annual",
     "adapter": "chain.counter_rate",
     "params_doc": "contract, function (a uint256 view), args?: contract names, decimals? (18), direction: rise | fall, days: the window, not_before?: ISO (clamps the window start), plus_share?: { contract, function, denominator } (x (1 + value/denominator)), refuse_if_supply_falls?: token contract name. Tokens a year: the counter's change from the first block at or after the window start to the run block, over the days elapsed, x 365."
+   },
+   {
+    "metric": "flow_usd.lp_fees",
+    "adapter": "pool.tape_fees_daily",
+    "params_doc": "Pool fees per completed UTC day in USD, summed over the scan's chains (pool tapes, gauges, FeesCollected; priced on chain). `field`: gross (every fee users paid), allocator (gauged pools' fees, owed to the voters who allocate to them), or lp (gross − allocator). `scan`: the pool-scan block (chains: [{ chain_id, factories: [{ address, kind: v2_stable|v2_volatile|cl, tape, hook? }], factory_registry, leaf_voter, anchors: [{ token, feed, description, feed_chain_id? }], log_range? }], subsidy_creators: [address], root_voter?: { chain_id: 8453, address }); anchor descriptions must be one of ETH / USD, BTC / USD, WBTC / USD, CBBTC / USD, USDC / USD, USDT / USD, DAI / USD, USDS / USD, USDG / USD, EURC / USD, HYPE / USD. `max_scan_days` (1..14, default 7): days scanned per run, oldest missing first, plus the 3 revision days. `since` (YYYY-MM-DD): no day before it is scanned (the contracts' first day)."
+   },
+   {
+    "metric": "flow_usd.pool_fees_gross",
+    "adapter": "pool.tape_fees_daily",
+    "params_doc": "Pool fees per completed UTC day in USD, summed over the scan's chains (pool tapes, gauges, FeesCollected; priced on chain). `field`: gross (every fee users paid), allocator (gauged pools' fees, owed to the voters who allocate to them), or lp (gross − allocator). `scan`: the pool-scan block (chains: [{ chain_id, factories: [{ address, kind: v2_stable|v2_volatile|cl, tape, hook? }], factory_registry, leaf_voter, anchors: [{ token, feed, description, feed_chain_id? }], log_range? }], subsidy_creators: [address], root_voter?: { chain_id: 8453, address }); anchor descriptions must be one of ETH / USD, BTC / USD, WBTC / USD, CBBTC / USD, USDC / USD, USDT / USD, DAI / USD, USDS / USD, USDG / USD, EURC / USD, HYPE / USD. `max_scan_days` (1..14, default 7): days scanned per run, oldest missing first, plus the 3 revision days. `since` (YYYY-MM-DD): no day before it is scanned (the contracts' first day)."
+   },
+   {
+    "metric": "flow_usd.protocol_subsidy",
+    "adapter": "pool.vrm_incentives_daily",
+    "params_doc": "VRM incentive streams per completed UTC day in USD (allocator-earned seconds only), summed over the scan's chains. `class`: vote_incentives (third-party programs) or protocol_subsidy (programs whose creator is in scan.subsidy_creators). `scan`: the pool-scan block (chains: [{ chain_id, factories: [{ address, kind: v2_stable|v2_volatile|cl, tape, hook? }], factory_registry, leaf_voter, anchors: [{ token, feed, description, feed_chain_id? }], log_range? }], subsidy_creators: [address], root_voter?: { chain_id: 8453, address }); anchor descriptions must be one of ETH / USD, BTC / USD, WBTC / USD, CBBTC / USD, USDC / USD, USDT / USD, DAI / USD, USDS / USD, USDG / USD, EURC / USD, HYPE / USD. `max_scan_days` (1..14, default 7): days scanned per run, oldest missing first, plus the 3 revision days. `since` (YYYY-MM-DD): no day before it is scanned (the contracts' first day)."
+   },
+   {
+    "metric": "flow_usd.vote_incentives",
+    "adapter": "pool.vrm_incentives_daily",
+    "params_doc": "VRM incentive streams per completed UTC day in USD (allocator-earned seconds only), summed over the scan's chains. `class`: vote_incentives (third-party programs) or protocol_subsidy (programs whose creator is in scan.subsidy_creators). `scan`: the pool-scan block (chains: [{ chain_id, factories: [{ address, kind: v2_stable|v2_volatile|cl, tape, hook? }], factory_registry, leaf_voter, anchors: [{ token, feed, description, feed_chain_id? }], log_range? }], subsidy_creators: [address], root_voter?: { chain_id: 8453, address }); anchor descriptions must be one of ETH / USD, BTC / USD, WBTC / USD, CBBTC / USD, USDC / USD, USDT / USD, DAI / USD, USDS / USD, USDG / USD, EURC / USD, HYPE / USD. `max_scan_days` (1..14, default 7): days scanned per run, oldest missing first, plus the 3 revision days. `since` (YYYY-MM-DD): no day before it is scanned (the contracts' first day)."
+   },
+   {
+    "metric": "flow_usd.voter_fees",
+    "adapter": "pool.tape_fees_daily",
+    "params_doc": "Pool fees per completed UTC day in USD, summed over the scan's chains (pool tapes, gauges, FeesCollected; priced on chain). `field`: gross (every fee users paid), allocator (gauged pools' fees, owed to the voters who allocate to them), or lp (gross − allocator). `scan`: the pool-scan block (chains: [{ chain_id, factories: [{ address, kind: v2_stable|v2_volatile|cl, tape, hook? }], factory_registry, leaf_voter, anchors: [{ token, feed, description, feed_chain_id? }], log_range? }], subsidy_creators: [address], root_voter?: { chain_id: 8453, address }); anchor descriptions must be one of ETH / USD, BTC / USD, WBTC / USD, CBBTC / USD, USDC / USD, USDT / USD, DAI / USD, USDS / USD, USDG / USD, EURC / USD, HYPE / USD. `max_scan_days` (1..14, default 7): days scanned per run, oldest missing first, plus the 3 revision days. `since` (YYYY-MM-DD): no day before it is scanned (the contracts' first day)."
    },
    {
     "metric": "price_usd",

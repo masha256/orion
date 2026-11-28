@@ -232,6 +232,37 @@ export const TERMS: Record<string, Terms> = {
     commercial: 'unknown',
     note: 'no keyless default: the env var must be set',
   },
+  // Phase 3 R4 (RET-203): the six Aero chains AERO's pool scan reads besides Base and Ethereum (spec section 4.4).
+  'rpc:eip155:10:ORION_OP_RPC_URL': {
+    label: 'OP Mainnet RPC', kind: 'rpc', operator: 'the provider ORION_OP_RPC_URL names',
+    commercial: 'unknown',
+    note: 'no keyless default: the env var must be set (AERO pool scan)',
+  },
+  'rpc:eip155:42161:ORION_ARB_RPC_URL': {
+    label: 'Arbitrum One RPC', kind: 'rpc', operator: 'the provider ORION_ARB_RPC_URL names',
+    commercial: 'unknown',
+    note: 'no keyless default: the env var must be set (AERO pool scan)',
+  },
+  'rpc:eip155:57073:ORION_INK_RPC_URL': {
+    label: 'Ink RPC', kind: 'rpc', operator: 'the provider ORION_INK_RPC_URL names (chains.ts and the scan config cap its log range at 10,000 blocks)',
+    commercial: 'unknown',
+    note: 'no keyless default: the env var must be set (AERO pool scan)',
+  },
+  'rpc:eip155:4663:ORION_ROBINHOOD_RPC_URL': {
+    label: 'Robinhood Chain RPC', kind: 'rpc', operator: 'the provider ORION_ROBINHOOD_RPC_URL names',
+    commercial: 'unknown',
+    note: 'no keyless default: the env var must be set (AERO pool scan)',
+  },
+  'rpc:eip155:5042:ORION_ARC_RPC_URL': {
+    label: 'Arc RPC', kind: 'rpc', operator: 'the provider ORION_ARC_RPC_URL names',
+    commercial: 'unknown',
+    note: 'no keyless default: the env var must be set (AERO pool scan)',
+  },
+  'rpc:eip155:99901:ORION_ELYSIUM_RPC_URL': {
+    label: 'Elysium RPC', kind: 'rpc', operator: 'the provider ORION_ELYSIUM_RPC_URL names',
+    commercial: 'unknown',
+    note: 'no keyless default: the env var must be set (AERO pool scan; its price anchors read Base feeds)',
+  },
   'rpc:solana:ORION_SOL_RPC_URL': {
     label: 'Solana RPC', kind: 'rpc', operator: 'the provider ORION_SOL_RPC_URL names (Alchemy, per src/ingest/transport/solana.ts)',
     commercial: 'unknown',

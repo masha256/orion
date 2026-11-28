@@ -307,10 +307,9 @@ describe('source types and provenance', () => {
     };
     expect(tp('hype')).toEqual(['revenue.trading', 'holders.af_buyback']);
     expect(tp('pump')).toEqual(['revenue.protocol']);
-    expect(tp('aero')).toEqual(['revenue.fees', 'holders.voter_fees']);
     expect(tp('crv')).toEqual(['below_line.vote_incentives', 'below_line.vote_incentives.cross_checks']);
-    // Phase 3 R1: LIT's buyback and VVV's burn/revenue DefiLlama cross-checks are gone.
-    for (const id of ['cake', 'cvxcrv', 'link', 'lit', 'sdcrv', 'sky', 'uni', 'vvv', 'ycrv']) expect(tp(id), id).toEqual([]);
+    // Phase 3 R1: LIT's buyback and VVV's burn/revenue DefiLlama cross-checks are gone. Phase 3 R4: AERO's revenue is on chain.
+    for (const id of ['aero', 'cake', 'cvxcrv', 'link', 'lit', 'sdcrv', 'sky', 'uni', 'vvv', 'ycrv']) expect(tp(id), id).toEqual([]);
   });
 
   it('provenance.sources names each statement series by rung, never a full URL', () => {
@@ -329,12 +328,13 @@ describe('listingBar (spec §2 deferral, D6)', () => {
       failing: [{ line: 'revenue.trading', sourceType: 'third_party' }, { line: 'holders.af_buyback', sourceType: 'third_party' }],
     });
     expect(listingBar(repoAsset('pump')).failing).toEqual([{ line: 'revenue.protocol', sourceType: 'third_party' }]);
-    expect(listingBar(repoAsset('aero')).failing).toEqual([{ line: 'revenue.fees', sourceType: 'third_party' }, { line: 'holders.voter_fees', sourceType: 'third_party' }]);
+    // Phase 3 R4 (RET-203): AERO's revenue and holders lines read the pool scan (pool_scan rung) and pass.
+    expect(listingBar(repoAsset('aero'))).toEqual({ ok: true, failing: [] });
   });
 
-  it('AERO, HYPE and PUMP are the only assets failing today (reported, not blocked); cost lines may be not_measured', () => {
+  it('HYPE and PUMP are the only assets failing today (reported, not blocked; AERO passes since Phase 3 R4); cost lines may be not_measured', () => {
     const failing = ALL_ASSETS.filter((id) => !listingBar(repoAsset(id)).ok);
-    expect(failing).toEqual(['aero', 'hype', 'pump']);
+    expect(failing).toEqual(['hype', 'pump']);
   });
 
   it('a not_measured holders line fails; an asset without income_statement fails', () => {
@@ -366,11 +366,16 @@ describe('the default report day (Task 11, ruling R11.1 B)', () => {
   };
   /** Phase 3 R1 deleted these display/cross-check series, so the gate no longer waits on them. */
   const R1_REMOVED: Record<string, string[]> = { cake: ['flow_usd.fees'], uni: ['flow_usd.swap_fees'], vvv: ['flow_usd.revenue_proxy'] };
+  /**
+   * Phase 3 R4 (RET-203) moved AERO's day on purpose: flow_usd.fees retired, the gate waits on the four pool-scan series
+   * the statement reads (flow_usd.pool_fees_gross is monitor-only and read by no line).
+   */
+  const R4_DAY_FLOWS: Record<string, string[]> = { aero: ['flow_usd.lp_fees', 'flow_usd.protocol_subsidy', 'flow_usd.vote_incentives', 'flow_usd.voter_fees'] };
   const periodic = (id: string) => new Set(repoAsset(id).income_statement!.revenue.filter((l) => l.settlement === 'periodic').map((l) => l.metric!));
   const dayFlows = (id: string) => [...new Set(defaultDayFlowMetrics(repoAsset(id)))].filter((m) => !periodic(id).has(m)).sort();
 
   it.each(ALL_ASSETS.filter((id) => id !== 'ycrv'))('%s: gates on exactly the flows it gated on before (the day cannot move)', (id) => {
-    expect(dayFlows(id)).toEqual(V1_DAY_FLOWS[id]!.filter((m) => !(R1_REMOVED[id] ?? []).includes(m)));
+    expect(dayFlows(id)).toEqual(R4_DAY_FLOWS[id] ?? V1_DAY_FLOWS[id]!.filter((m) => !(R1_REMOVED[id] ?? []).includes(m)));
   });
 
   it("ycrv: v1's st-yCRV fee leaves (no line reads it), the two by-sender flows of yearn_gross's own scan join", () => {
@@ -456,12 +461,16 @@ describe('fix round 1: below-line not measured is never 0 (I3)', () => {
     expect(v2.holderFlow.fromRevenue).toBeCloseTo(year(5));
   });
 
-  it('AERO (repo) on synthetic series: below line null, not 0', () => {
+  it('AERO (repo, Phase 3 R4) on synthetic series: below line measured, the vote incentives only (protocol_subsidy left out)', () => {
     const input = syntheticInput(repoAsset('aero'));
     const v2 = incomeStatementV2(input);
-    expect(v2.belowLine.toHolders).toBeNull();
-    expect(v2.holderFlow.fromBelowLine).toBeNull();
-    expect(v2.holderFlow.byBucket.cash!.fromBelowLine).toBeNull();
+    const vi = v2.belowLine.lines.find((b) => b.id === 'vote_incentives')!.annualized;
+    expect(vi).toEqual(expect.any(Number));
+    expect(v2.belowLine.notMeasured).toEqual([]);
+    expect(v2.belowLine.toHolders).toBe(vi);
+    expect(v2.holderFlow.fromBelowLine).toBe(vi);
+    expect(v2.holderFlow.byBucket.cash!.fromBelowLine).toBe(vi);
+    expect(v2.flags).toContain('not in holder flow: protocol_subsidy');
   });
 
   it('some measured: the measured sum, the rest listed', () => {

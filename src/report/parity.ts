@@ -92,7 +92,11 @@ const without = (pairs: PathPair[], ...labels: string[]): PathPair[] => pairs.fi
  * object as JSON (tools/phase2-proof/write-parity.ts writes it; tests/report/parity.test.ts asserts they agree).
  */
 export const PARITY_PATHS: Record<string, PathPair[]> = {
-  aero: [...commonPairs('cash'), revIncome('fees', 'voter_fees'), holderIncome('voter_fees', 'voter_fees'), ...flowPair('voter_fees', 'fees')],
+  // Phase 3 R4 (RET-203): AERO's revenue is read on chain (voter_rev + lp_rev, incentives below the line), so its v2
+  // figures differ from any v1 release's on purpose (the R4 proof is flatdiff with an AERO allowlist). The pairs name
+  // the new line ids; v1's holder flow `fees` (the retired third-party series) has none, nor does lp_rev (v1 had no LP
+  // line). belowLine.toHolders is the vote_incentives line alone: protocol_subsidy is in_holder_flow: false.
+  aero: [...commonPairs('cash'), revIncome('voter_rev', 'voter_fees'), holderIncome('voter_fees', 'voter_fees')],
   cake: [
     ...commonPairs('burn'), revIncome('burn_rev', 'burn'), revIncome('treasury_rev', 'treasury'), holderIncome('burn', 'burn'), protocolIncome('treasury', 'treasury'),
     ...flowPair('burn', 'burn'),

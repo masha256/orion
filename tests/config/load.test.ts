@@ -364,7 +364,8 @@ describe('metric watch', () => {
     // Re-pinned (Phase 3 R2 Task 6 fix wave, E): entriesFor includes the asset's own token's prices.yaml entry (AERO's again).
     // Re-pinned (Phase 3 R2 Task 10 fix wave, A/R36): AERO's prices.yaml entry valid_from 2026-09-23 -> 2026-10-22.
     // Re-pinned (Phase 3 R3 Task 5, Ruling R6): circulating_supply rebuild_from 2026-11-10.
-    expect(asset('aero')).toBe('4f3d7c2f690dbef0bc30f078d966ce6fb34ffc4252847dfbcfeeac2180cda99d');
+    // Re-pinned (Phase 3 R4 Task 8, RET-203): revenue on chain via pool_scan; flow_usd.fees retired; statement scope complete.
+    expect(asset('aero')).toBe('41d417dd8eac6aebf194b5ec1c5bec4cb625767f2982b11f64e7a617b5869cb8');
   });
 });
 

@@ -53,7 +53,12 @@ describe('sources register (docs/ops/sources-register.md)', () => {
   it('RPC rows name the env var, never a URL; commercial use is known only where the repo quotes the terms', () => {
     const uses = collectUses(loadAssets(root));
     const rpc = [...uses.keys()].filter((k) => k.startsWith('rpc:'));
-    expect(rpc.sort()).toEqual(['rpc:eip155:1:ORION_ETH_RPC_URL', 'rpc:eip155:56:ORION_BNB_RPC_URL', 'rpc:eip155:8453:ORION_BASE_RPC_URL', 'rpc:solana:ORION_SOL_RPC_URL']);
+    // Phase 3 R4 (RET-203): AERO's pool scan adds the six other Aero chains.
+    expect(rpc.sort()).toEqual([
+      'rpc:eip155:10:ORION_OP_RPC_URL', 'rpc:eip155:1:ORION_ETH_RPC_URL', 'rpc:eip155:42161:ORION_ARB_RPC_URL', 'rpc:eip155:4663:ORION_ROBINHOOD_RPC_URL',
+      'rpc:eip155:5042:ORION_ARC_RPC_URL', 'rpc:eip155:56:ORION_BNB_RPC_URL', 'rpc:eip155:57073:ORION_INK_RPC_URL', 'rpc:eip155:8453:ORION_BASE_RPC_URL',
+      'rpc:eip155:99901:ORION_ELYSIUM_RPC_URL', 'rpc:solana:ORION_SOL_RPC_URL',
+    ]);
     for (const [key, t] of Object.entries(TERMS)) {
       expect(JSON.stringify(t), key).not.toMatch(/https?:\/\//);
       // A date checked only on rows whose terms text is quoted (CoinGecko: roadmap rule 5; DefiLlama: roadmap rule 1).

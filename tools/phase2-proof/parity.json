@@ -126,34 +126,14 @@
       "yields.dilution"
     ],
     [
-      "revenue line fees",
-      "incomeStatement.revenue.lines[id=fees].annualized",
+      "revenue line voter_rev",
+      "incomeStatement.revenue.lines[id=voter_rev].annualized",
       "income.lines[id=voter_fees].annualized"
     ],
     [
       "holders line voter_fees",
       "incomeStatement.holders.lines[id=voter_fees].annualized",
       "income.lines[id=voter_fees].annualized"
-    ],
-    [
-      "holder flow line voter_fees",
-      "incomeStatement.holderFlow.lines[id=voter_fees].gross",
-      "flows[id=fees].gross"
-    ],
-    [
-      "holder flow line voter_fees net",
-      "incomeStatement.holderFlow.lines[id=voter_fees].net",
-      "flows[id=fees].net"
-    ],
-    [
-      "holder flow line voter_fees yield",
-      "incomeStatement.holderFlow.lines[id=voter_fees].yield",
-      "flows[id=fees].yield"
-    ],
-    [
-      "holder flow line voter_fees growth.annualized",
-      "incomeStatement.holderFlow.lines[id=voter_fees].growth.annualized",
-      "flows[id=fees].growth.annualized"
     ]
   ],
   "cake": [

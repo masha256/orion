@@ -5,7 +5,8 @@ chain: base
 
 # Aero (Aerodrome + Velodrome, launched 2026-10-22 00:00Z). Contracts from app.aero.xyz/docs/security, read live on
 # 2026-11-09 (Base block 55,335,954); see docs/superpowers/specs/2026-11-09-orion-aero-supply-design.md section 2.
-# No CoinGecko or DefiLlama read in this file except the revenue series (Mike, 2026-11-09: licensing; Phase 3 replaces it).
+# No CoinGecko or third-party read in this file (Mike, 2026-11-09: licensing). Since Phase 3 R4 the revenue is read on chain
+# too (spec docs/superpowers/specs/2026-11-27-orion-phase3-r4-aero-pool-scan-design.md).
 contracts:
   token: "0x3f5bF3EdAc59d650D8fDf9657a71F2f904A3a4Ee" # new AERO; pre-minted the two upgrade allocations at launch
   ve: "0xBF7977E1521e9a3032bf7243Ee4712f311f13915" # VotingEscrow: sAERO; supply() is the AERO staked
@@ -22,7 +23,7 @@ contracts:
 
 ingest: { chain_id: 8453, rpc_url_env: ORION_BASE_RPC_URL, backfill_days: 100 }
 
-# Identifiers only (no source reads them): CoinGecko's id for the new token, DefiLlama's slug the revenue series uses.
+# Identifiers only (no source reads them; retired in Phase 3 R8).
 external_ids:
   coingecko: aero
   defillama: aerodrome
@@ -137,37 +138,239 @@ metrics:
     monitor_only: true
     source: { type: adapter, name: chain.counter_rate, params: { contract: token, function: balanceOf, args: [ velo_migration ], direction: fall, days: 30, not_before: "2026-10-22T00:00:00Z", refuse_if_supply_falls: token } }
 
-  # DefiLlama's `aerodrome` holders revenue: Base-only Aerodrome gauged-pool fees before 2026-10-22, the all-chain Aero
-  # parent (parent#aero-protocol) since, so the 91-day window spans the change. Kept until Phase 3 reads exchange revenue on
-  # chain. Never re-backfill it: the 2026-09-09 manual correction row stays.
-  flow_usd.fees:
+  # Revenue on chain (Phase 3 R4, spec sections 4-5): one pool scan per chain and UTC day on the 8 Aero chains, shared
+  # by the five metrics below (the adapter memoizes it per run). Gross = each pool's tape accumulators (PoolTape /
+  # CLPoolTape) between the day's boundary blocks; allocator = the gauged pools' fees to sAERO allocators; lp = gross less
+  # allocator; incentives = VRM programs streamed to allocators, by creator. USD from Chainlink anchors and the pool
+  # graph. Fails a day on any failed read, coverage below 95 percent, or allocator above gross (0.5 percent and $1).
+  # `since` is the launch: no earlier day is ever scanned (the contracts do not exist before it).
+  # Every address below was copied from ~/.hermes/profiles/raymond/workspace/orion/phase3-r4-scoping/ (files named per
+  # line); each chain lists every factory its FactoryRegistry returns (Arc: incl. the Aero Lite factories), so a new
+  # one shows as factory drift. log_range 1,000,000 blocks a getLogs, Ink 10,000 (its provider's cap).
+  flow_usd.voter_fees:
     type: flow
     unit: usd
     cadence: daily
-    staleness_days: 4
+    staleness_days: 3
     critical: true
-    source: { type: defillama, slug: aerodrome, data_type: dailyHoldersRevenue, backfill_days: 100 }
+    source:
+      type: adapter
+      name: pool.tape_fees_daily
+      params:
+        field: allocator
+        since: "2026-10-22"
+        scan: &aero_scan
+          chains:
+            # base (8453)
+            - chain_id: 8453
+              factories:
+                # StablePoolFactory: enum_head.json base.v2s (in discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x78589E876edcEbdce72ee3436ab3c9AD3a7cEF2D", kind: v2_stable, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }
+                # VolatilePoolFactory: enum_head.json base.v2v (in discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x8E6a9FCd1d638CC760Ffba397605Fe3355dE76D2", kind: v2_volatile, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }
+                # CLFactory: enum_head.json base.cl (in discovery.json targets); tape: factory_tape_snapshots.json; hook: enum_head.json defaultSwapHook
+                - { address: "0x9CB220581b91b0C83223012FE69688b92aD07a76", kind: cl, tape: "0x27d5eb73e7406675f6b0cbd037490ec3dba935a4", hook: "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434" }
+              factory_registry: "0x7b2a2c12dc5ea2a31455952a05031c3e4bb28f3e" # discovery.json; incentives-and-events.md table
+              leaf_voter: "0x382409fad8503FbCdbB27A4211551fa03e884078" # LeafVoter: onchain-revenue.md section 10
+              anchors:
+                - { token: "0x0555e30da8f98308edb960aa94c0db47230d2b9c", feed: "0xCCADC697c55bbB68dc5bCdf8d3CBe83CdD4E071E", description: "WBTC / USD" } # WBTC: anchors-chainlink.json tier A
+                - { token: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", feed: "0x7e860098F58bBFC8648a4311b374B1D669a2bc6B", description: "USDC / USD" } # USDC: anchors-chainlink.json tier A
+                - { token: "0x4200000000000000000000000000000000000006", feed: "0x50015f8b17fb2C290Dde41fDc246ed0dcEE93a8b", description: "ETH / USD" } # WETH: anchors-chainlink.json tier A
+                - { token: "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2", feed: "0xf19d560eB8d2ADf07BD6D13ed03e1D11215721F9", description: "USDT / USD" } # USDT: anchors-chainlink.json tier A
+                - { token: "0x50c5725949a6f0c72e6c4a641f24049a917db0cb", feed: "0x591e79239a7d679378eC8c847e5038150364C78F", description: "DAI / USD" } # DAI: anchors-chainlink.json tier A
+                - { token: "0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42", feed: "0x9867186e52d2F1C2c565CDA6E747101Fa56501e0", description: "EURC / USD" } # EURC: anchors-chainlink.json tier A
+                - { token: "0x820c137fa70c8691f0e44dc420a5e53c168921dc", feed: "0x2330aaE3bca5F05169d5f4597964D44522F62930", description: "USDS / USD" } # USDS: anchors-chainlink.json tier A
+                - { token: "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf", feed: "0x10509b4053385b49145Fab2D6B1c58e96Eac5b79", description: "CBBTC / USD" } # cbBTC: anchors-chainlink.json tier A
+              log_range: 1000000
+            # ethereum (1)
+            - chain_id: 1
+              factories:
+                # StablePoolFactory: enum_head.json ethereum.v2s (in discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x78589E876edcEbdce72ee3436ab3c9AD3a7cEF2D", kind: v2_stable, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }
+                # VolatilePoolFactory: enum_head.json ethereum.v2v (in discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x8E6a9FCd1d638CC760Ffba397605Fe3355dE76D2", kind: v2_volatile, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }
+                # CLFactory: enum_head.json ethereum.cl (in discovery.json targets); tape: factory_tape_snapshots.json; hook: enum_head.json defaultSwapHook
+                - { address: "0xF4Fd2E6c5B60c5b365cd1B96DD6245E6D60414c2", kind: cl, tape: "0x27d5eb73e7406675f6b0cbd037490ec3dba935a4", hook: "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434" }
+              factory_registry: "0xdd1705e23762f4d6e44d8c31bd8ea80c54612239" # discovery.json; incentives-and-events.md table
+              leaf_voter: "0x382409fad8503FbCdbB27A4211551fa03e884078" # LeafVoter: onchain-revenue.md section 10
+              anchors:
+                - { token: "0x1abaea1f7c830bd89acc67ec4af516284b1bc33c", feed: "0x04F84020Fdf10d9ee64D1dcC2986EDF2F556DA11", description: "EURC / USD" } # EURC: anchors-chainlink.json tier A
+                - { token: "0x6b175474e89094c44da98b954eedeac495271d0f", feed: "0xAed0c38402a5d19df6E4c03F4E2DceD6e29c1ee9", description: "DAI / USD" } # DAI: anchors-chainlink.json tier A
+                - { token: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", feed: "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6", description: "USDC / USD" } # USDC: anchors-chainlink.json tier A
+                - { token: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", feed: "0x5147eA642CAEF7BD9c1265AadcA78f997AbB9649", description: "ETH / USD" } # WETH: anchors-chainlink.json tier A
+                - { token: "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf", feed: "0x7922912AB91eb6A4b0350b01Dd066994BA64f882", description: "CBBTC / USD" } # cbBTC: anchors-chainlink.json tier A
+                - { token: "0xdac17f958d2ee523a2206206994597c13d831ec7", feed: "0x3E7d1eAB13ad0104d2750B8863b489D65364e32D", description: "USDT / USD" } # USDT: anchors-chainlink.json tier A
+                - { token: "0xdc035d45d973e3ec169d2276ddab16f1e407384f", feed: "0xfF30586cD0F29eD462364C7e81375FC0C71219b1", description: "USDS / USD" } # USDS: anchors-chainlink.json tier A
+                - { token: "0xe343167631d89b6ffc58b88d6b7fb0228795491d", feed: "0x14f0737d6b705259e521EA6E9E3506AC78dBd311", description: "USDG / USD" } # USDG: anchors-chainlink.json tier A
+              log_range: 1000000
+            # optimism (10)
+            - chain_id: 10
+              factories:
+                # StablePoolFactory: enum_head.json optimism.v2s (in discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x78589E876edcEbdce72ee3436ab3c9AD3a7cEF2D", kind: v2_stable, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }
+                # VolatilePoolFactory: enum_head.json optimism.v2v (in discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x8E6a9FCd1d638CC760Ffba397605Fe3355dE76D2", kind: v2_volatile, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }
+                # CLFactory: enum_head.json optimism.cl (in discovery.json targets); tape: factory_tape_snapshots.json; hook: enum_head.json defaultSwapHook
+                - { address: "0xfeaB42D90055db3a0616249f76B6002D72266778", kind: cl, tape: "0x27d5eb73e7406675f6b0cbd037490ec3dba935a4", hook: "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434" }
+              factory_registry: "0xb6f9705a631cc1c0e8570ffde48882c95e2df408" # discovery.json; incentives-and-events.md table
+              leaf_voter: "0x382409fad8503FbCdbB27A4211551fa03e884078" # LeafVoter: onchain-revenue.md section 10
+              anchors:
+                - { token: "0x94b008aa00579c1307b0ef2c499ad98a8ce58e58", feed: "0xECef79E109e997bCA29c1c0897ec9d7b03647F5E", description: "USDT / USD" } # USDT: anchors-chainlink.json tier A
+                - { token: "0x0b2c639c533813f4aa9d7837caf62653d097ff85", feed: "0x16a9FA2FDa030272Ce99B29CF780dFA30361E0f3", description: "USDC / USD" } # USDC: anchors-chainlink.json tier A
+                - { token: "0x4200000000000000000000000000000000000006", feed: "0x13e3Ee699D1909E989722E753853AE30b17e08c5", description: "ETH / USD" } # WETH: anchors-chainlink.json tier A
+                - { token: "0x68f180fcce6836688e9084f035309e29bf0a2095", feed: "0x718A5788b89454aAE3A028AE9c111A29Be6c2a6F", description: "WBTC / USD" } # WBTC: anchors-chainlink.json tier A
+                - { token: "0xda10009cbd5d07dd0cecc66161fc93d7c9000da1", feed: "0x8dBa75e83DA73cc766A7e5a0ee71F656BAb470d6", description: "DAI / USD" } # DAI: anchors-chainlink.json tier A
+                - { token: "0xdcb612005417dc906ff72c87df732e5a90d49e11", feed: "0xDb2A51a5DD73865F1b0d1c33F99a96E0e7ae742c", description: "EURC / USD" } # EURC: anchors-chainlink.json tier A
+              log_range: 1000000
+            # arbitrum (42161)
+            - chain_id: 42161
+              factories:
+                # StablePoolFactory: enum_head.json arbitrum.v2s (in discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x78589E876edcEbdce72ee3436ab3c9AD3a7cEF2D", kind: v2_stable, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }
+                # VolatilePoolFactory: enum_head.json arbitrum.v2v (in discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x8E6a9FCd1d638CC760Ffba397605Fe3355dE76D2", kind: v2_volatile, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }
+                # CLFactory: enum_head.json arbitrum.cl (in discovery.json targets); tape: factory_tape_snapshots.json; hook: enum_head.json defaultSwapHook
+                - { address: "0x88a60ee77392577c355C0acb2A8d476D5a4EC03a", kind: cl, tape: "0x27d5eb73e7406675f6b0cbd037490ec3dba935a4", hook: "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434" }
+              factory_registry: "0x9e635b2c689fc52201df7ef1c9fa607c2f58f666" # discovery.json; incentives-and-events.md table
+              leaf_voter: "0x382409fad8503FbCdbB27A4211551fa03e884078" # LeafVoter: onchain-revenue.md section 10
+              anchors:
+                - { token: "0x004b506865409877c9fa29bfb1eba929984b9bbc", feed: "0xE9Bd4Ca2CDacb56cd06c9C4C5231e69c33340B3c", description: "USDG / USD" } # USDG: anchors-chainlink.json tier A
+                - { token: "0x2f2a2543b76a4166549f7aab2e75bef0aefc5b0f", feed: "0xd0C7101eACbB49F3deCcCc166d238410D6D46d57", description: "WBTC / USD" } # WBTC: anchors-chainlink.json tier A
+                - { token: "0x82af49447d8a07e3bd95bd0d56f35241523fbab1", feed: "0xe4D040128CFdF03eC221832251caC9b6f0515E3f", description: "ETH / USD" } # WETH: anchors-chainlink.json tier A
+                - { token: "0xaf88d065e77c8cc2239327c5edb3a432268e5831", feed: "0x0D0FaDDd42C53fc6d1b933C7ccccCFaF9B79B571", description: "USDC / USD" } # USDC: anchors-chainlink.json tier A
+                - { token: "0xda10009cbd5d07dd0cecc66161fc93d7c9000da1", feed: "0xc5C8E77B397E531B8EC06BFb0048328B30E9eCfB", description: "DAI / USD" } # DAI: anchors-chainlink.json tier A
+                - { token: "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", feed: "0x158B2203D267a50BE9b7930D13d8247A4968D659", description: "USDT / USD" } # USD₮0: anchors-chainlink.json tier A
+              log_range: 1000000
+            # ink (57073)
+            - chain_id: 57073
+              factories:
+                # StablePoolFactory: enum_head.json ink.v2s (in discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x78589E876edcEbdce72ee3436ab3c9AD3a7cEF2D", kind: v2_stable, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }
+                # VolatilePoolFactory: enum_head.json ink.v2v (in discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x8E6a9FCd1d638CC760Ffba397605Fe3355dE76D2", kind: v2_volatile, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }
+                # CLFactory: enum_head.json ink.cl (in discovery.json targets); tape: factory_tape_snapshots.json; hook: enum_head.json defaultSwapHook
+                - { address: "0x7660BF2aDefC687C22906112ca323d60A00358cF", kind: cl, tape: "0x27d5eb73e7406675f6b0cbd037490ec3dba935a4", hook: "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434" }
+              factory_registry: "0xdd1705e23762f4d6e44d8c31bd8ea80c54612239" # discovery.json; incentives-and-events.md table
+              leaf_voter: "0x382409fad8503FbCdbB27A4211551fa03e884078" # LeafVoter: onchain-revenue.md section 10
+              anchors:
+                - { token: "0x0200c29006150606b650577bbe7b6248f58470c1", feed: "0x5aF168556BaA3Bd5c232261F7D7C662a2Ed0Db85", description: "USDT / USD" } # USD₮0: anchors-chainlink.json tier A
+                - { token: "0x2d270e6886d130d724215a266106e6832161eaed", feed: "0x89991637dbaCd0999dE1bc8e86330302EAd2CD89", description: "USDC / USD" } # USDC: anchors-chainlink.json tier A
+                - { token: "0x4200000000000000000000000000000000000006", feed: "0x963d5d3aD2Dfd3fe759d376fF62A0963176DBdF5", description: "ETH / USD" } # WETH: anchors-chainlink.json tier A
+                - { token: "0xe343167631d89b6ffc58b88d6b7fb0228795491d", feed: "0xdb3B1fa77CF2c9597f9d4871Bed1Df03D096fdf3", description: "USDG / USD" } # USDG: anchors-chainlink.json tier A
+              log_range: 10000
+            # robinhood (4663)
+            - chain_id: 4663
+              factories:
+                # StablePoolFactory: enum_head.json robinhood.v2s (in discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x78589E876edcEbdce72ee3436ab3c9AD3a7cEF2D", kind: v2_stable, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }
+                # VolatilePoolFactory: enum_head.json robinhood.v2v (in discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x8E6a9FCd1d638CC760Ffba397605Fe3355dE76D2", kind: v2_volatile, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }
+                # CLFactory: enum_head.json robinhood.cl (in discovery.json targets); tape: factory_tape_snapshots.json; hook: enum_head.json defaultSwapHook
+                - { address: "0xc63d7338c178e805c544B8f897066bD3BBcBE136", kind: cl, tape: "0x27d5eb73e7406675f6b0cbd037490ec3dba935a4", hook: "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434" }
+              factory_registry: "0xdd1705e23762f4d6e44d8c31bd8ea80c54612239" # discovery.json; incentives-and-events.md table
+              leaf_voter: "0x382409fad8503FbCdbB27A4211551fa03e884078" # LeafVoter: onchain-revenue.md section 10
+              anchors:
+                - { token: "0x0bd7d308f8e1639fab988df18a8011f41eacad73", feed: "0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9", description: "ETH / USD" } # WETH: anchors-chainlink.json tier A
+                - { token: "0x5fc5360d0400a0fd4f2af552add042d716f1d168", feed: "0x61B7e5650328764B076A108EFF5fa7282a1B9aD2", description: "USDG / USD" } # USDG: anchors-chainlink.json tier A
+                - { token: "0xcec185eb182c47d1ba1efc84e6959e18cd620be4", feed: "0x0009cD492adf8167f9eEBf1293556A673530a21a", description: "CBBTC / USD" } # cbBTC: anchors-chainlink.json tier A
+              log_range: 1000000
+            # arc (5042)
+            - chain_id: 5042
+              factories:
+                # StablePoolFactory: enum_head.json arc.v2s (in discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x78589E876edcEbdce72ee3436ab3c9AD3a7cEF2D", kind: v2_stable, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }
+                # VolatilePoolFactory: enum_head.json arc.v2v (in discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x8E6a9FCd1d638CC760Ffba397605Fe3355dE76D2", kind: v2_volatile, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }
+                # CLFactory: enum_head.json arc.cl (in discovery.json targets); tape: factory_tape_snapshots.json; hook: enum_head.json defaultSwapHook
+                - { address: "0x7F83235643181E440433400a027618Cd50879751", kind: cl, tape: "0x27d5eb73e7406675f6b0cbd037490ec3dba935a4", hook: "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434" }
+                # Aero Lite stable factory (0 pools): enum_head.json arc.lite_v2s (in discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0xaEd253F1aD84d99f2165256D701b2b481DD4CC16", kind: v2_stable, tape: "0x8da07efabcf124b61671df449bc73292d4b56c25" }
+                # Aero Lite volatile factory (0 pools): enum_head.json arc.lite_v2v (in discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x9bc8b3F60D349d687Fb44A018967025E3741F9a5", kind: v2_volatile, tape: "0x8da07efabcf124b61671df449bc73292d4b56c25" }
+                # Aero Lite CLFactory: enum_head.json arc.lite_cl (in discovery.json targets); tape: factory_tape_snapshots.json; hook: enum_head.json defaultSwapHook
+                - { address: "0xb89Df768aF2CFE637ceB352c587Fe8edAf491d03", kind: cl, tape: "0x967f5352a6448e22d7361e149103350c49345ee9", hook: "0xaaf164008441f112eb2858d9f7a2db1b84b1e415" }
+              factory_registry: "0xce44907dc45d3bfa3f5f6035b0e6e8b22d780a42" # discovery.json; incentives-and-events.md table
+              leaf_voter: "0x382409fad8503FbCdbB27A4211551fa03e884078" # LeafVoter: onchain-revenue.md section 10
+              anchors:
+                - { token: "0x128cc466b61f542da60c70e3aa11c10e19b84edb", feed: "0x50FCDD99D6762D1C170DC6A9111db944AEE6D364", description: "ETH / USD" } # WETH: anchors-chainlink.json tier A
+                - { token: "0x3600000000000000000000000000000000000000", feed: "0x84EA90AC252Dc437031461836DB5164219147905", description: "USDC / USD" } # USDC: anchors-chainlink.json tier A
+                - { token: "0xbef5f6d51cb62b58e6a8f77868681825c6fe21c1", feed: "0x361b95c10b76Ca3f35C686d423e43A951755Bf23", description: "EURC / USD" } # EURC: anchors-chainlink.json tier A
+              log_range: 1000000
+            # elysium (99901)
+            - chain_id: 99901
+              factories:
+                # StablePoolFactory: enum_head.json elysium.v2s (in elysium_discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x78589E876edcEbdce72ee3436ab3c9AD3a7cEF2D", kind: v2_stable, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }
+                # VolatilePoolFactory: enum_head.json elysium.v2v (in elysium_discovery.json targets); tape: factory_tape_snapshots.json
+                - { address: "0x8E6a9FCd1d638CC760Ffba397605Fe3355dE76D2", kind: v2_volatile, tape: "0x34bdd64b19d8631f936c2d07f19aaa6b83515992" }
+                # CLFactory: enum_head.json elysium.cl (in elysium_discovery.json targets); tape: factory_tape_snapshots.json; hook: enum_head.json defaultSwapHook
+                - { address: "0xEfd7A089D3057F05189B05f74Ffcf30610c42891", kind: cl, tape: "0x27d5eb73e7406675f6b0cbd037490ec3dba935a4", hook: "0xc0ed888afe87ed1acf01d9f19bb850159e3ce434" }
+              factory_registry: "0xdd1705e23762f4d6e44d8c31bd8ea80c54612239" # elysium_discovery.json; incentives-and-events.md table
+              leaf_voter: "0x382409fad8503FbCdbB27A4211551fa03e884078" # LeafVoter: onchain-revenue.md section 10
+              anchors:
+                - { token: "0xb47c4c8f73f009cc0c0d3f92b388d13e293f0b65", feed: "0x7e860098F58bBFC8648a4311b374B1D669a2bc6B", description: "USDC / USD", feed_chain_id: 8453 } # anchors-chainlink.json cross_chain_anchors
+                - { token: "0xba876237b0f021a6c6d852d6c26e107997cc5e81", feed: "0xEdB56c5DE751eD3182DDa337f7d9ab33cf091DcA", description: "HYPE / USD", feed_chain_id: 8453 } # anchors-chainlink.json cross_chain_anchors
+                - { token: "0xe9c29585eae4b9a55b02a9605aea892b40d972e8", feed: "0x32F587986D3fb47601157c19615d568BeD0BCabc", description: "BTC / USD", feed_chain_id: 8453 } # anchors-chainlink.json cross_chain_anchors
+              log_range: 1000000
+          # Programs these two create book as protocol_subsidy, every other creator as vote_incentives (spec section 11).
+          subsidy_creators:
+            - "0x7269de76188E6597444D0859C4e5c336D3c39dDb" # Aero Foundation TGE wallet: incentives-and-events.md table
+            - "0x42255e3c2d0b71a0b006243148fdf1a71d054ce0" # governance multisig: incentives-and-events.md table
+          root_voter: { chain_id: 8453, address: "0x49d7d4f17Ec56Ef8fA04E464AF5D1A4942CC31e6" } # Base root Voter: incentives-and-events.md table
 
-# Carried from the holder_flows and reporting blocks Task 11 retired (the capture rules and haircuts now sit on
-# the holders and below_line lines):
-# Report-only holder yield and growth (orion report yield). AERO's fees arrive as the pools' own tokens, many long-tail:
-# 2 percent. Protocol revenue waits for the Phase 3 pilot.
-# Income statement (Mike, 2026-10-11): all fees go to the stakers; the protocol keeps none (revisit in Phase 3).
-#
-# Income statement v2 (spec 2026-10-28 §6/§8, Phase 2 Task 2): the report's only block since Task 11 retired
-# holder_flows and reporting. Revenue = what users pay; each section says where it goes.
+  flow_usd.lp_fees:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 3
+    source: { type: adapter, name: pool.tape_fees_daily, params: { field: lp, since: "2026-10-22", scan: *aero_scan } }
+
+  # Report-only: gross pool fees (allocator + LP), the bound the allocator is checked against; its run carries the
+  # coverage, drift and anchor warnings.
+  flow_usd.pool_fees_gross:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 3
+    monitor_only: true
+    source: { type: adapter, name: pool.tape_fees_daily, params: { field: gross, since: "2026-10-22", scan: *aero_scan } }
+
+  # VRM incentive programs streamed to allocators: third parties and the Foundation-signer Safe (vote_incentives), and the
+  # Foundation TGE wallet and governance multisig (protocol_subsidy: Aero's own money).
+  flow_usd.vote_incentives:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 3
+    source: { type: adapter, name: pool.vrm_incentives_daily, params: { class: vote_incentives, since: "2026-10-22", scan: *aero_scan } }
+
+  flow_usd.protocol_subsidy:
+    type: flow
+    unit: usd
+    cadence: daily
+    staleness_days: 3
+    source: { type: adapter, name: pool.vrm_incentives_daily, params: { class: protocol_subsidy, since: "2026-10-22", scan: *aero_scan } }
+
+# Income statement v2 (spec 2026-10-28 §6/§8; Phase 3 R4 spec section 5): revenue = every pool fee users pay, on chain
+# since the launch. The LP share is the cost of revenue; sAERO allocators get the rest (contractual, paid in the pools'
+# own tokens, many long-tail: 2 percent haircut). Incentives are below the line: third-party vote incentives to holders
+# (3 percent, CRV's figure), Aero's own programs shown but left out of holder flow. Pre-merger Aerodrome is not rebuilt,
+# so the window reads "N of 91 days" and growth is not meaningful until a full prior window exists.
 income_statement:
   category: dex
-  scope: protocol_share_only
+  scope: complete
   window_days: 91
+  history_start: "2026-10-22"
   revenue:
-    - { id: fees, label: "pool fees to stakers (DefiLlama dailyHoldersRevenue): all-chain Aero since 2026-10-22, Base-only Aerodrome before", metric: flow_usd.fees }
+    - { id: voter_rev, label: "pool fees to sAERO allocators (gauged pools, 8 chains)", metric: flow_usd.voter_fees, started: "2026-10-22" }
+    - { id: lp_rev, label: "pool fees kept by LPs (unstaked, ungauged and Aero Lite pools)", metric: flow_usd.lp_fees, started: "2026-10-22" }
   cost_of_revenue:
-    - { id: lp_fees, to: lps, not_measured: "swap fees to LPs and ungauged pools: pools not scanned yet (Phase 3)" }
+    - { id: lp_fees, to: lps, of: lp_rev }
   holders:
-    - { id: voter_fees, of: fees, bucket: cash, haircut: 0.02, recipient_base: locked, capture_rule: contractual, note: "all-chain Aero since 2026-10-22 (DefiLlama parent#aero-protocol); Base-only Aerodrome before" }
+    - { id: voter_fees, of: voter_rev, bucket: cash, haircut: 0.02, recipient_base: locked, capture_rule: contractual }
   below_line:
-    - { id: bribes, to: holders, not_measured: "incentives to sAERO allocators (Predictive Allocation): not read yet (Phase 3; Foundation migration incentives to be held apart)" }
+    - { id: vote_incentives, metric: flow_usd.vote_incentives, to: holders, bucket: cash, haircut: 0.03, recipient_base: locked, capture_rule: programmatic, started: "2026-10-22" }
+    - { id: protocol_subsidy, metric: flow_usd.protocol_subsidy, to: holders, in_holder_flow: false, note: "Aero Foundation TGE wallet and governance multisig programs: Aero's own money recycled", started: "2026-10-22" }
   dilution:
     - { id: aero_upgrade, metric: upgrade_release_aero, cap_metric: upgrade_reserve_aero, note: "unclaimed Aerodrome upgrade reserve moving to holders (trailing 30 days, capped at what is left)" }
     - { id: velo_upgrade, metric: upgrade_release_velo, cap_metric: upgrade_reserve_velo, note: "unclaimed Velodrome upgrade reserve moving to holders (trailing 30 days, capped at what is left)" }
