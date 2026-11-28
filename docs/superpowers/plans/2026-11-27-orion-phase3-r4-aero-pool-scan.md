@@ -156,20 +156,25 @@ is copied from those files, never typed from memory.**
   zero-fill before `started` and `youngWeight` run rate apply. below_line lines accept `in_holder_flow: false` (default
   true; requires `note`): the line is rendered but excluded from `holderFlow.gross/net` and every yield. The key is
   optional with no default written, so no other asset's config hash moves.
-- Statement JSON gains `window: { windowDays: number; daysMeasured: number; since: string | null }` (`daysMeasured` =
-  min over measured lines of their own measured days; `since` = latest `started` among lines, null when none). Text
-  render: `window: 36 of 91 days (since 2026-10-22)` only when `daysMeasured < windowDays`; nothing otherwise.
-- Growth guard: `growthOf` returns `{ change: null, annualized: null, note: 'not meaningful: the prior window starts
-  before <since>' }` when any contributing line's `started` is after the prior window's first day.
-
+- Window label and growth guard are opt-in through a new optional statement key `history_start: YYYY-MM-DD`
+  (Ruling 2026-11-27: a guard keyed on every line's `started` moved HYPE's and LIT's published growth and PEG, which
+  breaks the byte-identical constraint; HYPE/PUMP opt in at R5/R6). Without the key the statement is byte-identical to
+  today. With it:
+  - statement JSON gains `window: { windowDays: number; daysMeasured: number; since: string }` with `daysMeasured` =
+    min(windowDays, days from `history_start` through the report day); text render `window: 36 of 91 days (since
+    2026-10-22)` only when `daysMeasured < windowDays`;
+  - every growth figure of the statement (lines, totals, holder flow, `growthExNew`, `yields.pegTrailing`) is `{ change:
+    null, annualized: null, note: 'not meaningful: the prior window starts before <history_start>' }` until the prior
+    window's first day is on or after `history_start` (report day ≥ history_start + 2 × windowDays − 1).
 - [ ] **Step 1: Failing tests.**
   - `'a pool_scan row without token columns has priceBasis onchain_usd'`.
   - `'below-line started zero-fills and annualizes over its own days; holder flow stays non-null'` (fixture: 36 days).
   - `'in_holder_flow false is rendered and excluded from holder flow and yields'`; `'in_holder_flow without note is refused'`.
-  - `'window reads 36 of 91 days since 2026-10-22'`; `'no window line when every line has full history'`.
-  - `'growth is not meaningful while the prior window starts before started'` at started+120 days (prior partly filled:
-    today's code prints a finite number; the test asserts null + note); `'growth is computed once both windows are
-    after started'` at started+182.
+  - `'window reads 36 of 91 days since 2026-10-22'`; `'no window field without history_start'`.
+  - `'growth is not meaningful while the prior window starts before history_start'` at history_start+120 days (prior
+    partly filled: today's code prints a finite number; the test asserts null + note); `'growth is computed once both
+    windows are after history_start'` at history_start+182; `'a statement without history_start keeps today's growth'`
+    (HYPE- and LIT-shaped fixtures with one young `started` line).
   - `v2Golden`: the 12 non-AERO entries byte-identical (AERO is re-pinned in Task 8, not here).
 - [ ] **Step 2: Run; they fail.**
 - [ ] **Step 3: Implement.**
@@ -330,7 +335,7 @@ is copied from those files, never typed from memory.**
 - Metrics: `flow_usd.voter_fees` (critical, `field: allocator`), `flow_usd.lp_fees` (`lp`), `flow_usd.pool_fees_gross`
   (`gross`, monitor_only), `flow_usd.vote_incentives`, `flow_usd.protocol_subsidy`; all `type: flow`, `unit: usd`,
   `cadence: daily`, `staleness_days: 3`. `flow_usd.fees` and the DefiLlama comments removed.
-- Income statement exactly as spec §5: `scope: complete`; revenue `voter_rev`, `lp_rev`; cost `lp_fees { to: lps, of:
+- Income statement exactly as spec §5: `scope: complete`; `history_start: 2026-10-22`; revenue `voter_rev`, `lp_rev`; cost `lp_fees { to: lps, of:
   lp_rev }`; holders `voter_fees { of: voter_rev, bucket: cash, haircut: 0.02, recipient_base: locked, capture_rule:
   contractual }`; below_line `vote_incentives { metric: flow_usd.vote_incentives, to: holders, bucket: cash, haircut:
   0.03, recipient_base: locked, capture_rule: programmatic, started: 2026-10-22 }`, `protocol_subsidy { metric:

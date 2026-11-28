@@ -137,9 +137,12 @@ AERO itself is priced by step 2 through AERO/USDC on Base, consistent with `chai
 - **`started` on below-line lines**, with the same zero-fill and short-window annualizing as revenue lines; and
   **`in_holder_flow: false`** on a below-line line (default true; requires a `note`): shown in the statement, left out
   of holder flow gross/net and yields.
-- **Window label and growth** (Q5): the statement carries `window: { days_measured, window_days }` rendered
-  "N of 91 days"; growth is `not meaningful` until the prior window is entirely on or after every line's `started`.
-  Applies to every asset; assets with full history render unchanged (proven by flatdiff).
+- **Window label and growth** (Q5), opt-in by a statement key `history_start: YYYY-MM-DD` (AERO sets 2026-10-22;
+  HYPE and PUMP opt in at R5/R6). With it, the statement carries `window: { windowDays, daysMeasured, since }`
+  rendered "N of 91 days", and every growth figure is `not meaningful` until the prior window starts on or after
+  `history_start`. Without it the statement is unchanged. (Ruling 2026-11-27 during the build: keying the guard on
+  every line's `started` moved HYPE's and LIT's published growth and PEG, whose single young lines sit inside full
+  histories; their `growthExNew` already handles that.)
 
 ## 5. AERO income statement (`assets/aero.yaml`)
 
