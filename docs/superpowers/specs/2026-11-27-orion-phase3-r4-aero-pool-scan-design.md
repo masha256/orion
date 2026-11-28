@@ -89,8 +89,12 @@ For each configured chain and UTC day D:
 2. **Pools.** For each factory in the chain's FactoryRegistry (V2 stable/volatile, CL, Arc Lite CL/V2): `allPoolsLength`
    and `allPools(i)` at `e−1`; the factory's own `poolTape()` / `clPoolTape()`; per CL pool the swap hook
    (`getPoolSwapHook`). Pools absent at `s−1` start at 0.
-3. **Gross.** `accumulators(pool)` at `s−1` and `e−1`; delta per token. Unregistered pools: fee estimate from reserves is
-   NOT computed; they are counted and listed in detail (0.04%), and a gauged unregistered pool raises drift.
+3. **Gross.** `accumulators(pool)` at `s−1` and `e−1`; delta per token. Unregistered pools (`allowedCaller` 0 at `e−1`):
+   fee estimate from reserves is NOT computed; they are counted and listed in detail (0.04%), and a gauged unregistered
+   pool raises drift. An ungauged one books 0 gross; a gauged one books its allocator accrual (step 4) as gross, per
+   token, so its LP is 0, and the slice records it per chain as `unregisteredAllocatorUsd`. Registration lags pool
+   creation (Arbitrum 2026-10-26: six of seven new pools gauged, unregistered, $362 of gauge fees), so the tape misses
+   real fees the gauge took; tape-only gross put allocator above gross and failed the bound.
 4. **Allocator.** Gauge per pool (`factoryToGauges` / `gaugeToTarget`), raw pending at both blocks, `FeesCollected` logs
    for the VRMs over `[s, e−1]`, chunked to the chain's log-range limit.
 5. **Incentives.** VRM discovery from state (LeafVoter → FactoryRegistry → gauge factories → `votingRewardsManager()`),

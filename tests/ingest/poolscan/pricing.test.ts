@@ -287,6 +287,20 @@ describe('poolscan valueScan', () => {
     expect(v.grossUsd).toBeCloseTo(6, 9);
     expect(v.allocatorUsd).toBeCloseTo(4, 9);
     expect(v.unpriced).toEqual([{ token: NODEC, amount: 7n, pool: addr(0x902), estimateUsd: null }]);
+    expect(v.unregisteredAllocatorUsd).toBe(0);
+  });
+
+  it('a gauged unregistered pool (gross = its allocator accrual, from the scan) adds 0 LP and is summed in unregisteredAllocatorUsd', async () => {
+    const fx = usdcChain();
+    synthPool(fx, addr(0x901), { kind: 'v2_volatile', t0: X, t1: USDC, price: 2, fee: [1, 4], alloc: [0.5, 3] });
+    synthPool(fx, addr(0x903), { kind: 'v2_volatile', t0: X, t1: USDC, price: 2, fee: [2, 10], alloc: [2, 10] });
+    const { b, scan } = await book(fx);
+    scan.pools.find((p) => p.pool === addr(0x903))!.registered = false;
+    const v = valueScan(scan, b);
+    expect(v.grossUsd).toBeCloseTo(6 + 14, 9);
+    expect(v.allocatorUsd).toBeCloseTo(4 + 14, 9);
+    expect(v.lpUsd).toBeCloseTo(2, 9);
+    expect(v.unregisteredAllocatorUsd).toBeCloseTo(14, 9);
   });
 });
 

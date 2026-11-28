@@ -71,8 +71,18 @@ export interface WorldChain {
   deployedAt?: number;
   /** The token program 1 (third party) streams; default USDC. */
   voteToken?: string;
+  /**
+   * Extra USDC/Z pools after P3, each gauged but NOT registered on the tape (`allowedCaller` 0): entry i is that pool's
+   * allocator accrual in USDC per day (Δ pendingFees). Pool `unregPool(i)`, gauge `unregGauge(i)`, the shared VRM.
+   */
+  unregisteredGauged?: number[];
 }
 
+/** The i-th gauged unregistered pool of `WorldChain.unregisteredGauged`, and its gauge. */
+export const unregPool = (i: number): string => a(0x110 + i);
+export const unregGauge = (i: number): string => a(0x210 + i);
+
+const ZERO_ADDR = a(0);
 const DEFAULT_FEES: DayFees = { gross: 1000, alloc: 900, unpriced: 0 };
 
 const SELECTORS = (() => {
@@ -127,6 +137,8 @@ export function poolWorld(chains: WorldChain[], o: { nowIso: string; maxScanDays
     calls.set(c.chainId, counts);
     callsByDay.set(c.chainId, byDay);
     const fees = (day: string): DayFees => ({ ...DEFAULT_FEES, ...(c.fees?.(day) ?? {}) });
+    const extra = c.unregisteredGauged ?? [];
+    const extraIdx = (pool: string): number => extra.findIndex((_, i) => unregPool(i) === pool.toLowerCase());
     /** Σ of a per-day figure from GENESIS's day through `day`. */
     const cum = (day: string, pick: (f: DayFees) => number, unit: (n: number) => bigint): bigint => {
       let total = 0n;
@@ -141,18 +153,21 @@ export function poolWorld(chains: WorldChain[], o: { nowIso: string; maxScanDays
       const day = dayOfTs(t);
       const isFeed = address === W.feed;
       switch (fn) {
-        case 'allPoolsLength': return 3n;
-        case 'allPools': return [W.p1, W.p2, W.p3][Number(args[0])];
+        case 'allPoolsLength': return BigInt(3 + extra.length);
+        case 'allPools': return [W.p1, W.p2, W.p3, ...extra.map((_, i) => unregPool(i))][Number(args[0])];
         case 'poolTape': return c.liveTape ?? W.tape;
         case 'targetFactories': return [W.factory];
         case 'gaugeFactories': return [W.gaugeFactory];
-        case 'factoryToGauges': return [W.gauge];
-        case 'gaugeToTarget': return W.p1;
+        case 'factoryToGauges': return [W.gauge, ...extra.map((_, i) => unregGauge(i))];
+        case 'gaugeToTarget': {
+          const k = extra.findIndex((_, i) => unregGauge(i) === args[0]);
+          return k < 0 ? W.p1 : unregPool(k);
+        }
         case 'votingRewardsManager': return W.vrm;
         case 'FACTORY_REGISTRY': return W.registry;
-        case 'token0': return { [W.p1]: W.usdc, [W.p2]: W.x, [W.p3]: W.y }[address];
-        case 'token1': return { [W.p1]: W.z, [W.p2]: W.y, [W.p3]: W.usdc }[address];
-        case 'allowedCaller': return W.router;
+        case 'token0': return extraIdx(address) >= 0 ? W.usdc : { [W.p1]: W.usdc, [W.p2]: W.x, [W.p3]: W.y }[address];
+        case 'token1': return extraIdx(address) >= 0 ? W.z : { [W.p1]: W.z, [W.p2]: W.y, [W.p3]: W.usdc }[address];
+        case 'allowedCaller': return extraIdx(String(args[0])) >= 0 ? ZERO_ADDR : W.router;
         case 'accumulators': {
           // V2 PoolTape.accumulators: fee0, fee1, 6 volume/MEV words, lastSwapTimestamp, swapCount.
           const v = (f0: bigint) => [f0, 0n, 0n, 0n, 0n, 0n, 0n, 0n, BigInt(t), 1n];
@@ -164,7 +179,11 @@ export function poolWorld(chains: WorldChain[], o: { nowIso: string; maxScanDays
           if (args[0] === W.p2) return v(cum(day, (f) => f.unpriced, tok));
           return v(0n);
         }
-        case 'pendingFees': return [cum(day, (f) => f.alloc, usdc), 0n];
+        case 'pendingFees': {
+          const k = extraIdx(address);
+          if (k >= 0) return [cum(day, () => extra[k], usdc), 0n];
+          return [cum(day, (f) => f.alloc, usdc), 0n];
+        }
         case 'getCurrentBlockTimestamp': return BigInt(t);
         case 'description':
           return c.feedChain !== undefined ? null : 'USDC / USD';
@@ -175,6 +194,7 @@ export function poolWorld(chains: WorldChain[], o: { nowIso: string; maxScanDays
           if (c.feedChain !== undefined) return null;
           return [1n, 100_000_000n, BigInt(t), BigInt(t - (c.feedAgeSec ?? 0)), 1n];
         case 'getReserves':
+          if (extraIdx(address) >= 0) return [usdc(1000), tok(1000), 0n];
           return { [W.p1]: [usdc(1000), tok(1000), 0n], [W.p2]: [tok(100), tok(100), 0n], [W.p3]: [tok(100), usdc(100), 0n] }[address];
         case 'balanceOf': {
           const pool = String(args[0]).toLowerCase();

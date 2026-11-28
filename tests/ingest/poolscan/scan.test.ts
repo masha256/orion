@@ -2,7 +2,7 @@ import { decodeFunctionData, encodeFunctionResult, pad } from 'viem';
 import { describe, expect, it } from 'vitest';
 import { CL_POOL_TAPE_ABI, FACTORY_ABI, FEES_COLLECTED_TOPIC, POOL_ABI, ROOT_VOTER_ABI } from '../../../src/ingest/poolscan/abi.js';
 import { rpcChainReader } from '../../../src/ingest/poolscan/reader.js';
-import { checkRootChains, scanChainDay } from '../../../src/ingest/poolscan/scan.js';
+import { allocatorAsGross, checkRootChains, scanChainDay } from '../../../src/ingest/poolscan/scan.js';
 import { ScanConfigSchema, driftDedupeKey, driftKey, type ChainDayScan } from '../../../src/ingest/poolscan/types.js';
 import { fakeChainReader } from '../../helpers/fakeChainReader.js';
 import { fakeRpc } from '../../helpers/fakeRpc.js';
@@ -154,6 +154,37 @@ describe('poolscan scanChainDay (2026-11-26 scoping fixtures)', () => {
     const [a0, a1] = expectedAllocator(fx.pools[pool]);
     expect(scan.allocatorByPool.get(pool)).toEqual(new Map([[fx.pools[pool].token0, a0], [fx.pools[pool].token1, a1]]));
     expect(poolOf(scan, pool)).toMatchObject({ registered: false, fee0: 0n, fee1: 0n, gauge: fx.pools[pool].gauge });
+  });
+
+  it('a gauged pool unregistered at e-1 books its allocator accrual as gross (fees before registration never reach the tape)', async () => {
+    const fx: PoolscanFixture = structuredClone(loadPoolscanFixture('ethereum'));
+    const pool = '0x26e9a8313b62db29c7aac1715e6ffc91d1f756c9';
+    // Synthetic accrual (the real 11-26 one was 0): Δ pending 600/700 plus FeesCollected 5/6.
+    Object.assign(fx.pools[pool], { pend_s: ['100', '200'], pend_e: ['700', '900'], collected: ['5', '6'] });
+    const reader = fixtureReader(fx);
+    const scan = await scanChainDay(reader, fixtureConfig(fx), DAY);
+    const { token0, token1 } = fx.pools[pool];
+    expect(scan.allocatorByPool.get(pool)).toEqual(new Map([[token0, 605n], [token1, 706n]]));
+    expect(poolOf(scan, pool)).toMatchObject({ registered: false, fee0: 605n, fee1: 706n });
+    expect(scan.counts.registered).toBe(Object.values(fx.pools).filter(registered).length);
+    // Still drift, and the tape is still never read for it.
+    expect(scan.drift.map(driftKey)).toEqual([`gauged_unregistered:${pool}`]);
+    expect(reader.stats.calls.some((c) => c.functionName === 'accumulators' && c.args[0] === pool)).toBe(false);
+  });
+
+  it('allocatorAsGross: an allocator token outside the pool pair is inconsistent', () => {
+    const p = { pool: '0x0000000000000000000000000000000000000001', token0: '0x00000000000000000000000000000000000000a0', token1: '0x00000000000000000000000000000000000000a1' };
+    expect(allocatorAsGross(1, DAY, p, new Map([[p.token1, 7n]]))).toEqual([0n, 7n]);
+    const other = '0x00000000000000000000000000000000000000ff';
+    const err = (() => {
+      try {
+        allocatorAsGross(1, DAY, p, new Map([[p.token0, 1n], [other, 2n]]));
+      } catch (x) {
+        return x;
+      }
+    })();
+    expect(err).toMatchObject({ code: 'pool_scan_inconsistent' });
+    for (const s of ['chain 1 2026-11-26', p.pool, other]) expect((err as Error).message).toContain(s);
   });
 
   it('Arc Lite pools read the Lite tape named by their factory', async () => {

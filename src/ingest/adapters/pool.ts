@@ -361,7 +361,9 @@ async function tapeFeesDaily(ctx: SourceContext, params: Record<string, unknown>
       const v = f.value;
       // LP is what the allocator did not take; inside the bound allocator may top gross by cents, never below 0.
       value += field === 'gross' ? v.grossUsd : field === 'allocator' ? v.allocatorUsd : Math.max(0, v.grossUsd - v.allocatorUsd);
-      chains[String(c.chain_id)] = { ...blocksOf(f.scan), grossUsd: v.grossUsd, allocatorUsd: v.allocatorUsd, pricedPct: v.pricedPct, unpricedUsd: v.coverageEstimateUsd };
+      chains[String(c.chain_id)] = {
+        ...blocksOf(f.scan), grossUsd: v.grossUsd, allocatorUsd: v.allocatorUsd, unregisteredAllocatorUsd: v.unregisteredAllocatorUsd, pricedPct: v.pricedPct, unpricedUsd: v.coverageEstimateUsd,
+      };
       if (field === 'gross') feeWarnings(warnings, c, day, f);
     }
     const base = byChain.get(BASE);

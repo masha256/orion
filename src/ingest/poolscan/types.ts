@@ -66,7 +66,10 @@ export type ScanConfig = z.infer<typeof ScanConfigSchema>;
 /** Raw token amounts by lowercased token address. */
 export type TokenAmounts = Map<string, bigint>;
 
-/** One pool's gross fees for the day, in raw token units (0 for an unregistered pool: the tape does not record it). */
+/**
+ * One pool's gross fees for the day, in raw token units: the tape's accumulator delta for a registered pool; for an
+ * unregistered one (the tape does not record it) its allocator accrual when gauged, else 0 (scan.ts point 3).
+ */
 export interface PoolFees {
   pool: string;
   factory: string;

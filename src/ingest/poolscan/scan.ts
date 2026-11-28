@@ -16,7 +16,10 @@ import type { ChainDayScan, ChainScan, Drift, PoolFees, ScanFactory, TokenAmount
  *    during the day; required: a chain is scanned only from its `since`, when its factories exist); the factory's own `poolTape()` / `clPoolTape()` at e−1, which is the tape its pools are read from
  *    (the configured tape is only compared: a mismatch is `tape` drift); per CL pool its swap hook.
  * 3. Registration: that tape's `allowedCaller(pool)` at e−1; 0 = unregistered, so the tape never recorded it: counted and
- *    listed with zero gross, its accumulators not read.
+ *    listed, its accumulators not read. An ungauged one books zero gross. A gauged one books its allocator accrual (point
+ *    5) as gross, per token, so its LP is 0: registration lags pool creation (Arbitrum 2026-10-26: six of seven new
+ *    pools gauged and unregistered at e−1), and the fees its gauge took before registration are real fees the tape
+ *    never saw. Read from the tape alone they would push allocator above gross.
  * 4. Gross: `accumulators(pool)` on that tape at e−1 minus at s−1. A pool absent at s−1 comes back as the mapping's zero
  *    struct (a public mapping read never reverts; every scoping chain-day confirms it), and a pool still on the
  *    registration's 1-wei sentinel has lastSwapTimestamp 0: either way the start is 0. lastSwapTimestamp 0 at e−1: no swap
@@ -218,7 +221,8 @@ export async function scanChainDay(reader: ChainReader, cfg: ChainScan, day: str
   });
 
   const out: PoolFees[] = info.map((p) => {
-    const [fee0, fee1] = gross.get(p.pool) ?? [0n, 0n];
+    // Registration (point 3): a gauged pool the tape never recorded books its allocator accrual as gross.
+    const [fee0, fee1] = p.registered ? gross.get(p.pool)! : p.gauge !== null ? allocatorAsGross(cfg.chain_id, day, p, allocatorByPool.get(p.pool)!) : [0n, 0n];
     return { pool: p.pool, factory: p.factory.address, token0: p.token0, token1: p.token1, fee0, fee1, registered: p.registered, newInDay: p.newInDay, gauge: p.gauge };
   });
   return {
@@ -248,6 +252,19 @@ export async function checkRootChains(reader: ChainReader, rootVoter: string, co
     drift.push({ kind: 'chain', chainId: reader.chainId, id: String(id), detail: { in_root_voter: onChain.has(id), configured: mine.has(id) } });
   }
   return drift;
+}
+
+/**
+ * A gauged unregistered pool's gross (scan point 3): its allocator accrual, mapped onto [token0, token1]. An allocator
+ * token outside the pool's pair is `pool_scan_inconsistent` (the accrual is read per pool token, so it means a bug).
+ */
+export function allocatorAsGross(chainId: number, day: string, p: { pool: string; token0: string; token1: string }, amounts: TokenAmounts): [bigint, bigint] {
+  for (const t of amounts.keys()) {
+    if (t !== p.token0 && t !== p.token1) {
+      throw new OrionError('pool_scan_inconsistent', `chain ${chainId} ${day}: pool ${p.pool}'s allocator accrual holds token ${t}, neither its token0 ${p.token0} nor token1 ${p.token1}`);
+    }
+  }
+  return [amounts.get(p.token0) ?? 0n, amounts.get(p.token1) ?? 0n];
 }
 
 /** VRM addresses per eth_getLogs request (measure.py chunked at 500). */

@@ -11,7 +11,7 @@ import { adapterSource } from '../../src/ingest/sources/adapter.js';
 import type { SourceContext, SourceValue } from '../../src/ingest/types.js';
 import { ADAPTER_SOURCE_TYPES } from '../../src/report/sourceTypes.js';
 import { ADAPTER_ENDPOINTS } from '../../tools/sources-register/generate.js';
-import { paramsOf, poolWorld, POOL_METRICS, W, type PoolWorld, type WorldChain } from '../helpers/poolWorld.js';
+import { paramsOf, poolWorld, POOL_METRICS, unregPool, W, type PoolWorld, type WorldChain } from '../helpers/poolWorld.js';
 
 /**
  * pool.tape_fees_daily / pool.vrm_incentives_daily (Phase 3 R4 Task 7) over a SYNTHETIC two-chain world
@@ -78,7 +78,7 @@ describe('pool.tape_fees_daily and pool.vrm_incentives_daily', () => {
     expect(Object.keys(slice.chains).sort()).toEqual(['10', '8453']);
     expect(slice.chains['8453']).toEqual({
       s: expect.stringMatching(/^\d+$/), e: expect.stringMatching(/^\d+$/),
-      grossUsd: expect.closeTo(990, 6), allocatorUsd: expect.closeTo(900, 6), pricedPct: expect.closeTo(99, 6), unpricedUsd: expect.closeTo(10, 6),
+      grossUsd: expect.closeTo(990, 6), allocatorUsd: expect.closeTo(900, 6), unregisteredAllocatorUsd: 0, pricedPct: expect.closeTo(99, 6), unpricedUsd: expect.closeTo(10, 6),
     });
     const inc = await run(world, ctx, POOL_METRICS.vote_incentives);
     expect((inc.points[0].slice as { chains: Record<string, unknown> }).chains['8453']).toMatchObject({ vote_incentives: expect.closeTo(864, 4), protocol_subsidy: expect.closeTo(432, 4), programsActive: 2 });
@@ -158,6 +158,29 @@ describe('pool.tape_fees_daily and pool.vrm_incentives_daily', () => {
     // Over by 0.6% but only $0.60: within $1, writes.
     const small = poolWorld(two({ fees: () => ({ gross: 100, alloc: 100.6 }) }), { nowIso: NOW });
     expect(value(await run(small, small.ctx(), POOL_METRICS.gross), '2026-11-24')).toBeCloseTo(1100, 6);
+  });
+
+  it('gauged pools unregistered at e-1 (Arbitrum 10-26 shape): gross takes their allocator accrual, LP 0, no bound failure', async () => {
+    // Registered P1 (gross 1000, allocator 900) plus three gauged unregistered pools accruing $362 in all: before the fix
+    // their tape gross was 0, so allocator $1262 > gross $1000 failed the bound.
+    const world = poolWorld(two({ unregisteredGauged: [200, 150, 12] }), { nowIso: NOW });
+    const ctx = world.ctx();
+    const g = await run(world, ctx, POOL_METRICS.gross);
+    expect(value(g, '2026-11-24')).toBeCloseTo(1362 + 1000, 6);
+    const c8453 = (g.points[0].slice as { chains: Record<string, Record<string, unknown>> }).chains['8453'];
+    expect(c8453).toMatchObject({ grossUsd: expect.closeTo(1362, 6), allocatorUsd: expect.closeTo(1262, 6), unregisteredAllocatorUsd: expect.closeTo(362, 6) });
+    expect((g.points[0].slice as { chains: Record<string, Record<string, unknown>> }).chains['10']).toMatchObject({ unregisteredAllocatorUsd: 0 });
+    expect(value(await run(world, ctx, POOL_METRICS.allocator), '2026-11-24')).toBeCloseTo(1262 + 900, 6);
+    expect(value(await run(world, ctx, POOL_METRICS.lp), '2026-11-24')).toBeCloseTo(100 + 100, 6);
+    // The drift warning stays, one per pool.
+    expect((g.warnings ?? []).map((w) => w.dedupeKey).filter((k) => k.startsWith('pool_scan:gauged_unregistered:')).sort()).toEqual(
+      [0, 1, 2].map((i) => `pool_scan:gauged_unregistered:8453:${unregPool(i)}`).sort(),
+    );
+  });
+
+  it('a registered pool whose allocator tops its gross still fails the bound beside gauged unregistered pools', async () => {
+    const world = poolWorld(two({ fees: () => ({ gross: 400, alloc: 405 }), unregisteredGauged: [100] }), { nowIso: NOW });
+    await expect(run(world, world.ctx(), POOL_METRICS.gross)).rejects.toThrow(/chain 8453 2026-11-24: allocator \$505\.00 exceeds gross \$500\.00/);
   });
 
   it('an RPC failure on any chain fails the run; nothing is written', async () => {
@@ -400,6 +423,15 @@ describe('pool.tape_fees_daily in a fetch', () => {
     const second = await fetchWith(next);
     expect(second.source).toMatchObject({ status: 'ok', metricsWritten: [], conflicts: [] });
     expect(count(next, 8453, 'targetFactories')).toBe(3);
+  });
+
+  it('gauged unregistered pools with accrual: the fetch writes every day, gross including their allocator accrual', async () => {
+    const world = poolWorld(two({ unregisteredGauged: [200, 150, 12] }), { nowIso: NOW });
+    const { h, source } = await fetchWith(world);
+    expect(source).toMatchObject({ status: 'ok', metricsWritten: [METRIC], conflicts: [] });
+    const rows = await listActiveObservations(h.db, 'hype', METRIC);
+    expect(rows.map((o) => o.observedAt.slice(0, 10))).toEqual(dayRange('2026-11-21', 7));
+    for (const o of rows) expect(o.value).toBeCloseTo(1362 + 1000, 6);
   });
 
   it('a negative_gross chain-day fails the source and writes nothing', async () => {
