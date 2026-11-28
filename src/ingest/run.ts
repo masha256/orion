@@ -19,7 +19,7 @@ import type { SourceType } from '../report/sourceTypes.js';
 import { MS_PER_DAY, OrionError, STD_METRICS } from '../types.js';
 import { adapterNeedsRpc } from './adapters/registry.js';
 import { checkRevenueStale, REVENUE_STALE_MOVE_PCT, type IndexPoint } from './alerts.js';
-import { DEFAULT_API_FLOW_BACKFILL_DAYS, DEFILLAMA_REVISION_DAYS, writeApiFlow } from './apiFlow.js';
+import { DEFAULT_API_FLOW_BACKFILL_DAYS, DEFILLAMA_REVISION_DAYS, seriesOriginOf, storedSeriesDays, writeApiFlow } from './apiFlow.js';
 import { writePeriodicPayments } from './periodic.js';
 import { compareLevel, compareMonthly } from './crosscheck.js';
 import { derivedFunction, levelGapPct, type DerivedName } from './derived.js';
@@ -284,6 +284,9 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     // Any chain's transport, one per chain, through the unwrapped factory the price reads use: a caller that wraps
     // rpcFactory to capture the fetch's block (levels, refresh) must never take another chain's head for it.
     rpcFor: chainRpcFor(deps.env, deps.priceRpcFactory ?? deps.rpcFactory),
+    // The days the series writer reads back as the metric's own (its origin's one-day rows): what a gap-filling adapter
+    // (the pool scan) has left to read.
+    storedFlowDays: async (metricKey) => new Set((await storedSeriesDays(db, asset.id, metricKey, seriesOriginOf(loaded, metricKey))).keys()),
   };
 
   const outcomes = new Map<string, SourceOutcome>();
@@ -344,6 +347,14 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
       }
       if (result.value.kind === 'daily_series' && (r.source.type === 'defillama' || r.source.type === 'adapter') && asset.metrics[r.metricKey].type === 'flow') {
         const def = asset.metrics[r.metricKey];
+        // An adapter's warnings (drift, a chain-day priced 95-99%): one advisory anomaly per key per run, whether or not
+        // the days are written (the existing kind: adding one needs a migration).
+        const warned = new Set<string>();
+        for (const w of result.value.warnings ?? []) {
+          if (warned.has(w.dedupeKey)) continue;
+          warned.add(w.dedupeKey);
+          await raise({ kind: 'cross_check_mismatch', metricKey: r.metricKey, dedupeKey: w.dedupeKey, severity: 'advisory', detail: w.detail });
+        }
         try {
           const flow = await writeApiFlow({
             db, asset, configHash: loaded.hash, metricKey: r.metricKey, scanKey: `${batch.sourceId}>${r.metricKey}`, points: result.value.points, detail: result.value.detail, now,
@@ -622,7 +633,11 @@ export async function fetchAsset(db: Db, loaded: LoadedAsset, now: Date, deps: F
     }
     // A derivation carries the provenance of its input: an API series' flow gives an api level, a transfer scan's an onchain one.
     const inputs = [...flowMetrics, ...minusMetrics];
-    const apiInputs = inputs.filter((m) => ['defillama', 'adapter'].includes(asset.metrics[m].source?.type ?? '')).length;
+    // An adapter input is an API series only when its rows are `api` (seriesOriginOf): a pool scan's are on chain.
+    const apiInputs = inputs.filter((m) => {
+      const type = asset.metrics[m].source?.type;
+      return type === 'defillama' || (type === 'adapter' && seriesOriginOf(loaded, m) === 'api');
+    }).length;
     if (apiInputs > 0 && apiInputs < inputs.length) {
       throw new OrionError('invalid_source_config', `metrics.${r.metricKey}: ${name} cannot sum API-series and on-chain flows`);
     }

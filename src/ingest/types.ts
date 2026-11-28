@@ -48,9 +48,19 @@ export interface ScheduleStepReading {
 export type SourceValue =
   | { kind: 'level'; value: number; observedAt: string; source: 'onchain' | 'api'; detail: string; slice?: Json; citation?: { url: string; quote: string } }
   | { kind: 'schedule_steps'; steps: ScheduleStepReading[]; source: 'onchain' | 'api'; detail: string }
-  | { kind: 'daily_series'; points: DailyPoint[]; detail: string; token?: TokenInfo }
+  | { kind: 'daily_series'; points: DailyPoint[]; detail: string; token?: TokenInfo; warnings?: AdapterWarning[] }
   | { kind: 'monthly_series'; points: MonthlyPoint[]; detail: string }
   | { kind: 'periodic_payments'; payments: PeriodicPayment[]; due: PeriodDue[]; payers: string[]; expectedPayers: string[]; detail: string; token?: TokenInfo };
+
+/**
+ * Something an adapter saw that does not fail its read but should reach a person (the pool scan's drift, a chain-day
+ * priced 95-99%): the run raises each as an advisory `cross_check_mismatch` anomaly on the metric, once per run per
+ * `dedupeKey` (e.g. `pool_scan:<what>:<chain>[:<id>]`), with `detail` as the anomaly's detail.
+ */
+export interface AdapterWarning {
+  dedupeKey: string;
+  detail: Record<string, unknown>;
+}
 
 /**
  * One lump payment for a known coverage period (HYPE's USDC reserve yield: 30 days, paid 8 days after the period ends).
@@ -145,6 +155,12 @@ export interface SourceContext {
    * no_rpc_url, naming the env var, when it is unset (and the chain has no keyless default).
    */
   rpcFor?: (chainId: number) => RpcTransport;
+  /**
+   * The UTC days ('YYYY-MM-DD') the run's own series of a flow metric already holds: its active one-day rows of the
+   * series' origin (`seriesOrigin` of the metric's provenance), the rows the series writer reads back as stored. For an
+   * adapter that reads only the days still missing (the pool scan).
+   */
+  storedFlowDays?: (metricKey: string) => Promise<Set<string>>;
 }
 
 /**

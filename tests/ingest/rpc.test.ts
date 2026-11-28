@@ -3,9 +3,9 @@ import { firstBlockAtOrAfter, getLogsChunked, type TransferLog } from '../../src
 import { DEFAULT_RPC_URLS } from '../../src/ingest/run.js';
 import { CHAINS } from '../../src/ingest/transport/chains.js';
 import { CHAIN_RPC_ENV } from '../../src/ingest/transport/chainRpcEnv.js';
-import { cleanRpcErrorMessage, createViemRpc, pickValue } from '../../src/ingest/transport/viemRpc.js';
+import { cleanRpcErrorMessage, createViemRpc, createViemRpcWith, pickValue } from '../../src/ingest/transport/viemRpc.js';
 import type { OrionError } from '../../src/types.js';
-import { fakeRpc } from '../helpers/fakeRpc.js';
+import { fakeJsonRpcFetch, fakeRpc } from '../helpers/fakeRpc.js';
 
 const noSleep = { sleep: async () => undefined };
 const log = (blockNumber: bigint, logIndex = 0): Omit<TransferLog, 'timestamp'> => ({
@@ -204,5 +204,95 @@ describe('pickValue', () => {
     expect(pickValue([1n], 3)).toEqual({ ok: false, error: 'the call returned no integer at position 3' });
     expect(pickValue('0xabc', undefined)).toEqual({ ok: false, error: 'the call returned no integer' });
     expect(pickValue([-4n, 0n], 0)).toEqual({ ok: false, error: 'the call returned a negative value (-4)' });
+  });
+});
+
+describe('multicallData (Multicall3 aggregate3, raw calldata, Phase 3 R4)', () => {
+  const calls = (n: number) => Array.from({ length: n }, (_, i) => ({ address: `0x${(i + 1).toString(16).padStart(40, '0')}`, data: `0x${i.toString(16).padStart(8, '0')}` as `0x${string}` }));
+  /** Echo: each inner call returns its own calldata, so order is visible; a target ending in ...dead fails. */
+  const echo = (to: string, data: string) => (to.toLowerCase().endsWith('dead') ? null : data);
+
+  it('multicallData chunks 1000 calls into 3 eth_calls and keeps order', async () => {
+    const node = fakeJsonRpcFetch({ call: echo });
+    const rpc = createViemRpcWith('http://localhost:1', 8453, { fetchFn: node.fetchFn });
+    const out = await rpc.multicallData!(calls(1000), 123n);
+    expect(node.requests.filter((r) => r.method === 'eth_call')).toHaveLength(3); // 400 + 400 + 200
+    expect(node.innerCallsPerRequest).toEqual([400, 400, 200]);
+    expect(node.requests.every((r) => r.method !== 'eth_call' || r.params[1] === '0x7b')).toBe(true); // every chunk at block 123
+    expect(out.map((r) => (r.ok ? r.data : null))).toEqual(calls(1000).map((c) => c.data));
+  });
+
+  it('honours a smaller chunk', async () => {
+    const node = fakeJsonRpcFetch({ call: echo });
+    const rpc = createViemRpcWith('http://localhost:1', 8453, { fetchFn: node.fetchFn });
+    await rpc.multicallData!(calls(10), 1n, { chunk: 4 });
+    expect(node.innerCallsPerRequest).toEqual([4, 4, 2]);
+  });
+
+  it('a failed inner call is reported in its slot', async () => {
+    const node = fakeJsonRpcFetch({ call: echo });
+    const rpc = createViemRpcWith('http://localhost:1', 8453, { fetchFn: node.fetchFn });
+    const list = calls(3);
+    list[1] = { address: '0x000000000000000000000000000000000000dead', data: '0x12345678' };
+    const out = await rpc.multicallData!(list, 5n);
+    expect(out).toEqual([{ ok: true, data: list[0].data }, { ok: false, error: expect.stringMatching(/reverted/) }, { ok: true, data: list[2].data }]);
+  });
+
+  it('fakeRpc serves dataCalls in chunks, counting one multicallData per eth_call, and fails a null slot', async () => {
+    const rpc = fakeRpc({ genesisTs: 0, latest: 10n, dataCalls: (a, d, b) => (a.endsWith('3') ? null : `${d}${b.toString(16).padStart(2, '0')}`) });
+    const out = await rpc.multicallData!(calls(5), 7n, { chunk: 2 });
+    expect(rpc.stats.multicallData).toBe(3);
+    expect(out[0]).toEqual({ ok: true, data: '0x0000000007' });
+    expect(out[2]).toMatchObject({ ok: false });
+  });
+});
+
+describe('getLogs (raw logs by address list and topic0, Phase 3 R4)', () => {
+  const TOPIC = '0x' + 'ab'.repeat(32);
+  const ADDR = ['0x00000000000000000000000000000000000000aa', '0x00000000000000000000000000000000000000bb'];
+
+  it('getLogs splits 25,000 blocks at Ink maxLogRange 10,000 into 3 requests', async () => {
+    const node = fakeJsonRpcFetch({ logs: (q) => [{ address: ADDR[0], topics: [TOPIC], data: '0x01', blockNumber: q.fromBlock, logIndex: 0 }] });
+    const rpc = createViemRpcWith('http://localhost:1', 57073, { fetchFn: node.fetchFn });
+    expect(rpc.maxLogRange).toBe(10_000n);
+    const logs = await rpc.getLogs!({ address: ADDR, topic0: TOPIC, fromBlock: 0n, toBlock: 24_999n });
+    const ranges = node.requests.filter((r) => r.method === 'eth_getLogs').map((r) => [r.params[0].fromBlock, r.params[0].toBlock]);
+    expect(ranges).toEqual([['0x0', '0x270f'], ['0x2710', '0x4e1f'], ['0x4e20', '0x61a7']]);
+    expect(node.requests.find((r) => r.method === 'eth_getLogs')!.params[0]).toMatchObject({ address: ADDR, topics: [TOPIC] });
+    expect(logs.map((l) => l.blockNumber)).toEqual([0n, 10_000n, 20_000n]);
+    expect(logs[0]).toEqual({ address: ADDR[0], topics: [TOPIC], data: '0x01', logIndex: 0, blockNumber: 0n });
+  });
+
+  it('getLogs halves on a range error', async () => {
+    // The provider refuses more than 2,500 blocks with a "too many results" error.
+    const node = fakeJsonRpcFetch({
+      logs: (q) => {
+        if (q.toBlock - q.fromBlock + 1n > 2_500n) return { code: -32602, message: 'query returned more than 10000 results' };
+        return [{ address: ADDR[1], topics: [TOPIC], data: '0x', blockNumber: q.toBlock, logIndex: 1 }];
+      },
+    });
+    const rpc = createViemRpcWith('http://localhost:1', 57073, { fetchFn: node.fetchFn });
+    const logs = await rpc.getLogs!({ address: ADDR, topic0: TOPIC, fromBlock: 0n, toBlock: 9_999n });
+    const ok = node.requests.filter((r) => r.method === 'eth_getLogs').map((r) => [BigInt(r.params[0].fromBlock), BigInt(r.params[0].toBlock)]);
+    // 10,000 is refused, then each 5,000 half, then each 2,500 quarter is served, in block order.
+    expect(ok).toEqual([[0n, 9_999n], [0n, 4_999n], [0n, 2_499n], [2_500n, 4_999n], [5_000n, 9_999n], [5_000n, 7_499n], [7_500n, 9_999n]]);
+    expect(logs.map((l) => l.blockNumber)).toEqual([2_499n, 4_999n, 7_499n, 9_999n]);
+  });
+
+  it('throws after 8 halvings, and passes any other error straight on', async () => {
+    const always = fakeRpc({ genesisTs: 0, latest: 10n, maxLogRange: 10_000n, logs: () => { throw new Error('block range too large'); } });
+    await expect(always.getLogs!({ address: ADDR, topic0: TOPIC, fromBlock: 0n, toBlock: 9_999n })).rejects.toThrow(/8 halvings/);
+    expect(always.stats.getLogs).toBe(9); // the range itself, then one half at each of 8 depths
+    const broken = fakeRpc({ genesisTs: 0, latest: 10n, logs: () => { throw new Error('connection reset'); } });
+    await expect(broken.getLogs!({ address: ADDR, topic0: TOPIC, fromBlock: 0n, toBlock: 10n })).rejects.toThrow('connection reset');
+    expect(broken.stats.getLogs).toBe(1);
+  });
+
+  it('fakeRpc splits at its maxLogRange and counts each request', async () => {
+    const seen: [bigint, bigint][] = [];
+    const rpc = fakeRpc({ genesisTs: 0, latest: 10n, maxLogRange: 10_000n, logs: (q) => (seen.push([q.fromBlock, q.toBlock]), []) });
+    await rpc.getLogs!({ address: ADDR, topic0: TOPIC, fromBlock: 0n, toBlock: 24_999n });
+    expect(seen).toEqual([[0n, 9_999n], [10_000n, 19_999n], [20_000n, 24_999n]]);
+    expect(rpc.stats.getLogs).toBe(3);
   });
 });

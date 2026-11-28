@@ -1,8 +1,8 @@
-import { createPublicClient, defineChain, http, parseAbi, parseAbiItem, type Address, type Chain } from 'viem';
+import { createPublicClient, defineChain, http, numberToHex, parseAbi, parseAbiItem, type Address, type Chain, type HttpTransportConfig } from 'viem';
 import { arbitrum, arc, base, bsc, ink, mainnet, optimism, robinhood } from 'viem/chains';
 import { OrionError } from '../../types.js';
 import { chainInfo, supportedChainIds } from './chains.js';
-import type { CallResult, RpcFactory } from './rpc.js';
+import { chunkedMulticallData, LogRangeError, isLogRangeError, splitGetLogs, type BlockLog, type CallResult, type DataCallResult, type RpcFactory, type RpcTransport } from './rpc.js';
 
 /**
  * Elysium (99901) is not in the vendored viem. Only multicall3 matters to Orion's reads; there is no default RPC URL
@@ -21,6 +21,25 @@ const VIEM_CHAINS: Record<number, Chain> = Object.fromEntries(
 );
 
 const TRANSFER = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');
+
+/** Multicall3's aggregate3 (allowFailure per call), for `multicallData`'s raw calls. Declared `view` (it is payable on chain; the
+ * selector is the same) so it is read with eth_call. */
+const AGGREGATE3 = parseAbi(['function aggregate3((address target, bool allowFailure, bytes callData)[] calls) view returns ((bool success, bytes returnData)[] returnData)']);
+
+/** The raw eth_getLogs entry `getLogs` maps (hex quantities). */
+interface RpcLog {
+  address: string;
+  topics: string[];
+  data: string;
+  blockNumber: string | null;
+  logIndex: string | null;
+}
+
+/** An error's full text for classification (viem keeps the provider's wording in `details`); never stored. */
+const rawErrorText = (err: unknown): string => {
+  const e = err as { message?: unknown; details?: unknown; code?: unknown } | null;
+  return [e?.message, e?.details, typeof e?.code === 'number' ? String(e.code) : undefined].filter((x) => typeof x === 'string').join(' ');
+};
 
 /**
  * Prefers viem's `shortMessage`, which never contains the RPC URL, over its full `message`, which
@@ -56,13 +75,20 @@ export function cleanRpcErrorMessage(err: unknown): string {
 }
 
 /** The only file that imports viem. The chains are those of `chains.ts` that viem also knows. */
-export const createViemRpc: RpcFactory = (url, chainId) => {
+export const createViemRpc: RpcFactory = (url, chainId) => createViemRpcWith(url, chainId);
+
+/**
+ * createViemRpc with transport options: `fetchFn` lets a test serve JSON-RPC from memory (tests/helpers/fakeRpc.ts
+ * fakeJsonRpcFetch), so the aggregate3 and eth_getLogs encodings are exercised with no network.
+ */
+export function createViemRpcWith(url: string, chainId: number, opts: { fetchFn?: HttpTransportConfig['fetchFn'] } = {}): RpcTransport {
   const info = chainInfo(chainId);
   const chain = VIEM_CHAINS[chainId];
   if (!info || !chain) {
     throw new OrionError('unsupported_chain', `chain_id ${chainId} is not supported; supported: ${supportedChainIds().join(', ')}`);
   }
-  const client = createPublicClient({ chain, transport: http(url, { retryCount: 3, retryDelay: 1000, timeout: 20_000 }) });
+  const client = createPublicClient({ chain, transport: http(url, { retryCount: 3, retryDelay: 1000, timeout: 20_000, ...(opts.fetchFn ? { fetchFn: opts.fetchFn } : {}) }) });
+  const multicall3 = chain.contracts?.multicall3?.address;
 
   /** Every error leaving this file is safe to store and log: never the keyed RPC URL. */
   const clean = <T>(fn: () => Promise<T>): Promise<T> =>
@@ -109,6 +135,46 @@ export const createViemRpc: RpcFactory = (url, chainId) => {
           return pickValue(r.result, calls[i].pick);
         });
       }),
+    multicallData: (calls, blockNumber, o) =>
+      clean(async () => {
+        if (multicall3 === undefined) throw new Error(`${info.name} has no Multicall3 address`);
+        // One eth_call per chunk, each its own request under the transport's 20 s timeout.
+        return await chunkedMulticallData(
+          async (chunk) => {
+            const results = await client.readContract({
+              address: multicall3, abi: AGGREGATE3, functionName: 'aggregate3', blockNumber,
+              args: [chunk.map((c) => ({ target: c.address as Address, allowFailure: true, callData: c.data }))],
+            });
+            return results.map((r): DataCallResult => (r.success ? { ok: true, data: r.returnData } : { ok: false, error: `execution reverted${r.returnData !== '0x' ? ` (${r.returnData.slice(0, 74)})` : ''}` }));
+          },
+          calls,
+          o?.chunk,
+        );
+      }),
+    getLogs: (q) =>
+      clean(async () =>
+        await splitGetLogs(
+          async (part) => {
+            let raw: RpcLog[];
+            try {
+              raw = (await client.request({
+                method: 'eth_getLogs',
+                params: [{ address: part.address as Address[], topics: [part.topic0 as `0x${string}`], fromBlock: numberToHex(part.fromBlock), toBlock: numberToHex(part.toBlock) }],
+              })) as unknown as RpcLog[];
+            } catch (err) {
+              // Classified on the provider's own wording, then passed on clean (never the keyed URL).
+              if (isLogRangeError(new Error(rawErrorText(err)))) throw new LogRangeError(cleanRpcErrorMessage(err));
+              throw err;
+            }
+            return raw.map((l): BlockLog => {
+              if (l.blockNumber === null || l.logIndex === null) throw new Error('the RPC returned a pending log');
+              return { address: l.address.toLowerCase(), topics: l.topics.map((t) => t.toLowerCase()), data: l.data, logIndex: Number(BigInt(l.logIndex)), blockNumber: BigInt(l.blockNumber) };
+            });
+          },
+          q,
+          info.maxLogRange,
+        ),
+      ),
     getReceiptLogs: (txHash) =>
       clean(async () => {
         const r = await client.getTransactionReceipt({ hash: txHash as `0x${string}` });
@@ -136,4 +202,4 @@ export const createViemRpc: RpcFactory = (url, chainId) => {
         });
       }),
   };
-};
+}

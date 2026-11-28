@@ -6,7 +6,7 @@ import type { Observation } from '../../src/db/observations.js';
 import { adapterNames, getAdapter } from '../../src/ingest/adapters/registry.js';
 import type { SourceContext, SourceValue } from '../../src/ingest/types.js';
 import { methodOfSource } from '../../src/provenance/locator.js';
-import { ADAPTER_ORIGINS, originOf, SERIES_ORIGIN } from '../../src/provenance/origin.js';
+import { ADAPTER_ORIGINS, originOf, SERIES_ORIGIN, seriesOrigin } from '../../src/provenance/origin.js';
 import { ADAPTER_SOURCE_TYPES, sourceTypeOf } from '../../src/report/sourceTypes.js';
 import { ETH_USDC_FEED, feedCalls, hyperliquidMids, liveEvmCalls, PRICES, priceRef } from '../helpers/livePrices.js';
 import { fakeHttp } from '../helpers/fakeHttp.js';
@@ -18,42 +18,67 @@ import { fixture, sourceCtx } from '../helpers/sourceCtx.js';
  * Task 10 fix round 1 (review I-1): since 0006 a row's origin is read back from its provenance (`originOf`), so the origin
  * an adapter's writer stamps must be the one `originOf` gives for that adapter's provenance, or its own rows read back as
  * another origin (a contract-state series declared `onchain` would see its own rows as foreign conflicts and stall). Every
- * registered adapter is run once here on fakes; its writer's stamp (a level's or schedule's `source`; `SERIES_ORIGIN`
- * for a daily series or periodic payments, which `writeApiFlow` / `writePeriodicPayments` stamp) must equal
+ * registered adapter is run once here on fakes; its writer's stamp (a level's or schedule's `source`; for a daily series
+ * the origin of its own provenance, which `writeApiFlow` stamps since R4; SERIES_ORIGIN for periodic payments) must equal
  * `originOf(its method, its rung, { adapter })` (method `measured`, or `disclosed` on the disclosure rung:
  * `schedule.unlocks_next_year`), and a contract-state adapter must be declared in ADAPTER_ORIGINS.
  */
 type Stamp = 'onchain' | 'api';
+/** What a writer stamps: a level's own `source`, or `series` for a daily series (resolved from its provenance). */
+type Written = Stamp | 'series' | null;
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const DAY = 86_400_000;
 const E18 = 10n ** 18n;
 
-/** The origin the writer of this reading stamps; null for a monthly series (a cross-check, never stored). */
-function stampOf(v: SourceValue): Stamp | null {
+/** The provenance fields `originOf` reads for an adapter's rows. */
+const fieldsOf = (name: string) => ({ method: methodOfSource({ type: 'adapter', name, params: {} }), sourceType: ADAPTER_SOURCE_TYPES[name], locator: { adapter: name, params: {} }, formula: null });
+
+/**
+ * The origin the writer of this reading stamps; null for a monthly series (a cross-check, never stored). A daily series'
+ * writer (`writeApiFlow`) stamps the origin of the series' own provenance (Phase 3 R4 Task 2: `seriesOrigin`), so it is
+ * resolved per name when compared; periodic payments are stamped SERIES_ORIGIN by `writePeriodicPayments`.
+ */
+function stampOf(v: SourceValue): Written {
   switch (v.kind) {
     case 'level':
     case 'schedule_steps':
       return v.source;
     case 'daily_series':
+      return 'series';
     case 'periodic_payments':
       return SERIES_ORIGIN;
     case 'monthly_series':
       return null;
   }
 }
+const resolve = (name: string, w: Written): Stamp | null => (w === 'series' ? seriesOrigin(fieldsOf(name)) : w);
 
 /** Every adapter whose writer's stamp is not what `originOf` reads back for its provenance, as `name: stamp vs origin`. */
-function mismatches(stamps: ReadonlyMap<string, Stamp | null>): string[] {
+function mismatches(stamps: ReadonlyMap<string, Written>): string[] {
   const out: string[] = [];
-  for (const [name, stamp] of stamps) {
+  for (const [name, written] of stamps) {
     const sourceType = ADAPTER_SOURCE_TYPES[name];
     if (sourceType === 'contract_state' && ADAPTER_ORIGINS[name] === undefined) out.push(`${name}: a contract-state adapter missing from ADAPTER_ORIGINS`);
+    const stamp = resolve(name, written);
     if (stamp === null) continue;
-    const origin = originOf({ method: methodOfSource({ type: 'adapter', name, params: {} }), sourceType, locator: { adapter: name, params: {} }, formula: null });
+    const origin = originOf(fieldsOf(name));
     if (origin !== stamp) out.push(`${name}: stamps ${stamp}, reads back ${origin}`);
   }
   return out.sort();
 }
+
+/** The stamp every daily-series adapter's rows carry, by name. */
+function seriesStamps(stamps: ReadonlyMap<string, Written>): Record<string, Stamp | null> {
+  return Object.fromEntries([...stamps].filter(([, w]) => w === 'series').map(([name, w]) => [name, resolve(name, w)]));
+}
+
+/** Every daily-series adapter registered before R4, and the stamp its rows carry: unchanged by the origin fix. */
+const SERIES_API: Record<string, Stamp> = {
+  'hype.fund_buys_daily': 'api',
+  'lit.exchange_fees_daily': 'api',
+  'lit.treasury_buys_daily': 'api',
+  'solana.supply_burn_daily': 'api',
+};
 
 // --- fakes, one successful read per adapter (shapes from the adapters' own tests) ---
 
@@ -260,7 +285,7 @@ async function linkPriceCtx(): Promise<SourceContext> {
 }
 
 describe('the adapter origin registry (review I-1)', () => {
-  const stamps = new Map<string, Stamp | null>();
+  const stamps = new Map<string, Written>();
   beforeAll(async () => {
     for (const [name, sample] of Object.entries(SAMPLES)) stamps.set(name, stampOf(await sample()));
   });
@@ -273,7 +298,19 @@ describe('the adapter origin registry (review I-1)', () => {
     expect(stamps.size).toBe(adapterNames().length);
     expect(mismatches(stamps)).toEqual([]);
     // The one contract-state adapter whose rows are `api`: its daily series goes through writeApiFlow.
-    expect(stamps.get('solana.supply_burn_daily')).toBe('api');
+    expect(resolve('solana.supply_burn_daily', stamps.get('solana.supply_burn_daily')!)).toBe('api');
+  });
+
+  it('every daily-series adapter registered before R4 still stamps api (the series origin comes from its provenance)', () => {
+    expect(seriesStamps(stamps)).toEqual(SERIES_API);
+  });
+
+  it('a daily series on the pool_scan rung stamps onchain, the origin its rows read back as', () => {
+    const fields = { method: 'measured' as const, sourceType: 'pool_scan' as const, locator: { adapter: 'test.pool_scan', params: {} }, formula: null };
+    expect(seriesOrigin(fields)).toBe('onchain');
+    expect(seriesOrigin(fields)).toBe(originOf(fields));
+    // And a manual origin is never a series' stamp: the writer refuses it.
+    expect(() => seriesOrigin({ method: 'derived', sourceType: 'derived', locator: null, formula: 'manual_mean_of_neighbours@1' })).toThrow(/manual/);
   });
 
   it('a price adapter on a first-party venue (HYPE, Hyperliquid allMids) stamps api, as its rung reads back', async () => {
@@ -294,14 +331,22 @@ describe('the adapter origin registry (review I-1)', () => {
 
   it('fails when an entry is flipped', () => {
     const table = ADAPTER_ORIGINS as Record<string, Stamp>;
-    for (const [name, flipped] of [['solana.supply_burn_daily', 'onchain'], ['chain.view_sum', 'api']] as const) {
-      const was = table[name];
-      table[name] = flipped;
-      try {
-        expect(mismatches(stamps)).toEqual([`${name}: stamps ${was}, reads back ${flipped}`]);
-      } finally {
-        table[name] = was;
-      }
+    const name = 'chain.view_sum';
+    const was = table[name];
+    table[name] = 'api';
+    try {
+      expect(mismatches(stamps)).toEqual([`${name}: stamps ${was}, reads back api`]);
+    } finally {
+      table[name] = was;
+    }
+    // A daily series' stamp follows its provenance, so a flipped entry moves its stamp with it: the pin above catches it.
+    const series = 'solana.supply_burn_daily';
+    table[series] = 'onchain';
+    try {
+      expect(mismatches(stamps)).toEqual([]);
+      expect(seriesStamps(stamps)).toEqual({ ...SERIES_API, [series]: 'onchain' });
+    } finally {
+      table[series] = 'api';
     }
     expect(mismatches(stamps)).toEqual([]);
   });
@@ -313,8 +358,8 @@ describe('the adapter origin registry (review I-1)', () => {
     try {
       expect(mismatches(stamps)).toEqual([
         'solana.supply_burn_daily: a contract-state adapter missing from ADAPTER_ORIGINS',
-        'solana.supply_burn_daily: stamps api, reads back onchain',
       ]);
+      expect(seriesStamps(stamps)['solana.supply_burn_daily']).toBe('onchain'); // and the pin catches the moved stamp
     } finally {
       table['solana.supply_burn_daily'] = was;
     }

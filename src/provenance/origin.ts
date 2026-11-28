@@ -57,8 +57,23 @@ export const ADAPTER_ORIGINS: Readonly<Record<string, 'onchain' | 'api'>> = {
   'vvv.diem_target_supply': 'onchain',
 };
 
-/** The origin the series writers (`writeApiFlow`, `writePeriodicPayments`) stamp on every row they write. */
+/**
+ * The origin `writePeriodicPayments` stamps on every row it writes, and the one every daily series registered before
+ * Phase 3 R4 carries (`writeApiFlow` now stamps `seriesOrigin` of the series' provenance, which is this for each of them).
+ */
 export const SERIES_ORIGIN = 'api' as const;
+
+/**
+ * The origin a daily series' rows carry (`writeApiFlow`: its stamp, its stored-day lookup, its conflict check): the one
+ * `originOf` reads back from the series' own provenance, so a writer never sees its own rows as another origin's. `api`
+ * for DefiLlama and every first-party or contract-state API series (Solana's supply drop, by ADAPTER_ORIGINS); `onchain`
+ * for a pool scan (Phase 3 R4). A series is never manual: such a provenance is refused.
+ */
+export function seriesOrigin(p: OriginFields): 'onchain' | 'api' {
+  const origin = originOf(p);
+  if (origin === 'manual') throw new Error(`a fetched series cannot carry a manual origin (method ${p.method}, rung ${p.sourceType})`);
+  return origin;
+}
 
 /** The locator key a derivation over DefiLlama or adapter inputs carries (R10.7); written only with the value 'api'. */
 export const INPUT_ORIGIN_KEY = 'input_origin';

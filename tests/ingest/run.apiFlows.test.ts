@@ -1,12 +1,16 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parseAssetYaml } from '../../src/config/load.js';
 import type { Db } from '../../src/db/connection.js';
+import { listAnomalies } from '../../src/db/anomalies.js';
 import { getCursor } from '../../src/db/fetchCursors.js';
 import { insertObservation, listActiveObservations, listObservations } from '../../src/db/observations.js';
 import { DEFILLAMA_REVISION_DAYS, REVISION_DAYS } from '../../src/ingest/apiFlow.js';
+import { registerAdapter } from '../../src/ingest/adapters/registry.js';
 import { fetchAsset, type FetchResult } from '../../src/ingest/run.js';
+import type { AdapterWarning, DailyPoint, SourceContext } from '../../src/ingest/types.js';
+import { ADAPTER_SOURCE_TYPES, type SourceType } from '../../src/report/sourceTypes.js';
 import { harness, type Harness } from '../helpers/fetchHarness.js';
 import { useTestDb } from '../helpers/db.js';
 import { TEST_PROVENANCE, testProvenance } from '../helpers/provenance.js';
@@ -240,5 +244,101 @@ describe('fetchAsset: a DefiLlama series is read again 30 days back on every run
     expect(r.written.map((w) => [w.observedAt.slice(0, 10), w.value])).toEqual([['2026-09-21', 7777]]);
     expect((await byDay(h))['2026-09-16']).toBe(2);
     expect((await listActiveObservations(h.db, 'hype', METRIC)).filter((o) => o.source === 'manual').map((o) => o.id).sort()).toEqual([manual.id, fix.id].sort());
+  });
+});
+
+
+/**
+ * Phase 3 R4 Task 2: a daily series an adapter on the pool_scan rung returns. Its rows read back `onchain` (originOf), so
+ * the series writer must stamp, look up and conflict-check by that origin, not by the API stamp every earlier adapter
+ * series carries. The adapter is registered for this file only (vitest isolates files), in a beforeAll.
+ */
+describe('fetchAsset: an adapter series on the pool_scan rung (Phase 3 R4)', () => {
+  const NAME = 'test.pool_scan_daily';
+  const POOL_SOURCE = `adapter:${NAME}`;
+  const state: { points: DailyPoint[]; warnings?: AdapterWarning[]; storedSeen: Set<string>[] } = { points: [], storedSeen: [] };
+  beforeAll(() => {
+    (ADAPTER_SOURCE_TYPES as Record<string, SourceType>)[NAME] = 'pool_scan';
+    registerAdapter({
+      name: NAME,
+      needsRpc: false,
+      run: async (ctx: SourceContext) => {
+        if (ctx.storedFlowDays) state.storedSeen.push(await ctx.storedFlowDays(METRIC));
+        return { kind: 'daily_series', points: state.points, detail: 'pool scan (test)', ...(state.warnings ? { warnings: state.warnings } : {}) };
+      },
+    });
+  });
+  afterAll(() => {
+    delete (ADAPTER_SOURCE_TYPES as Record<string, SourceType>)[NAME];
+  });
+  const POOL_YAML = FIXTURE
+    .replace('source: { type: defillama, slug: hyperliquid, data_type: dailyHoldersRevenue }', `source: { type: adapter, name: ${NAME}, params: {} }`)
+    .replace('revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 7, critical: true }', 'revenue_run_rate_usd: { type: level, unit: usd, staleness_days: 7, critical: true, source: { type: derived, name: flow_annualized, params: { metric: flow_usd.buyback, days: 2 } } }');
+  const pool = (points: Record<string, number>, db: Db = testDb()): Harness => {
+    if (!POOL_YAML.includes(NAME) || !POOL_YAML.includes('flow_annualized')) throw new Error('the fixture no longer has the lines this test edits');
+    state.points = Object.entries(points).map(([day, value]) => ({ day, value }));
+    return harness(db, { loaded: parseAssetYaml(POOL_YAML) });
+  };
+  const poolSource = (r: FetchResult) => r.sources.find((s) => s.sourceId === POOL_SOURCE)!;
+  const SERIES_DAYS = { '2026-09-14': 100, '2026-09-15': 110, '2026-09-17': 130, '2026-09-18': 140 };
+
+  it('a pool_scan series stamps onchain, reads its own rows back as stored, and does not conflict', async () => {
+    const h = pool(SERIES_DAYS);
+    const first = await fetch(h);
+    expect(poolSource(first)).toMatchObject({ status: 'ok', metricsWritten: [METRIC], conflicts: [] });
+    expect(first.written.filter((w) => w.metricKey === METRIC).map((w) => w.source)).toEqual(['onchain', 'onchain', 'onchain', 'onchain']);
+    const rows = await listActiveObservations(h.db, 'hype', METRIC);
+    expect(rows.map((o) => o.source)).toEqual(['onchain', 'onchain', 'onchain', 'onchain']);
+    expect(await h.db.all(`SELECT DISTINCT method, source_type FROM observations WHERE metric_key = '${METRIC}'`)).toEqual([{ method: 'measured', source_type: 'pool_scan' }]);
+    // A derivation over an on-chain adapter series is on chain too (run.ts counts an adapter input as api only when its origin is).
+    const derived = first.written.filter((w) => w.metricKey === 'revenue_run_rate_usd');
+    expect(derived.length).toBeGreaterThan(0);
+    expect(derived.every((w) => w.source === 'onchain')).toBe(true);
+    expect((await listActiveObservations(h.db, 'hype', 'revenue_run_rate_usd')).every((o) => o.source === 'onchain')).toBe(true);
+    expect(await h.db.all("SELECT DISTINCT locator->>'input_origin' AS io FROM observations WHERE metric_key = 'revenue_run_rate_usd'")).toEqual([{ io: null }]);
+
+    const second = await fetch(pool(SERIES_DAYS, h.db));
+    expect(poolSource(second)).toMatchObject({ status: 'ok', metricsWritten: [], conflicts: [] });
+    expect(second.written.filter((w) => w.metricKey === METRIC)).toEqual([]);
+    expect(await byDay(h)).toEqual({ '2026-09-15': 100, '2026-09-16': 110, '2026-09-18': 130, '2026-09-19': 140 });
+  });
+
+  it('storedFlowDays returns the active days of the series', async () => {
+    const h = pool(SERIES_DAYS);
+    state.storedSeen = [];
+    await fetch(h);
+    expect(state.storedSeen).toEqual([new Set()]); // nothing stored before the first run
+    // A row of another origin on a day outside the revision window: not the series' own, so not one of its days.
+    await insertObservation(h.db, { provenance: testProvenance('api'), assetId: 'hype', metricKey: METRIC, observedAt: '2026-09-11T00:00:00.000Z', periodDays: 1, value: 5, fetchedAt: '2026-09-11T00:00:00Z' });
+    await fetch(pool({ ...SERIES_DAYS, '2026-09-18': 141 }, h.db)); // 09-18 revised: superseded, still one active day
+    await fetch(pool(SERIES_DAYS, h.db));
+    expect(state.storedSeen[1]).toEqual(new Set(['2026-09-14', '2026-09-15', '2026-09-17', '2026-09-18']));
+    expect(state.storedSeen[2]).toEqual(new Set(['2026-09-14', '2026-09-15', '2026-09-17', '2026-09-18']));
+  });
+
+  it('adapter warnings raise one advisory cross_check_mismatch each, deduped', async () => {
+    const h = pool(SERIES_DAYS);
+    state.warnings = [
+      { dedupeKey: 'pool_scan:drift:8453', detail: { tape: '0xabc' } },
+      { dedupeKey: 'pool_scan:coverage:10', detail: { pricedPct: 97.5 } },
+      { dedupeKey: 'pool_scan:drift:8453', detail: { tape: '0xabc' } },
+    ];
+    try {
+      const r = await fetch(h);
+      expect(r.anomalies.map((a) => [a.kind, a.severity, a.metricKey, a.dedupeKey])).toEqual([
+        ['cross_check_mismatch', 'advisory', METRIC, 'pool_scan:drift:8453'],
+        ['cross_check_mismatch', 'advisory', METRIC, 'pool_scan:coverage:10'],
+      ]);
+      expect(r.anomalies[1].detail).toEqual({ pricedPct: 97.5 });
+      expect((await listAnomalies(h.db, { assetId: 'hype' })).map((a) => a.dedupeKey).sort()).toEqual(['pool_scan:coverage:10', 'pool_scan:drift:8453']);
+      // The rows are still written: a warning never blocks the series.
+      expect(poolSource(r)).toMatchObject({ status: 'ok', metricsWritten: [METRIC] });
+      // A dry run raises nothing in the database, but reports what it would raise.
+      const dry = await fetch(pool(SERIES_DAYS, h.db), { dryRun: true });
+      expect(dry.anomalies.map((a) => a.dedupeKey)).toEqual(['pool_scan:drift:8453', 'pool_scan:coverage:10']);
+      expect(await listAnomalies(h.db, { assetId: 'hype' })).toHaveLength(2);
+    } finally {
+      delete state.warnings;
+    }
   });
 });

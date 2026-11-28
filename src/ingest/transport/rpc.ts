@@ -41,8 +41,39 @@ export interface ReceiptLog {
   logIndex: number;
 }
 
+/** One raw inner call of `multicallData`: ABI-encoded calldata for one target (the caller encodes and decodes). */
+export interface DataCall {
+  address: string;
+  data: `0x${string}`;
+}
+
+/** One inner call's raw return data, or why it failed (a revert); reported in its slot. */
+export type DataCallResult = { ok: true; data: `0x${string}` } | { ok: false; error: string };
+
+/** Every log of the listed addresses whose first topic is `topic0`, in [fromBlock, toBlock]. */
+export interface RawLogQuery {
+  address: string[];
+  topic0: string;
+  fromBlock: bigint;
+  toBlock: bigint;
+}
+
+/** A raw log with its block (addresses and topics lowercased). */
+export type BlockLog = ReceiptLog & { blockNumber: bigint };
+
 export interface RpcTransport {
   latestBlock(): Promise<BlockRef>;
+  /**
+   * Raw calls through Multicall3 `aggregate3` (allowFailure) at one block, chunked: at most `opts.chunk` (default
+   * MULTICALL_DATA_CHUNK) inner calls per eth_call, each chunk its own request. Results are in call order; a failed inner
+   * call is reported in its slot, and only a transport failure throws. Optional: the pool scan (Phase 3 R4) needs it.
+   */
+  multicallData?(calls: DataCall[], blockNumber: bigint, opts?: { chunk?: number }): Promise<DataCallResult[]>;
+  /**
+   * Raw logs by address list and topic0, split at the chain's maxLogRange and halved on a provider's "too many results /
+   * range" refusal (at most MAX_LOG_HALVINGS times, then it throws). Sorted by block, then log index. Optional.
+   */
+  getLogs?(q: RawLogQuery): Promise<BlockLog[]>;
   /** The newest block under the chain's `finalized` tag. Optional: when present, transfer scans stop there (no reorg can
    * change what they read); level reads keep `latestBlock`. */
   finalizedBlock?(): Promise<BlockRef>;
@@ -67,6 +98,81 @@ export type RpcFactory = (url: string, chainId: number) => RpcTransport;
 
 /** The default log range: https://mainnet.base.org caps eth_getLogs at 2,000 blocks per call (error -32614 beyond that). */
 export const MAX_LOG_RANGE = 2000n;
+
+/** Inner calls per eth_call in `multicallData`: a ~1.9k-call archive snapshot is too heavy for one request (R4 scoping §3). */
+export const MULTICALL_DATA_CHUNK = 400;
+
+/**
+ * `calls` in chunks of `chunk` through `aggregate` (one eth_call per chunk, in order), concatenated in call order. A
+ * chunk's result count must match its calls: a short reply would shift every later slot.
+ */
+export async function chunkedMulticallData(
+  aggregate: (chunk: DataCall[]) => Promise<DataCallResult[]>,
+  calls: DataCall[],
+  chunk = MULTICALL_DATA_CHUNK,
+): Promise<DataCallResult[]> {
+  if (!Number.isInteger(chunk) || chunk < 1) throw new Error(`the multicall chunk must be a positive integer, got ${chunk}`);
+  const out: DataCallResult[] = [];
+  for (let i = 0; i < calls.length; i += chunk) {
+    const part = calls.slice(i, i + chunk);
+    const results = await aggregate(part);
+    if (results.length !== part.length) throw new Error(`multicall returned ${results.length} results for ${part.length} calls`);
+    out.push(...results);
+  }
+  return out;
+}
+
+/** How many times one getLogs range is halved on a range refusal before the read fails. */
+export const MAX_LOG_HALVINGS = 8;
+
+/** A provider's refusal of an eth_getLogs range as too wide or too many results (halving it may succeed). */
+export class LogRangeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LogRangeError';
+  }
+}
+
+/**
+ * Whether an eth_getLogs error is a range / result-size refusal, by its wording across providers ("query returned more
+ * than 10000 results", "block range too large", "exceed maximum block range", "Log response size exceeded", "limit
+ * exceeded", -32005) or by its type. Anything else (a timeout, a reset connection) is not halved.
+ */
+export function isLogRangeError(err: unknown): boolean {
+  if (err instanceof LogRangeError) return true;
+  const text = err instanceof Error ? err.message : String(err);
+  return /too many|more than \d+ results|block range|range (is )?too (large|wide|big)|exceeds? (the )?max(imum)? (block )?range|response size|limit exceeded|-32005/i.test(text);
+}
+
+/**
+ * [fromBlock, toBlock] in ranges of at most `maxLogRange`, each fetched by `fetchRange`; a range the provider refuses as
+ * too wide is halved and both halves fetched, down to MAX_LOG_HALVINGS halvings of the original range, then the read
+ * fails. Any other error passes straight on. Logs come back sorted by block, then log index.
+ */
+export async function splitGetLogs(fetchRange: (q: RawLogQuery) => Promise<BlockLog[]>, q: RawLogQuery, maxLogRange: bigint): Promise<BlockLog[]> {
+  if (maxLogRange < 1n) throw new Error(`the log range must be at least one block, got ${maxLogRange}`);
+  const out: BlockLog[] = [];
+  const read = async (from: bigint, to: bigint, depth: number): Promise<void> => {
+    try {
+      out.push(...(await fetchRange({ ...q, fromBlock: from, toBlock: to })));
+    } catch (err) {
+      if (!isLogRangeError(err)) throw err;
+      const why = err instanceof Error ? err.message : String(err);
+      if (depth >= MAX_LOG_HALVINGS || to === from) {
+        throw new Error(`eth_getLogs refused blocks ${from}-${to} after ${depth} halvings of the range: ${why}`);
+      }
+      const mid = from + (to - from) / 2n;
+      await read(from, mid, depth + 1);
+      await read(mid + 1n, to, depth + 1);
+    }
+  };
+  for (let from = q.fromBlock; from <= q.toBlock; from += maxLogRange) {
+    const to = from + maxLogRange - 1n < q.toBlock ? from + maxLogRange - 1n : q.toBlock;
+    await read(from, to, 0);
+  }
+  out.sort((a, b) => (a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : a.blockNumber < b.blockNumber ? -1 : 1));
+  return out;
+}
 
 /**
  * Walks [fromBlock, toBlock] in chunks. Each chunk gets one attempt plus three retries; when it

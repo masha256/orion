@@ -4,8 +4,8 @@ import { advanceCursor, getCursor } from '../db/fetchCursors.js';
 import type { FlowConflict, SourceOutcome } from '../db/fetchRuns.js';
 import { insertObservation, listActiveObservations, rejectObservation } from '../db/observations.js';
 import { upsertToken, USD_TOKEN_REF, type ObservationTokens, type TokenInfo } from '../db/prices.js';
-import { fetchedProvenance } from '../provenance/locator.js';
-import { SERIES_ORIGIN } from '../provenance/origin.js';
+import { fetchedProvenance, type ProvenanceAsset } from '../provenance/locator.js';
+import { seriesOrigin } from '../provenance/origin.js';
 import { responseDigest } from '../provenance/types.js';
 import { MS_PER_DAY } from '../types.js';
 import { findFlowConflicts } from './flow.js';
@@ -70,11 +70,20 @@ export interface ApiFlowResult {
   daily: DailyPoint[];
 }
 
-/** The metric's stored daily API rows, keyed by the UTC day each one covers. */
-async function storedApiDays(db: Db, assetId: string, metricKey: string): Promise<Map<string, number>> {
+/**
+ * The origin of the series `metricKey`'s configured source writes (`seriesOrigin` of its provenance): `api` for DefiLlama
+ * and every adapter series before Phase 3 R4, `onchain` for a pool scan.
+ */
+export function seriesOriginOf(asset: ProvenanceAsset, metricKey: string): 'onchain' | 'api' {
+  const p = fetchedProvenance(asset, metricKey);
+  return seriesOrigin({ method: p.method, sourceType: p.sourceType, locator: p.locator, formula: p.formula ?? null });
+}
+
+/** The metric's stored daily rows of the series' own origin, keyed by the UTC day each one covers. */
+export async function storedSeriesDays(db: Db, assetId: string, metricKey: string, origin: 'onchain' | 'api'): Promise<Map<string, number>> {
   const days = new Map<string, number>();
   for (const o of await listActiveObservations(db, assetId, metricKey)) {
-    if (o.source === SERIES_ORIGIN && o.periodDays === 1) days.set(utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY), o.value);
+    if (o.source === origin && o.periodDays === 1) days.set(utcDay(new Date(o.observedAt).getTime() - MS_PER_DAY), o.value);
   }
   return days;
 }
@@ -98,7 +107,9 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
   const windowStart = utcDay(args.now.getTime() - args.backfillDays * MS_PER_DAY);
   const cursor = await getCursor(db, asset.id, args.scanKey);
   const byDay = new Map(args.points.map((p) => [p.day, p]));
-  const stored = await storedApiDays(db, asset.id, metricKey);
+  // The series' own origin, read back from its provenance: its stamp, its stored days, and what is a foreign conflict.
+  const own = seriesOriginOf({ config: asset, hash: args.configHash }, metricKey);
+  const stored = await storedSeriesDays(db, asset.id, metricKey, own);
   // The days to read: with a cursor, the last revisionDays written days (a revised value supersedes the day's row) plus
   // any GAP day inside the backfill window, one by one: a day the series had not aggregated when the cursor passed it
   // and that no active row covers yet. A gap is retried on every run until it appears; the days between a gap and the
@@ -129,7 +140,7 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
   //    a manual row inside the revision window is a decision already taken (AERO's 2026-09-09 artifact, replaced by hand):
   //    its days are left alone, so a 30-day revision window does not refuse the whole series over it. A rescan still
   //    refuses it unless --adopt.
-  const allConflicts = await findFlowConflicts(db, asset.id, metricKey, rangeStartMs, rangeEndMs, SERIES_ORIGIN);
+  const allConflicts = await findFlowConflicts(db, asset.id, metricKey, rangeStartMs, rangeEndMs, own);
   const honoured = cursor && !args.rescan && !args.adopt ? allConflicts.filter((c) => c.adoptable) : [];
   const conflicts = allConflicts.filter((c) => !honoured.includes(c));
   const manualDays = new Set<string>();
@@ -205,7 +216,7 @@ export async function writeApiFlow(args: ApiFlowArgs): Promise<ApiFlowResult> {
           ...(tokens ? { tokens } : {}),
         })).id;
       }
-      result.written.push({ metricKey, value, observedAt, periodDays: 1, source: SERIES_ORIGIN, observationId });
+      result.written.push({ metricKey, value, observedAt, periodDays: 1, source: own, observationId });
       if (newest === null || day > newest) newest = day;
     }
     // The cursor never moves backwards; lastBlock is meaningless for an API series.
